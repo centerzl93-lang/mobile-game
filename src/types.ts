@@ -22,7 +22,8 @@ export type ResourceKind =
   | 'tools'
   | 'leather'
   | 'clothing'
-  | 'livestock';
+  | 'livestock'
+  | 'medicine';
 
 export type Resources = Record<ResourceKind, number>;
 
@@ -37,6 +38,7 @@ export const RESOURCE_KINDS: ResourceKind[] = [
   'leather',
   'clothing',
   'livestock',
+  'medicine',
 ];
 
 export const RESOURCE_ICON: Record<ResourceKind, string> = {
@@ -50,6 +52,7 @@ export const RESOURCE_ICON: Record<ResourceKind, string> = {
   leather: '🟫',
   clothing: '🧥',
   livestock: '🐄',
+  medicine: '💊',
 };
 
 /** Resources that show a red "low" warning in the HUD (survival-critical). */
@@ -73,6 +76,9 @@ export type BuildingType =
   | 'tailor'
   | 'trading'
   | 'school'
+  | 'herbalist'
+  | 'hospital'
+  | 'well'
   | 'barn';
 
 export type MineOutput = 'coal' | 'iron';
@@ -121,6 +127,8 @@ export interface Building {
    * buffer. Construction site (built=false): materials delivered so far.
    */
   store: Partial<Record<ResourceKind, number>>;
+  /** Seconds of fire remaining while burning down (undefined = not on fire). */
+  fireTimer?: number;
 }
 
 /** What a villager is doing right now in the logistics loop. */
@@ -163,6 +171,7 @@ export interface Citizen {
   health: number; // 0..100
   happiness: number; // 0..100
   educated: boolean; // grew up with a staffed school -> more productive
+  sick: boolean; // ill from a disease outbreak; can't work until recovered
 }
 
 /** Children can't work; they take a housing slot and grow up at ADULT_AGE. */
@@ -239,6 +248,20 @@ export const EDUCATED_BONUS = 1.3; // production multiplier for educated workers
 export const START_HEALTH = 80;
 export const START_HAPPINESS = 80;
 
+// ---- Disease & fire ----
+export const DISEASE_CHANCE = 0.06; // base chance per season of an outbreak
+export const DISEASE_INFECT_FRACTION = 0.3; // share of the healthy who fall ill
+export const SICK_RECOVER_BASE = 0.4; // per-season recovery chance, unaided
+export const SICK_RECOVER_MEDICINE = 0.3; // bonus if a dose of medicine is on hand
+export const SICK_RECOVER_HOSPITAL = 0.2; // bonus if a staffed hospital exists
+export const SICK_DEATH_CHANCE = 0.15; // per-season death chance while still sick
+export const MED_LOAD = 5; // medicine produced per herbalist work cycle (× forest)
+export const FIRE_CHANCE = 0.05; // base chance per season a building ignites
+export const WELL_RADIUS = 6; // wells protect buildings within this radius
+export const WELL_DOUSE_CHANCE = 0.85; // chance a nearby well stops a fire
+export const FIRE_SPREAD_CHANCE = 0.3; // chance fire jumps to an adjacent building
+export const FIRE_BURN_SECONDS = 8; // how long a building burns before collapsing
+
 // ---- Production (per assigned worker, per season, before local factors) ----
 export const GATHER_FOOD_PER_SEASON = 15;
 export const FISH_FOOD_PER_SEASON = 16;
@@ -276,6 +299,7 @@ export const START_RESOURCES: Resources = {
   leather: 0,
   clothing: 80,
   livestock: 0,
+  medicine: 40,
 };
 export const START_CITIZENS = 4;
 
@@ -291,6 +315,7 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
   leather: 3,
   clothing: 6,
   livestock: 20,
+  medicine: 5,
 };
 export const MERCHANT_MARGIN = 0.8; // you receive 80% of the value you hand over
 export const MERCHANT_VISIT_EVERY = 2; // seasons between arrivals (needs a trading post)
@@ -366,6 +391,21 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     cost: { wood: 16, stone: 10 }, jobs: 1, buildTime: 7,
     desc: 'A teacher educates the children; kids who grow up here become skilled, more productive adults.',
   },
+  herbalist: {
+    type: 'herbalist', name: 'Herbalist', emoji: '🌿', category: 'civic', w: 2, h: 2,
+    cost: { wood: 12 }, jobs: 2, buildTime: 6, workRadius: 6,
+    desc: 'Gathers wild herbs from the forest to brew medicine for the sick.',
+  },
+  hospital: {
+    type: 'hospital', name: 'Hospital', emoji: '🏥', category: 'civic', w: 2, h: 2,
+    cost: { wood: 16, stone: 12 }, jobs: 2, buildTime: 8,
+    desc: 'Doctors treat the sick during outbreaks — the ill recover faster and die less.',
+  },
+  well: {
+    type: 'well', name: 'Well', emoji: '⛲', category: 'civic', w: 1, h: 1,
+    cost: { wood: 6, stone: 8 }, jobs: 0, buildTime: 4,
+    desc: 'Provides water to fight fires. Buildings nearby rarely burn down.',
+  },
   barn: {
     type: 'barn', name: 'Barn', emoji: '🛖', category: 'resources', w: 2, h: 2,
     cost: { wood: 16 }, jobs: 0, buildTime: 6,
@@ -397,5 +437,8 @@ export const BUILD_ORDER: BuildingType[] = [
   'tailor',
   'trading',
   'school',
+  'herbalist',
+  'hospital',
+  'well',
   'barn',
 ];

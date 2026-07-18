@@ -21,7 +21,7 @@ import {
   PATH_STONE_PLAN,
 } from './types';
 import { newGame } from './game/state';
-import { update, LogKind, tradeWithMerchant, TradeResult } from './game/simulation';
+import { update, LogKind, tradeWithMerchant, TradeResult, igniteBuilding } from './game/simulation';
 import { canPlace, placeBuilding, canAfford, demolishBuilding } from './game/buildings';
 import { addNearest } from './game/storage';
 import { planPath } from './game/paths';
@@ -343,7 +343,7 @@ class Game {
       rows.push({ label: 'Sex', value: c.sex === 'm' ? '♂ Male' : '♀ Female' });
       rows.push({ label: 'Stage', value: adult ? 'Adult' : `Child · grows up at ${ADULT_AGE}` });
       rows.push({ label: 'Age', value: `${Math.floor(c.age)} yr` });
-      rows.push({ label: 'Health', value: `❤️ ${Math.round(c.health)}%` });
+      rows.push({ label: 'Health', value: `❤️ ${Math.round(c.health)}%${c.sick ? ' · 🤒 sick' : ''}` });
       rows.push({ label: 'Happiness', value: `😊 ${Math.round(c.happiness)}%` });
       if (adult) rows.push({ label: 'Schooling', value: c.educated ? 'Educated (+30% work)' : 'Uneducated' });
       if (adult) rows.push({ label: 'Work', value: job ? `${BUILDING_DEFS[job.type].name} worker` : 'Builder / laborer' });
@@ -354,6 +354,12 @@ class Game {
       const title = !adult ? '🧒 Child' : c.sex === 'm' ? '👨 Villager' : '👩 Villager';
       this.ui.showInspect(title, rows);
     }
+  }
+
+  /** Debug/testing helper: try to set a building on fire. */
+  debugIgnite(id: number): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (b) igniteBuilding(this.state, b, this.log);
   }
 
   /** Debug/testing helper: run the simulation forward by `seconds` in fixed steps. */

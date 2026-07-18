@@ -35,6 +35,18 @@ import {
   OLD_AGE_START,
   MAX_AGE,
   EDUCATED_BONUS,
+  DISEASE_CHANCE,
+  DISEASE_INFECT_FRACTION,
+  SICK_RECOVER_BASE,
+  SICK_RECOVER_MEDICINE,
+  SICK_RECOVER_HOSPITAL,
+  SICK_DEATH_CHANCE,
+  MED_LOAD,
+  FIRE_CHANCE,
+  WELL_RADIUS,
+  WELL_DOUSE_CHANCE,
+  FIRE_SPREAD_CHANCE,
+  FIRE_BURN_SECONDS,
   BuildingType,
   isAdult,
 } from '../types';
@@ -77,6 +89,7 @@ export function update(s: GameState, dt: number, log: LogFn): void {
   assignHomesAndJobs(s);
   const toolFactor = totalStored(s, 'tools') > 0 ? 1 : NO_TOOLS_PENALTY;
   for (const c of s.citizens) runCitizen(s, c, dt, toolFactor);
+  processFires(s, dt, log);
   regrowForest(s, dt);
 
   s.seasonTimer += dt;
@@ -170,8 +183,8 @@ function goTo(c: Citizen, p: { x: number; y: number }): void {
 
 // ---- per-citizen behaviour ----
 function runCitizen(s: GameState, c: Citizen, dt: number, toolFactor: number): void {
-  if (!isAdult(c)) {
-    wander(s, c, dt); // children play near the village; they can't work or haul
+  if (!isAdult(c) || c.sick) {
+    wander(s, c, dt); // children play; the sick rest — neither can work or haul
     return;
   }
   const job = c.jobId !== null ? s.buildings.find((b) => b.id === c.jobId) : null;
@@ -304,6 +317,8 @@ function workOutput(
       tendCircle(s, b, WORK_SECONDS);
       return { kind: 'wood', amount: LOAD_MAT * f * tf };
     }
+    case 'herbalist':
+      return { kind: 'medicine', amount: MED_LOAD * factorCircle(s, b) * tf };
     case 'quarry':
       return { kind: 'stone', amount: LOAD_MAT * factorStone(s, b) * tf };
     case 'mine': {
@@ -610,6 +625,9 @@ function endSeason(s: GameState, log: LogFn): void {
     }
   }
 
+  diseaseSeason(s, log);
+  fireSeason(s, log);
+
   // Reproduction: a house with an adult man + woman, spare room, and enough food
   // stored may bear a child. Happier villages breed faster.
   if (s.citizens.length > 0 && totalStored(s, 'food') > s.citizens.length * FOOD_PER_CITIZEN_PER_SEASON) {
@@ -770,6 +788,108 @@ function updateWellbeing(s: GameState, foodShort: boolean): void {
   for (const c of s.citizens) {
     c.health += (healthTarget - c.health) * 0.25;
     c.happiness += (happyTarget - c.happiness) * 0.25;
+  }
+}
+
+// ---- disease & fire ----
+function dist2c(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  return (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+}
+
+function diseaseSeason(s: GameState, log: LogFn): void {
+  const pop = s.citizens.length;
+  if (pop === 0) return;
+
+  // Outbreak: infect a share of the healthy (likelier when the village is unwell).
+  if (pop >= 4 && Math.random() < DISEASE_CHANCE) {
+    const healthy = s.citizens.filter((c) => !c.sick);
+    healthy.sort(() => Math.random() - 0.5);
+    const n = Math.min(healthy.length, Math.max(1, Math.floor(healthy.length * DISEASE_INFECT_FRACTION)));
+    for (let i = 0; i < n; i++) healthy[i].sick = true;
+    if (n > 0) log('A sickness spreads through the village', 'bad');
+  }
+
+  // Treat the sick: medicine and a staffed hospital speed recovery.
+  const hospital = s.buildings.some((b) => b.built && b.type === 'hospital' && b.workers.length > 0);
+  let died = 0;
+  for (const c of [...s.citizens]) {
+    if (!c.sick) continue;
+    let chance = SICK_RECOVER_BASE + (c.health / 100) * 0.2;
+    if (totalStored(s, 'medicine') >= 1) {
+      consume(s, 'medicine', 1);
+      chance += SICK_RECOVER_MEDICINE;
+    }
+    if (hospital) chance += SICK_RECOVER_HOSPITAL;
+    if (Math.random() < chance) {
+      c.sick = false;
+      c.health = Math.min(100, c.health + 15);
+    } else {
+      c.health -= 15;
+      if (c.health <= 0 || Math.random() < SICK_DEATH_CHANCE) {
+        removeCitizen(s, c);
+        died++;
+      }
+    }
+  }
+  if (died > 0) log(`${died} villager${died > 1 ? 's' : ''} died of illness`, 'bad');
+}
+
+function fireSeason(s: GameState, log: LogFn): void {
+  const flammable = s.buildings.filter((b) => b.built && b.type !== 'well' && !b.fireTimer);
+  if (flammable.length === 0) return;
+  if (Math.random() < FIRE_CHANCE) tryIgnite(s, flammable[(Math.random() * flammable.length) | 0], log, true);
+}
+
+/** Testing/debug: attempt to set a building alight (respecting well protection). */
+export function igniteBuilding(s: GameState, b: Building, log: LogFn): void {
+  tryIgnite(s, b, log, true);
+}
+
+function tryIgnite(s: GameState, b: Building, log: LogFn, announce: boolean): void {
+  if (b.fireTimer || b.type === 'well') return;
+  const c = buildingCenter(b);
+  const wellNear = s.buildings.some(
+    (w) => w.built && w.type === 'well' && dist2c(buildingCenter(w), c) <= WELL_RADIUS * WELL_RADIUS,
+  );
+  if (wellNear && Math.random() < WELL_DOUSE_CHANCE) {
+    if (announce) log('A well doused a fire before it spread', 'info');
+    return;
+  }
+  b.fireTimer = FIRE_BURN_SECONDS;
+  log(`🔥 Fire! The ${BUILDING_DEFS[b.type].name} is burning`, 'bad');
+}
+
+function processFires(s: GameState, dt: number, log: LogFn): void {
+  for (const b of [...s.buildings]) {
+    if (!b.fireTimer) continue;
+    b.fireTimer -= dt;
+    if (b.fireTimer <= 0) {
+      const name = BUILDING_DEFS[b.type].name;
+      const neighbours = adjacentBuildings(s, b);
+      removeBuilding(s, b);
+      log(`The ${name} burned down`, 'bad');
+      for (const n of neighbours) if (Math.random() < FIRE_SPREAD_CHANCE) tryIgnite(s, n, log, false);
+    }
+  }
+}
+
+function adjacentBuildings(s: GameState, b: Building): Building[] {
+  const bd = BUILDING_DEFS[b.type];
+  const out: Building[] = [];
+  for (const o of s.buildings) {
+    if (o === b || !o.built || o.type === 'well' || o.fireTimer) continue;
+    const od = BUILDING_DEFS[o.type];
+    if (b.x - 1 < o.x + od.w && b.x + bd.w + 1 > o.x && b.y - 1 < o.y + od.h && b.y + bd.h + 1 > o.y) out.push(o);
+  }
+  return out;
+}
+
+function removeBuilding(s: GameState, b: Building): void {
+  const idx = s.buildings.indexOf(b);
+  if (idx >= 0) s.buildings.splice(idx, 1);
+  for (const c of s.citizens) {
+    if (c.jobId === b.id) c.jobId = null;
+    if (c.homeId === b.id) c.homeId = null;
   }
 }
 

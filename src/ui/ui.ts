@@ -56,6 +56,7 @@ export class UI {
     ages: byId('stat-ages'),
     health: byId('stat-health'),
     happy: byId('stat-happy'),
+    sick: byId('stat-sick'),
     builders: byId('stat-builders'),
     resources: byId('stat-resources'),
     season: byId('stat-season'),
@@ -124,6 +125,10 @@ export class UI {
     this.el.happy.querySelector('.val')!.textContent = `${Math.round(avgHappiness(s))}`;
     this.el.health.classList.toggle('low', avgHealth(s) < 45);
     this.el.happy.classList.toggle('low', avgHappiness(s) < 45);
+    const sick = s.citizens.reduce((n, c) => n + (c.sick ? 1 : 0), 0);
+    this.el.sick.classList.toggle('hidden', sick === 0);
+    this.el.sick.classList.add('low');
+    this.el.sick.querySelector('.val')!.textContent = `${sick}`;
     this.el.builders.querySelector('.val')!.textContent = `${builders}`;
     for (const kind of RESOURCE_KINDS) {
       const chip = this.resChips.get(kind)!;

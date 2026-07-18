@@ -103,6 +103,15 @@ slot, eat a **half ration**, **can't work**, and grow into adults at **age 4**.
 while it runs become educated adults who produce ~30% more**. The HUD's age chip shows
 🧒 children · 🧑 adults · 👴 elders.
 
+### Disease & disasters (Civic)
+
+- **Disease** outbreaks strike from time to time. The **sick can't work** until they
+  recover. A **🌿 Herbalist** gathers herbs into **💊 medicine**, and a **🏥 Hospital**
+  with doctors speeds recovery — without them, the ill can die. Keep some medicine
+  stocked. A 🤒 count appears in the HUD during an outbreak.
+- **Fire** can break out and **burn a building down**, spreading to neighbours. Build
+  **⛲ Wells** near your town — buildings within range are usually saved.
+
 ### Trading (🚢)
 
 Build a **Trading Post** on the shore and staff it. Every few seasons a

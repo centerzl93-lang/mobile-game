@@ -32,6 +32,7 @@ export function makeCitizen(s: { nextId: number }, sex: Sex, age: number, x: num
     health: START_HEALTH,
     happiness: START_HAPPINESS,
     educated: false,
+    sick: false,
   };
 }
 

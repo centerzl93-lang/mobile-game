@@ -46,6 +46,9 @@ const BUILDING_COLORS: Record<BuildingType, string> = {
   tailor: '#9a5f92',
   trading: '#46708f',
   school: '#8f7d3f',
+  herbalist: '#4f8a5a',
+  hospital: '#b85a5a',
+  well: '#5f7fa0',
   barn: '#6f6a4a',
 };
 
@@ -153,6 +156,12 @@ export class Renderer {
         ctx.lineWidth = 1;
         ctx.stroke();
         this.glyph(def.emoji, sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.55);
+        if (b.fireTimer) {
+          ctx.fillStyle = 'rgba(224,84,32,0.45)';
+          roundRect(ctx, sx + 2, sy + 2, bw - 4, bh - 4, 5);
+          ctx.fill();
+          this.glyph('🔥', sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.6);
+        }
         // Farm growth bar.
         if (b.type === 'farm' && b.growth > 0.02) {
           ctx.fillStyle = '#00000055';
@@ -200,6 +209,12 @@ export class Renderer {
         ctx.beginPath();
         ctx.arc(sx, sy - cr * 1.7, Math.max(1.5, cr * 0.7), 0, Math.PI * 2);
         ctx.fillStyle = RES_DOT[c.carry.kind] ?? '#fff';
+        ctx.fill();
+      }
+      if (c.sick) {
+        ctx.beginPath();
+        ctx.arc(sx + cr, sy - cr, Math.max(1.5, cr * 0.6), 0, Math.PI * 2);
+        ctx.fillStyle = '#d24a4a';
         ctx.fill();
       }
     }

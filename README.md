@@ -24,13 +24,26 @@ It works offline after the first load, and your village is saved automatically.
 ## How to play
 
 - **Pan:** drag one finger. **Zoom:** pinch.
-- **Build:** tap a building in the bottom bar, **pan to line up the green outline
-  at the centre of the screen, and tap to place it**. Costs are shown on each
-  button; some buildings must sit on the right terrain (a ⚠️ hint tells you).
+- **Toolbar:** the bottom bar has **Inspect**, build categories (**Housing /
+  Food / Resources / Trade**), **Paths**, and **Demolish**. Tap a category to pop
+  out its buildings.
+- **Build:** choose a building, **pan to line up the green outline at the centre
+  of the screen, and tap to place it**. Placing only marks a **site** — it costs
+  nothing yet. Your **builders walk to a barn, carry the materials to the site,
+  and construct it on the spot**. Some buildings must sit on the right terrain.
+- **Everything is hauled by hand.** Resources live in **barns** (5000 each), and
+  villagers physically **fetch and carry** goods: a gatherer works, then walks a
+  load of food to the nearest barn; a blacksmith's worker fetches iron from a
+  barn before forging. **Keep barns close to the work** or trips get slow — build
+  more barns as you grow (total storage = 5000 × barns).
+- **Inspect (👆):** tap any building or villager to see its inventory — a barn's
+  contents, a workshop's buffer, or what a villager is carrying right now.
+- **Demolish (💥):** tap a building or path to remove it and reclaim **25%** of
+  its materials into storage.
 - **Paths:** pick **Dirt Path** (free, 1.5× walk speed) or **Stone Path**
   (1 stone/tile, 2× speed) and **drag one finger to draw** a route (pan with two
-  fingers while drawing). Villagers build the planned tiles; paths speed up all
-  their walking, so the village runs faster.
+  fingers while drawing). Villagers build the planned tiles; paths speed all
+  their hauling, so a well-paved village runs much faster.
 
 ### Buildings
 

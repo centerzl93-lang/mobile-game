@@ -10,6 +10,7 @@ import {
   STONE_PATH_COST,
 } from '../types';
 import { tileIndex, inBounds, getTile } from './world';
+import { totalStored } from './storage';
 
 export type PathTier = 'dirt' | 'stone';
 
@@ -26,8 +27,8 @@ export function planPath(s: GameState, tx: number, ty: number, tier: PathTier): 
   const cur = s.paths[idx];
   if (tier === 'stone') {
     if (cur === PATH_STONE || cur === PATH_STONE_PLAN) return false;
-    if (s.resources.stone < STONE_PATH_COST) return false;
-    s.resources.stone -= STONE_PATH_COST;
+    // Stone is consumed by the builder when the tile is laid; just require some exists.
+    if (totalStored(s, 'stone') < STONE_PATH_COST) return false;
     s.paths[idx] = PATH_STONE_PLAN;
     return true;
   }

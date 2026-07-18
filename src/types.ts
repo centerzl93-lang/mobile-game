@@ -77,10 +77,13 @@ export type BuildingType =
 export type MineOutput = 'coal' | 'iron';
 export type SmithRecipe = 'iron' | 'steel';
 
+export type BuildCategory = 'housing' | 'food' | 'resources' | 'trade';
+
 export interface BuildingDef {
   type: BuildingType;
   name: string;
   emoji: string;
+  category: BuildCategory;
   w: number;
   h: number;
   /** Resources spent to place it. */
@@ -112,9 +115,32 @@ export interface Building {
   output: MineOutput;
   /** Blacksmith: iron tools or steel tools. */
   recipe: SmithRecipe;
+  /**
+   * Local inventory. Barn: its stock (cap BARN_CAPACITY). Producer: input/output
+   * buffer. Construction site (built=false): materials delivered so far.
+   */
+  store: Partial<Record<ResourceKind, number>>;
 }
 
-export type CitizenState = 'toWork' | 'working' | 'toHome' | 'resting' | 'wander';
+/** What a villager is doing right now in the logistics loop. */
+export type TaskKind =
+  | 'idle'
+  | 'toFetch' // walking to a barn to pick up an input/material
+  | 'toDeliver' // carrying a material to a construction site or workplace
+  | 'toWork' // walking to the work area / workplace
+  | 'work' // producing into `carry`
+  | 'toDrop' // carrying output to a barn
+  | 'build' // laboring at a construction site
+  | 'toPath' // walking to a planned path tile
+  | 'wander';
+
+export interface CitizenTask {
+  kind: TaskKind;
+  resource?: ResourceKind;
+  targetId?: number; // building id
+  ptx?: number; // path/target tile
+  pty?: number;
+}
 
 export interface Citizen {
   id: number;
@@ -125,8 +151,10 @@ export interface Citizen {
   homeId: number | null;
   /** Building this villager works at; null means a builder/laborer. */
   jobId: number | null;
-  state: CitizenState;
-  timer: number; // seconds remaining in current state activity
+  /** What this villager is carrying (single kind at a time). */
+  carry: { kind: ResourceKind; amount: number } | null;
+  task: CitizenTask;
+  timer: number; // seconds remaining in current work action
   age: number; // years
 }
 
@@ -150,7 +178,6 @@ export interface GameState {
   paths: number[]; // length MAP_W * MAP_H, PATH_* values
   buildings: Building[];
   citizens: Citizen[];
-  resources: Resources;
   season: number; // index into SEASONS
   year: number;
   seasonTimer: number; // seconds elapsed in current season
@@ -165,10 +192,13 @@ export interface GameState {
 // ---- Time ----
 export const SEASON_LENGTH = 20 * 60; // 20 real minutes per season at 1x speed
 
-// ---- Housing / storage ----
+// ---- Housing / storage / logistics ----
 export const HOUSING_PER_HOUSE = 4;
-export const STORAGE_BASE = 100;
-export const STORAGE_PER_BARN = 160;
+export const BARN_CAPACITY = 5000; // total units a single barn can hold
+export const CARRY_CAP = 12; // units a villager carries per trip
+export const REFUND_FRACTION = 0.25; // fraction of build cost reclaimed on demolish
+export const WORK_SECONDS = 4; // seconds of work to fill/convert one carry-load
+export const BUILD_SECONDS_PER_UNIT = 0.5; // on-site labor seconds per unit of construction
 
 // ---- Movement / paths ----
 export const BASE_WALK_SPEED = 1.75; // ~33% slower than the old 2.6
@@ -177,13 +207,13 @@ export const PATH_STONE_MULT = 2.0;
 export const STONE_PATH_COST = 1; // stone per stone-path tile
 export const PATH_BUILD_TILES_PER_SEC = 0.6; // per free builder
 
-// ---- Consumption (per season) ----
-export const FOOD_PER_CITIZEN_PER_SEASON = 5;
-export const HEAT_PER_CITIZEN_WINTER = 4;
+// ---- Consumption (per season) — sized for the per-trip hauling economy ----
+export const FOOD_PER_CITIZEN_PER_SEASON = 60;
+export const HEAT_PER_CITIZEN_WINTER = 40; // heat units; firewood = 1, coal = 2
 export const FIREWOOD_HEAT = 1;
 export const COAL_HEAT = 2;
-export const CLOTHING_PER_CITIZEN_WINTER = 1; // clothing worn out over winter
-export const TOOL_WEAR_PER_WORKER = 0.4; // tools consumed per employed worker per season
+export const CLOTHING_PER_CITIZEN_WINTER = 5; // clothing worn out over winter
+export const TOOL_WEAR_PER_WORKER = 4; // tools consumed per employed worker per season
 export const NO_TOOLS_PENALTY = 0.6; // output multiplier when the tool stockpile is empty
 export const SICKNESS_CHANCE = 0.5; // chance an unclothed villager sickens in winter
 
@@ -199,7 +229,7 @@ export const LIVESTOCK_GROWTH_PER_SEASON = 0.12; // herd breeds ~12%/season per 
 export const LUMBER_WOOD_PER_SEASON = 13;
 export const WOODCUT_FIREWOOD_PER_SEASON = 18;
 export const WOODCUT_WOOD_PER_SEASON = 11;
-export const FARM_FOOD_PER_WORKER = 36; // at full growth, paid at autumn harvest
+export const FARM_FOOD_PER_WORKER = 320; // at full growth, paid at autumn harvest (hauled from the field)
 export const QUARRY_STONE_PER_SEASON = 9;
 export const MINE_COAL_PER_SEASON = 7;
 export const MINE_IRON_PER_SEASON = 6;
@@ -214,15 +244,15 @@ export const TAILOR_CLOTHING_OUT = 6;
 
 // ---- Starting stockpile / population ----
 export const START_RESOURCES: Resources = {
-  food: 70,
-  wood: 60,
-  firewood: 30,
-  stone: 0,
+  food: 400,
+  wood: 220,
+  firewood: 200,
+  stone: 40,
   coal: 0,
   iron: 0,
-  tools: 30,
+  tools: 120,
   leather: 0,
-  clothing: 12,
+  clothing: 80,
   livestock: 0,
 };
 export const START_CITIZENS = 4;
@@ -245,75 +275,83 @@ export const MERCHANT_VISIT_EVERY = 2; // seasons between arrivals (needs a trad
 
 export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   house: {
-    type: 'house', name: 'House', emoji: '🏠', w: 2, h: 2,
+    type: 'house', name: 'House', emoji: '🏠', category: 'housing', w: 2, h: 2,
     cost: { wood: 12 }, jobs: 0, buildTime: 6,
     desc: 'Homes up to 4 villagers and lets families grow.',
   },
   gatherer: {
-    type: 'gatherer', name: 'Gatherer', emoji: '🧺', w: 2, h: 2,
+    type: 'gatherer', name: 'Gatherer', emoji: '🧺', category: 'food', w: 2, h: 2,
     cost: { wood: 10 }, jobs: 2, buildTime: 6, workRadius: 6,
     desc: 'Collects food from forest in its work circle — more trees, more food.',
   },
   farm: {
-    type: 'farm', name: 'Field', emoji: '🌱', w: 3, h: 3,
+    type: 'farm', name: 'Field', emoji: '🌱', category: 'food', w: 3, h: 3,
     cost: { wood: 6 }, jobs: 2, buildTime: 5,
     desc: 'Grows crops through the year; harvested each autumn.',
   },
   fishing: {
-    type: 'fishing', name: 'Fishing Hut', emoji: '🎣', w: 2, h: 2,
+    type: 'fishing', name: 'Fishing Hut', emoji: '🎣', category: 'food', w: 2, h: 2,
     cost: { wood: 12 }, jobs: 2, buildTime: 6, requiresAdjacent: ['water'],
     desc: 'Catches fish. Must be built on the shoreline (next to water).',
   },
   hunting: {
-    type: 'hunting', name: 'Hunting Cabin', emoji: '🏹', w: 2, h: 2,
+    type: 'hunting', name: 'Hunting Cabin', emoji: '🏹', category: 'food', w: 2, h: 2,
     cost: { wood: 12 }, jobs: 2, buildTime: 6, workRadius: 6,
     desc: 'Hunts game in its work circle for food and leather — needs forest.',
   },
   ranch: {
-    type: 'ranch', name: 'Ranch', emoji: '🐄', w: 3, h: 3,
+    type: 'ranch', name: 'Ranch', emoji: '🐄', category: 'food', w: 3, h: 3,
     cost: { wood: 16 }, jobs: 2, buildTime: 7,
     desc: 'Raises livestock for food and leather. Buy animals from traders.',
   },
   lumberyard: {
-    type: 'lumberyard', name: 'Lumberyard', emoji: '🌲', w: 2, h: 2,
+    type: 'lumberyard', name: 'Lumberyard', emoji: '🌲', category: 'resources', w: 2, h: 2,
     cost: { wood: 12 }, jobs: 2, buildTime: 6, workRadius: 5,
     desc: 'Foresters tend and fell trees for wood within their work circle.',
   },
   woodcutter: {
-    type: 'woodcutter', name: 'Woodcutter', emoji: '🪓', w: 2, h: 2,
+    type: 'woodcutter', name: 'Woodcutter', emoji: '🪓', category: 'resources', w: 2, h: 2,
     cost: { wood: 10 }, jobs: 2, buildTime: 6,
     desc: 'Splits stockpiled wood into firewood to heat homes in winter.',
   },
   quarry: {
-    type: 'quarry', name: 'Quarry', emoji: '⛏️', w: 2, h: 2,
+    type: 'quarry', name: 'Quarry', emoji: '⛏️', category: 'resources', w: 2, h: 2,
     cost: { wood: 12 }, jobs: 2, buildTime: 7, requiresAdjacent: ['stone'],
     desc: 'Cuts stone. Must be built against a rocky mountainside.',
   },
   mine: {
-    type: 'mine', name: 'Mine', emoji: '🕳️', w: 2, h: 2,
+    type: 'mine', name: 'Mine', emoji: '🕳️', category: 'resources', w: 2, h: 2,
     cost: { wood: 14, stone: 10 }, jobs: 2, buildTime: 8, requiresAdjacent: ['stone'],
     desc: 'Digs coal or iron from the mountainside (toggle in the job board).',
   },
   blacksmith: {
-    type: 'blacksmith', name: 'Blacksmith', emoji: '⚒️', w: 2, h: 2,
+    type: 'blacksmith', name: 'Blacksmith', emoji: '⚒️', category: 'resources', w: 2, h: 2,
     cost: { wood: 14, stone: 8 }, jobs: 2, buildTime: 7,
     desc: 'Forges tools from iron, or steel tools from iron + coal (lasts longer).',
   },
   tailor: {
-    type: 'tailor', name: 'Tailor', emoji: '🧵', w: 2, h: 2,
+    type: 'tailor', name: 'Tailor', emoji: '🧵', category: 'resources', w: 2, h: 2,
     cost: { wood: 12 }, jobs: 2, buildTime: 6,
     desc: 'Sews warm clothing from leather to keep villagers healthy in winter.',
   },
   trading: {
-    type: 'trading', name: 'Trading Post', emoji: '🚢', w: 3, h: 2,
+    type: 'trading', name: 'Trading Post', emoji: '🚢', category: 'trade', w: 3, h: 2,
     cost: { wood: 20, stone: 10 }, jobs: 1, buildTime: 8, requiresAdjacent: ['water'],
     desc: 'Merchants dock here to barter goods — and to sell you livestock.',
   },
   barn: {
-    type: 'barn', name: 'Barn', emoji: '🛖', w: 2, h: 2,
+    type: 'barn', name: 'Barn', emoji: '🛖', category: 'resources', w: 2, h: 2,
     cost: { wood: 16 }, jobs: 0, buildTime: 6,
-    desc: 'Raises how much of every resource you can store.',
+    desc: 'Stores up to 5000 goods. Tap it to see what is inside.',
   },
+};
+
+export const CATEGORY_ORDER: BuildCategory[] = ['housing', 'food', 'resources', 'trade'];
+export const CATEGORY_META: Record<BuildCategory, { label: string; emoji: string }> = {
+  housing: { label: 'Housing', emoji: '🏠' },
+  food: { label: 'Food', emoji: '🌾' },
+  resources: { label: 'Resources', emoji: '🪵' },
+  trade: { label: 'Trade', emoji: '🚢' },
 };
 
 export const BUILD_ORDER: BuildingType[] = [

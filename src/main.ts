@@ -5,6 +5,8 @@ import { Renderer, PlacementView } from './render/renderer';
 import { UI, PathTier } from './ui/ui';
 import {
   GameState,
+  Building,
+  Citizen,
   BuildingType,
   BUILDING_DEFS,
   MAP_W,
@@ -12,12 +14,18 @@ import {
   MineOutput,
   SmithRecipe,
   ResourceKind,
+  RESOURCE_ICON,
+  RESOURCE_KINDS,
+  PATH_STONE,
+  PATH_STONE_PLAN,
 } from './types';
 import { newGame } from './game/state';
 import { update, LogKind, tradeWithMerchant, TradeResult } from './game/simulation';
-import { canPlace, placeBuilding, canAfford } from './game/buildings';
+import { canPlace, placeBuilding, canAfford, demolishBuilding } from './game/buildings';
+import { addNearest } from './game/storage';
 import { planPath } from './game/paths';
 import { saveGame, loadGame } from './game/save';
+import { InspectRow } from './ui/ui';
 
 const SPEEDS = [1, 2, 3];
 
@@ -35,6 +43,8 @@ class Game {
   speedIndex = 0;
   selectedBuild: BuildingType | null = null;
   selectedPath: PathTier | null = null;
+  demolish = false;
+  inspectSel: { kind: 'building' | 'citizen'; id: number } | null = null;
 
   dpr = 1;
   cw = 0;
@@ -47,6 +57,7 @@ class Game {
     this.ui = new UI({
       onSelectBuild: (t) => this.onSelectBuild(t),
       onSelectPath: (tier) => this.onSelectPath(tier),
+      onSetDemolish: (a) => this.onSetDemolish(a),
       onPauseToggle: () => this.togglePause(),
       onSpeedCycle: () => this.cycleSpeed(),
       onNewGame: () => this.startNewGame(),
@@ -112,13 +123,32 @@ class Game {
   private onSelectBuild(t: BuildingType | null): void {
     this.selectedBuild = t;
     this.selectedPath = null;
+    this.demolish = false;
+    this.clearInspect();
     this.input.setMode('normal');
   }
 
   private onSelectPath(tier: PathTier | null): void {
     this.selectedPath = tier;
     this.selectedBuild = null;
+    this.demolish = false;
+    this.clearInspect();
     this.input.setMode(tier ? 'path' : 'normal');
+  }
+
+  private onSetDemolish(active: boolean): void {
+    this.demolish = active;
+    if (active) {
+      this.selectedBuild = null;
+      this.selectedPath = null;
+      this.clearInspect();
+      this.input.setMode('normal');
+    }
+  }
+
+  private clearInspect(): void {
+    this.inspectSel = null;
+    this.ui.hideInspect();
   }
 
   private setWorkers(id: number, delta: number): void {
@@ -177,6 +207,8 @@ class Game {
     this.paused = false;
     this.selectedBuild = null;
     this.selectedPath = null;
+    this.demolish = false;
+    this.clearInspect();
     this.input.setMode('normal');
     this.ui.clearSelection();
     this.running = true;
@@ -184,9 +216,23 @@ class Game {
     this.ui.log('A fresh village begins', 'good');
   }
 
+  private onTap(sx: number, sy: number): void {
+    if (!this.running || this.state.gameOver) return;
+    if (this.selectedBuild) {
+      this.placeAtReticle();
+      return;
+    }
+    const [wx, wy] = this.camera.screenToWorld(sx, sy, this.cw, this.ch);
+    if (this.demolish) {
+      this.demolishAt(wx, wy);
+      return;
+    }
+    this.inspectAt(wx, wy);
+  }
+
   /** Placement uses a centre-screen reticle: pan to aim, tap to place. */
-  private onTap(_sx: number, _sy: number): void {
-    if (!this.selectedBuild || !this.running || this.state.gameOver) return;
+  private placeAtReticle(): void {
+    if (!this.selectedBuild) return;
     const { tx, ty } = this.reticleTile(this.selectedBuild);
     const check = canPlace(this.state, this.selectedBuild, tx, ty);
     if (!check.ok) {
@@ -194,14 +240,111 @@ class Game {
       return;
     }
     placeBuilding(this.state, this.selectedBuild, tx, ty);
-    const def = BUILDING_DEFS[this.selectedBuild];
-    this.ui.log(`${def.name} placed`, 'info');
+    this.ui.log(`${BUILDING_DEFS[this.selectedBuild].name} site marked — builders will haul materials`, 'info');
     this.persist();
-    // If the next one is now unaffordable, drop out of build mode.
     if (!canAfford(this.state, this.selectedBuild)) {
       this.selectedBuild = null;
       this.ui.clearSelection();
-      this.ui.flashHint('Not enough resources for another — gather more first');
+      this.ui.flashHint('Not enough materials in storage for another');
+    }
+  }
+
+  private buildingAt(wx: number, wy: number): Building | null {
+    const tx = Math.floor(wx);
+    const ty = Math.floor(wy);
+    for (const b of this.state.buildings) {
+      const d = BUILDING_DEFS[b.type];
+      if (tx >= b.x && tx < b.x + d.w && ty >= b.y && ty < b.y + d.h) return b;
+    }
+    return null;
+  }
+
+  private citizenAt(wx: number, wy: number): Citizen | null {
+    let best: Citizen | null = null;
+    let bd = 0.7 * 0.7;
+    for (const c of this.state.citizens) {
+      const dd = (c.x - wx) ** 2 + (c.y - wy) ** 2;
+      if (dd < bd) {
+        bd = dd;
+        best = c;
+      }
+    }
+    return best;
+  }
+
+  private demolishAt(wx: number, wy: number): void {
+    const b = this.buildingAt(wx, wy);
+    if (b) {
+      demolishBuilding(this.state, b);
+      this.ui.log(`${BUILDING_DEFS[b.type].name} demolished`, 'info');
+      this.persist();
+      return;
+    }
+    const tx = Math.floor(wx);
+    const ty = Math.floor(wy);
+    const idx = ty * MAP_W + tx;
+    if (idx >= 0 && idx < this.state.paths.length && this.state.paths[idx] !== 0) {
+      const wasStone = this.state.paths[idx] === PATH_STONE || this.state.paths[idx] === PATH_STONE_PLAN;
+      this.state.paths[idx] = 0;
+      if (wasStone) addNearest(this.state, { x: tx, y: ty }, 'stone', 0.25);
+      this.persist();
+    }
+  }
+
+  private inspectAt(wx: number, wy: number): void {
+    const c = this.citizenAt(wx, wy);
+    if (c) {
+      this.inspectSel = { kind: 'citizen', id: c.id };
+      this.refreshInspect();
+      return;
+    }
+    const b = this.buildingAt(wx, wy);
+    if (b) {
+      this.inspectSel = { kind: 'building', id: b.id };
+      this.refreshInspect();
+      return;
+    }
+    this.clearInspect();
+  }
+
+  private refreshInspect(): void {
+    if (!this.inspectSel) return;
+    const rows: InspectRow[] = [];
+    if (this.inspectSel.kind === 'building') {
+      const b = this.state.buildings.find((x) => x.id === this.inspectSel!.id);
+      if (!b) return this.clearInspect();
+      const def = BUILDING_DEFS[b.type];
+      if (!b.built) {
+        rows.push({ label: 'Status', value: `Building ${Math.floor((b.progress / def.buildTime) * 100)}%` });
+        for (const [k, amt] of Object.entries(def.cost) as [ResourceKind, number][]) {
+          rows.push({ label: `${RESOURCE_ICON[k]} ${k}`, value: `${Math.floor(b.store[k] ?? 0)}/${amt} delivered` });
+        }
+      } else {
+        if (def.jobs > 0) rows.push({ label: 'Workers', value: `${b.workers.length}/${b.desiredWorkers}` });
+        if (b.type === 'mine') rows.push({ label: 'Digging', value: b.output });
+        if (b.type === 'blacksmith') rows.push({ label: 'Forging', value: `${b.recipe} tools` });
+        if (b.type === 'barn') {
+          let load = 0;
+          for (const k of RESOURCE_KINDS) load += b.store[k] ?? 0;
+          rows.push({ label: 'Stored', value: `${Math.floor(load)} / 5000` });
+        }
+        for (const k of RESOURCE_KINDS) {
+          const v = b.store[k] ?? 0;
+          if (v > 0.5) rows.push({ label: `${RESOURCE_ICON[k]} ${k}`, value: `${Math.floor(v)}` });
+        }
+      }
+      this.ui.showInspect(`${def.emoji} ${def.name}`, rows);
+    } else {
+      const c = this.state.citizens.find((x) => x.id === this.inspectSel!.id);
+      if (!c) return this.clearInspect();
+      const job = c.jobId !== null ? this.state.buildings.find((b) => b.id === c.jobId) : null;
+      rows.push({ label: 'Role', value: job ? `${BUILDING_DEFS[job.type].name} worker` : 'Builder / laborer' });
+      rows.push({
+        label: 'Carrying',
+        value: c.carry ? `${RESOURCE_ICON[c.carry.kind]} ${Math.floor(c.carry.amount)} ${c.carry.kind}` : 'nothing',
+      });
+      rows.push({ label: 'Age', value: `${Math.floor(c.age)}` });
+      this.ui.showInspect('🧑 Villager', rows);
     }
   }
 
@@ -254,6 +397,8 @@ class Game {
       ty: 0,
       valid: false,
       pathTier: this.selectedPath,
+      selBuildingId: this.inspectSel?.kind === 'building' ? this.inspectSel.id : null,
+      selCitizenId: this.inspectSel?.kind === 'citizen' ? this.inspectSel.id : null,
     };
     if (this.selectedBuild && this.running && !this.state.gameOver) {
       const { tx, ty } = this.reticleTile(this.selectedBuild);
@@ -267,6 +412,7 @@ class Game {
     this.renderer.draw(this.state, this.cw, this.ch, placement);
     this.ui.updateHud(this.state, SPEEDS[this.speedIndex], this.paused);
     this.ui.refreshPanels(this.state);
+    if (this.inspectSel) this.refreshInspect();
 
     requestAnimationFrame((next) => this.frame(next));
   }

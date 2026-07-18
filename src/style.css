@@ -488,6 +488,112 @@ body {
   filter: saturate(0.6);
 }
 
+/* ---------- Bottom toolbar (tools + build categories) ---------- */
+#toolbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  gap: 6px;
+  padding: 6px calc(var(--safe-right) + 8px) calc(var(--safe-bottom) + 6px) calc(var(--safe-left) + 8px);
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: linear-gradient(to top, rgba(10, 16, 10, 0.95), rgba(10, 16, 10, 0.55));
+  z-index: 6;
+}
+#toolbar::-webkit-scrollbar {
+  display: none;
+}
+.tool-btn {
+  flex: 0 0 auto;
+  min-width: 60px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel-solid);
+  color: var(--text);
+  padding: 6px 6px 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+}
+.tool-btn .emoji {
+  font-size: 20px;
+  line-height: 1;
+}
+.tool-btn .tname {
+  font-size: 10px;
+  color: var(--muted);
+}
+.tool-btn.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent) inset;
+}
+.tool-btn.active .tname {
+  color: var(--text);
+}
+
+/* Build buildings pop out above the toolbar */
+#popout {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--safe-bottom) + 66px);
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  z-index: 6;
+}
+#popout::-webkit-scrollbar {
+  display: none;
+}
+
+/* ---------- Inspect / inventory bottom sheet ---------- */
+#inspect {
+  position: absolute;
+  left: calc(var(--safe-left) + 8px);
+  right: calc(var(--safe-right) + 8px);
+  bottom: calc(var(--safe-bottom) + 72px);
+  max-height: 42vh;
+  overflow-y: auto;
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  z-index: 7;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.inv-head {
+  font-size: 16px;
+  font-weight: 700;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.inv-head .close {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 22px;
+  cursor: pointer;
+  line-height: 1;
+}
+.inv-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 3px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.inv-row span:first-child {
+  color: var(--muted);
+}
+
 .hidden {
   display: none !important;
 }

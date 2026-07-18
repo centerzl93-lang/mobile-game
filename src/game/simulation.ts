@@ -2,9 +2,18 @@ import {
   GameState,
   Building,
   Citizen,
+  ResourceKind,
   BUILDING_DEFS,
+  MAP_W,
   SEASON_LENGTH,
   SEASONS,
+  BASE_WALK_SPEED,
+  CARRY_CAP,
+  WORK_SECONDS,
+  PATH_DIRT_PLAN,
+  PATH_STONE_PLAN,
+  PATH_DIRT,
+  PATH_STONE,
   FOOD_PER_CITIZEN_PER_SEASON,
   HEAT_PER_CITIZEN_WINTER,
   FIREWOOD_HEAT,
@@ -13,66 +22,53 @@ import {
   TOOL_WEAR_PER_WORKER,
   NO_TOOLS_PENALTY,
   SICKNESS_CHANCE,
-  GATHER_FOOD_PER_SEASON,
-  FISH_FOOD_PER_SEASON,
-  HUNT_FOOD_PER_SEASON,
-  HUNT_LEATHER_PER_SEASON,
-  RANCH_FOOD_PER_SEASON,
-  RANCH_LEATHER_PER_SEASON,
   RANCH_LIVESTOCK_IDEAL,
   LIVESTOCK_GROWTH_PER_SEASON,
-  LUMBER_WOOD_PER_SEASON,
-  WOODCUT_FIREWOOD_PER_SEASON,
-  WOODCUT_WOOD_PER_SEASON,
   FARM_FOOD_PER_WORKER,
-  QUARRY_STONE_PER_SEASON,
-  MINE_COAL_PER_SEASON,
-  MINE_IRON_PER_SEASON,
-  SMITH_IRON_IN,
-  SMITH_IRON_TOOLS_OUT,
-  SMITH_STEEL_IRON_IN,
-  SMITH_STEEL_COAL_IN,
-  SMITH_STEEL_TOOLS_OUT,
-  TAILOR_LEATHER_IN,
-  TAILOR_CLOTHING_OUT,
-  BASE_WALK_SPEED,
-  PATH_DIRT_PLAN,
-  PATH_DIRT,
-  PATH_STONE,
-  PATH_BUILD_TILES_PER_SEC,
   TRADE_VALUE,
   MERCHANT_MARGIN,
   MERCHANT_VISIT_EVERY,
-  ResourceKind,
 } from '../types';
-import { storageCap, housingCapacity, buildingCenter } from './state';
+import { housingCapacity, buildingCenter } from './state';
 import { forestInCircle, nearbyStone, nearbyWater } from './buildings';
 import { getTile } from './world';
-import { pathSpeedMult, nextPlannedPath } from './paths';
+import { pathSpeedMult } from './paths';
+import {
+  totalStored,
+  addNearest,
+  takeNearest,
+  consume,
+  nearestBarnWith,
+  nearestBarnWithRoom,
+} from './storage';
 
 export type LogKind = 'info' | 'good' | 'bad';
 export type LogFn = (msg: string, kind?: LogKind) => void;
 
-// Local-resource "ideal" amounts: yields scale from MIN_FACTOR up to 1.
+// Local balance for the per-trip economy.
 const FOREST_CIRCLE_IDEAL = 24;
 const WATER_IDEAL = 8;
 const STONE_IDEAL = 6;
 const MIN_FACTOR = 0.15;
-
 const TREE_REGROW = 0.02;
-const LUMBER_DEPLETE = 0.06;
 
-/** Advance the whole simulation by `dt` seconds (already scaled by game speed). */
+const LOAD_FOOD = 8; // food produced per work cycle (before factor)
+const LOAD_MAT = 6; // raw material produced per work cycle (before factor)
+// Converter recipes: inputs consumed and output produced per cycle.
+const WCUT_WOOD_IN = 6, WCUT_FW_OUT = 8;
+const SMITH_IRON_IN = 4, SMITH_IRON_OUT = 5;
+const SMITH_STEEL_IRON = 4, SMITH_STEEL_COAL = 3, SMITH_STEEL_OUT = 8;
+const TAILOR_IN = 5, TAILOR_OUT = 4;
+
+const ARRIVE = 0.25; // tile distance considered "arrived"
+
 export function update(s: GameState, dt: number, log: LogFn): void {
   if (s.gameOver) return;
-
   reconcileWorkers(s);
-  advanceConstruction(s, dt, log);
   assignHomesAndJobs(s);
-  produce(s, dt);
-  buildPaths(s, dt);
+  const toolFactor = totalStored(s, 'tools') > 0 ? 1 : NO_TOOLS_PENALTY;
+  for (const c of s.citizens) runCitizen(s, c, dt, toolFactor);
   regrowForest(s, dt);
-  moveCitizens(s, dt);
 
   s.seasonTimer += dt;
   if (s.seasonTimer >= SEASON_LENGTH) {
@@ -81,32 +77,16 @@ export function update(s: GameState, dt: number, log: LogFn): void {
   }
 }
 
+// ---- jobs ----
 function reconcileWorkers(s: GameState): void {
   const alive = new Set(s.citizens.map((c) => c.id));
   for (const b of s.buildings) b.workers = b.workers.filter((id) => alive.has(id));
 }
 
-// ---- Jobs / builders --------------------------------------------------------
-
-function advanceConstruction(s: GameState, dt: number, log: LogFn): void {
-  const builders = s.citizens.filter((c) => c.jobId === null).length;
-  const speed = 0.4 + Math.min(builders, 5) * 0.4;
-  for (const b of s.buildings) {
-    if (b.built) continue;
-    b.progress += dt * speed;
-    if (b.progress >= BUILDING_DEFS[b.type].buildTime) {
-      b.built = true;
-      log(`${BUILDING_DEFS[b.type].name} built`, 'good');
-    }
-  }
-}
-
 function assignHomesAndJobs(s: GameState): void {
-  // Normalise any building missing a target (robust to older saves).
   for (const b of s.buildings) {
     if (typeof b.desiredWorkers !== 'number') b.desiredWorkers = BUILDING_DEFS[b.type].jobs;
   }
-
   // Homes.
   const occ = new Map<number, number>();
   for (const c of s.citizens) if (c.homeId !== null) occ.set(c.homeId, (occ.get(c.homeId) ?? 0) + 1);
@@ -121,9 +101,7 @@ function assignHomesAndJobs(s: GameState): void {
       }
     }
   }
-
   const byId = new Map(s.citizens.map((c) => [c.id, c]));
-  // Free workers above each building's desired target.
   for (const b of s.buildings) {
     const target = b.built ? Math.min(BUILDING_DEFS[b.type].jobs, b.desiredWorkers) : 0;
     while (b.workers.length > target) {
@@ -132,7 +110,6 @@ function assignHomesAndJobs(s: GameState): void {
       if (c) c.jobId = null;
     }
   }
-  // Fill open slots from the current builder pool.
   const employed = new Set<number>();
   for (const b of s.buildings) for (const id of b.workers) employed.add(id);
   const avail = s.citizens.filter((c) => !employed.has(c.id));
@@ -146,144 +123,371 @@ function assignHomesAndJobs(s: GameState): void {
       c.jobId = b.id;
     }
   }
-  // Anyone not employed is a builder.
   const stillEmployed = new Set<number>();
   for (const b of s.buildings) for (const id of b.workers) stillEmployed.add(id);
   for (const c of s.citizens) if (!stillEmployed.has(c.id)) c.jobId = null;
 }
 
-// ---- Production -------------------------------------------------------------
+// ---- movement ----
+function stepTo(s: GameState, c: Citizen, dt: number): boolean {
+  const dx = c.tx - c.x;
+  const dy = c.ty - c.y;
+  const d = Math.hypot(dx, dy);
+  if (d <= ARRIVE) return true;
+  const speed = BASE_WALK_SPEED * pathSpeedMult(s, c.x, c.y);
+  const step = Math.min(d, speed * dt);
+  c.x += (dx / d) * step;
+  c.y += (dy / d) * step;
+  return false;
+}
 
-function circleFactor(s: GameState, b: Building): number {
+function goTo(c: Citizen, p: { x: number; y: number }): void {
+  c.tx = p.x;
+  c.ty = p.y;
+}
+
+// ---- per-citizen behaviour ----
+function runCitizen(s: GameState, c: Citizen, dt: number, toolFactor: number): void {
+  const job = c.jobId !== null ? s.buildings.find((b) => b.id === c.jobId) : null;
+  if (job && job.built) runWorker(s, c, job, dt, toolFactor);
+  else runBuilder(s, c, dt);
+}
+
+// ---- workers (production logistics) ----
+function converterInputs(b: Building): [ResourceKind, number][] {
+  switch (b.type) {
+    case 'woodcutter':
+      return [['wood', WCUT_WOOD_IN]];
+    case 'blacksmith':
+      return b.recipe === 'steel'
+        ? [['iron', SMITH_STEEL_IRON], ['coal', SMITH_STEEL_COAL]]
+        : [['iron', SMITH_IRON_IN]];
+    case 'tailor':
+      return [['leather', TAILOR_IN]];
+    default:
+      return [];
+  }
+}
+
+function firstMissingInput(b: Building): ResourceKind | null {
+  for (const [kind, amt] of converterInputs(b)) {
+    if ((b.store[kind] ?? 0) < amt) return kind;
+  }
+  return null;
+}
+
+function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor: number): void {
+  // 1. Carrying output? Haul it to the nearest barn with room.
+  if (c.carry) {
+    const barn = nearestBarnWithRoom(s, { x: c.x, y: c.y });
+    if (!barn) {
+      goTo(c, buildingCenter(b));
+      stepTo(s, c, dt);
+      return;
+    }
+    goTo(c, buildingCenter(barn));
+    if (stepTo(s, c, dt)) {
+      const left = addNearest(s, { x: c.x, y: c.y }, c.carry.kind, c.carry.amount);
+      c.carry = left > 0 ? { kind: c.carry.kind, amount: left } : null;
+    }
+    return;
+  }
+
+  // 2. Converter missing an input? Fetch it from the nearest barn that has it.
+  const missing = firstMissingInput(b);
+  if (missing) {
+    if (totalStored(s, missing) <= 0) {
+      goTo(c, buildingCenter(b)); // wait at the shop
+      stepTo(s, c, dt);
+      c.timer = 0;
+      return;
+    }
+    const barn = nearestBarnWith(s, buildingCenter(b), missing);
+    if (barn) {
+      goTo(c, buildingCenter(barn));
+      if (stepTo(s, c, dt)) {
+        const inputs = converterInputs(b);
+        const need = inputs.find(([k]) => k === missing)![1];
+        const want = Math.min(CARRY_CAP, need - (b.store[missing] ?? 0), barn.store[missing] ?? 0);
+        if (want > 0) {
+          barn.store[missing] = (barn.store[missing] ?? 0) - want;
+          if ((barn.store[missing] ?? 0) <= 0) delete barn.store[missing];
+          b.store[missing] = (b.store[missing] ?? 0) + want;
+        }
+      }
+    }
+    return;
+  }
+
+  // 3. Work at the building; on completion, fill carry with a produced load.
+  goTo(c, buildingCenter(b));
+  if (stepTo(s, c, dt)) {
+    c.timer += dt;
+    if (c.timer >= WORK_SECONDS) {
+      c.timer = 0;
+      const out = workOutput(s, b, dt, toolFactor);
+      if (out && out.amount > 0.01) c.carry = { kind: out.kind, amount: Math.min(CARRY_CAP, out.amount) };
+    }
+  }
+}
+
+function factorCircle(s: GameState, b: Building): number {
   return clamp(forestInCircle(s, b) / FOREST_CIRCLE_IDEAL, MIN_FACTOR, 1);
 }
-function waterFactor(s: GameState, b: Building): number {
+function factorWater(s: GameState, b: Building): number {
   return clamp(nearbyWater(s, b) / WATER_IDEAL, MIN_FACTOR, 1);
 }
-function stoneFactor(s: GameState, b: Building): number {
-  const def = BUILDING_DEFS[b.type];
-  return clamp(nearbyStone(s, def, b.x, b.y) / STONE_IDEAL, MIN_FACTOR, 1);
+function factorStone(s: GameState, b: Building): number {
+  return clamp(nearbyStone(s, BUILDING_DEFS[b.type], b.x, b.y) / STONE_IDEAL, MIN_FACTOR, 1);
 }
 
-function produce(s: GameState, dt: number): void {
-  const cap = storageCap(s);
-  const per = dt / SEASON_LENGTH;
+/** One work cycle's output, consuming converter inputs from the building's store. */
+function workOutput(
+  s: GameState,
+  b: Building,
+  dt: number,
+  tf: number,
+): { kind: ResourceKind; amount: number } | null {
+  switch (b.type) {
+    case 'gatherer':
+      return { kind: 'food', amount: LOAD_FOOD * factorCircle(s, b) * tf };
+    case 'fishing':
+      return { kind: 'food', amount: LOAD_FOOD * factorWater(s, b) * tf };
+    case 'hunting': {
+      const f = factorCircle(s, b) * tf;
+      return Math.random() < 0.7
+        ? { kind: 'food', amount: LOAD_FOOD * f }
+        : { kind: 'leather', amount: LOAD_MAT * f };
+    }
+    case 'ranch': {
+      const herd = Math.min(1, totalStored(s, 'livestock') / RANCH_LIVESTOCK_IDEAL);
+      if (herd <= 0) return null;
+      const f = herd * tf;
+      return Math.random() < 0.7
+        ? { kind: 'food', amount: LOAD_FOOD * f }
+        : { kind: 'leather', amount: LOAD_MAT * f };
+    }
+    case 'lumberyard': {
+      const f = factorCircle(s, b);
+      depleteCircleTrees(s, b, 0.25 * f);
+      tendCircle(s, b, WORK_SECONDS);
+      return { kind: 'wood', amount: LOAD_MAT * f * tf };
+    }
+    case 'quarry':
+      return { kind: 'stone', amount: LOAD_MAT * factorStone(s, b) * tf };
+    case 'mine': {
+      const f = factorStone(s, b) * tf;
+      return b.output === 'iron'
+        ? { kind: 'iron', amount: LOAD_MAT * 0.8 * f }
+        : { kind: 'coal', amount: LOAD_MAT * f };
+    }
+    case 'woodcutter':
+      return consumeStore(b, [['wood', WCUT_WOOD_IN]]) ? { kind: 'firewood', amount: WCUT_FW_OUT * tf } : null;
+    case 'blacksmith':
+      if (b.recipe === 'steel') {
+        return consumeStore(b, [['iron', SMITH_STEEL_IRON], ['coal', SMITH_STEEL_COAL]])
+          ? { kind: 'tools', amount: SMITH_STEEL_OUT * tf }
+          : null;
+      }
+      return consumeStore(b, [['iron', SMITH_IRON_IN]]) ? { kind: 'tools', amount: SMITH_IRON_OUT * tf } : null;
+    case 'tailor':
+      return consumeStore(b, [['leather', TAILOR_IN]]) ? { kind: 'clothing', amount: TAILOR_OUT * tf } : null;
+    case 'farm': {
+      const have = b.store.food ?? 0;
+      if (have <= 0) return null;
+      const take = Math.min(CARRY_CAP, have);
+      b.store.food = have - take;
+      if ((b.store.food ?? 0) <= 0) delete b.store.food;
+      return { kind: 'food', amount: take };
+    }
+  }
+  return null;
+}
 
-  // Tools help all labour; when the stockpile is empty, output is penalised.
-  const toolFactor = s.resources.tools > 0 ? 1 : NO_TOOLS_PENALTY;
-  let employed = 0;
-  for (const b of s.buildings) if (b.built) employed += b.workers.length;
-  s.resources.tools = Math.max(0, s.resources.tools - employed * TOOL_WEAR_PER_WORKER * per);
+function consumeStore(b: Building, inputs: [ResourceKind, number][]): boolean {
+  for (const [k, amt] of inputs) if ((b.store[k] ?? 0) < amt) return false;
+  for (const [k, amt] of inputs) {
+    b.store[k] = (b.store[k] ?? 0) - amt;
+    if ((b.store[k] ?? 0) <= 0) delete b.store[k];
+  }
+  return true;
+}
 
+// ---- builders (construction + path logistics) ----
+interface SiteAction {
+  site: Building;
+  action: 'fetch' | 'build';
+  kind?: ResourceKind;
+}
+
+function pickSite(s: GameState, c: Citizen): SiteAction | null {
+  let best: SiteAction | null = null;
+  let bestD = Infinity;
   for (const b of s.buildings) {
-    if (!b.built || b.workers.length === 0) continue;
-    const w = b.workers.length;
-    const tf = toolFactor;
-    switch (b.type) {
-      case 'gatherer':
-        add(s, 'food', GATHER_FOOD_PER_SEASON * w * circleFactor(s, b) * tf * per, cap);
-        break;
-      case 'fishing':
-        add(s, 'food', FISH_FOOD_PER_SEASON * w * waterFactor(s, b) * tf * per, cap);
-        break;
-      case 'hunting': {
-        const f = circleFactor(s, b);
-        add(s, 'food', HUNT_FOOD_PER_SEASON * w * f * tf * per, cap);
-        add(s, 'leather', HUNT_LEATHER_PER_SEASON * w * f * tf * per, cap);
-        break;
+    if (b.built) continue;
+    const cost = BUILDING_DEFS[b.type].cost;
+    let fetchKind: ResourceKind | null = null;
+    let fully = true;
+    for (const k in cost) {
+      const kind = k as ResourceKind;
+      if ((b.store[kind] ?? 0) < (cost[kind] ?? 0)) {
+        fully = false;
+        if (totalStored(s, kind) > 0 && fetchKind === null) fetchKind = kind;
       }
-      case 'ranch': {
-        const herd = Math.min(1, s.resources.livestock / RANCH_LIVESTOCK_IDEAL);
-        if (herd > 0) {
-          add(s, 'food', RANCH_FOOD_PER_SEASON * w * herd * tf * per, cap);
-          add(s, 'leather', RANCH_LEATHER_PER_SEASON * w * herd * tf * per, cap);
-        }
-        break;
+    }
+    const action: SiteAction | null = fully
+      ? { site: b, action: 'build' }
+      : fetchKind
+        ? { site: b, action: 'fetch', kind: fetchKind }
+        : null;
+    if (!action) continue;
+    const p = buildingCenter(b);
+    const d = (p.x - c.x) ** 2 + (p.y - c.y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = action;
+    }
+  }
+  return best;
+}
+
+function runBuilder(s: GameState, c: Citizen, dt: number): void {
+  // Deliver carried material to a site that needs it, else return it to a barn.
+  if (c.carry) {
+    const kind = c.carry.kind;
+    const site = nearestUnbuiltNeeding(s, c, kind);
+    if (site) {
+      goTo(c, buildingCenter(site));
+      if (stepTo(s, c, dt)) {
+        const cost = BUILDING_DEFS[site.type].cost;
+        const need = (cost[kind] ?? 0) - (site.store[kind] ?? 0);
+        const put = Math.min(c.carry.amount, Math.max(0, need));
+        site.store[kind] = (site.store[kind] ?? 0) + put;
+        c.carry.amount -= put;
+        if (c.carry.amount <= 0.01) c.carry = null;
       }
-      case 'lumberyard': {
-        const f = circleFactor(s, b);
-        add(s, 'wood', LUMBER_WOOD_PER_SEASON * w * f * tf * per, cap);
-        depleteCircleTrees(s, b, LUMBER_DEPLETE * w * f * dt);
-        tendCircle(s, b, dt);
-        break;
+      return;
+    }
+    const barn = nearestBarnWithRoom(s, { x: c.x, y: c.y });
+    if (barn) {
+      goTo(c, buildingCenter(barn));
+      if (stepTo(s, c, dt)) {
+        const left = addNearest(s, { x: c.x, y: c.y }, kind, c.carry.amount);
+        c.carry = left > 0 ? { kind, amount: left } : null;
       }
-      case 'woodcutter': {
-        const want = WOODCUT_WOOD_PER_SEASON * w * per;
-        const r = ratio(s.resources.wood, want);
-        if (r > 0) {
-          s.resources.wood -= want * r;
-          add(s, 'firewood', WOODCUT_FIREWOOD_PER_SEASON * w * r * tf * per, cap);
-        }
-        break;
-      }
-      case 'quarry':
-        add(s, 'stone', QUARRY_STONE_PER_SEASON * w * stoneFactor(s, b) * tf * per, cap);
-        break;
-      case 'mine': {
-        const kind: ResourceKind = b.output === 'iron' ? 'iron' : 'coal';
-        const rate = b.output === 'iron' ? MINE_IRON_PER_SEASON : MINE_COAL_PER_SEASON;
-        add(s, kind, rate * w * stoneFactor(s, b) * tf * per, cap);
-        break;
-      }
-      case 'blacksmith': {
-        if (b.recipe === 'steel') {
-          const ironWant = SMITH_STEEL_IRON_IN * w * per;
-          const coalWant = SMITH_STEEL_COAL_IN * w * per;
-          const r = Math.min(ratio(s.resources.iron, ironWant), ratio(s.resources.coal, coalWant));
-          if (r > 0) {
-            s.resources.iron -= ironWant * r;
-            s.resources.coal -= coalWant * r;
-            add(s, 'tools', SMITH_STEEL_TOOLS_OUT * w * r * tf * per, cap);
+    } else {
+      c.carry = null; // nowhere to put it; drop
+    }
+    return;
+  }
+
+  // Find a construction site to work.
+  const pick = pickSite(s, c);
+  if (pick) {
+    if (pick.action === 'fetch') {
+      const kind = pick.kind!;
+      const barn = nearestBarnWith(s, buildingCenter(pick.site), kind);
+      if (barn) {
+        goTo(c, buildingCenter(barn));
+        if (stepTo(s, c, dt)) {
+          const cost = BUILDING_DEFS[pick.site.type].cost;
+          const need = (cost[kind] ?? 0) - (pick.site.store[kind] ?? 0);
+          const want = Math.min(CARRY_CAP, need, barn.store[kind] ?? 0);
+          if (want > 0) {
+            barn.store[kind] = (barn.store[kind] ?? 0) - want;
+            if ((barn.store[kind] ?? 0) <= 0) delete barn.store[kind];
+            c.carry = { kind, amount: want };
           }
-        } else {
-          const ironWant = SMITH_IRON_IN * w * per;
-          const r = ratio(s.resources.iron, ironWant);
-          if (r > 0) {
-            s.resources.iron -= ironWant * r;
-            add(s, 'tools', SMITH_IRON_TOOLS_OUT * w * r * tf * per, cap);
-          }
         }
-        break;
       }
-      case 'tailor': {
-        const want = TAILOR_LEATHER_IN * w * per;
-        const r = ratio(s.resources.leather, want);
-        if (r > 0) {
-          s.resources.leather -= want * r;
-          add(s, 'clothing', TAILOR_CLOTHING_OUT * w * r * tf * per, cap);
-        }
-        break;
+      return;
+    }
+    // build: stand at the site and labour.
+    goTo(c, buildingCenter(pick.site));
+    if (stepTo(s, c, dt)) {
+      pick.site.progress += dt;
+      if (pick.site.progress >= BUILDING_DEFS[pick.site.type].buildTime) {
+        finishConstruction(pick.site);
       }
-      case 'farm': {
-        const season = SEASONS[s.season];
-        if (season === 'Spring' || season === 'Summer') {
-          b.growth = Math.min(1, b.growth + dt / (SEASON_LENGTH * 1.6));
-        }
-        break;
-      }
+    }
+    return;
+  }
+
+  // No sites: build a planned path if any, else wander.
+  if (!buildPath(s, c, dt)) wander(s, c, dt);
+}
+
+function nearestUnbuiltNeeding(s: GameState, c: Citizen, kind: ResourceKind): Building | null {
+  let best: Building | null = null;
+  let bestD = Infinity;
+  for (const b of s.buildings) {
+    if (b.built) continue;
+    const cost = BUILDING_DEFS[b.type].cost;
+    if ((b.store[kind] ?? 0) >= (cost[kind] ?? 0)) continue;
+    const p = buildingCenter(b);
+    const d = (p.x - c.x) ** 2 + (p.y - c.y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = b;
+    }
+  }
+  return best;
+}
+
+function finishConstruction(b: Building): void {
+  const cost = BUILDING_DEFS[b.type].cost;
+  for (const k in cost) {
+    const kind = k as ResourceKind;
+    b.store[kind] = (b.store[kind] ?? 0) - (cost[kind] ?? 0);
+    if ((b.store[kind] ?? 0) <= 0.001) delete b.store[kind];
+  }
+  b.built = true;
+  b.progress = BUILDING_DEFS[b.type].buildTime;
+}
+
+function buildPath(s: GameState, c: Citizen, dt: number): boolean {
+  let bestIdx = -1;
+  let bestD = Infinity;
+  for (let i = 0; i < s.paths.length; i++) {
+    const v = s.paths[i];
+    if (v !== PATH_DIRT_PLAN && v !== PATH_STONE_PLAN) continue;
+    const tx = i % MAP_W;
+    const ty = (i / MAP_W) | 0;
+    const d = (tx + 0.5 - c.x) ** 2 + (ty + 0.5 - c.y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      bestIdx = i;
+    }
+  }
+  if (bestIdx < 0) return false;
+  const tx = bestIdx % MAP_W;
+  const ty = (bestIdx / MAP_W) | 0;
+  c.tx = tx + 0.5;
+  c.ty = ty + 0.5;
+  if (stepTo(s, c, dt)) {
+    const v = s.paths[bestIdx];
+    if (v === PATH_STONE_PLAN) {
+      if (takeNearest(s, { x: tx, y: ty }, 'stone', 1) >= 1) s.paths[bestIdx] = PATH_STONE;
+    } else {
+      s.paths[bestIdx] = PATH_DIRT;
+    }
+  }
+  return true;
+}
+
+function wander(s: GameState, c: Citizen, dt: number): void {
+  if (stepTo(s, c, dt)) {
+    c.timer -= dt;
+    if (c.timer <= 0) {
+      const centre = centreOfVillage(s);
+      c.tx = clampTile(centre.x + (Math.random() - 0.5) * 8);
+      c.ty = clampTile(centre.y + (Math.random() - 0.5) * 8);
+      c.timer = 2 + Math.random() * 3;
     }
   }
 }
 
-// ---- Paths: builders complete planned tiles ---------------------------------
-
-function buildPaths(s: GameState, dt: number): void {
-  const builders = s.citizens.filter((c) => c.jobId === null).length;
-  if (builders === 0) return;
-  s.pathProgress += PATH_BUILD_TILES_PER_SEC * builders * dt;
-  while (s.pathProgress >= 1) {
-    const idx = nextPlannedPath(s);
-    if (idx < 0) {
-      s.pathProgress = 0;
-      break;
-    }
-    s.paths[idx] = s.paths[idx] === PATH_DIRT_PLAN ? PATH_DIRT : PATH_STONE;
-    s.pathProgress -= 1;
-  }
-}
-
-// ---- Season turnover --------------------------------------------------------
-
+// ---- season turnover ----
 function endSeason(s: GameState, log: LogFn): void {
   s.season = (s.season + 1) % SEASONS.length;
   if (s.season === 0) {
@@ -291,62 +495,62 @@ function endSeason(s: GameState, log: LogFn): void {
     log(`A new year begins — Year ${s.year}`, 'info');
   }
   const season = SEASONS[s.season];
-  const cap = storageCap(s);
 
-  if (season === 'Autumn') {
-    let harvested = 0;
-    for (const b of s.buildings) {
-      if (b.built && b.type === 'farm' && b.workers.length > 0) {
-        harvested += b.workers.length * FARM_FOOD_PER_WORKER * b.growth;
+  // Farms grow through spring/summer; deposit the harvest into their store at autumn.
+  for (const b of s.buildings) {
+    if (b.built && b.type === 'farm') {
+      if (season === 'Spring' || season === 'Summer') b.growth = Math.min(1, b.growth + 0.5);
+      if (season === 'Autumn' && b.workers.length > 0) {
+        const yield_ = b.workers.length * FARM_FOOD_PER_WORKER * b.growth;
+        if (yield_ > 1) {
+          b.store.food = (b.store.food ?? 0) + yield_;
+          log(`A field yielded ${Math.round(yield_)} food to harvest`, 'good');
+        }
         b.growth = 0;
       }
     }
-    if (harvested > 1) {
-      add(s, 'food', harvested, cap);
-      log(`Harvest brought in ${Math.round(harvested)} food`, 'good');
-    }
   }
 
-  // Livestock breeds if a ranch is keeping them.
-  if (s.resources.livestock > 0 && s.buildings.some((b) => b.built && b.type === 'ranch')) {
-    s.resources.livestock = Math.min(cap, s.resources.livestock * (1 + LIVESTOCK_GROWTH_PER_SEASON));
+  // Livestock breeds if a ranch keeps them.
+  const herd = totalStored(s, 'livestock');
+  if (herd > 0 && s.buildings.some((b) => b.built && b.type === 'ranch')) {
+    addNearest(s, centreOfVillage(s), 'livestock', herd * LIVESTOCK_GROWTH_PER_SEASON);
   }
 
   let pop = s.citizens.length;
   if (pop === 0) return;
 
+  // Tools wear from labour.
+  let employed = 0;
+  for (const b of s.buildings) if (b.built) employed += b.workers.length;
+  consume(s, 'tools', employed * TOOL_WEAR_PER_WORKER);
+
   // Food.
-  const foodNeed = pop * FOOD_PER_CITIZEN_PER_SEASON;
-  s.resources.food -= foodNeed;
-  if (s.resources.food < 0) {
-    const starved = Math.min(pop, Math.ceil(-s.resources.food / FOOD_PER_CITIZEN_PER_SEASON));
-    s.resources.food = 0;
+  const shortFood = consume(s, 'food', pop * FOOD_PER_CITIZEN_PER_SEASON);
+  if (shortFood > 0) {
+    const starved = Math.min(pop, Math.ceil(shortFood / FOOD_PER_CITIZEN_PER_SEASON));
     killCitizens(s, starved);
     log(`${starved} villager${starved > 1 ? 's' : ''} starved`, 'bad');
   }
 
-  // Winter: heating (firewood then coal), then cold-sickness for the unclothed.
+  // Winter: heat (firewood then coal), then cold-sickness for the unclothed.
   if (season === 'Winter' && s.citizens.length > 0) {
-    let heatNeed = s.citizens.length * HEAT_PER_CITIZEN_WINTER;
-    const burnWood = Math.min(s.resources.firewood, heatNeed / FIREWOOD_HEAT);
-    s.resources.firewood -= burnWood;
-    heatNeed -= burnWood * FIREWOOD_HEAT;
-    if (heatNeed > 0 && s.resources.coal > 0) {
-      const burnCoal = Math.min(s.resources.coal, Math.ceil(heatNeed / COAL_HEAT));
-      s.resources.coal -= burnCoal;
-      heatNeed -= burnCoal * COAL_HEAT;
+    const heatNeed = s.citizens.length * HEAT_PER_CITIZEN_WINTER;
+    // firewood is 1 heat each; consume() returns the shortfall (heat still needed).
+    let remaining = consume(s, 'firewood', heatNeed) * FIREWOOD_HEAT;
+    if (remaining > 0) {
+      const coalNeeded = Math.ceil(remaining / COAL_HEAT);
+      remaining = consume(s, 'coal', coalNeeded) * COAL_HEAT;
     }
-    if (heatNeed > 0.001) {
-      const froze = Math.min(s.citizens.length, Math.ceil(heatNeed / HEAT_PER_CITIZEN_WINTER));
+    if (remaining > 0.001) {
+      const froze = Math.min(s.citizens.length, Math.ceil(remaining / HEAT_PER_CITIZEN_WINTER));
       killCitizens(s, froze);
       log(`${froze} villager${froze > 1 ? 's' : ''} froze in the cold`, 'bad');
     }
 
-    // Clothing: worn out over winter; the unclothed may fall ill.
     const survivors = s.citizens.length;
-    const clothed = Math.min(s.resources.clothing, survivors);
-    s.resources.clothing = Math.max(0, s.resources.clothing - clothed);
-    const unclothed = survivors - clothed;
+    const clothShort = consume(s, 'clothing', survivors * CLOTHING_PER_CITIZEN_WINTER);
+    const unclothed = Math.floor(clothShort / CLOTHING_PER_CITIZEN_WINTER);
     let sick = 0;
     for (let k = 0; k < unclothed; k++) if (Math.random() < SICKNESS_CHANCE) sick++;
     if (sick > 0) {
@@ -359,10 +563,9 @@ function endSeason(s: GameState, log: LogFn): void {
   pop = s.citizens.length;
   if (pop > 0) {
     const freeHousing = housingCapacity(s) - pop;
-    const comfortable = s.resources.food > pop * FOOD_PER_CITIZEN_PER_SEASON * 2;
+    const comfortable = totalStored(s, 'food') > pop * FOOD_PER_CITIZEN_PER_SEASON;
     if (freeHousing >= 1 && comfortable) {
-      const births =
-        freeHousing >= 2 && s.resources.food > pop * FOOD_PER_CITIZEN_PER_SEASON * 4 ? 2 : 1;
+      const births = freeHousing >= 2 && totalStored(s, 'food') > pop * FOOD_PER_CITIZEN_PER_SEASON * 2 ? 2 : 1;
       for (let i = 0; i < births; i++) spawnCitizen(s);
       log(births > 1 ? `${births} villagers joined the village` : `A villager joined the village`, 'good');
     }
@@ -376,8 +579,7 @@ function endSeason(s: GameState, log: LogFn): void {
   }
 }
 
-// ---- Merchant / trading -----------------------------------------------------
-
+// ---- merchant ----
 function updateMerchant(s: GameState, log: LogFn): void {
   const m = s.merchant;
   const hasPost = s.buildings.some((b) => b.built && b.type === 'trading' && b.workers.length > 0);
@@ -393,15 +595,8 @@ function updateMerchant(s: GameState, log: LogFn): void {
     m.timer -= 1;
     if (m.timer <= 0) {
       m.present = true;
-      m.timer = 1; // stays for one season
-      m.stock = {
-        livestock: 6,
-        iron: 24,
-        coal: 24,
-        tools: 12,
-        food: 40,
-        clothing: 10,
-      };
+      m.timer = 1;
+      m.stock = { livestock: 6, iron: 120, coal: 120, tools: 80, food: 200, clothing: 80 };
       log('A merchant has docked — barter at the trading post', 'good');
     }
   }
@@ -413,10 +608,6 @@ export interface TradeResult {
   gave?: number;
 }
 
-/**
- * Barter `getQty` of `get` from the merchant, paying in `give` by relative value
- * (the merchant keeps a margin). Returns how much `give` was spent.
- */
 export function tradeWithMerchant(
   s: GameState,
   give: ResourceKind,
@@ -428,23 +619,21 @@ export function tradeWithMerchant(
   if (give === get) return { ok: false, reason: 'Pick two different goods' };
   const stock = m.stock[get] ?? 0;
   if (getQty <= 0 || stock < getQty) return { ok: false, reason: 'Not enough in stock' };
-  const getValue = TRADE_VALUE[get] * getQty;
-  const giveQty = Math.ceil(getValue / MERCHANT_MARGIN / TRADE_VALUE[give]);
-  if (s.resources[give] < giveQty) return { ok: false, reason: `Need ${giveQty} ${give}` };
-  const cap = storageCap(s);
-  s.resources[give] -= giveQty;
-  s.resources[get] = Math.min(cap, s.resources[get] + getQty);
+  const giveQty = Math.ceil((TRADE_VALUE[get] * getQty) / MERCHANT_MARGIN / TRADE_VALUE[give]);
+  if (totalStored(s, give) < giveQty) return { ok: false, reason: `Need ${giveQty} ${give}` };
+  const post = s.buildings.find((b) => b.built && b.type === 'trading');
+  const pos = post ? buildingCenter(post) : centreOfVillage(s);
+  takeNearest(s, pos, give, giveQty);
+  addNearest(s, pos, get, getQty);
   m.stock[get] = stock - getQty;
   return { ok: true, gave: giveQty };
 }
 
-/** How much `give` it costs to obtain `qty` of `get` right now. */
 export function tradeCost(give: ResourceKind, get: ResourceKind, qty: number): number {
   return Math.ceil((TRADE_VALUE[get] * qty) / MERCHANT_MARGIN / TRADE_VALUE[give]);
 }
 
-// ---- Population helpers -----------------------------------------------------
-
+// ---- population helpers ----
 function killCitizens(s: GameState, n: number): void {
   for (let i = 0; i < n && s.citizens.length > 0; i++) {
     let idx = 0;
@@ -455,26 +644,20 @@ function killCitizens(s: GameState, n: number): void {
 }
 
 function spawnCitizen(s: GameState): void {
-  const house = s.buildings.find((b) => b.built && b.type === 'house' && countHome(s, b.id) < 4);
-  const at = house ? buildingCenter(house) : centreOfVillage(s);
+  const at = centreOfVillage(s);
   s.citizens.push({
     id: s.nextId++,
     x: at.x + (Math.random() - 0.5),
     y: at.y + (Math.random() - 0.5),
     tx: at.x,
     ty: at.y,
-    homeId: house ? house.id : null,
+    homeId: null,
     jobId: null,
-    state: 'wander',
-    timer: Math.random() * 2,
+    carry: null,
+    task: { kind: 'idle' },
+    timer: 0,
     age: 1,
   });
-}
-
-function countHome(s: GameState, homeId: number): number {
-  let n = 0;
-  for (const c of s.citizens) if (c.homeId === homeId) n++;
-  return n;
 }
 
 function centreOfVillage(s: GameState): { x: number; y: number } {
@@ -492,61 +675,10 @@ function centreOfVillage(s: GameState): { x: number; y: number } {
   return { x: x / s.buildings.length, y: y / s.buildings.length };
 }
 
-// ---- Movement ---------------------------------------------------------------
-
-function moveCitizens(s: GameState, dt: number): void {
-  for (const c of s.citizens) {
-    const dx = c.tx - c.x;
-    const dy = c.ty - c.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist > 0.08) {
-      const speed = BASE_WALK_SPEED * pathSpeedMult(s, c.x, c.y);
-      const step = Math.min(dist, speed * dt);
-      c.x += (dx / dist) * step;
-      c.y += (dy / dist) * step;
-    } else {
-      c.timer -= dt;
-      if (c.timer <= 0) pickNextTarget(s, c);
-    }
-  }
-}
-
-function pickNextTarget(s: GameState, c: Citizen): void {
-  const job = c.jobId !== null ? s.buildings.find((b) => b.id === c.jobId) : null;
-  const home = c.homeId !== null ? s.buildings.find((b) => b.id === c.homeId) : null;
-
-  if (job && job.built) {
-    if (c.state === 'working') {
-      const h = home ? buildingCenter(home) : centreOfVillage(s);
-      c.tx = h.x + jitter();
-      c.ty = h.y + jitter();
-      c.state = 'toHome';
-      c.timer = 3 + Math.random() * 3;
-    } else {
-      const w = buildingCenter(job);
-      c.tx = w.x + jitter();
-      c.ty = w.y + jitter();
-      c.state = 'working';
-      c.timer = 3 + Math.random() * 4;
-    }
-    return;
-  }
-
-  const site = s.buildings.find((b) => !b.built);
-  const target = site ? buildingCenter(site) : centreOfVillage(s);
-  const spread = site ? 2.5 : 8;
-  c.tx = clampTile(target.x + (Math.random() - 0.5) * spread);
-  c.ty = clampTile(target.y + (Math.random() - 0.5) * spread);
-  c.state = 'wander';
-  c.timer = 2 + Math.random() * 3;
-}
-
-// ---- Forest upkeep ----------------------------------------------------------
-
+// ---- forest upkeep ----
 function regrowForest(s: GameState, dt: number): void {
   const n = s.tiles.length;
-  const samples = 40;
-  for (let i = 0; i < samples; i++) {
+  for (let i = 0; i < 40; i++) {
     const idx = (Math.random() * n) | 0;
     const t = s.tiles[idx];
     if (t.type === 'forest' && t.trees < 1) t.trees = Math.min(1, t.trees + TREE_REGROW * dt * 0.02);
@@ -587,24 +719,9 @@ function depleteCircleTrees(s: GameState, b: Building, amount: number): void {
   });
 }
 
-// ---- helpers ----------------------------------------------------------------
-
-function add(s: GameState, kind: ResourceKind, amount: number, cap: number): void {
-  s.resources[kind] = Math.max(0, Math.min(cap, s.resources[kind] + amount));
-}
-
-function ratio(have: number, want: number): number {
-  return want > 0 ? Math.min(1, have / want) : 0;
-}
-
-function jitter(): number {
-  return (Math.random() - 0.5) * 1.4;
-}
-
 function clampTile(v: number): number {
   return Math.max(0, Math.min(47.5, v));
 }
-
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }

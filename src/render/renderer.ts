@@ -4,6 +4,7 @@ import {
   Tile,
   BUILDING_DEFS,
   BuildingType,
+  ResourceKind,
   MAP_W,
   MAP_H,
   PATH_DIRT,
@@ -20,7 +21,14 @@ export interface PlacementView {
   valid: boolean;
   /** True while in path-drawing mode (shows a hint reticle at screen centre). */
   pathTier?: 'dirt' | 'stone' | null;
+  selBuildingId?: number | null;
+  selCitizenId?: number | null;
 }
+
+const RES_DOT: Record<string, string> = {
+  food: '#e2c15a', wood: '#8a6a3c', firewood: '#d1642f', stone: '#a6a8af', coal: '#333',
+  iron: '#9aa0aa', tools: '#c0c4cc', leather: '#8a5a3a', clothing: '#7bb0d8', livestock: '#d8b98a',
+};
 
 const BUILDING_COLORS: Record<BuildingType, string> = {
   house: '#b07a45',
@@ -121,6 +129,20 @@ export class Renderer {
         ctx.stroke();
         ctx.setLineDash([]);
         this.glyph('🔨', sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.5);
+        // Delivered-materials bar.
+        const cost = def.cost;
+        let need = 0;
+        let have = 0;
+        for (const k in cost) {
+          const kind = k as ResourceKind;
+          need += cost[kind] ?? 0;
+          have += Math.min(cost[kind] ?? 0, b.store[kind] ?? 0);
+        }
+        const frac = need > 0 ? have / need : 0;
+        ctx.fillStyle = '#00000066';
+        ctx.fillRect(sx + 4, sy + bh - 6, bw - 8, 3);
+        ctx.fillStyle = '#e2c15a';
+        ctx.fillRect(sx + 4, sy + bh - 6, (bw - 8) * frac, 3);
       } else {
         ctx.fillStyle = BUILDING_COLORS[b.type];
         roundRect(ctx, sx + 2, sy + 2, bw - 4, bh - 4, 5);
@@ -170,6 +192,36 @@ export class Renderer {
       ctx.lineWidth = 1;
       ctx.strokeStyle = '#5b3d24';
       ctx.stroke();
+      if (c.carry) {
+        ctx.beginPath();
+        ctx.arc(sx, sy - cr * 1.7, Math.max(1.5, cr * 0.7), 0, Math.PI * 2);
+        ctx.fillStyle = RES_DOT[c.carry.kind] ?? '#fff';
+        ctx.fill();
+      }
+    }
+
+    // Selection highlight (from the inspect panel).
+    if (placement.selBuildingId != null) {
+      const b = s.buildings.find((x) => x.id === placement.selBuildingId);
+      if (b) {
+        const def = BUILDING_DEFS[b.type];
+        const [sx, sy] = this.camera.worldToScreen(b.x, b.y, w, h);
+        ctx.strokeStyle = '#ffd76b';
+        ctx.lineWidth = 2.5;
+        roundRect(ctx, sx, sy, def.w * p, def.h * p, 5);
+        ctx.stroke();
+      }
+    }
+    if (placement.selCitizenId != null) {
+      const c = s.citizens.find((x) => x.id === placement.selCitizenId);
+      if (c) {
+        const [sx, sy] = this.camera.worldToScreen(c.x, c.y, w, h);
+        ctx.beginPath();
+        ctx.arc(sx, sy, cr + 4, 0, Math.PI * 2);
+        ctx.strokeStyle = '#ffd76b';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
     }
 
     // Placement preview.

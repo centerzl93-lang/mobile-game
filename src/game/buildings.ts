@@ -2,12 +2,13 @@ import {
   GameState,
   Building,
   BuildingType,
-  BuildingDef,
   BUILDING_DEFS,
   ResourceKind,
   TileType,
+  REFUND_FRACTION,
 } from '../types';
 import { getTile, inBounds } from './world';
+import { totalStored, addNearest } from './storage';
 
 export interface PlaceResult {
   ok: boolean;
@@ -39,10 +40,10 @@ export function canPlace(s: GameState, type: BuildingType, x: number, y: number)
     const label = def.requiresAdjacent.includes('water') ? 'water' : 'rock';
     return { ok: false, reason: `Must be built next to ${label}` };
   }
-  // Enough of every resource in the cost.
+  // Materials must exist in storage (consumed later, on delivery — not now).
   for (const [kind, amount] of Object.entries(def.cost) as [ResourceKind, number][]) {
-    if (s.resources[kind] < amount) {
-      return { ok: false, reason: `Need ${amount} ${kind}` };
+    if (totalStored(s, kind) < amount) {
+      return { ok: false, reason: `Need ${amount} ${kind} in storage` };
     }
   }
   return { ok: true };
@@ -57,9 +58,7 @@ export function placeBuilding(
   const check = canPlace(s, type, x, y);
   if (!check.ok) return null;
   const def = BUILDING_DEFS[type];
-  for (const [kind, amount] of Object.entries(def.cost) as [ResourceKind, number][]) {
-    s.resources[kind] -= amount;
-  }
+  // No deduction — builders haul the materials to the site during construction.
   const b: Building = {
     id: s.nextId++,
     type,
@@ -68,22 +67,47 @@ export function placeBuilding(
     built: false,
     progress: 0,
     workers: [],
-    desiredWorkers: def.jobs, // fully staffed by default; player can dial down
+    desiredWorkers: def.jobs,
     growth: 0,
     output: 'coal',
     recipe: 'iron',
+    store: {},
   };
   s.buildings.push(b);
   return b;
 }
 
-/** True if the stockpile can afford to place this building right now. */
+/** True if storage holds the materials to start this building. */
 export function canAfford(s: GameState, type: BuildingType): boolean {
   const def = BUILDING_DEFS[type];
   for (const [kind, amount] of Object.entries(def.cost) as [ResourceKind, number][]) {
-    if (s.resources[kind] < amount) return false;
+    if (totalStored(s, kind) < amount) return false;
   }
   return true;
+}
+
+/**
+ * Remove a building, returning REFUND_FRACTION of its build cost (rounded down) to
+ * storage. A barn's own contents are spilled into the remaining barns first.
+ */
+export function demolishBuilding(s: GameState, b: Building): void {
+  const def = BUILDING_DEFS[b.type];
+  const at = { x: b.x + def.w / 2, y: b.y + def.h / 2 };
+  const idx = s.buildings.indexOf(b);
+  if (idx >= 0) s.buildings.splice(idx, 1); // remove first so its own space isn't a target
+  for (const k in b.store) {
+    const kind = k as ResourceKind;
+    const amt = b.store[kind] ?? 0;
+    if (amt > 0) addNearest(s, at, kind, amt);
+  }
+  for (const [kind, amount] of Object.entries(def.cost) as [ResourceKind, number][]) {
+    const refund = Math.floor(amount * REFUND_FRACTION);
+    if (refund > 0) addNearest(s, at, kind, refund);
+  }
+  for (const c of s.citizens) {
+    if (c.jobId === b.id) c.jobId = null;
+    if (c.homeId === b.id) c.homeId = null;
+  }
 }
 
 function rectsOverlap(

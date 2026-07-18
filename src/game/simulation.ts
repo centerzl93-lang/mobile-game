@@ -28,8 +28,12 @@ import {
   TRADE_VALUE,
   MERCHANT_MARGIN,
   MERCHANT_VISIT_EVERY,
+  HOUSING_PER_HOUSE,
+  CHILD_FOOD_FACTOR,
+  BIRTH_CHANCE,
+  isAdult,
 } from '../types';
-import { housingCapacity, buildingCenter } from './state';
+import { buildingCenter, makeCitizen } from './state';
 import { forestInCircle, nearbyStone, nearbyWater } from './buildings';
 import { getTile } from './world';
 import { pathSpeedMult } from './paths';
@@ -87,20 +91,32 @@ function assignHomesAndJobs(s: GameState): void {
   for (const b of s.buildings) {
     if (typeof b.desiredWorkers !== 'number') b.desiredWorkers = BUILDING_DEFS[b.type].jobs;
   }
-  // Homes.
+  // Homes. Track occupancy and which adult sexes each house already holds so we can
+  // bias homeless adults toward forming couples.
   const occ = new Map<number, number>();
-  for (const c of s.citizens) if (c.homeId !== null) occ.set(c.homeId, (occ.get(c.homeId) ?? 0) + 1);
+  const hasM = new Set<number>();
+  const hasF = new Set<number>();
   const houses = s.buildings.filter((b) => b.built && b.type === 'house');
   for (const c of s.citizens) {
+    if (c.homeId === null) continue;
+    occ.set(c.homeId, (occ.get(c.homeId) ?? 0) + 1);
+    if (isAdult(c)) (c.sex === 'm' ? hasM : hasF).add(c.homeId);
+  }
+  for (const c of s.citizens) {
     if (c.homeId !== null) continue;
-    for (const h of houses) {
-      if ((occ.get(h.id) ?? 0) < 4) {
-        c.homeId = h.id;
-        occ.set(h.id, (occ.get(h.id) ?? 0) + 1);
-        break;
-      }
+    let target: Building | null = null;
+    if (isAdult(c)) {
+      const wantSet = c.sex === 'm' ? hasF : hasM; // a house holding the opposite sex
+      for (const h of houses) if ((occ.get(h.id) ?? 0) < HOUSING_PER_HOUSE && wantSet.has(h.id)) { target = h; break; }
+    }
+    if (!target) for (const h of houses) if ((occ.get(h.id) ?? 0) < HOUSING_PER_HOUSE) { target = h; break; }
+    if (target) {
+      c.homeId = target.id;
+      occ.set(target.id, (occ.get(target.id) ?? 0) + 1);
+      if (isAdult(c)) (c.sex === 'm' ? hasM : hasF).add(target.id);
     }
   }
+
   const byId = new Map(s.citizens.map((c) => [c.id, c]));
   for (const b of s.buildings) {
     const target = b.built ? Math.min(BUILDING_DEFS[b.type].jobs, b.desiredWorkers) : 0;
@@ -112,7 +128,8 @@ function assignHomesAndJobs(s: GameState): void {
   }
   const employed = new Set<number>();
   for (const b of s.buildings) for (const id of b.workers) employed.add(id);
-  const avail = s.citizens.filter((c) => !employed.has(c.id));
+  // Only adults can be hired.
+  const avail = s.citizens.filter((c) => !employed.has(c.id) && isAdult(c));
   let i = 0;
   for (const b of s.buildings) {
     if (!b.built) continue;
@@ -148,6 +165,10 @@ function goTo(c: Citizen, p: { x: number; y: number }): void {
 
 // ---- per-citizen behaviour ----
 function runCitizen(s: GameState, c: Citizen, dt: number, toolFactor: number): void {
+  if (!isAdult(c)) {
+    wander(s, c, dt); // children play near the village; they can't work or haul
+    return;
+  }
   const job = c.jobId !== null ? s.buildings.find((b) => b.id === c.jobId) : null;
   if (job && job.built) runWorker(s, c, job, dt, toolFactor);
   else runBuilder(s, c, dt);
@@ -493,6 +514,11 @@ function endSeason(s: GameState, log: LogFn): void {
   if (s.season === 0) {
     s.year++;
     log(`A new year begins — Year ${s.year}`, 'info');
+    // Everyone ages one year; the elderly pass away.
+    for (const c of s.citizens) c.age += 1;
+    const old = s.citizens.filter((c) => c.age >= c.lifespan);
+    for (const c of old) removeCitizen(s, c);
+    if (old.length > 0) log(`${old.length} elder${old.length > 1 ? 's' : ''} died of old age`, 'info');
   }
   const season = SEASONS[s.season];
 
@@ -525,8 +551,11 @@ function endSeason(s: GameState, log: LogFn): void {
   for (const b of s.buildings) if (b.built) employed += b.workers.length;
   consume(s, 'tools', employed * TOOL_WEAR_PER_WORKER);
 
-  // Food.
-  const shortFood = consume(s, 'food', pop * FOOD_PER_CITIZEN_PER_SEASON);
+  // Food — adults eat a full ration, children half.
+  const adults = s.citizens.filter(isAdult).length;
+  const children = s.citizens.length - adults;
+  const foodNeed = (adults + children * CHILD_FOOD_FACTOR) * FOOD_PER_CITIZEN_PER_SEASON;
+  const shortFood = consume(s, 'food', foodNeed);
   if (shortFood > 0) {
     const starved = Math.min(pop, Math.ceil(shortFood / FOOD_PER_CITIZEN_PER_SEASON));
     killCitizens(s, starved);
@@ -559,16 +588,22 @@ function endSeason(s: GameState, log: LogFn): void {
     }
   }
 
-  // Births.
-  pop = s.citizens.length;
-  if (pop > 0) {
-    const freeHousing = housingCapacity(s) - pop;
-    const comfortable = totalStored(s, 'food') > pop * FOOD_PER_CITIZEN_PER_SEASON;
-    if (freeHousing >= 1 && comfortable) {
-      const births = freeHousing >= 2 && totalStored(s, 'food') > pop * FOOD_PER_CITIZEN_PER_SEASON * 2 ? 2 : 1;
-      for (let i = 0; i < births; i++) spawnCitizen(s);
-      log(births > 1 ? `${births} villagers joined the village` : `A villager joined the village`, 'good');
+  // Reproduction: a house with an adult man + woman, spare room, and enough food
+  // stored may bear a child.
+  if (s.citizens.length > 0 && totalStored(s, 'food') > s.citizens.length * FOOD_PER_CITIZEN_PER_SEASON) {
+    let born = 0;
+    for (const h of s.buildings) {
+      if (!h.built || h.type !== 'house') continue;
+      const residents = s.citizens.filter((c) => c.homeId === h.id);
+      if (residents.length >= HOUSING_PER_HOUSE) continue;
+      const man = residents.some((c) => isAdult(c) && c.sex === 'm');
+      const woman = residents.some((c) => isAdult(c) && c.sex === 'f');
+      if (man && woman && Math.random() < BIRTH_CHANCE) {
+        spawnChild(s, h);
+        born++;
+      }
     }
+    if (born > 0) log(born > 1 ? `${born} children were born` : `A child was born`, 'good');
   }
 
   updateMerchant(s, log);
@@ -638,26 +673,23 @@ function killCitizens(s: GameState, n: number): void {
   for (let i = 0; i < n && s.citizens.length > 0; i++) {
     let idx = 0;
     for (let k = 1; k < s.citizens.length; k++) if (s.citizens[k].age > s.citizens[idx].age) idx = k;
-    const [dead] = s.citizens.splice(idx, 1);
-    for (const b of s.buildings) b.workers = b.workers.filter((id) => id !== dead.id);
+    removeCitizen(s, s.citizens[idx]);
   }
 }
 
-function spawnCitizen(s: GameState): void {
-  const at = centreOfVillage(s);
-  s.citizens.push({
-    id: s.nextId++,
-    x: at.x + (Math.random() - 0.5),
-    y: at.y + (Math.random() - 0.5),
-    tx: at.x,
-    ty: at.y,
-    homeId: null,
-    jobId: null,
-    carry: null,
-    task: { kind: 'idle' },
-    timer: 0,
-    age: 1,
-  });
+function removeCitizen(s: GameState, c: Citizen): void {
+  const idx = s.citizens.indexOf(c);
+  if (idx < 0) return;
+  s.citizens.splice(idx, 1);
+  for (const b of s.buildings) b.workers = b.workers.filter((id) => id !== c.id);
+}
+
+/** A new child, born into `house`. */
+function spawnChild(s: GameState, house: Building): void {
+  const at = buildingCenter(house);
+  const c = makeCitizen(s, Math.random() < 0.5 ? 'm' : 'f', 0, at.x + (Math.random() - 0.5), at.y + (Math.random() - 0.5));
+  c.homeId = house.id;
+  s.citizens.push(c);
 }
 
 function centreOfVillage(s: GameState): { x: number; y: number } {

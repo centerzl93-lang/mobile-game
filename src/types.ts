@@ -142,6 +142,8 @@ export interface CitizenTask {
   pty?: number;
 }
 
+export type Sex = 'm' | 'f';
+
 export interface Citizen {
   id: number;
   x: number; // world position in tile units (float)
@@ -155,7 +157,14 @@ export interface Citizen {
   carry: { kind: ResourceKind; amount: number } | null;
   task: CitizenTask;
   timer: number; // seconds remaining in current work action
+  sex: Sex;
   age: number; // years
+  lifespan: number; // years; dies of old age at/after this
+}
+
+/** Children can't work; they take a housing slot and grow up at ADULT_AGE. */
+export function isAdult(c: { age: number }): boolean {
+  return c.age >= ADULT_AGE;
 }
 
 // Path layer values (per tile).
@@ -216,6 +225,13 @@ export const CLOTHING_PER_CITIZEN_WINTER = 5; // clothing worn out over winter
 export const TOOL_WEAR_PER_WORKER = 4; // tools consumed per employed worker per season
 export const NO_TOOLS_PENALTY = 0.6; // output multiplier when the tool stockpile is empty
 export const SICKNESS_CHANCE = 0.5; // chance an unclothed villager sickens in winter
+
+// ---- Demographics ----
+export const ADULT_AGE = 7; // children become working adults at this age (years)
+export const CHILD_FOOD_FACTOR = 0.5; // children eat this fraction of an adult ration
+export const BIRTH_CHANCE = 0.35; // chance per qualifying house, per season, of a child
+export const OLD_AGE_MEAN = 70; // average age of death from old age (years)
+export const OLD_AGE_VAR = 8; // +/- variance on each villager's lifespan
 
 // ---- Production (per assigned worker, per season, before local factors) ----
 export const GATHER_FOOD_PER_SEASON = 15;

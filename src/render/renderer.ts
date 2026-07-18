@@ -5,6 +5,7 @@ import {
   BUILDING_DEFS,
   BuildingType,
   ResourceKind,
+  ADULT_AGE,
   MAP_W,
   MAP_H,
   PATH_DIRT,
@@ -185,12 +186,14 @@ export class Renderer {
     const cr = Math.max(2, p * 0.12);
     for (const c of s.citizens) {
       const [sx, sy] = this.camera.worldToScreen(c.x, c.y, w, h);
+      const child = c.age < ADULT_AGE;
+      const r = child ? cr * 0.6 : cr;
       ctx.beginPath();
-      ctx.arc(sx, sy, cr, 0, Math.PI * 2);
-      ctx.fillStyle = '#f4d9b0';
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fillStyle = child ? '#f7e6c8' : '#f4d9b0';
       ctx.fill();
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = '#5b3d24';
+      ctx.lineWidth = child ? 1 : 1.4;
+      ctx.strokeStyle = c.sex === 'm' ? '#3f6d9c' : '#b0577f';
       ctx.stroke();
       if (c.carry) {
         ctx.beginPath();

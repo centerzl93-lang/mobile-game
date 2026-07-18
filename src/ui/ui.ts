@@ -16,6 +16,7 @@ import {
   FOOD_PER_CITIZEN_PER_SEASON,
   HEAT_PER_CITIZEN_WINTER,
   CLOTHING_PER_CITIZEN_WINTER,
+  isAdult,
 } from '../types';
 import { housingCapacity } from '../game/state';
 import { totalStoredAll, totalStored } from '../game/storage';
@@ -298,11 +299,13 @@ export class UI {
 
   private refreshJobBoard(s: GameState): void {
     const jobs = s.buildings.filter((b) => b.built && BUILDING_DEFS[b.type].jobs > 0);
-    const builders = s.citizens.reduce((n, c) => n + (c.jobId === null ? 1 : 0), 0);
-    const employed = s.citizens.length - builders;
+    const children = s.citizens.reduce((n, c) => n + (isAdult(c) ? 0 : 1), 0);
+    const adults = s.citizens.length - children;
+    const employed = s.citizens.reduce((n, c) => n + (c.jobId !== null ? 1 : 0), 0);
+    const builders = adults - employed;
     const sig =
       jobs.map((b) => `${b.id}:${b.workers.length}:${b.desiredWorkers}:${b.output}:${b.recipe}`).join('|') +
-      `#${s.citizens.length},${builders}`;
+      `#${adults},${children},${employed}`;
     if (sig === this.jobSig) return;
     this.jobSig = sig;
 
@@ -314,7 +317,7 @@ export class UI {
     head.querySelector('#jb-close')!.addEventListener('click', () => this.toggleJobBoard());
     const sum = document.createElement('div');
     sum.className = 'summary';
-    sum.textContent = `👤 ${s.citizens.length}  ·  employed ${employed}  ·  🔨 ${builders} free`;
+    sum.textContent = `${adults} adults (🔨 ${builders} free) · 🧒 ${children} children`;
     p.appendChild(sum);
     if (jobs.length === 0) {
       const empty = document.createElement('div');

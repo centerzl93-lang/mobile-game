@@ -16,6 +16,7 @@ import {
   ResourceKind,
   RESOURCE_ICON,
   RESOURCE_KINDS,
+  ADULT_AGE,
   PATH_STONE,
   PATH_STONE_PLAN,
 } from './types';
@@ -337,14 +338,18 @@ class Game {
     } else {
       const c = this.state.citizens.find((x) => x.id === this.inspectSel!.id);
       if (!c) return this.clearInspect();
+      const adult = c.age >= ADULT_AGE;
       const job = c.jobId !== null ? this.state.buildings.find((b) => b.id === c.jobId) : null;
-      rows.push({ label: 'Role', value: job ? `${BUILDING_DEFS[job.type].name} worker` : 'Builder / laborer' });
+      rows.push({ label: 'Sex', value: c.sex === 'm' ? '♂ Male' : '♀ Female' });
+      rows.push({ label: 'Stage', value: adult ? 'Adult' : `Child · grows up at ${ADULT_AGE}` });
+      rows.push({ label: 'Age', value: `${Math.floor(c.age)} yr` });
+      if (adult) rows.push({ label: 'Work', value: job ? `${BUILDING_DEFS[job.type].name} worker` : 'Builder / laborer' });
       rows.push({
         label: 'Carrying',
         value: c.carry ? `${RESOURCE_ICON[c.carry.kind]} ${Math.floor(c.carry.amount)} ${c.carry.kind}` : 'nothing',
       });
-      rows.push({ label: 'Age', value: `${Math.floor(c.age)}` });
-      this.ui.showInspect('🧑 Villager', rows);
+      const title = !adult ? '🧒 Child' : c.sex === 'm' ? '👨 Villager' : '👩 Villager';
+      this.ui.showInspect(title, rows);
     }
   }
 

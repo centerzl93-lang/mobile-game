@@ -3,15 +3,40 @@ import {
   Building,
   Citizen,
   BuildingType,
+  Sex,
   BUILDING_DEFS,
   HOUSING_PER_HOUSE,
   BARN_CAPACITY,
-  START_CITIZENS,
   START_RESOURCES,
   MERCHANT_VISIT_EVERY,
+  OLD_AGE_MEAN,
+  OLD_AGE_VAR,
   ResourceKind,
 } from '../types';
 import { generateWorld, findStartTile, emptyPaths } from './world';
+
+/** Roll a natural lifespan around the mean. */
+export function rollLifespan(): number {
+  return Math.round(OLD_AGE_MEAN + (Math.random() * 2 - 1) * OLD_AGE_VAR);
+}
+
+export function makeCitizen(s: { nextId: number }, sex: Sex, age: number, x: number, y: number): Citizen {
+  return {
+    id: s.nextId++,
+    x,
+    y,
+    tx: x,
+    ty: y,
+    homeId: null,
+    jobId: null,
+    carry: null,
+    task: { kind: 'idle' },
+    timer: 0,
+    sex,
+    age,
+    lifespan: Math.max(age + 1, rollLifespan()),
+  };
+}
 
 function makeBuilding(s: { nextId: number }, type: BuildingType, x: number, y: number, built: boolean): Building {
   const def = BUILDING_DEFS[type];
@@ -57,20 +82,12 @@ export function newGame(seed?: number): GameState {
   }
   state.buildings.push(barn);
 
-  for (let i = 0; i < START_CITIZENS; i++) {
-    state.citizens.push({
-      id: state.nextId++,
-      x: start.x + 2 + (Math.random() * 2 - 1),
-      y: start.y + 2 + (Math.random() * 2 - 1),
-      tx: start.x + 2,
-      ty: start.y + 2,
-      homeId: null,
-      jobId: null,
-      carry: null,
-      task: { kind: 'idle' },
-      timer: 0,
-      age: 18 + Math.floor(Math.random() * 20),
-    });
+  // Four founding adults: two men, two women, so couples can form.
+  const sexes: Sex[] = ['m', 'm', 'f', 'f'];
+  for (const sex of sexes) {
+    const cx = start.x + 2 + (Math.random() * 2 - 1);
+    const cy = start.y + 2 + (Math.random() * 2 - 1);
+    state.citizens.push(makeCitizen(state, sex, 20 + Math.floor(Math.random() * 15), cx, cy));
   }
   return state;
 }

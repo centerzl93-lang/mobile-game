@@ -83,6 +83,16 @@ The 🔨 HUD number is how many free builders remain.
   Blacksmith → tools (add coal for longer-lasting steel); Hunting/Ranch →
   leather → Tailor → clothing.
 
+### Villagers & families
+
+Villagers are **men and women** who **age one year per in-game year**. To grow your
+population you need **families**: a house with an **adult man and woman**, **spare
+room**, and a **food surplus** will have **children**. Children take a housing slot,
+eat a **half ration**, **can't work**, and grow into working adults at **age 7**.
+Villagers eventually **die of old age** (~70), so keep raising the next generation to
+sustain your workforce. Tap a villager to see their sex, age, and life stage; the job
+board shows how many **adults** vs **children** you have.
+
 ### Trading (🚢)
 
 Build a **Trading Post** on the shore and staff it. Every few seasons a

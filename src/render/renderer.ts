@@ -6,6 +6,10 @@ import {
   BuildingType,
   MAP_W,
   MAP_H,
+  PATH_DIRT,
+  PATH_DIRT_PLAN,
+  PATH_STONE,
+  PATH_STONE_PLAN,
 } from '../types';
 import { tileIndex } from '../game/world';
 
@@ -14,17 +18,25 @@ export interface PlacementView {
   tx: number;
   ty: number;
   valid: boolean;
+  /** True while in path-drawing mode (shows a hint reticle at screen centre). */
+  pathTier?: 'dirt' | 'stone' | null;
 }
 
 const BUILDING_COLORS: Record<BuildingType, string> = {
   house: '#b07a45',
   gatherer: '#5a8f4e',
   farm: '#9a8340',
+  fishing: '#3f8f9a',
+  hunting: '#7a5a3c',
+  ranch: '#b58f52',
   lumberyard: '#3f7a3a',
   woodcutter: '#8a6a3c',
   quarry: '#8b8e95',
   mine: '#4a4a52',
-  barn: '#7a5a86',
+  blacksmith: '#565059',
+  tailor: '#9a5f92',
+  trading: '#46708f',
+  barn: '#6f6a4a',
 };
 
 export class Renderer {
@@ -57,6 +69,35 @@ export class Renderer {
         const [sx, sy] = this.camera.worldToScreen(tx, ty, w, h);
         this.drawTile(tile, tx, ty, sx, sy, p);
       }
+    }
+
+    // Paths (over tiles, under buildings).
+    for (let ty = minY; ty <= maxY; ty++) {
+      for (let tx = minX; tx <= maxX; tx++) {
+        const pv = s.paths[tileIndex(tx, ty)];
+        if (!pv) continue;
+        const [sx, sy] = this.camera.worldToScreen(tx, ty, w, h);
+        const built = pv === PATH_DIRT || pv === PATH_STONE;
+        const stone = pv === PATH_STONE || pv === PATH_STONE_PLAN;
+        ctx.globalAlpha = built ? 1 : 0.4;
+        ctx.fillStyle = stone ? '#a6a8af' : '#6b5236';
+        const inset = p * 0.16;
+        roundRect(ctx, sx + inset, sy + inset, p - 2 * inset, p - 2 * inset, Math.max(2, p * 0.16));
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // Faint work-radius rings for forest-worked buildings.
+    for (const b of s.buildings) {
+      const def = BUILDING_DEFS[b.type];
+      if (!def.workRadius || !b.built) continue;
+      const [sx, sy] = this.camera.worldToScreen(b.x + def.w / 2, b.y + def.h / 2, w, h);
+      ctx.beginPath();
+      ctx.arc(sx, sy, def.workRadius * p, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.13)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
     }
 
     // Buildings.
@@ -136,6 +177,20 @@ export class Renderer {
       const def = BUILDING_DEFS[placement.type];
       const [sx, sy] = this.camera.worldToScreen(placement.tx, placement.ty, w, h);
       ctx.save();
+      // Bright work-radius ring while positioning a forest-worked building.
+      if (def.workRadius) {
+        const [cxp, cyp] = this.camera.worldToScreen(
+          placement.tx + def.w / 2,
+          placement.ty + def.h / 2,
+          w,
+          h,
+        );
+        ctx.beginPath();
+        ctx.arc(cxp, cyp, def.workRadius * p, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
       ctx.globalAlpha = 0.5;
       ctx.fillStyle = placement.valid ? '#5ad06a' : '#e0574a';
       roundRect(ctx, sx, sy, def.w * p, def.h * p, 4);

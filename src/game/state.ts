@@ -7,13 +7,10 @@ import {
   STORAGE_BASE,
   STORAGE_PER_BARN,
   START_CITIZENS,
-  START_COAL,
-  START_FIREWOOD,
-  START_FOOD,
-  START_STONE,
-  START_WOOD,
+  START_RESOURCES,
+  MERCHANT_VISIT_EVERY,
 } from '../types';
-import { generateWorld, findStartTile } from './world';
+import { generateWorld, findStartTile, emptyPaths } from './world';
 
 export function newGame(seed?: number): GameState {
   const tiles = generateWorld(seed);
@@ -21,21 +18,18 @@ export function newGame(seed?: number): GameState {
 
   const state: GameState = {
     tiles,
+    paths: emptyPaths(),
     buildings: [],
     citizens: [],
-    resources: {
-      food: START_FOOD,
-      wood: START_WOOD,
-      firewood: START_FIREWOOD,
-      stone: START_STONE,
-      coal: START_COAL,
-    },
+    resources: { ...START_RESOURCES },
     season: 0,
     year: 1,
     seasonTimer: 0,
     nextId: 1,
     gameOver: false,
     everLived: true,
+    merchant: { present: false, timer: MERCHANT_VISIT_EVERY, stock: {} },
+    pathProgress: 0,
   };
 
   // Seed a few villagers milling around the starting clearing.
@@ -78,9 +72,8 @@ export function jobSlots(s: GameState): { filled: number; total: number } {
   let total = 0;
   for (const b of s.buildings) {
     if (!b.built) continue;
-    const def = BUILDING_DEFS[b.type];
-    total += def.jobs;
-    filled += Math.min(b.workers.length, def.jobs);
+    total += b.desiredWorkers;
+    filled += Math.min(b.workers.length, b.desiredWorkers);
   }
   return { filled, total };
 }

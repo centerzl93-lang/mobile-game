@@ -1,7 +1,12 @@
-import { MAP_W, MAP_H, Tile, TileType } from '../types';
+import { MAP_W, MAP_H, Tile, TileType, PATH_NONE } from '../types';
 
 export function tileIndex(x: number, y: number): number {
   return y * MAP_W + x;
+}
+
+/** A fresh, empty path layer (one entry per tile). */
+export function emptyPaths(): number[] {
+  return new Array(MAP_W * MAP_H).fill(PATH_NONE);
 }
 
 export function inBounds(x: number, y: number): boolean {

@@ -22,23 +22,26 @@
 
       <!-- Top HUD: resources + season -->
       <div id="hud-top" class="hud">
-        <div class="stat" id="stat-pop"><span class="ico">👤</span><span class="val">0</span></div>
-        <div class="stat" id="stat-builders" title="Idle builders"><span class="ico">🔨</span><span class="val">0</span></div>
-        <div class="stat" id="stat-food"><span class="ico">🌾</span><span class="val">0</span></div>
-        <div class="stat" id="stat-wood"><span class="ico">🪵</span><span class="val">0</span></div>
-        <div class="stat" id="stat-firewood"><span class="ico">🔥</span><span class="val">0</span></div>
-        <div class="stat" id="stat-stone"><span class="ico">🪨</span><span class="val">0</span></div>
-        <div class="stat" id="stat-coal"><span class="ico">⚫</span><span class="val">0</span></div>
-        <div class="spacer"></div>
-        <div class="stat season" id="stat-season"><span class="val">Spring · Yr 1</span></div>
+        <div class="stat pinned" id="stat-pop"><span class="ico">👤</span><span class="val">0</span></div>
+        <div class="stat pinned" id="stat-builders" title="Idle builders"><span class="ico">🔨</span><span class="val">0</span></div>
+        <div id="stat-resources"></div>
+        <div class="stat season pinned" id="stat-season"><span class="val">Spring · Yr 1</span></div>
       </div>
 
       <!-- Speed / menu controls -->
       <div id="controls">
         <button class="ctrl" id="btn-pause" title="Pause">⏸</button>
         <button class="ctrl" id="btn-speed" title="Speed">1×</button>
+        <button class="ctrl" id="btn-jobs" title="Job board">📋</button>
+        <button class="ctrl hidden" id="btn-merchant" title="Merchant">📦</button>
         <button class="ctrl" id="btn-new" title="New game">⟳</button>
       </div>
+
+      <!-- Job board (slide-in from right) -->
+      <div id="jobboard" class="panel hidden"></div>
+
+      <!-- Trade modal -->
+      <div id="trade-overlay" class="hidden"></div>
 
       <!-- Event log -->
       <div id="log"></div>

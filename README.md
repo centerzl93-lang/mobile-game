@@ -23,33 +23,67 @@ It works offline after the first load, and your village is saved automatically.
 
 ## How to play
 
-- **Pan:** drag with one finger. **Zoom:** pinch.
-- **Build:** tap a building in the bottom bar, then **pan to line up the green
-  outline in the centre of the screen and tap to place it**. Buildings cost
-  resources (shown on each button).
-  - 🏠 **House** — homes up to 4 villagers and lets the village grow.
-  - 🧺 **Gatherer** — collects food from nearby forest year-round.
-  - 🌱 **Field** — grows crops, harvested each **autumn**.
-  - 🌲 **Lumberyard** — foresters tend the woods and fell trees for **wood**.
-  - 🪓 **Woodcutter** — splits stockpiled **wood → firewood** to heat homes.
-  - ⛏️ **Quarry** — cuts **stone** from a rocky outcrop (build next to rock).
-  - 🕳️ **Coal Mine** — digs **coal**, a hotter winter fuel (needs stone to build).
-  - 🛖 **Barn** — raises how much of every resource you can store.
-- **Jobs:** villagers are **builders** by default (they raise your placed
-  buildings). Each workplace automatically staffs itself from free builders — a
-  badge on the building shows workers, e.g. `2/2` (green = full, amber = short).
-  The 🔨 count in the HUD is how many free builders you have.
-- **Resource chain:** Lumberyard → wood → Woodcutter → firewood. Quarry → stone
-  (also needed to build a mine). Mine → coal.
-- **Survive:** every season villagers eat food; every **winter** they burn fuel
-  (firewood first, then coal — coal burns twice as hot). Run out of food or heat
-  and people die. Zero people is game over.
-- **Time:** each season lasts **20 minutes** at 1×; use **speed** (1×/2×/3×) and
-  **pause** (top-right) to manage it. The game auto-saves, so you can close it
-  and come back.
+- **Pan:** drag one finger. **Zoom:** pinch.
+- **Build:** tap a building in the bottom bar, **pan to line up the green outline
+  at the centre of the screen, and tap to place it**. Costs are shown on each
+  button; some buildings must sit on the right terrain (a ⚠️ hint tells you).
+- **Paths:** pick **Dirt Path** (free, 1.5× walk speed) or **Stone Path**
+  (1 stone/tile, 2× speed) and **drag one finger to draw** a route (pan with two
+  fingers while drawing). Villagers build the planned tiles; paths speed up all
+  their walking, so the village runs faster.
 
-Tip: start with gatherers near forest, a lumberyard + woodcutter for winter
-firewood, and houses — then push toward a quarry and mine in the hills.
+### Buildings
+
+| | Building | Makes | Needs |
+|---|---|---|---|
+| 🏠 | House | housing (grows the village) | — |
+| 🧺 | Gatherer | food | forest in its work-circle |
+| 🌱 | Field | food (autumn harvest) | — |
+| 🎣 | Fishing Hut | food | built on the **shoreline** |
+| 🏹 | Hunting Cabin | food + leather | forest in its work-circle |
+| 🐄 | Ranch | food + leather | **livestock** (buy from traders) |
+| 🌲 | Lumberyard | wood | forest in its work-circle (it replants) |
+| 🪓 | Woodcutter | firewood (from wood) | — |
+| ⛏️ | Quarry | stone | built against **rock** |
+| 🕳️ | Mine | coal **or** iron (toggle) | built against **rock** |
+| ⚒️ | Blacksmith | tools (iron) or steel tools (iron+coal) | — |
+| 🧵 | Tailor | clothing (from leather) | — |
+| 🚢 | Trading Post | barter with merchants | built on the **shoreline** |
+| 🛖 | Barn | more storage | — |
+
+### Jobs & the job board (📋)
+
+Villagers are **builders** by default — they raise your placed buildings and
+paths. Open the **job board** (📋, top-right) to set how many workers each
+workplace should have with **− / +**. Mines toggle **Coal/Iron**, blacksmiths
+toggle **Iron/Steel**. On the map, a badge shows staffing (`2/2` green = full).
+The 🔨 HUD number is how many free builders remain.
+
+### Survival
+
+- Every season villagers eat **food**. Every **winter** they burn fuel
+  (**firewood** first, then **coal** — coal burns twice as hot) *and* need
+  **clothing**; the unclothed can fall ill. Keep all three stocked for winter.
+- **Tools** wear out as people work. If the tool stockpile empties, everyone
+  works slower — keep a blacksmith going.
+- **Resource chains:** Lumberyard → wood → Woodcutter → firewood; Mine → iron →
+  Blacksmith → tools (add coal for longer-lasting steel); Hunting/Ranch →
+  leather → Tailor → clothing.
+
+### Trading (🚢)
+
+Build a **Trading Post** on the shore and staff it. Every few seasons a
+**merchant** docks (a 📦 button appears) — open it to **barter** goods by value
+(no money). Traders are the only place to buy **livestock** to start a ranch.
+
+### Time
+
+Each season lasts **20 minutes** at 1×; use **speed** (1×/2×/3×) and **pause**.
+The game auto-saves, so you can close it and come back.
+
+Tip: gatherers/lumberyard near forest, a woodcutter and tailor for winter, then
+push into the hills for a quarry, mine, and blacksmith — and pave paths between
+them so villagers move quickly.
 
 ## Deploy it to your GitHub (one-time setup)
 

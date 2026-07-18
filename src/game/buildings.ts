@@ -1,4 +1,12 @@
-import { GameState, Building, BuildingType, BUILDING_DEFS, ResourceKind } from '../types';
+import {
+  GameState,
+  Building,
+  BuildingType,
+  BuildingDef,
+  BUILDING_DEFS,
+  ResourceKind,
+  TileType,
+} from '../types';
 import { getTile, inBounds } from './world';
 
 export interface PlaceResult {
@@ -26,9 +34,10 @@ export function canPlace(s: GameState, type: BuildingType, x: number, y: number)
       return { ok: false, reason: 'Overlaps a building' };
     }
   }
-  // Quarries and mines must sit next to rock to have anything to dig.
-  if ((type === 'quarry' || type === 'mine') && nearbyStone(s, def, x, y) < 1) {
-    return { ok: false, reason: 'Must be built next to rock' };
+  // Terrain gating: at least one border tile of a required type.
+  if (def.requiresAdjacent && !borderHasType(s, def, x, y, def.requiresAdjacent)) {
+    const label = def.requiresAdjacent.includes('water') ? 'water' : 'rock';
+    return { ok: false, reason: `Must be built next to ${label}` };
   }
   // Enough of every resource in the cost.
   for (const [kind, amount] of Object.entries(def.cost) as [ResourceKind, number][]) {
@@ -59,7 +68,10 @@ export function placeBuilding(
     built: false,
     progress: 0,
     workers: [],
+    desiredWorkers: def.jobs, // fully staffed by default; player can dial down
     growth: 0,
+    output: 'coal',
+    recipe: 'iron',
   };
   s.buildings.push(b);
   return b;
@@ -75,31 +87,63 @@ export function canAfford(s: GameState, type: BuildingType): boolean {
 }
 
 function rectsOverlap(
-  ax: number,
-  ay: number,
-  aw: number,
-  ah: number,
-  bx: number,
-  by: number,
-  bw: number,
-  bh: number,
+  ax: number, ay: number, aw: number, ah: number,
+  bx: number, by: number, bw: number, bh: number,
 ): boolean {
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 }
 
-function centerTile(x: number, y: number, w: number, h: number): { cx: number; cy: number } {
-  return { cx: Math.floor(x + w / 2), cy: Math.floor(y + h / 2) };
+/** Do any tiles just outside the footprint match one of the given types? */
+function borderHasType(
+  s: GameState,
+  def: { w: number; h: number },
+  x: number,
+  y: number,
+  types: TileType[],
+): boolean {
+  for (let dx = -1; dx <= def.w; dx++) {
+    for (let dy = -1; dy <= def.h; dy++) {
+      const inside = dx >= 0 && dx < def.w && dy >= 0 && dy < def.h;
+      if (inside) continue;
+      const t = getTile(s.tiles, x + dx, y + dy);
+      if (t && types.includes(t.type)) return true;
+    }
+  }
+  return false;
 }
 
-/** Total forest-resource in tiles surrounding a building (drives wood/food yields). */
-export function nearbyForest(s: GameState, b: Building, radius = 4): number {
+export function buildingCenterTile(b: Building): { cx: number; cy: number } {
   const def = BUILDING_DEFS[b.type];
-  const { cx, cy } = centerTile(b.x, b.y, def.w, def.h);
+  return { cx: b.x + def.w / 2, cy: b.y + def.h / 2 };
+}
+
+/** Sum of forest tree-resource within a building's circular work radius. */
+export function forestInCircle(s: GameState, b: Building): number {
+  const def = BUILDING_DEFS[b.type];
+  const r = def.workRadius ?? 4;
+  const { cx, cy } = buildingCenterTile(b);
+  let total = 0;
+  const r2 = r * r;
+  for (let ty = Math.floor(cy - r); ty <= Math.ceil(cy + r); ty++) {
+    for (let tx = Math.floor(cx - r); tx <= Math.ceil(cx + r); tx++) {
+      const ddx = tx + 0.5 - cx;
+      const ddy = ty + 0.5 - cy;
+      if (ddx * ddx + ddy * ddy > r2) continue;
+      const t = getTile(s.tiles, tx, ty);
+      if (t && t.type === 'forest') total += t.trees;
+    }
+  }
+  return total;
+}
+
+/** Count of water tiles adjacent to a fishing hut / trading post footprint. */
+export function nearbyWater(s: GameState, b: Building, radius = 3): number {
+  const { cx, cy } = buildingCenterTile(b);
   let total = 0;
   for (let dy = -radius; dy <= radius; dy++) {
     for (let dx = -radius; dx <= radius; dx++) {
-      const t = getTile(s.tiles, cx + dx, cy + dy);
-      if (t && t.type === 'forest') total += t.trees;
+      const t = getTile(s.tiles, Math.floor(cx) + dx, Math.floor(cy) + dy);
+      if (t && t.type === 'water') total += 1;
     }
   }
   return total;
@@ -113,7 +157,8 @@ export function nearbyStone(
   y: number,
   radius = 4,
 ): number {
-  const { cx, cy } = centerTile(x, y, def.w, def.h);
+  const cx = Math.floor(x + def.w / 2);
+  const cy = Math.floor(y + def.h / 2);
   let total = 0;
   for (let dy = -radius; dy <= radius; dy++) {
     for (let dx = -radius; dx <= radius; dx++) {

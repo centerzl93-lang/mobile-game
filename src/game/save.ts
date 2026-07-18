@@ -1,7 +1,7 @@
 import { GameState, MAP_W, MAP_H } from '../types';
 
-const KEY = 'little-village-save-v2';
-const VERSION = 2;
+const KEY = 'little-village-save-v3';
+const VERSION = 3;
 
 interface SaveEnvelope {
   v: number;
@@ -27,6 +27,8 @@ export function loadGame(): GameState | null {
     // Sanity check the shape so a corrupt save can't crash the game.
     if (!Array.isArray(s.tiles) || s.tiles.length !== MAP_W * MAP_H) return null;
     if (!Array.isArray(s.buildings) || !Array.isArray(s.citizens)) return null;
+    if (!Array.isArray(s.paths) || s.paths.length !== MAP_W * MAP_H) return null;
+    if (!s.merchant || typeof s.pathProgress !== 'number') return null;
     return s;
   } catch {
     return null;

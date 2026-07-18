@@ -8,16 +8,20 @@ interface PointerRec {
   moved: boolean;
 }
 
+export type InputMode = 'normal' | 'path';
+
 /**
- * Unified pointer input (touch + mouse) for a tile map:
- *  - one pointer drag  -> pan
- *  - two pointer pinch -> zoom
- *  - quick tap (little movement) -> onTap(screenX, screenY)
+ * Unified pointer input (touch + mouse) for a tile map.
+ *  normal mode: one-finger drag pans; quick tap fires onTap; two fingers pinch/pan.
+ *  path mode:   one-finger drag paints (onPaint); two fingers pinch/pan.
  */
 export class InputManager {
   private pointers = new Map<number, PointerRec>();
   private lastPinchDist = 0;
+  private lastCenter: [number, number] | null = null;
+  mode: InputMode = 'normal';
   onTap: (sx: number, sy: number) => void = () => {};
+  onPaint: (sx: number, sy: number) => void = () => {};
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -28,9 +32,12 @@ export class InputManager {
     canvas.addEventListener('pointerup', this.onUp, { passive: false });
     canvas.addEventListener('pointercancel', this.onUp, { passive: false });
     canvas.addEventListener('pointerleave', this.onUp, { passive: false });
-    // Block context menu / scroll gestures on the canvas.
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener('wheel', this.onWheel, { passive: false });
+  }
+
+  setMode(mode: InputMode): void {
+    this.mode = mode;
   }
 
   private onDown = (e: PointerEvent) => {
@@ -45,6 +52,9 @@ export class InputManager {
     });
     if (this.pointers.size === 2) {
       this.lastPinchDist = this.pinchDist();
+      this.lastCenter = this.pinchCenter();
+    } else if (this.pointers.size === 1 && this.mode === 'path') {
+      this.onPaint(e.clientX, e.clientY);
     }
   };
 
@@ -56,32 +66,40 @@ export class InputManager {
     const dy = e.clientY - p.y;
     p.x = e.clientX;
     p.y = e.clientY;
-    if (Math.hypot(e.clientX - p.startX, e.clientY - p.startY) > 8) {
-      p.moved = true;
-    }
+    if (Math.hypot(e.clientX - p.startX, e.clientY - p.startY) > 8) p.moved = true;
 
     if (this.pointers.size === 1) {
-      this.camera.panByPixels(dx, dy);
+      if (this.mode === 'path') {
+        this.onPaint(e.clientX, e.clientY);
+      } else {
+        this.camera.panByPixels(dx, dy);
+      }
     } else if (this.pointers.size === 2) {
+      // Two fingers: pinch-zoom plus pan by the movement of their midpoint.
       const dist = this.pinchDist();
+      const center = this.pinchCenter();
+      if (this.lastCenter) {
+        this.camera.panByPixels(center[0] - this.lastCenter[0], center[1] - this.lastCenter[1]);
+      }
       if (this.lastPinchDist > 0) {
         const factor = dist / this.lastPinchDist;
-        const [cx, cy] = this.pinchCenter();
-        this.camera.zoomAt(factor, cx, cy, this.canvas.clientWidth, this.canvas.clientHeight);
+        this.camera.zoomAt(factor, center[0], center[1], this.canvas.clientWidth, this.canvas.clientHeight);
       }
       this.lastPinchDist = dist;
+      this.lastCenter = center;
     }
   };
 
   private onUp = (e: PointerEvent) => {
     const p = this.pointers.get(e.pointerId);
     if (!p) return;
-    const wasTap = !p.moved && this.pointers.size === 1;
+    const wasTap = !p.moved && this.pointers.size === 1 && this.mode === 'normal';
     this.pointers.delete(e.pointerId);
-    if (this.pointers.size < 2) this.lastPinchDist = 0;
-    if (wasTap) {
-      this.onTap(p.startX, p.startY);
+    if (this.pointers.size < 2) {
+      this.lastPinchDist = 0;
+      this.lastCenter = null;
     }
+    if (wasTap) this.onTap(p.startX, p.startY);
   };
 
   private onWheel = (e: WheelEvent) => {

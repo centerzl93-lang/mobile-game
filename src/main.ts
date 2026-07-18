@@ -2,11 +2,21 @@ import './style.css';
 import { Camera } from './engine/camera';
 import { InputManager } from './engine/input';
 import { Renderer, PlacementView } from './render/renderer';
-import { UI } from './ui/ui';
-import { GameState, BuildingType, BUILDING_DEFS, MAP_W, MAP_H } from './types';
+import { UI, PathTier } from './ui/ui';
+import {
+  GameState,
+  BuildingType,
+  BUILDING_DEFS,
+  MAP_W,
+  MAP_H,
+  MineOutput,
+  SmithRecipe,
+  ResourceKind,
+} from './types';
 import { newGame } from './game/state';
-import { update, LogKind } from './game/simulation';
+import { update, LogKind, tradeWithMerchant, TradeResult } from './game/simulation';
 import { canPlace, placeBuilding, canAfford } from './game/buildings';
+import { planPath } from './game/paths';
 import { saveGame, loadGame } from './game/save';
 
 const SPEEDS = [1, 2, 3];
@@ -24,6 +34,7 @@ class Game {
   paused = false;
   speedIndex = 0;
   selectedBuild: BuildingType | null = null;
+  selectedPath: PathTier | null = null;
 
   dpr = 1;
   cw = 0;
@@ -35,12 +46,18 @@ class Game {
     this.state = newGame();
     this.ui = new UI({
       onSelectBuild: (t) => this.onSelectBuild(t),
+      onSelectPath: (tier) => this.onSelectPath(tier),
       onPauseToggle: () => this.togglePause(),
       onSpeedCycle: () => this.cycleSpeed(),
       onNewGame: () => this.startNewGame(),
+      onSetWorkers: (id, d) => this.setWorkers(id, d),
+      onSetMineOutput: (id, o) => this.setMineOutput(id, o),
+      onSetSmithRecipe: (id, r) => this.setSmithRecipe(id, r),
+      onTrade: (give, get, qty) => this.trade(give, get, qty),
     });
     this.input = new InputManager(this.canvas, this.camera);
     this.input.onTap = (sx, sy) => this.onTap(sx, sy);
+    this.input.onPaint = (sx, sy) => this.onPaint(sx, sy);
 
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => {
@@ -94,6 +111,53 @@ class Game {
 
   private onSelectBuild(t: BuildingType | null): void {
     this.selectedBuild = t;
+    this.selectedPath = null;
+    this.input.setMode('normal');
+  }
+
+  private onSelectPath(tier: PathTier | null): void {
+    this.selectedPath = tier;
+    this.selectedBuild = null;
+    this.input.setMode(tier ? 'path' : 'normal');
+  }
+
+  private setWorkers(id: number, delta: number): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (!b) return;
+    const max = BUILDING_DEFS[b.type].jobs;
+    b.desiredWorkers = Math.max(0, Math.min(max, b.desiredWorkers + delta));
+    this.persist();
+  }
+
+  private setMineOutput(id: number, output: MineOutput): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (b) {
+      b.output = output;
+      this.persist();
+    }
+  }
+
+  private setSmithRecipe(id: number, recipe: SmithRecipe): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (b) {
+      b.recipe = recipe;
+      this.persist();
+    }
+  }
+
+  private trade(give: ResourceKind, get: ResourceKind, qty: number): TradeResult {
+    const r = tradeWithMerchant(this.state, give, get, qty);
+    if (r.ok) {
+      this.log(`Traded ${r.gave} ${give} for ${qty} ${get}`, 'good');
+      this.persist();
+    }
+    return r;
+  }
+
+  private onPaint(sx: number, sy: number): void {
+    if (!this.selectedPath || !this.running || this.state.gameOver) return;
+    const [wx, wy] = this.camera.screenToWorld(sx, sy, this.cw, this.ch);
+    planPath(this.state, Math.floor(wx), Math.floor(wy), this.selectedPath);
   }
 
   private togglePause(): void {
@@ -112,6 +176,8 @@ class Game {
     this.centreOnVillage();
     this.paused = false;
     this.selectedBuild = null;
+    this.selectedPath = null;
+    this.input.setMode('normal');
     this.ui.clearSelection();
     this.running = true;
     this.persist();
@@ -182,7 +248,13 @@ class Game {
     }
 
     // Build placement preview at the centre reticle.
-    const placement: PlacementView = { type: null, tx: 0, ty: 0, valid: false };
+    const placement: PlacementView = {
+      type: null,
+      tx: 0,
+      ty: 0,
+      valid: false,
+      pathTier: this.selectedPath,
+    };
     if (this.selectedBuild && this.running && !this.state.gameOver) {
       const { tx, ty } = this.reticleTile(this.selectedBuild);
       placement.type = this.selectedBuild;
@@ -194,6 +266,7 @@ class Game {
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.renderer.draw(this.state, this.cw, this.ch, placement);
     this.ui.updateHud(this.state, SPEEDS[this.speedIndex], this.paused);
+    this.ui.refreshPanels(this.state);
 
     requestAnimationFrame((next) => this.frame(next));
   }

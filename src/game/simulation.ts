@@ -31,9 +31,14 @@ import {
   HOUSING_PER_HOUSE,
   CHILD_FOOD_FACTOR,
   BIRTH_CHANCE,
+  ADULT_AGE,
+  OLD_AGE_START,
+  MAX_AGE,
+  EDUCATED_BONUS,
+  BuildingType,
   isAdult,
 } from '../types';
-import { buildingCenter, makeCitizen } from './state';
+import { housingCapacity, buildingCenter, makeCitizen } from './state';
 import { forestInCircle, nearbyStone, nearbyWater } from './buildings';
 import { getTile } from './world';
 import { pathSpeedMult } from './paths';
@@ -247,7 +252,12 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
     if (c.timer >= WORK_SECONDS) {
       c.timer = 0;
       const out = workOutput(s, b, dt, toolFactor);
-      if (out && out.amount > 0.01) c.carry = { kind: out.kind, amount: Math.min(CARRY_CAP, out.amount) };
+      if (out && out.amount > 0.01) {
+        // Healthier, happier, and educated workers produce more.
+        const wellbeing = (0.7 + 0.3 * (c.health / 100)) * (0.85 + 0.15 * (c.happiness / 100));
+        const prod = wellbeing * (c.educated ? EDUCATED_BONUS : 1);
+        c.carry = { kind: out.kind, amount: Math.min(CARRY_CAP, out.amount * prod) };
+      }
     }
   }
 }
@@ -514,11 +524,22 @@ function endSeason(s: GameState, log: LogFn): void {
   if (s.season === 0) {
     s.year++;
     log(`A new year begins — Year ${s.year}`, 'info');
-    // Everyone ages one year; the elderly pass away.
-    for (const c of s.citizens) c.age += 1;
-    const old = s.citizens.filter((c) => c.age >= c.lifespan);
-    for (const c of old) removeCitizen(s, c);
-    if (old.length > 0) log(`${old.length} elder${old.length > 1 ? 's' : ''} died of old age`, 'info');
+    // Everyone ages a year. Children coming of age are educated if a school is staffed.
+    const schoolStaffed = s.buildings.some((b) => b.built && b.type === 'school' && b.workers.length > 0);
+    for (const c of s.citizens) {
+      const wasChild = c.age < ADULT_AGE;
+      c.age += 1;
+      if (wasChild && c.age >= ADULT_AGE) c.educated = schoolStaffed;
+    }
+    // Old age: from OLD_AGE_START the yearly death chance ramps up, worse if unhealthy.
+    const dying: Citizen[] = [];
+    for (const c of s.citizens) {
+      if (c.age < OLD_AGE_START) continue;
+      const base = clamp((c.age - OLD_AGE_START) / (MAX_AGE - OLD_AGE_START), 0, 1);
+      if (Math.random() < Math.min(1, base * (1 + (1 - c.health / 100)))) dying.push(c);
+    }
+    for (const c of dying) removeCitizen(s, c);
+    if (dying.length > 0) log(`${dying.length} elder${dying.length > 1 ? 's' : ''} died of old age`, 'info');
   }
   const season = SEASONS[s.season];
 
@@ -580,8 +601,9 @@ function endSeason(s: GameState, log: LogFn): void {
     const survivors = s.citizens.length;
     const clothShort = consume(s, 'clothing', survivors * CLOTHING_PER_CITIZEN_WINTER);
     const unclothed = Math.floor(clothShort / CLOTHING_PER_CITIZEN_WINTER);
+    const sickChance = Math.min(1, SICKNESS_CHANCE * (1 + (1 - avgHealth(s) / 100)));
     let sick = 0;
-    for (let k = 0; k < unclothed; k++) if (Math.random() < SICKNESS_CHANCE) sick++;
+    for (let k = 0; k < unclothed; k++) if (Math.random() < sickChance) sick++;
     if (sick > 0) {
       killCitizens(s, sick);
       log(`${sick} villager${sick > 1 ? 's' : ''} fell ill without warm clothing`, 'bad');
@@ -589,8 +611,9 @@ function endSeason(s: GameState, log: LogFn): void {
   }
 
   // Reproduction: a house with an adult man + woman, spare room, and enough food
-  // stored may bear a child.
+  // stored may bear a child. Happier villages breed faster.
   if (s.citizens.length > 0 && totalStored(s, 'food') > s.citizens.length * FOOD_PER_CITIZEN_PER_SEASON) {
+    const chance = BIRTH_CHANCE * (0.4 + 0.6 * (avgHappiness(s) / 100));
     let born = 0;
     for (const h of s.buildings) {
       if (!h.built || h.type !== 'house') continue;
@@ -598,13 +621,16 @@ function endSeason(s: GameState, log: LogFn): void {
       if (residents.length >= HOUSING_PER_HOUSE) continue;
       const man = residents.some((c) => isAdult(c) && c.sex === 'm');
       const woman = residents.some((c) => isAdult(c) && c.sex === 'f');
-      if (man && woman && Math.random() < BIRTH_CHANCE) {
+      if (man && woman && Math.random() < chance) {
         spawnChild(s, h);
         born++;
       }
     }
     if (born > 0) log(born > 1 ? `${born} children were born` : `A child was born`, 'good');
   }
+
+  // Well-being drifts toward conditions (food/variety -> health; space/goods -> happiness).
+  updateWellbeing(s, shortFood > 0);
 
   updateMerchant(s, log);
 
@@ -705,6 +731,46 @@ function centreOfVillage(s: GameState): { x: number; y: number } {
     y += c.y;
   }
   return { x: x / s.buildings.length, y: y / s.buildings.length };
+}
+
+// ---- well-being (health & happiness) ----
+const FOOD_BUILDINGS: BuildingType[] = ['gatherer', 'fishing', 'hunting', 'farm', 'ranch'];
+
+function foodVariety(s: GameState): number {
+  const set = new Set<BuildingType>();
+  for (const b of s.buildings) {
+    if (b.built && b.workers.length > 0 && FOOD_BUILDINGS.includes(b.type)) set.add(b.type);
+  }
+  return set.size;
+}
+
+export function avgHealth(s: GameState): number {
+  if (s.citizens.length === 0) return 100;
+  let t = 0;
+  for (const c of s.citizens) t += c.health;
+  return t / s.citizens.length;
+}
+
+export function avgHappiness(s: GameState): number {
+  if (s.citizens.length === 0) return 100;
+  let t = 0;
+  for (const c of s.citizens) t += c.happiness;
+  return t / s.citizens.length;
+}
+
+function updateWellbeing(s: GameState, foodShort: boolean): void {
+  const pop = s.citizens.length;
+  if (pop === 0) return;
+  const variety = foodVariety(s);
+  const healthTarget = clamp(40 + 12 * variety - (foodShort ? 30 : 0), 0, 100);
+  const headroom = housingCapacity(s) - pop > 0;
+  const clothed = totalStored(s, 'clothing') >= pop;
+  const comfortable = totalStored(s, 'food') > pop * FOOD_PER_CITIZEN_PER_SEASON;
+  const happyTarget = clamp(50 + (headroom ? 15 : 0) + (clothed ? 15 : 0) + (comfortable ? 20 : 0), 0, 100);
+  for (const c of s.citizens) {
+    c.health += (healthTarget - c.health) * 0.25;
+    c.happiness += (happyTarget - c.happiness) * 0.25;
+  }
 }
 
 // ---- forest upkeep ----

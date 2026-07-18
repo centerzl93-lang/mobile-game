@@ -45,6 +45,7 @@ const BUILDING_COLORS: Record<BuildingType, string> = {
   blacksmith: '#565059',
   tailor: '#9a5f92',
   trading: '#46708f',
+  school: '#8f7d3f',
   barn: '#6f6a4a',
 };
 

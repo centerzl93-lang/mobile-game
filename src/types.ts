@@ -72,12 +72,13 @@ export type BuildingType =
   | 'blacksmith'
   | 'tailor'
   | 'trading'
+  | 'school'
   | 'barn';
 
 export type MineOutput = 'coal' | 'iron';
 export type SmithRecipe = 'iron' | 'steel';
 
-export type BuildCategory = 'housing' | 'food' | 'resources' | 'trade';
+export type BuildCategory = 'housing' | 'food' | 'resources' | 'civic' | 'trade';
 
 export interface BuildingDef {
   type: BuildingType;
@@ -159,7 +160,9 @@ export interface Citizen {
   timer: number; // seconds remaining in current work action
   sex: Sex;
   age: number; // years
-  lifespan: number; // years; dies of old age at/after this
+  health: number; // 0..100
+  happiness: number; // 0..100
+  educated: boolean; // grew up with a staffed school -> more productive
 }
 
 /** Children can't work; they take a housing slot and grow up at ADULT_AGE. */
@@ -199,7 +202,7 @@ export interface GameState {
 }
 
 // ---- Time ----
-export const SEASON_LENGTH = 20 * 60; // 20 real minutes per season at 1x speed
+export const SEASON_LENGTH = 10 * 60; // 10 real minutes per season at 1x speed
 
 // ---- Housing / storage / logistics ----
 export const HOUSING_PER_HOUSE = 4;
@@ -227,11 +230,14 @@ export const NO_TOOLS_PENALTY = 0.6; // output multiplier when the tool stockpil
 export const SICKNESS_CHANCE = 0.5; // chance an unclothed villager sickens in winter
 
 // ---- Demographics ----
-export const ADULT_AGE = 7; // children become working adults at this age (years)
+export const ADULT_AGE = 4; // children become working adults at this age (years)
 export const CHILD_FOOD_FACTOR = 0.5; // children eat this fraction of an adult ration
-export const BIRTH_CHANCE = 0.35; // chance per qualifying house, per season, of a child
-export const OLD_AGE_MEAN = 70; // average age of death from old age (years)
-export const OLD_AGE_VAR = 8; // +/- variance on each villager's lifespan
+export const BIRTH_CHANCE = 0.35; // base chance per qualifying house, per season
+export const OLD_AGE_START = 35; // old-age deaths begin at this age
+export const MAX_AGE = 48; // by this age old-age death is near-certain each year
+export const EDUCATED_BONUS = 1.3; // production multiplier for educated workers
+export const START_HEALTH = 80;
+export const START_HAPPINESS = 80;
 
 // ---- Production (per assigned worker, per season, before local factors) ----
 export const GATHER_FOOD_PER_SEASON = 15;
@@ -355,6 +361,11 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     cost: { wood: 20, stone: 10 }, jobs: 1, buildTime: 8, requiresAdjacent: ['water'],
     desc: 'Merchants dock here to barter goods — and to sell you livestock.',
   },
+  school: {
+    type: 'school', name: 'School', emoji: '🏫', category: 'civic', w: 2, h: 2,
+    cost: { wood: 16, stone: 10 }, jobs: 1, buildTime: 7,
+    desc: 'A teacher educates the children; kids who grow up here become skilled, more productive adults.',
+  },
   barn: {
     type: 'barn', name: 'Barn', emoji: '🛖', category: 'resources', w: 2, h: 2,
     cost: { wood: 16 }, jobs: 0, buildTime: 6,
@@ -362,11 +373,12 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
 };
 
-export const CATEGORY_ORDER: BuildCategory[] = ['housing', 'food', 'resources', 'trade'];
+export const CATEGORY_ORDER: BuildCategory[] = ['housing', 'food', 'resources', 'civic', 'trade'];
 export const CATEGORY_META: Record<BuildCategory, { label: string; emoji: string }> = {
   housing: { label: 'Housing', emoji: '🏠' },
   food: { label: 'Food', emoji: '🌾' },
   resources: { label: 'Resources', emoji: '🪵' },
+  civic: { label: 'Civic', emoji: '🏫' },
   trade: { label: 'Trade', emoji: '🚢' },
 };
 
@@ -384,5 +396,6 @@ export const BUILD_ORDER: BuildingType[] = [
   'blacksmith',
   'tailor',
   'trading',
+  'school',
   'barn',
 ];

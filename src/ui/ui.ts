@@ -16,11 +16,13 @@ import {
   FOOD_PER_CITIZEN_PER_SEASON,
   HEAT_PER_CITIZEN_WINTER,
   CLOTHING_PER_CITIZEN_WINTER,
+  ADULT_AGE,
+  OLD_AGE_START,
   isAdult,
 } from '../types';
 import { housingCapacity } from '../game/state';
 import { totalStoredAll, totalStored } from '../game/storage';
-import { LogKind, tradeCost, TradeResult } from '../game/simulation';
+import { LogKind, tradeCost, TradeResult, avgHealth, avgHappiness } from '../game/simulation';
 
 export type PathTier = 'dirt' | 'stone';
 
@@ -51,6 +53,9 @@ const LOW_NEED: Partial<Record<ResourceKind, number>> = {
 export class UI {
   private el = {
     pop: byId('stat-pop'),
+    ages: byId('stat-ages'),
+    health: byId('stat-health'),
+    happy: byId('stat-happy'),
     builders: byId('stat-builders'),
     resources: byId('stat-resources'),
     season: byId('stat-season'),
@@ -95,7 +100,7 @@ export class UI {
   private buildResourceChips(): void {
     for (const kind of RESOURCE_KINDS) {
       const chip = document.createElement('div');
-      chip.className = 'stat';
+      chip.className = 'stat mini';
       chip.innerHTML = `<span class="ico">${RESOURCE_ICON[kind]}</span><span class="val">0</span>`;
       this.el.resources.appendChild(chip);
       this.resChips.set(kind, chip);
@@ -105,8 +110,20 @@ export class UI {
   updateHud(s: GameState, speed: number, paused: boolean): void {
     const totals = totalStoredAll(s);
     const pop = s.citizens.length;
+    let childCount = 0;
+    let elderCount = 0;
+    for (const c of s.citizens) {
+      if (c.age < ADULT_AGE) childCount++;
+      else if (c.age >= OLD_AGE_START) elderCount++;
+    }
+    const adultCount = pop - childCount - elderCount;
     const builders = s.citizens.reduce((n, c) => n + (c.jobId === null ? 1 : 0), 0);
     this.el.pop.querySelector('.val')!.textContent = `${pop}/${housingCapacity(s)}`;
+    this.el.ages.querySelector('.val')!.textContent = `🧒${childCount} 🧑${adultCount} 👴${elderCount}`;
+    this.el.health.querySelector('.val')!.textContent = `${Math.round(avgHealth(s))}`;
+    this.el.happy.querySelector('.val')!.textContent = `${Math.round(avgHappiness(s))}`;
+    this.el.health.classList.toggle('low', avgHealth(s) < 45);
+    this.el.happy.classList.toggle('low', avgHappiness(s) < 45);
     this.el.builders.querySelector('.val')!.textContent = `${builders}`;
     for (const kind of RESOURCE_KINDS) {
       const chip = this.resChips.get(kind)!;
@@ -317,7 +334,7 @@ export class UI {
     head.querySelector('#jb-close')!.addEventListener('click', () => this.toggleJobBoard());
     const sum = document.createElement('div');
     sum.className = 'summary';
-    sum.textContent = `${adults} adults (🔨 ${builders} free) · 🧒 ${children} children`;
+    sum.textContent = `${adults} adults (🔨 ${builders} free) · 🧒 ${children} children · ❤️ ${Math.round(avgHealth(s))} · 😊 ${Math.round(avgHappiness(s))}`;
     p.appendChild(sum);
     if (jobs.length === 0) {
       const empty = document.createElement('div');

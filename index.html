@@ -21,11 +21,16 @@
       <canvas id="game"></canvas>
 
       <!-- Top HUD: resources + season -->
-      <div id="hud-top" class="hud">
-        <div class="stat pinned" id="stat-pop"><span class="ico">👤</span><span class="val">0</span></div>
-        <div class="stat pinned" id="stat-builders" title="Idle builders"><span class="ico">🔨</span><span class="val">0</span></div>
-        <div id="stat-resources"></div>
-        <div class="stat season pinned" id="stat-season"><span class="val">Spring · Yr 1</span></div>
+      <div id="hud-top">
+        <div class="hud-row" id="hud-people">
+          <div class="stat" id="stat-pop" title="Population / housing"><span class="ico">👤</span><span class="val">0</span></div>
+          <div class="stat" id="stat-ages" title="children · adults · elders"><span class="val">🧒0 🧑0 👴0</span></div>
+          <div class="stat" id="stat-health" title="Average health"><span class="ico">❤️</span><span class="val">0</span></div>
+          <div class="stat" id="stat-happy" title="Average happiness"><span class="ico">😊</span><span class="val">0</span></div>
+          <div class="stat" id="stat-builders" title="Idle builders"><span class="ico">🔨</span><span class="val">0</span></div>
+          <div class="stat season" id="stat-season"><span class="val">Spring · Yr 1</span></div>
+        </div>
+        <div class="hud-row" id="stat-resources"></div>
       </div>
 
       <!-- Speed / menu controls -->

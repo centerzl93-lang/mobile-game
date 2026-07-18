@@ -343,6 +343,9 @@ class Game {
       rows.push({ label: 'Sex', value: c.sex === 'm' ? '♂ Male' : '♀ Female' });
       rows.push({ label: 'Stage', value: adult ? 'Adult' : `Child · grows up at ${ADULT_AGE}` });
       rows.push({ label: 'Age', value: `${Math.floor(c.age)} yr` });
+      rows.push({ label: 'Health', value: `❤️ ${Math.round(c.health)}%` });
+      rows.push({ label: 'Happiness', value: `😊 ${Math.round(c.happiness)}%` });
+      if (adult) rows.push({ label: 'Schooling', value: c.educated ? 'Educated (+30% work)' : 'Uneducated' });
       if (adult) rows.push({ label: 'Work', value: job ? `${BUILDING_DEFS[job.type].name} worker` : 'Builder / laborer' });
       rows.push({
         label: 'Carrying',

@@ -9,16 +9,11 @@ import {
   BARN_CAPACITY,
   START_RESOURCES,
   MERCHANT_VISIT_EVERY,
-  OLD_AGE_MEAN,
-  OLD_AGE_VAR,
+  START_HEALTH,
+  START_HAPPINESS,
   ResourceKind,
 } from '../types';
 import { generateWorld, findStartTile, emptyPaths } from './world';
-
-/** Roll a natural lifespan around the mean. */
-export function rollLifespan(): number {
-  return Math.round(OLD_AGE_MEAN + (Math.random() * 2 - 1) * OLD_AGE_VAR);
-}
 
 export function makeCitizen(s: { nextId: number }, sex: Sex, age: number, x: number, y: number): Citizen {
   return {
@@ -34,7 +29,9 @@ export function makeCitizen(s: { nextId: number }, sex: Sex, age: number, x: num
     timer: 0,
     sex,
     age,
-    lifespan: Math.max(age + 1, rollLifespan()),
+    health: START_HEALTH,
+    happiness: START_HAPPINESS,
+    educated: false,
   };
 }
 

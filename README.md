@@ -85,13 +85,23 @@ The 🔨 HUD number is how many free builders remain.
 
 ### Villagers & families
 
-Villagers are **men and women** who **age one year per in-game year**. To grow your
-population you need **families**: a house with an **adult man and woman**, **spare
-room**, and a **food surplus** will have **children**. Children take a housing slot,
-eat a **half ration**, **can't work**, and grow into working adults at **age 7**.
-Villagers eventually **die of old age** (~70), so keep raising the next generation to
-sustain your workforce. Tap a villager to see their sex, age, and life stage; the job
-board shows how many **adults** vs **children** you have.
+Villagers are **men and women** who **age one year per in-game year** (seasons are 10
+minutes). To grow, you need **families**: a house with an **adult man and woman**,
+**spare room**, and a **food surplus** bears **children**. Children take a housing
+slot, eat a **half ration**, **can't work**, and grow into adults at **age 4**.
+**Old age** claims villagers from about **35 onward** (a rising yearly chance up to
+~48), so keep raising the next generation.
+
+**Health & Happiness** (shown as averages ❤️/😊 in the HUD, per-villager on inspect):
+- **Health** rises with a **varied diet** (more kinds of food buildings working) and
+  enough food; low health means more illness and earlier old-age death.
+- **Happiness** rises with **housing room**, **clothing**, and a **food surplus**;
+  happier villages have **more children**.
+- Both also affect **work output** — unhealthy or unhappy villagers produce less.
+
+**Schools (🏫, Civic).** Staff a school with a teacher and the **children who grow up
+while it runs become educated adults who produce ~30% more**. The HUD's age chip shows
+🧒 children · 🧑 adults · 👴 elders.
 
 ### Trading (🚢)
 

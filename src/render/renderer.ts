@@ -49,6 +49,7 @@ const BUILDING_COLORS: Record<BuildingType, string> = {
   herbalist: '#4f8a5a',
   hospital: '#b85a5a',
   well: '#5f7fa0',
+  market: '#a07a3f',
   barn: '#6f6a4a',
 };
 

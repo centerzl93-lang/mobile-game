@@ -112,6 +112,13 @@ while it runs become educated adults who produce ~30% more**. The HUD's age chip
 - **Fire** can break out and **burn a building down**, spreading to neighbours. Build
   **⛲ Wells** near your town — buildings within range are usually saved.
 
+### Markets (🛒)
+
+A **Market** is extra storage you place among your homes and workshops. Villagers
+deliver and fetch at the **nearest** storage, so a market cuts long hauling trips, and
+its **vendors keep a bit of every good in stock** by ferrying from your barns. Storage
+capacity now = your barns (5000 each) + markets (2000 each).
+
 ### Trading (🚢)
 
 Build a **Trading Post** on the shore and staff it. Every few seasons a

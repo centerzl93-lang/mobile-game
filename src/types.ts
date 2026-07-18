@@ -79,6 +79,7 @@ export type BuildingType =
   | 'herbalist'
   | 'hospital'
   | 'well'
+  | 'market'
   | 'barn';
 
 export type MineOutput = 'coal' | 'iron';
@@ -216,6 +217,8 @@ export const SEASON_LENGTH = 10 * 60; // 10 real minutes per season at 1x speed
 // ---- Housing / storage / logistics ----
 export const HOUSING_PER_HOUSE = 4;
 export const BARN_CAPACITY = 5000; // total units a single barn can hold
+export const MARKET_CAPACITY = 2000; // total units a market holds
+export const MARKET_STOCK_TARGET = 60; // per-resource amount a vendor keeps stocked
 export const CARRY_CAP = 12; // units a villager carries per trip
 export const REFUND_FRACTION = 0.25; // fraction of build cost reclaimed on demolish
 export const WORK_SECONDS = 4; // seconds of work to fill/convert one carry-load
@@ -406,6 +409,11 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     cost: { wood: 6, stone: 8 }, jobs: 0, buildTime: 4,
     desc: 'Provides water to fight fires. Buildings nearby rarely burn down.',
   },
+  market: {
+    type: 'market', name: 'Market', emoji: '🛒', category: 'resources', w: 3, h: 2,
+    cost: { wood: 22, stone: 10 }, jobs: 2, buildTime: 8,
+    desc: 'Vendors keep a bit of every good in stock here, so nearby homes and workshops fetch and deliver locally instead of hiking to a distant barn.',
+  },
   barn: {
     type: 'barn', name: 'Barn', emoji: '🛖', category: 'resources', w: 2, h: 2,
     cost: { wood: 16 }, jobs: 0, buildTime: 6,
@@ -440,5 +448,6 @@ export const BUILD_ORDER: BuildingType[] = [
   'herbalist',
   'hospital',
   'well',
+  'market',
   'barn',
 ];

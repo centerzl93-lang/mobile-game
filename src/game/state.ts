@@ -7,6 +7,7 @@ import {
   BUILDING_DEFS,
   HOUSING_PER_HOUSE,
   BARN_CAPACITY,
+  MARKET_CAPACITY,
   START_RESOURCES,
   MERCHANT_VISIT_EVERY,
   START_HEALTH,
@@ -98,7 +99,11 @@ export function housingCapacity(s: GameState): number {
 
 export function storageCap(s: GameState): number {
   let n = 0;
-  for (const b of s.buildings) if (b.built && b.type === 'barn') n += BARN_CAPACITY;
+  for (const b of s.buildings) {
+    if (!b.built) continue;
+    if (b.type === 'barn') n += BARN_CAPACITY;
+    else if (b.type === 'market') n += MARKET_CAPACITY;
+  }
   return n;
 }
 

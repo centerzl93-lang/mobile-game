@@ -47,6 +47,8 @@ import {
   WELL_DOUSE_CHANCE,
   FIRE_SPREAD_CHANCE,
   FIRE_BURN_SECONDS,
+  MARKET_STOCK_TARGET,
+  RESOURCE_KINDS,
   BuildingType,
   isAdult,
 } from '../types';
@@ -61,6 +63,8 @@ import {
   consume,
   nearestBarnWith,
   nearestBarnWithRoom,
+  nearestBarnOnlyWith,
+  barnFree,
 } from './storage';
 
 export type LogKind = 'info' | 'good' | 'bad';
@@ -216,6 +220,10 @@ function firstMissingInput(b: Building): ResourceKind | null {
 }
 
 function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor: number): void {
+  if (b.type === 'market') {
+    runVendor(s, c, b, dt);
+    return;
+  }
   // 1. Carrying output? Haul it to the nearest barn with room.
   if (c.carry) {
     const barn = nearestBarnWithRoom(s, { x: c.x, y: c.y });
@@ -271,6 +279,48 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
         const prod = wellbeing * (c.educated ? EDUCATED_BONUS : 1);
         c.carry = { kind: out.kind, amount: Math.min(CARRY_CAP, out.amount * prod) };
       }
+    }
+  }
+}
+
+/** Market vendor: ferry a bit of every good from barns into the market stall. */
+function runVendor(s: GameState, c: Citizen, b: Building, dt: number): void {
+  if (c.carry) {
+    goTo(c, buildingCenter(b));
+    if (stepTo(s, c, dt)) {
+      const put = Math.min(c.carry.amount, barnFree(b));
+      if (put > 0) b.store[c.carry.kind] = (b.store[c.carry.kind] ?? 0) + put;
+      c.carry.amount -= put;
+      if (c.carry.amount > 0.01) {
+        const left = addNearest(s, { x: c.x, y: c.y }, c.carry.kind, c.carry.amount);
+        c.carry = left > 0 ? { kind: c.carry.kind, amount: left } : null;
+      } else c.carry = null;
+    }
+    return;
+  }
+  // Find a good the market is short on that a barn can supply.
+  let want: { kind: (typeof RESOURCE_KINDS)[number]; barn: Building } | null = null;
+  for (const k of RESOURCE_KINDS) {
+    if ((b.store[k] ?? 0) >= MARKET_STOCK_TARGET) continue;
+    const barn = nearestBarnOnlyWith(s, buildingCenter(b), k);
+    if (barn) {
+      want = { kind: k, barn };
+      break;
+    }
+  }
+  if (!want) {
+    goTo(c, buildingCenter(b));
+    stepTo(s, c, dt);
+    return;
+  }
+  goTo(c, buildingCenter(want.barn));
+  if (stepTo(s, c, dt)) {
+    const need = MARKET_STOCK_TARGET - (b.store[want.kind] ?? 0);
+    const take = Math.min(CARRY_CAP, need, want.barn.store[want.kind] ?? 0);
+    if (take > 0) {
+      want.barn.store[want.kind] = (want.barn.store[want.kind] ?? 0) - take;
+      if ((want.barn.store[want.kind] ?? 0) <= 0) delete want.barn.store[want.kind];
+      c.carry = { kind: want.kind, amount: take };
     }
   }
 }

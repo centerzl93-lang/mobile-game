@@ -1,4 +1,11 @@
-import { GameState, Building, ResourceKind, BUILDING_DEFS, BARN_CAPACITY } from '../types';
+import {
+  GameState,
+  Building,
+  ResourceKind,
+  BUILDING_DEFS,
+  BARN_CAPACITY,
+  MARKET_CAPACITY,
+} from '../types';
 
 export interface Pos {
   x: number;
@@ -16,8 +23,13 @@ function dist2(a: Pos, b: Pos): number {
   return dx * dx + dy * dy;
 }
 
-export function barns(s: GameState): Building[] {
-  return s.buildings.filter((b) => b.built && b.type === 'barn');
+export function capacityOf(b: Building): number {
+  return b.type === 'market' ? MARKET_CAPACITY : BARN_CAPACITY;
+}
+
+/** All storage that goods can live in: barns and markets. */
+export function storageNodes(s: GameState): Building[] {
+  return s.buildings.filter((b) => b.built && (b.type === 'barn' || b.type === 'market'));
 }
 
 export function barnLoad(b: Building): number {
@@ -27,22 +39,24 @@ export function barnLoad(b: Building): number {
 }
 
 export function barnFree(b: Building): number {
-  return BARN_CAPACITY - barnLoad(b);
+  return capacityOf(b) - barnLoad(b);
 }
 
 export function storageCapTotal(s: GameState): number {
-  return barns(s).length * BARN_CAPACITY;
+  let n = 0;
+  for (const b of storageNodes(s)) n += capacityOf(b);
+  return n;
 }
 
 export function totalStored(s: GameState, kind: ResourceKind): number {
   let n = 0;
-  for (const b of barns(s)) n += b.store[kind] ?? 0;
+  for (const b of storageNodes(s)) n += b.store[kind] ?? 0;
   return n;
 }
 
 export function totalStoredAll(s: GameState): Record<ResourceKind, number> {
   const out = {} as Record<ResourceKind, number>;
-  for (const b of barns(s)) {
+  for (const b of storageNodes(s)) {
     for (const k in b.store) {
       const kind = k as ResourceKind;
       out[kind] = (out[kind] ?? 0) + (b.store[kind] ?? 0);
@@ -53,30 +67,20 @@ export function totalStoredAll(s: GameState): Record<ResourceKind, number> {
 
 export function freeCapacity(s: GameState): number {
   let n = 0;
-  for (const b of barns(s)) n += barnFree(b);
+  for (const b of storageNodes(s)) n += barnFree(b);
   return n;
 }
 
-/** Nearest built barn that holds at least 1 of `kind`. */
+/** Nearest storage node that holds at least 1 of `kind`. */
 export function nearestBarnWith(s: GameState, pos: Pos, kind: ResourceKind): Building | null {
-  let best: Building | null = null;
-  let bestD = Infinity;
-  for (const b of barns(s)) {
-    if ((b.store[kind] ?? 0) <= 0) continue;
-    const d = dist2(center(b), pos);
-    if (d < bestD) {
-      bestD = d;
-      best = b;
-    }
-  }
-  return best;
+  return nearestHolding(storageNodes(s), pos, kind);
 }
 
-/** Nearest built barn with any free room. */
+/** Nearest storage node with any free room. */
 export function nearestBarnWithRoom(s: GameState, pos: Pos): Building | null {
   let best: Building | null = null;
   let bestD = Infinity;
-  for (const b of barns(s)) {
+  for (const b of storageNodes(s)) {
     if (barnFree(b) <= 0) continue;
     const d = dist2(center(b), pos);
     if (d < bestD) {
@@ -87,10 +91,33 @@ export function nearestBarnWithRoom(s: GameState, pos: Pos): Building | null {
   return best;
 }
 
-/** Remove up to `amount` of `kind` starting from the nearest barns. Returns amount taken. */
+/** Nearest *barn* (not a market) holding `kind` — used by market vendors restocking. */
+export function nearestBarnOnlyWith(s: GameState, pos: Pos, kind: ResourceKind): Building | null {
+  return nearestHolding(
+    s.buildings.filter((b) => b.built && b.type === 'barn'),
+    pos,
+    kind,
+  );
+}
+
+function nearestHolding(list: Building[], pos: Pos, kind: ResourceKind): Building | null {
+  let best: Building | null = null;
+  let bestD = Infinity;
+  for (const b of list) {
+    if ((b.store[kind] ?? 0) <= 0) continue;
+    const d = dist2(center(b), pos);
+    if (d < bestD) {
+      bestD = d;
+      best = b;
+    }
+  }
+  return best;
+}
+
+/** Remove up to `amount` of `kind` starting from the nearest storage. Returns amount taken. */
 export function takeNearest(s: GameState, pos: Pos, kind: ResourceKind, amount: number): number {
   let need = amount;
-  const list = barns(s)
+  const list = storageNodes(s)
     .filter((b) => (b.store[kind] ?? 0) > 0)
     .sort((a, b) => dist2(center(a), pos) - dist2(center(b), pos));
   for (const b of list) {
@@ -104,10 +131,10 @@ export function takeNearest(s: GameState, pos: Pos, kind: ResourceKind, amount: 
   return amount - need;
 }
 
-/** Add `amount` of `kind` into the nearest barns with room. Returns leftover not stored. */
+/** Add `amount` of `kind` into the nearest storage with room. Returns leftover not stored. */
 export function addNearest(s: GameState, pos: Pos, kind: ResourceKind, amount: number): number {
   let left = amount;
-  const list = barns(s)
+  const list = storageNodes(s)
     .filter((b) => barnFree(b) > 0)
     .sort((a, b) => dist2(center(a), pos) - dist2(center(b), pos));
   for (const b of list) {
@@ -120,10 +147,10 @@ export function addNearest(s: GameState, pos: Pos, kind: ResourceKind, amount: n
   return left;
 }
 
-/** Non-spatial removal (eating/heating): take from any barns. Returns shortfall. */
+/** Non-spatial removal (eating/heating): take from any storage. Returns shortfall. */
 export function consume(s: GameState, kind: ResourceKind, amount: number): number {
   let need = amount;
-  for (const b of barns(s)) {
+  for (const b of storageNodes(s)) {
     if (need <= 0) break;
     const have = b.store[kind] ?? 0;
     const take = Math.min(have, need);
@@ -134,7 +161,7 @@ export function consume(s: GameState, kind: ResourceKind, amount: number): numbe
   return need;
 }
 
-/** Does storage hold at least the given cost across all barns? */
+/** Does storage hold at least the given cost across all nodes? */
 export function canAffordCost(s: GameState, cost: Partial<Record<ResourceKind, number>>): boolean {
   for (const k in cost) {
     const kind = k as ResourceKind;

@@ -6,7 +6,7 @@ import { UI } from './ui/ui';
 import { GameState, BuildingType, BUILDING_DEFS, MAP_W, MAP_H } from './types';
 import { newGame } from './game/state';
 import { update, LogKind } from './game/simulation';
-import { canPlace, placeBuilding } from './game/buildings';
+import { canPlace, placeBuilding, canAfford } from './game/buildings';
 import { saveGame, loadGame } from './game/save';
 
 const SPEEDS = [1, 2, 3];
@@ -132,10 +132,10 @@ class Game {
     this.ui.log(`${def.name} placed`, 'info');
     this.persist();
     // If the next one is now unaffordable, drop out of build mode.
-    if (this.state.resources.wood < def.woodCost) {
+    if (!canAfford(this.state, this.selectedBuild)) {
       this.selectedBuild = null;
       this.ui.clearSelection();
-      this.ui.flashHint('Out of wood — build a woodcutter to make more');
+      this.ui.flashHint('Not enough resources for another — gather more first');
     }
   }
 

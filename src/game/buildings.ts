@@ -1,4 +1,4 @@
-import { GameState, Building, BuildingType, BUILDING_DEFS } from '../types';
+import { GameState, Building, BuildingType, BUILDING_DEFS, ResourceKind } from '../types';
 import { getTile, inBounds } from './world';
 
 export interface PlaceResult {
@@ -26,8 +26,15 @@ export function canPlace(s: GameState, type: BuildingType, x: number, y: number)
       return { ok: false, reason: 'Overlaps a building' };
     }
   }
-  if (s.resources.wood < def.woodCost) {
-    return { ok: false, reason: `Need ${def.woodCost} wood` };
+  // Quarries and mines must sit next to rock to have anything to dig.
+  if ((type === 'quarry' || type === 'mine') && nearbyStone(s, def, x, y) < 1) {
+    return { ok: false, reason: 'Must be built next to rock' };
+  }
+  // Enough of every resource in the cost.
+  for (const [kind, amount] of Object.entries(def.cost) as [ResourceKind, number][]) {
+    if (s.resources[kind] < amount) {
+      return { ok: false, reason: `Need ${amount} ${kind}` };
+    }
   }
   return { ok: true };
 }
@@ -41,7 +48,9 @@ export function placeBuilding(
   const check = canPlace(s, type, x, y);
   if (!check.ok) return null;
   const def = BUILDING_DEFS[type];
-  s.resources.wood -= def.woodCost;
+  for (const [kind, amount] of Object.entries(def.cost) as [ResourceKind, number][]) {
+    s.resources[kind] -= amount;
+  }
   const b: Building = {
     id: s.nextId++,
     type,
@@ -54,6 +63,15 @@ export function placeBuilding(
   };
   s.buildings.push(b);
   return b;
+}
+
+/** True if the stockpile can afford to place this building right now. */
+export function canAfford(s: GameState, type: BuildingType): boolean {
+  const def = BUILDING_DEFS[type];
+  for (const [kind, amount] of Object.entries(def.cost) as [ResourceKind, number][]) {
+    if (s.resources[kind] < amount) return false;
+  }
+  return true;
 }
 
 function rectsOverlap(
@@ -69,16 +87,38 @@ function rectsOverlap(
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 }
 
-/** Count forest resource in the tiles surrounding a building (for yields). */
+function centerTile(x: number, y: number, w: number, h: number): { cx: number; cy: number } {
+  return { cx: Math.floor(x + w / 2), cy: Math.floor(y + h / 2) };
+}
+
+/** Total forest-resource in tiles surrounding a building (drives wood/food yields). */
 export function nearbyForest(s: GameState, b: Building, radius = 4): number {
   const def = BUILDING_DEFS[b.type];
-  const cx = Math.floor(b.x + def.w / 2);
-  const cy = Math.floor(b.y + def.h / 2);
+  const { cx, cy } = centerTile(b.x, b.y, def.w, def.h);
   let total = 0;
   for (let dy = -radius; dy <= radius; dy++) {
     for (let dx = -radius; dx <= radius; dx++) {
       const t = getTile(s.tiles, cx + dx, cy + dy);
       if (t && t.type === 'forest') total += t.trees;
+    }
+  }
+  return total;
+}
+
+/** Count of rock tiles surrounding a footprint (drives quarry/mine yields). */
+export function nearbyStone(
+  s: GameState,
+  def: { w: number; h: number },
+  x: number,
+  y: number,
+  radius = 4,
+): number {
+  const { cx, cy } = centerTile(x, y, def.w, def.h);
+  let total = 0;
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const t = getTile(s.tiles, cx + dx, cy + dy);
+      if (t && t.type === 'stone') total += 1;
     }
   }
   return total;

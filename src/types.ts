@@ -12,13 +12,23 @@ export interface Tile {
   trees: number;
 }
 
-export type ResourceKind = 'food' | 'wood' | 'firewood';
+export type ResourceKind = 'food' | 'wood' | 'firewood' | 'stone' | 'coal';
 
 export interface Resources {
   food: number;
   wood: number;
   firewood: number;
+  stone: number;
+  coal: number;
 }
+
+export const RESOURCE_ICON: Record<ResourceKind, string> = {
+  food: '🌾',
+  wood: '🪵',
+  firewood: '🔥',
+  stone: '🪨',
+  coal: '⚫',
+};
 
 export type Season = 'Spring' | 'Summer' | 'Autumn' | 'Winter';
 export const SEASONS: Season[] = ['Spring', 'Summer', 'Autumn', 'Winter'];
@@ -26,8 +36,11 @@ export const SEASONS: Season[] = ['Spring', 'Summer', 'Autumn', 'Winter'];
 export type BuildingType =
   | 'house'
   | 'gatherer'
-  | 'woodcutter'
   | 'farm'
+  | 'lumberyard'
+  | 'woodcutter'
+  | 'quarry'
+  | 'mine'
   | 'barn';
 
 export interface BuildingDef {
@@ -36,10 +49,11 @@ export interface BuildingDef {
   emoji: string;
   w: number;
   h: number;
-  woodCost: number;
+  /** Resources spent to place it. */
+  cost: Partial<Record<ResourceKind, number>>;
   /** Max workers this building employs (0 = no jobs, e.g. house/barn). */
   jobs: number;
-  /** Seconds of work to finish construction. */
+  /** Seconds of work to finish construction (by builders). */
   buildTime: number;
   desc: string;
 }
@@ -65,6 +79,7 @@ export interface Citizen {
   tx: number; // current move target
   ty: number;
   homeId: number | null;
+  /** Building this villager works at; null means a builder/laborer. */
   jobId: number | null;
   state: CitizenState;
   timer: number; // seconds remaining in current state activity
@@ -84,16 +99,37 @@ export interface GameState {
   everLived: boolean;
 }
 
-// ---- Balance constants ----
-export const SEASON_LENGTH = 24; // seconds per season at 1x speed
+// ---- Time ----
+export const SEASON_LENGTH = 20 * 60; // 20 real minutes per season at 1x speed
+
+// ---- Housing / storage ----
 export const HOUSING_PER_HOUSE = 4;
-export const STORAGE_BASE = 60;
-export const STORAGE_PER_BARN = 120;
+export const STORAGE_BASE = 80;
+export const STORAGE_PER_BARN = 140;
+
+// ---- Consumption (per season) ----
 export const FOOD_PER_CITIZEN_PER_SEASON = 5;
-export const FIREWOOD_PER_CITIZEN_WINTER = 4;
-export const START_FOOD = 60;
-export const START_WOOD = 45;
-export const START_FIREWOOD = 24;
+/** Heat units each villager needs to survive winter. */
+export const HEAT_PER_CITIZEN_WINTER = 4;
+/** Heat value of fuels: firewood = 1 heat, coal = 2 heat (burns hotter/longer). */
+export const FIREWOOD_HEAT = 1;
+export const COAL_HEAT = 2;
+
+// ---- Production (per assigned worker, per season, before local factors) ----
+export const GATHER_FOOD_PER_SEASON = 15;
+export const LUMBER_WOOD_PER_SEASON = 13;
+export const WOODCUT_FIREWOOD_PER_SEASON = 18;
+export const WOODCUT_WOOD_PER_SEASON = 11; // wood consumed to make that firewood
+export const FARM_FOOD_PER_WORKER = 36; // at full growth, paid at autumn harvest
+export const QUARRY_STONE_PER_SEASON = 9;
+export const MINE_COAL_PER_SEASON = 7;
+
+// ---- Starting stockpile / population ----
+export const START_FOOD = 70;
+export const START_WOOD = 55;
+export const START_FIREWOOD = 30;
+export const START_STONE = 0;
+export const START_COAL = 0;
 export const START_CITIZENS = 4;
 
 export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
@@ -103,9 +139,9 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     emoji: '🏠',
     w: 2,
     h: 2,
-    woodCost: 12,
+    cost: { wood: 12 },
     jobs: 0,
-    buildTime: 5,
+    buildTime: 6,
     desc: 'Homes up to 4 villagers and lets families grow.',
   },
   gatherer: {
@@ -114,21 +150,10 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     emoji: '🧺',
     w: 2,
     h: 2,
-    woodCost: 10,
+    cost: { wood: 10 },
     jobs: 2,
-    buildTime: 5,
+    buildTime: 6,
     desc: 'Collects food from nearby forest all year round.',
-  },
-  woodcutter: {
-    type: 'woodcutter',
-    name: 'Woodcutter',
-    emoji: '🪓',
-    w: 2,
-    h: 2,
-    woodCost: 8,
-    jobs: 2,
-    buildTime: 5,
-    desc: 'Fells nearby trees for wood and splits firewood.',
   },
   farm: {
     type: 'farm',
@@ -136,10 +161,54 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     emoji: '🌱',
     w: 3,
     h: 3,
-    woodCost: 6,
+    cost: { wood: 6 },
     jobs: 2,
-    buildTime: 4,
+    buildTime: 5,
     desc: 'Grows crops through the year; harvested each autumn.',
+  },
+  lumberyard: {
+    type: 'lumberyard',
+    name: 'Lumberyard',
+    emoji: '🌲',
+    w: 2,
+    h: 2,
+    cost: { wood: 12 },
+    jobs: 2,
+    buildTime: 6,
+    desc: 'Foresters tend nearby woods and fell trees for wood (logs).',
+  },
+  woodcutter: {
+    type: 'woodcutter',
+    name: 'Woodcutter',
+    emoji: '🪓',
+    w: 2,
+    h: 2,
+    cost: { wood: 10 },
+    jobs: 2,
+    buildTime: 6,
+    desc: 'Splits stockpiled wood into firewood to heat homes in winter.',
+  },
+  quarry: {
+    type: 'quarry',
+    name: 'Quarry',
+    emoji: '⛏️',
+    w: 2,
+    h: 2,
+    cost: { wood: 12 },
+    jobs: 2,
+    buildTime: 7,
+    desc: 'Cuts stone from a nearby rocky outcrop. Build next to rock.',
+  },
+  mine: {
+    type: 'mine',
+    name: 'Coal Mine',
+    emoji: '🕳️',
+    w: 2,
+    h: 2,
+    cost: { wood: 14, stone: 10 },
+    jobs: 2,
+    buildTime: 8,
+    desc: 'Digs coal from the mountains — a hotter winter fuel than firewood.',
   },
   barn: {
     type: 'barn',
@@ -147,17 +216,20 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     emoji: '🛖',
     w: 2,
     h: 2,
-    woodCost: 14,
+    cost: { wood: 16 },
     jobs: 0,
-    buildTime: 5,
-    desc: 'Raises how much food, wood and firewood you can store.',
+    buildTime: 6,
+    desc: 'Raises how much of every resource you can store.',
   },
 };
 
 export const BUILD_ORDER: BuildingType[] = [
   'house',
   'gatherer',
-  'woodcutter',
   'farm',
+  'lumberyard',
+  'woodcutter',
+  'quarry',
+  'mine',
   'barn',
 ];

@@ -6,22 +6,32 @@ import {
   SEASON_LENGTH,
   SEASONS,
   FOOD_PER_CITIZEN_PER_SEASON,
-  FIREWOOD_PER_CITIZEN_WINTER,
+  HEAT_PER_CITIZEN_WINTER,
+  FIREWOOD_HEAT,
+  COAL_HEAT,
+  GATHER_FOOD_PER_SEASON,
+  LUMBER_WOOD_PER_SEASON,
+  WOODCUT_FIREWOOD_PER_SEASON,
+  WOODCUT_WOOD_PER_SEASON,
+  FARM_FOOD_PER_WORKER,
+  QUARRY_STONE_PER_SEASON,
+  MINE_COAL_PER_SEASON,
   ResourceKind,
 } from '../types';
 import { storageCap, housingCapacity, buildingCenter } from './state';
-import { nearbyForest } from './buildings';
+import { nearbyForest, nearbyStone } from './buildings';
 import { getTile } from './world';
 
 export type LogKind = 'info' | 'good' | 'bad';
 export type LogFn = (msg: string, kind?: LogKind) => void;
 
-// Production rates (per worker, per second).
-const GATHER_RATE = 0.9;
-const WOOD_RATE = 0.6;
-const FIREWOOD_RATE = 0.5;
-const FARM_YIELD = 26; // food per worker at a full-grown autumn harvest
-const TREE_REGROW = 0.004; // per second, per forest tile
+// Local-resource "ideal" amounts: yields scale from 0.15 (sparse) up to 1 (rich).
+const FOREST_IDEAL = 8;
+const STONE_IDEAL = 6;
+const MIN_FACTOR = 0.15;
+
+const TREE_REGROW = 0.02; // forest recovery per second per sampled tile
+const LUMBER_DEPLETE = 0.06; // trees felled per lumberyard worker per second of ideal work
 const WALK_SPEED = 2.6; // tiles per second
 
 /** Advance the whole simulation by `dt` seconds (already scaled by game speed). */
@@ -49,10 +59,15 @@ function reconcileWorkers(s: GameState): void {
   }
 }
 
+// ---- Jobs / builders --------------------------------------------------------
+// Villagers with no jobId are *builders* (laborers): they raise unfinished
+// buildings. Every job building auto-staffs itself from the pool of builders up
+// to its worker slots, so each workplace ends up with assigned villagers.
+
 function advanceConstruction(s: GameState, dt: number, log: LogFn): void {
-  // Builders = citizens without a job speed things up; base rate always applies.
-  const idle = s.citizens.filter((c) => c.jobId === null).length;
-  const speed = 1 + Math.min(idle, 4) * 0.25;
+  const builders = s.citizens.filter((c) => c.jobId === null).length;
+  // Construction needs builders; a lone base rate keeps it inching if none free.
+  const speed = 0.4 + Math.min(builders, 5) * 0.4;
   for (const b of s.buildings) {
     if (b.built) continue;
     b.progress += dt * speed;
@@ -81,47 +96,77 @@ function assignHomesAndJobs(s: GameState): void {
     }
   }
 
-  // Jobs: fill open slots with unemployed citizens.
+  // Jobs: fill open slots at built workplaces with available builders.
   const employed = new Set<number>();
   for (const b of s.buildings) for (const id of b.workers) employed.add(id);
-  const jobless = s.citizens.filter((c) => !employed.has(c.id));
-  let ji = 0;
+  const builders = s.citizens.filter((c) => !employed.has(c.id));
+  let bi = 0;
   for (const b of s.buildings) {
     if (!b.built) continue;
     const slots = BUILDING_DEFS[b.type].jobs;
-    while (b.workers.length < slots && ji < jobless.length) {
-      const c = jobless[ji++];
+    while (b.workers.length < slots && bi < builders.length) {
+      const c = builders[bi++];
       b.workers.push(c.id);
       c.jobId = b.id;
     }
   }
-  // Clear stale jobId for anyone not in a worker list.
+  // Anyone not in a worker list is a builder again.
   const stillEmployed = new Set<number>();
   for (const b of s.buildings) for (const id of b.workers) stillEmployed.add(id);
   for (const c of s.citizens) if (!stillEmployed.has(c.id)) c.jobId = null;
 }
 
+// ---- Production -------------------------------------------------------------
+
+function forestFactor(s: GameState, b: Building): number {
+  return clamp(nearbyForest(s, b) / FOREST_IDEAL, MIN_FACTOR, 1);
+}
+
+function stoneFactor(s: GameState, b: Building): number {
+  const def = BUILDING_DEFS[b.type];
+  return clamp(nearbyStone(s, def, b.x, b.y) / STONE_IDEAL, MIN_FACTOR, 1);
+}
+
 function produce(s: GameState, dt: number): void {
   const cap = storageCap(s);
+  const perSeason = dt / SEASON_LENGTH; // fraction of a season elapsed this step
   for (const b of s.buildings) {
     if (!b.built || b.workers.length === 0) continue;
     const w = b.workers.length;
     switch (b.type) {
-      case 'gatherer': {
-        const forest = Math.min(nearbyForest(s, b), 6) / 6; // 0..1
-        add(s, 'food', w * GATHER_RATE * (0.35 + forest) * dt, cap);
+      case 'gatherer':
+        add(s, 'food', GATHER_FOOD_PER_SEASON * w * forestFactor(s, b) * perSeason, cap);
+        break;
+
+      case 'lumberyard': {
+        const f = forestFactor(s, b);
+        add(s, 'wood', LUMBER_WOOD_PER_SEASON * w * f * perSeason, cap);
+        // Foresters both fell and tend: light depletion, but replant nearby.
+        depleteNearbyTrees(s, b, LUMBER_DEPLETE * w * f * dt);
+        tendForest(s, b, dt);
         break;
       }
+
       case 'woodcutter': {
-        const forest = Math.min(nearbyForest(s, b), 6) / 6;
-        const factor = 0.25 + forest;
-        add(s, 'wood', w * WOOD_RATE * factor * dt, cap);
-        add(s, 'firewood', w * FIREWOOD_RATE * factor * dt, cap);
-        depleteNearbyTrees(s, b, w * 0.02 * dt);
+        // Split stockpiled wood into firewood. Output is limited by wood on hand.
+        const woodWant = WOODCUT_WOOD_PER_SEASON * w * perSeason;
+        const ratio = woodWant > 0 ? Math.min(1, s.resources.wood / woodWant) : 0;
+        if (ratio > 0) {
+          s.resources.wood -= woodWant * ratio;
+          add(s, 'firewood', WOODCUT_FIREWOOD_PER_SEASON * w * ratio * perSeason, cap);
+        }
         break;
       }
+
+      case 'quarry':
+        add(s, 'stone', QUARRY_STONE_PER_SEASON * w * stoneFactor(s, b) * perSeason, cap);
+        break;
+
+      case 'mine':
+        add(s, 'coal', MINE_COAL_PER_SEASON * w * stoneFactor(s, b) * perSeason, cap);
+        break;
+
       case 'farm': {
-        // Crops mature through spring & summer, then wait for autumn harvest.
         const season = SEASONS[s.season];
         if (season === 'Spring' || season === 'Summer') {
           b.growth = Math.min(1, b.growth + dt / (SEASON_LENGTH * 1.6));
@@ -131,6 +176,8 @@ function produce(s: GameState, dt: number): void {
     }
   }
 }
+
+// ---- Season turnover --------------------------------------------------------
 
 function endSeason(s: GameState, log: LogFn): void {
   s.season = (s.season + 1) % SEASONS.length;
@@ -146,7 +193,7 @@ function endSeason(s: GameState, log: LogFn): void {
     let harvested = 0;
     for (const b of s.buildings) {
       if (b.built && b.type === 'farm' && b.workers.length > 0) {
-        harvested += b.workers.length * FARM_YIELD * b.growth;
+        harvested += b.workers.length * FARM_FOOD_PER_WORKER * b.growth;
         b.growth = 0;
       }
     }
@@ -169,14 +216,23 @@ function endSeason(s: GameState, log: LogFn): void {
     log(`${starved} villager${starved > 1 ? 's' : ''} starved`, 'bad');
   }
 
-  // Firewood consumption in winter only.
+  // Winter heating: burn firewood first, then coal (which burns hotter).
   if (season === 'Winter' && s.citizens.length > 0) {
     const pop2 = s.citizens.length;
-    const woodNeed = pop2 * FIREWOOD_PER_CITIZEN_WINTER;
-    s.resources.firewood -= woodNeed;
-    if (s.resources.firewood < 0) {
-      const froze = Math.min(pop2, Math.ceil(-s.resources.firewood / FIREWOOD_PER_CITIZEN_WINTER));
-      s.resources.firewood = 0;
+    let heatNeed = pop2 * HEAT_PER_CITIZEN_WINTER;
+
+    const burnWood = Math.min(s.resources.firewood, heatNeed / FIREWOOD_HEAT);
+    s.resources.firewood -= burnWood;
+    heatNeed -= burnWood * FIREWOOD_HEAT;
+
+    if (heatNeed > 0 && s.resources.coal > 0) {
+      const burnCoal = Math.min(s.resources.coal, Math.ceil(heatNeed / COAL_HEAT));
+      s.resources.coal -= burnCoal;
+      heatNeed -= burnCoal * COAL_HEAT;
+    }
+
+    if (heatNeed > 0.001) {
+      const froze = Math.min(pop2, Math.ceil(heatNeed / HEAT_PER_CITIZEN_WINTER));
       killCitizens(s, froze);
       log(`${froze} villager${froze > 1 ? 's' : ''} froze in the cold`, 'bad');
     }
@@ -188,9 +244,13 @@ function endSeason(s: GameState, log: LogFn): void {
     const freeHousing = housingCapacity(s) - popNow;
     const comfortable = s.resources.food > popNow * FOOD_PER_CITIZEN_PER_SEASON * 2;
     if (freeHousing >= 1 && comfortable) {
-      const births = freeHousing >= 2 && s.resources.food > popNow * FOOD_PER_CITIZEN_PER_SEASON * 4 ? 2 : 1;
+      const births =
+        freeHousing >= 2 && s.resources.food > popNow * FOOD_PER_CITIZEN_PER_SEASON * 4 ? 2 : 1;
       for (let i = 0; i < births; i++) spawnCitizen(s);
-      log(births > 1 ? `${births} villagers joined the village` : `A villager joined the village`, 'good');
+      log(
+        births > 1 ? `${births} villagers joined the village` : `A villager joined the village`,
+        'good',
+      );
     }
   }
 
@@ -213,9 +273,7 @@ function killCitizens(s: GameState, n: number): void {
 }
 
 function spawnCitizen(s: GameState): void {
-  const house = s.buildings.find(
-    (b) => b.built && b.type === 'house' && countHome(s, b.id) < 4,
-  );
+  const house = s.buildings.find((b) => b.built && b.type === 'house' && countHome(s, b.id) < 4);
   const at = house ? buildingCenter(house) : centreOfVillage(s);
   s.citizens.push({
     id: s.nextId++,
@@ -224,7 +282,7 @@ function spawnCitizen(s: GameState): void {
     tx: at.x,
     ty: at.y,
     homeId: house ? house.id : null,
-    jobId: null,
+    jobId: null, // newcomers start as builders/laborers
     state: 'wander',
     timer: Math.random() * 2,
     age: 1,
@@ -252,6 +310,8 @@ function centreOfVillage(s: GameState): { x: number; y: number } {
   return { x: x / s.buildings.length, y: y / s.buildings.length };
 }
 
+// ---- Movement ---------------------------------------------------------------
+
 function moveCitizens(s: GameState, dt: number): void {
   for (const c of s.citizens) {
     const dx = c.tx - c.x;
@@ -272,8 +332,8 @@ function pickNextTarget(s: GameState, c: Citizen): void {
   const job = c.jobId !== null ? s.buildings.find((b) => b.id === c.jobId) : null;
   const home = c.homeId !== null ? s.buildings.find((b) => b.id === c.homeId) : null;
 
-  // Commute loop when employed: work -> home -> work.
   if (job && job.built) {
+    // Commute loop: work -> home -> work.
     if (c.state === 'working') {
       const h = home ? buildingCenter(home) : centreOfVillage(s);
       c.tx = h.x + jitter();
@@ -290,23 +350,41 @@ function pickNextTarget(s: GameState, c: Citizen): void {
     return;
   }
 
-  // Unemployed: wander around the village centre.
-  const centre = centreOfVillage(s);
-  c.tx = clampTile(centre.x + (Math.random() - 0.5) * 8);
-  c.ty = clampTile(centre.y + (Math.random() - 0.5) * 8);
+  // Builders: mill about a construction site if one exists, else the centre.
+  const site = s.buildings.find((b) => !b.built);
+  const target = site ? buildingCenter(site) : centreOfVillage(s);
+  const spread = site ? 2.5 : 8;
+  c.tx = clampTile(target.x + (Math.random() - 0.5) * spread);
+  c.ty = clampTile(target.y + (Math.random() - 0.5) * spread);
   c.state = 'wander';
   c.timer = 2 + Math.random() * 3;
 }
 
+// ---- Forest upkeep ----------------------------------------------------------
+
 function regrowForest(s: GameState, dt: number): void {
-  // Cheap: nudge a small random sample of forest tiles back toward full.
   const n = s.tiles.length;
   const samples = 40;
   for (let i = 0; i < samples; i++) {
     const idx = (Math.random() * n) | 0;
     const t = s.tiles[idx];
     if (t.type === 'forest' && t.trees < 1) {
-      t.trees = Math.min(1, t.trees + TREE_REGROW * dt * (n / samples) * 0.05);
+      t.trees = Math.min(1, t.trees + TREE_REGROW * dt * 0.02);
+    }
+  }
+}
+
+function tendForest(s: GameState, b: Building, dt: number): void {
+  // Foresters replant: nudge forest tiles near the lumberyard back toward full.
+  const c = buildingCenter(b);
+  const cx = Math.floor(c.x);
+  const cy = Math.floor(c.y);
+  for (let dy = -4; dy <= 4; dy++) {
+    for (let dx = -4; dx <= 4; dx++) {
+      const t = getTile(s.tiles, cx + dx, cy + dy);
+      if (t && t.type === 'forest' && t.trees < 1) {
+        t.trees = Math.min(1, t.trees + TREE_REGROW * dt * 0.5);
+      }
     }
   }
 }
@@ -327,6 +405,8 @@ function depleteNearbyTrees(s: GameState, b: Building, amount: number): void {
   }
 }
 
+// ---- helpers ----------------------------------------------------------------
+
 function add(s: GameState, kind: ResourceKind, amount: number, cap: number): void {
   s.resources[kind] = Math.max(0, Math.min(cap, s.resources[kind] + amount));
 }
@@ -337,4 +417,8 @@ function jitter(): number {
 
 function clampTile(v: number): number {
   return Math.max(0, Math.min(47.5, v));
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
 }

@@ -19,8 +19,11 @@ export interface PlacementView {
 const BUILDING_COLORS: Record<BuildingType, string> = {
   house: '#b07a45',
   gatherer: '#5a8f4e',
-  woodcutter: '#8a6a3c',
   farm: '#9a8340',
+  lumberyard: '#3f7a3a',
+  woodcutter: '#8a6a3c',
+  quarry: '#8b8e95',
+  mine: '#4a4a52',
   barn: '#7a5a86',
 };
 
@@ -91,6 +94,25 @@ export class Renderer {
           ctx.fillRect(sx + 4, sy + bh - 6, bw - 8, 3);
           ctx.fillStyle = '#8ed66b';
           ctx.fillRect(sx + 4, sy + bh - 6, (bw - 8) * b.growth, 3);
+        }
+        // Worker badge (staffing) on job buildings: green = full, amber = short.
+        if (def.jobs > 0 && p > 12) {
+          const label = `${b.workers.length}/${def.jobs}`;
+          const fs = Math.max(8, Math.floor(p * 0.32));
+          ctx.font = `${fs}px -apple-system, "Segoe UI", sans-serif`;
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'top';
+          const padX = 3;
+          const tw = ctx.measureText(label).width;
+          const bx = sx + 3;
+          const by = sy + 3;
+          const bhh = fs + 3;
+          ctx.fillStyle =
+            b.workers.length >= def.jobs ? 'rgba(30,70,34,0.9)' : 'rgba(120,80,24,0.9)';
+          roundRect(ctx, bx, by, tw + padX * 2, bhh, 3);
+          ctx.fill();
+          ctx.fillStyle = '#eef3e8';
+          ctx.fillText(label, bx + padX, by + 1);
         }
       }
       ctx.restore();

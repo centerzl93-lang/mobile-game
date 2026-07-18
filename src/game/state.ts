@@ -7,8 +7,10 @@ import {
   STORAGE_BASE,
   STORAGE_PER_BARN,
   START_CITIZENS,
+  START_COAL,
   START_FIREWOOD,
   START_FOOD,
+  START_STONE,
   START_WOOD,
 } from '../types';
 import { generateWorld, findStartTile } from './world';
@@ -21,7 +23,13 @@ export function newGame(seed?: number): GameState {
     tiles,
     buildings: [],
     citizens: [],
-    resources: { food: START_FOOD, wood: START_WOOD, firewood: START_FIREWOOD },
+    resources: {
+      food: START_FOOD,
+      wood: START_WOOD,
+      firewood: START_FIREWOOD,
+      stone: START_STONE,
+      coal: START_COAL,
+    },
     season: 0,
     year: 1,
     seasonTimer: 0,

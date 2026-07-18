@@ -3,6 +3,8 @@ import {
   BuildingType,
   BUILD_ORDER,
   BUILDING_DEFS,
+  RESOURCE_ICON,
+  ResourceKind,
 } from '../types';
 import { SEASONS } from '../types';
 import { storageCap, housingCapacity } from '../game/state';
@@ -18,9 +20,12 @@ export interface UICallbacks {
 export class UI {
   private el = {
     pop: byId('stat-pop'),
+    builders: byId('stat-builders'),
     food: byId('stat-food'),
     wood: byId('stat-wood'),
     firewood: byId('stat-firewood'),
+    stone: byId('stat-stone'),
+    coal: byId('stat-coal'),
     season: byId('stat-season'),
     pause: byId('btn-pause'),
     speed: byId('btn-speed'),
@@ -50,7 +55,10 @@ export class UI {
       const btn = document.createElement('button');
       btn.className = 'build-btn';
       btn.dataset.type = type;
-      btn.innerHTML = `<span class="emoji">${def.emoji}</span><span class="name">${def.name}</span><span class="cost">🪵${def.woodCost}</span>`;
+      const cost = (Object.entries(def.cost) as [ResourceKind, number][])
+        .map(([k, a]) => `${RESOURCE_ICON[k]}${a}`)
+        .join(' ');
+      btn.innerHTML = `<span class="emoji">${def.emoji}</span><span class="name">${def.name}</span><span class="cost">${cost}</span>`;
       btn.addEventListener('click', () => this.toggleSelect(type));
       this.el.menu.appendChild(btn);
     }
@@ -83,11 +91,15 @@ export class UI {
 
   updateHud(s: GameState, speed: number, paused: boolean): void {
     const cap = storageCap(s);
+    const builders = s.citizens.reduce((n, c) => n + (c.jobId === null ? 1 : 0), 0);
     this.el.pop.querySelector('.val')!.textContent =
       `${s.citizens.length}/${housingCapacity(s)}`;
+    this.el.builders.querySelector('.val')!.textContent = `${builders}`;
     setStat(this.el.food, s.resources.food, cap);
     setStat(this.el.wood, s.resources.wood, cap);
     setStat(this.el.firewood, s.resources.firewood, cap);
+    setPlain(this.el.stone, s.resources.stone);
+    setPlain(this.el.coal, s.resources.coal);
     this.el.season.querySelector('.val')!.textContent =
       `${SEASONS[s.season]} · Yr ${s.year}`;
     this.el.pause.textContent = paused ? '▶' : '⏸';
@@ -164,6 +176,10 @@ export class UI {
 function setStat(el: HTMLElement, value: number, cap: number): void {
   el.querySelector('.val')!.textContent = `${Math.floor(value)}`;
   el.classList.toggle('low', value <= cap * 0.12);
+}
+
+function setPlain(el: HTMLElement, value: number): void {
+  el.querySelector('.val')!.textContent = `${Math.floor(value)}`;
 }
 
 function byId(id: string): HTMLElement {

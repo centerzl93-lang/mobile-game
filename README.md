@@ -26,18 +26,30 @@ It works offline after the first load, and your village is saved automatically.
 - **Pan:** drag with one finger. **Zoom:** pinch.
 - **Build:** tap a building in the bottom bar, then **pan to line up the green
   outline in the centre of the screen and tap to place it**. Buildings cost
-  wood.
+  resources (shown on each button).
   - 🏠 **House** — homes up to 4 villagers and lets the village grow.
   - 🧺 **Gatherer** — collects food from nearby forest year-round.
-  - 🪓 **Woodcutter** — turns nearby trees into wood and firewood.
   - 🌱 **Field** — grows crops, harvested each **autumn**.
-  - 🛖 **Barn** — raises how much you can store.
-- **Survive:** every season your villagers eat food; every **winter** they also
-  burn firewood. Run out and people die. Get to zero people and it's game over.
-- Use the **speed** (1×/2×/3×) and **pause** buttons (top-right) to manage time.
+  - 🌲 **Lumberyard** — foresters tend the woods and fell trees for **wood**.
+  - 🪓 **Woodcutter** — splits stockpiled **wood → firewood** to heat homes.
+  - ⛏️ **Quarry** — cuts **stone** from a rocky outcrop (build next to rock).
+  - 🕳️ **Coal Mine** — digs **coal**, a hotter winter fuel (needs stone to build).
+  - 🛖 **Barn** — raises how much of every resource you can store.
+- **Jobs:** villagers are **builders** by default (they raise your placed
+  buildings). Each workplace automatically staffs itself from free builders — a
+  badge on the building shows workers, e.g. `2/2` (green = full, amber = short).
+  The 🔨 count in the HUD is how many free builders you have.
+- **Resource chain:** Lumberyard → wood → Woodcutter → firewood. Quarry → stone
+  (also needed to build a mine). Mine → coal.
+- **Survive:** every season villagers eat food; every **winter** they burn fuel
+  (firewood first, then coal — coal burns twice as hot). Run out of food or heat
+  and people die. Zero people is game over.
+- **Time:** each season lasts **20 minutes** at 1×; use **speed** (1×/2×/3×) and
+  **pause** (top-right) to manage it. The game auto-saves, so you can close it
+  and come back.
 
-Tip: your first moves should be a couple of gatherers and a woodcutter near
-forest, then houses, and stockpile firewood **before** winter.
+Tip: start with gatherers near forest, a lumberyard + woodcutter for winter
+firewood, and houses — then push toward a quarry and mine in the hills.
 
 ## Deploy it to your GitHub (one-time setup)
 

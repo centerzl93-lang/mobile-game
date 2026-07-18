@@ -5,6 +5,8 @@ import {
   BUILDING_DEFS,
   RESOURCE_ICON,
   RESOURCE_KINDS,
+  HUD_RESOURCES,
+  FOOD_ICON,
   ResourceKind,
   SURVIVAL_RESOURCES,
   SEASONS,
@@ -21,7 +23,7 @@ import {
   isAdult,
 } from '../types';
 import { housingCapacity } from '../game/state';
-import { totalStoredAll, totalStored } from '../game/storage';
+import { totalStoredAll, totalStored, totalFood } from '../game/storage';
 import { LogKind, tradeCost, TradeResult, avgHealth, avgHappiness } from '../game/simulation';
 
 export type PathTier = 'dirt' | 'stone';
@@ -45,7 +47,6 @@ export interface UICallbacks {
 }
 
 const LOW_NEED: Partial<Record<ResourceKind, number>> = {
-  food: FOOD_PER_CITIZEN_PER_SEASON,
   firewood: HEAT_PER_CITIZEN_WINTER,
   clothing: CLOTHING_PER_CITIZEN_WINTER,
 };
@@ -81,7 +82,7 @@ export class UI {
   private openCategory: BuildCategory | 'paths' | null = null;
   private jobBoardOpen = false;
   private jobSig = '';
-  private tradeGive: ResourceKind = 'food';
+  private tradeGive: ResourceKind = 'grain';
   private tradeGet: ResourceKind = 'livestock';
   private tradeQty = 1;
 
@@ -98,8 +99,16 @@ export class UI {
   }
 
   // ---- HUD ----
+  private foodChip!: HTMLElement;
   private buildResourceChips(): void {
-    for (const kind of RESOURCE_KINDS) {
+    // One combined food chip (all food types), then a chip per non-food resource.
+    const food = document.createElement('div');
+    food.className = 'stat mini';
+    food.title = 'Total food (all types)';
+    food.innerHTML = `<span class="ico">${FOOD_ICON}</span><span class="val">0</span>`;
+    this.el.resources.appendChild(food);
+    this.foodChip = food;
+    for (const kind of HUD_RESOURCES) {
       const chip = document.createElement('div');
       chip.className = 'stat mini';
       chip.innerHTML = `<span class="ico">${RESOURCE_ICON[kind]}</span><span class="val">0</span>`;
@@ -130,7 +139,10 @@ export class UI {
     this.el.sick.classList.add('low');
     this.el.sick.querySelector('.val')!.textContent = `${sick}`;
     this.el.builders.querySelector('.val')!.textContent = `${builders}`;
-    for (const kind of RESOURCE_KINDS) {
+    const food = totalFood(s);
+    this.foodChip.querySelector('.val')!.textContent = `${Math.floor(food)}`;
+    this.foodChip.classList.toggle('low', food < pop * FOOD_PER_CITIZEN_PER_SEASON);
+    for (const kind of HUD_RESOURCES) {
       const chip = this.resChips.get(kind)!;
       const v = totals[kind] ?? 0;
       chip.querySelector('.val')!.textContent = `${Math.floor(v)}`;

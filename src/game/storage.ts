@@ -5,6 +5,7 @@ import {
   BUILDING_DEFS,
   BARN_CAPACITY,
   MARKET_CAPACITY,
+  FOOD_KINDS,
 } from '../types';
 
 export interface Pos {
@@ -157,6 +158,30 @@ export function consume(s: GameState, kind: ResourceKind, amount: number): numbe
     b.store[kind] = have - take;
     if ((b.store[kind] ?? 0) <= 0) delete b.store[kind];
     need -= take;
+  }
+  return need;
+}
+
+/** Total of all food types across storage. */
+export function totalFood(s: GameState): number {
+  let n = 0;
+  for (const k of FOOD_KINDS) n += totalStored(s, k);
+  return n;
+}
+
+/** Number of distinct food types currently in storage (0..4) — dietary variety. */
+export function foodVarietyStored(s: GameState): number {
+  let n = 0;
+  for (const k of FOOD_KINDS) if (totalStored(s, k) > 0.5) n++;
+  return n;
+}
+
+/** Eat `amount` of food, drawn across whatever food types exist. Returns shortfall. */
+export function consumeFood(s: GameState, amount: number): number {
+  let need = amount;
+  for (const k of FOOD_KINDS) {
+    if (need <= 0) break;
+    need = consume(s, k, need);
   }
   return need;
 }

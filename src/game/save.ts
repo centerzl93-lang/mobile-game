@@ -1,7 +1,7 @@
 import { GameState, MAP_W, MAP_H } from '../types';
 
-const KEY = 'little-village-save-v8';
-const VERSION = 8;
+const KEY = 'little-village-save-v9';
+const VERSION = 9;
 
 interface SaveEnvelope {
   v: number;

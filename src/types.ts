@@ -13,7 +13,10 @@ export interface Tile {
 }
 
 export type ResourceKind =
-  | 'food'
+  | 'fruit'
+  | 'grain'
+  | 'fish'
+  | 'meat'
   | 'wood'
   | 'firewood'
   | 'stone'
@@ -27,8 +30,14 @@ export type ResourceKind =
 
 export type Resources = Record<ResourceKind, number>;
 
+/** The distinct food types. A varied diet (more of these in stock) means better health. */
+export const FOOD_KINDS: ResourceKind[] = ['fruit', 'grain', 'fish', 'meat'];
+
 export const RESOURCE_KINDS: ResourceKind[] = [
-  'food',
+  'fruit',
+  'grain',
+  'fish',
+  'meat',
   'wood',
   'firewood',
   'stone',
@@ -41,8 +50,17 @@ export const RESOURCE_KINDS: ResourceKind[] = [
   'medicine',
 ];
 
+/** Resources shown as their own HUD chip — the food types are aggregated separately. */
+export const HUD_RESOURCES: ResourceKind[] = RESOURCE_KINDS.filter((k) => !FOOD_KINDS.includes(k));
+
+/** Icon for the combined food total shown in the HUD. */
+export const FOOD_ICON = '🍽️';
+
 export const RESOURCE_ICON: Record<ResourceKind, string> = {
-  food: '🌾',
+  fruit: '🍎',
+  grain: '🌾',
+  fish: '🐟',
+  meat: '🍖',
   wood: '🪵',
   firewood: '🔥',
   stone: '🪨',
@@ -55,8 +73,8 @@ export const RESOURCE_ICON: Record<ResourceKind, string> = {
   medicine: '💊',
 };
 
-/** Resources that show a red "low" warning in the HUD (survival-critical). */
-export const SURVIVAL_RESOURCES: ResourceKind[] = ['food', 'firewood', 'clothing'];
+/** Non-food resources that show a red "low" warning in the HUD (survival-critical). */
+export const SURVIVAL_RESOURCES: ResourceKind[] = ['firewood', 'clothing'];
 
 export type Season = 'Spring' | 'Summer' | 'Autumn' | 'Winter';
 export const SEASONS: Season[] = ['Spring', 'Summer', 'Autumn', 'Winter'];
@@ -292,7 +310,10 @@ export const TAILOR_CLOTHING_OUT = 6;
 
 // ---- Starting stockpile / population ----
 export const START_RESOURCES: Resources = {
-  food: 400,
+  fruit: 120,
+  grain: 120,
+  fish: 90,
+  meat: 90,
   wood: 220,
   firewood: 200,
   stone: 40,
@@ -308,7 +329,10 @@ export const START_CITIZENS = 4;
 
 // ---- Trade (barter by relative value; merchant keeps a margin) ----
 export const TRADE_VALUE: Record<ResourceKind, number> = {
-  food: 1,
+  fruit: 1,
+  grain: 1,
+  fish: 1,
+  meat: 1.5,
   wood: 1,
   firewood: 1.5,
   stone: 2,

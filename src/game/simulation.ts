@@ -65,6 +65,9 @@ import {
   nearestBarnWithRoom,
   nearestBarnOnlyWith,
   barnFree,
+  totalFood,
+  consumeFood,
+  foodVarietyStored,
 } from './storage';
 
 export type LogKind = 'info' | 'good' | 'bad';
@@ -344,13 +347,13 @@ function workOutput(
 ): { kind: ResourceKind; amount: number } | null {
   switch (b.type) {
     case 'gatherer':
-      return { kind: 'food', amount: LOAD_FOOD * factorCircle(s, b) * tf };
+      return { kind: 'fruit', amount: LOAD_FOOD * factorCircle(s, b) * tf };
     case 'fishing':
-      return { kind: 'food', amount: LOAD_FOOD * factorWater(s, b) * tf };
+      return { kind: 'fish', amount: LOAD_FOOD * factorWater(s, b) * tf };
     case 'hunting': {
       const f = factorCircle(s, b) * tf;
       return Math.random() < 0.7
-        ? { kind: 'food', amount: LOAD_FOOD * f }
+        ? { kind: 'meat', amount: LOAD_FOOD * f }
         : { kind: 'leather', amount: LOAD_MAT * f };
     }
     case 'ranch': {
@@ -358,7 +361,7 @@ function workOutput(
       if (herd <= 0) return null;
       const f = herd * tf;
       return Math.random() < 0.7
-        ? { kind: 'food', amount: LOAD_FOOD * f }
+        ? { kind: 'meat', amount: LOAD_FOOD * f }
         : { kind: 'leather', amount: LOAD_MAT * f };
     }
     case 'lumberyard': {
@@ -389,12 +392,12 @@ function workOutput(
     case 'tailor':
       return consumeStore(b, [['leather', TAILOR_IN]]) ? { kind: 'clothing', amount: TAILOR_OUT * tf } : null;
     case 'farm': {
-      const have = b.store.food ?? 0;
+      const have = b.store.grain ?? 0;
       if (have <= 0) return null;
       const take = Math.min(CARRY_CAP, have);
-      b.store.food = have - take;
-      if ((b.store.food ?? 0) <= 0) delete b.store.food;
-      return { kind: 'food', amount: take };
+      b.store.grain = have - take;
+      if ((b.store.grain ?? 0) <= 0) delete b.store.grain;
+      return { kind: 'grain', amount: take };
     }
   }
   return null;
@@ -615,8 +618,8 @@ function endSeason(s: GameState, log: LogFn): void {
       if (season === 'Autumn' && b.workers.length > 0) {
         const yield_ = b.workers.length * FARM_FOOD_PER_WORKER * b.growth;
         if (yield_ > 1) {
-          b.store.food = (b.store.food ?? 0) + yield_;
-          log(`A field yielded ${Math.round(yield_)} food to harvest`, 'good');
+          b.store.grain = (b.store.grain ?? 0) + yield_;
+          log(`A field yielded ${Math.round(yield_)} grain to harvest`, 'good');
         }
         b.growth = 0;
       }
@@ -641,7 +644,7 @@ function endSeason(s: GameState, log: LogFn): void {
   const adults = s.citizens.filter(isAdult).length;
   const children = s.citizens.length - adults;
   const foodNeed = (adults + children * CHILD_FOOD_FACTOR) * FOOD_PER_CITIZEN_PER_SEASON;
-  const shortFood = consume(s, 'food', foodNeed);
+  const shortFood = consumeFood(s, foodNeed);
   if (shortFood > 0) {
     const starved = Math.min(pop, Math.ceil(shortFood / FOOD_PER_CITIZEN_PER_SEASON));
     killCitizens(s, starved);
@@ -680,7 +683,7 @@ function endSeason(s: GameState, log: LogFn): void {
 
   // Reproduction: a house with an adult man + woman, spare room, and enough food
   // stored may bear a child. Happier villages breed faster.
-  if (s.citizens.length > 0 && totalStored(s, 'food') > s.citizens.length * FOOD_PER_CITIZEN_PER_SEASON) {
+  if (s.citizens.length > 0 && totalFood(s) > s.citizens.length * FOOD_PER_CITIZEN_PER_SEASON) {
     const chance = BIRTH_CHANCE * (0.4 + 0.6 * (avgHappiness(s) / 100));
     let born = 0;
     for (const h of s.buildings) {
@@ -725,7 +728,7 @@ function updateMerchant(s: GameState, log: LogFn): void {
     if (m.timer <= 0) {
       m.present = true;
       m.timer = 1;
-      m.stock = { livestock: 6, iron: 120, coal: 120, tools: 80, food: 200, clothing: 80 };
+      m.stock = { livestock: 6, iron: 120, coal: 120, tools: 80, grain: 120, fish: 80, clothing: 80 };
       log('A merchant has docked — barter at the trading post', 'good');
     }
   }
@@ -802,16 +805,6 @@ function centreOfVillage(s: GameState): { x: number; y: number } {
 }
 
 // ---- well-being (health & happiness) ----
-const FOOD_BUILDINGS: BuildingType[] = ['gatherer', 'fishing', 'hunting', 'farm', 'ranch'];
-
-function foodVariety(s: GameState): number {
-  const set = new Set<BuildingType>();
-  for (const b of s.buildings) {
-    if (b.built && b.workers.length > 0 && FOOD_BUILDINGS.includes(b.type)) set.add(b.type);
-  }
-  return set.size;
-}
-
 export function avgHealth(s: GameState): number {
   if (s.citizens.length === 0) return 100;
   let t = 0;
@@ -829,11 +822,11 @@ export function avgHappiness(s: GameState): number {
 function updateWellbeing(s: GameState, foodShort: boolean): void {
   const pop = s.citizens.length;
   if (pop === 0) return;
-  const variety = foodVariety(s);
-  const healthTarget = clamp(40 + 12 * variety - (foodShort ? 30 : 0), 0, 100);
+  const variety = foodVarietyStored(s); // distinct food types in stock (0..4)
+  const healthTarget = clamp(40 + 15 * variety - (foodShort ? 30 : 0), 0, 100);
   const headroom = housingCapacity(s) - pop > 0;
   const clothed = totalStored(s, 'clothing') >= pop;
-  const comfortable = totalStored(s, 'food') > pop * FOOD_PER_CITIZEN_PER_SEASON;
+  const comfortable = totalFood(s) > pop * FOOD_PER_CITIZEN_PER_SEASON;
   const happyTarget = clamp(50 + (headroom ? 15 : 0) + (clothed ? 15 : 0) + (comfortable ? 20 : 0), 0, 100);
   for (const c of s.citizens) {
     c.health += (healthTarget - c.health) * 0.25;

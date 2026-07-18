@@ -50,11 +50,11 @@ It works offline after the first load, and your village is saved automatically.
 | | Building | Makes | Needs |
 |---|---|---|---|
 | 🏠 | House | housing (grows the village) | — |
-| 🧺 | Gatherer | food | forest in its work-circle |
-| 🌱 | Field | food (autumn harvest) | — |
-| 🎣 | Fishing Hut | food | built on the **shoreline** |
-| 🏹 | Hunting Cabin | food + leather | forest in its work-circle |
-| 🐄 | Ranch | food + leather | **livestock** (buy from traders) |
+| 🧺 | Gatherer | 🍎 fruit | forest in its work-circle |
+| 🌱 | Field | 🌾 grain (autumn harvest) | — |
+| 🎣 | Fishing Hut | 🐟 fish | built on the **shoreline** |
+| 🏹 | Hunting Cabin | 🍖 meat + leather | forest in its work-circle |
+| 🐄 | Ranch | 🍖 meat + leather | **livestock** (buy from traders) |
 | 🌲 | Lumberyard | wood | forest in its work-circle (it replants) |
 | 🪓 | Woodcutter | firewood (from wood) | — |
 | ⛏️ | Quarry | stone | built against **rock** |
@@ -74,7 +74,9 @@ The 🔨 HUD number is how many free builders remain.
 
 ### Survival
 
-- Every season villagers eat **food**. Every **winter** they burn fuel
+- Every season villagers eat **food**. Food comes in **four kinds** — 🍎 fruit,
+  🌾 grain, 🐟 fish, 🍖 meat — but the HUD shows them as a **single 🍽️ food total**;
+  a meal is drawn from whatever's in stock. Every **winter** they burn fuel
   (**firewood** first, then **coal** — coal burns twice as hot) *and* need
   **clothing**; the unclothed can fall ill. Keep all three stocked for winter.
 - **Tools** wear out as people work. If the tool stockpile empties, everyone
@@ -93,8 +95,10 @@ slot, eat a **half ration**, **can't work**, and grow into adults at **age 4**.
 ~48), so keep raising the next generation.
 
 **Health & Happiness** (shown as averages ❤️/😊 in the HUD, per-villager on inspect):
-- **Health** rises with a **varied diet** (more kinds of food buildings working) and
-  enough food; low health means more illness and earlier old-age death.
+- **Health** rises with a **varied diet** — the more of the **four food kinds** (fruit,
+  grain, fish, meat) you keep in storage at once, the healthier the village. Living on a
+  single crop keeps people fed but unwell; low health means more illness and earlier
+  old-age death.
 - **Happiness** rises with **housing room**, **clothing**, and a **food surplus**;
   happier villages have **more children**.
 - Both also affect **work output** — unhealthy or unhappy villagers produce less.

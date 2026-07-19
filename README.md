@@ -198,8 +198,14 @@ node scripts/gen-icons.mjs
 ### 3D view
 
 The world renders in **3D** (Three.js): a low-poly medieval-village look with a tilted
-RTS camera — **drag to pan, pinch to zoom**, tap to inspect, exactly as before. Append
-**`?2d`** to the URL to fall back to the original flat 2D renderer (handy for comparison).
+RTS camera — **drag to pan, pinch to zoom, twist two fingers to rotate**, tap to inspect.
+The sun casts **shadows**, the sky/light **shift with the seasons** (the ground turns
+**snowy in winter**), the **river ripples**, **chimney smoke** rises from homes and
+workshops, and villagers **bob as they walk**.
+
+- **Graphics quality** auto-selects: weaker/small phones drop shadows & smoke. Force it with
+  **`?gfx=low`** or **`?gfx=high`** in the URL.
+- Append **`?2d`** to fall back to the original flat 2D renderer (handy for comparison).
 
 Buildings, trees, and rocks show **placeholder shapes** until you drop in real low-poly
 `.glb` models. It's optional and incremental — add one or all. See

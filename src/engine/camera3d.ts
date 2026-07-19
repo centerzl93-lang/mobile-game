@@ -66,6 +66,12 @@ export class Camera3D {
     this.apply();
   }
 
+  /** Rotate the view around its ground target by `delta` radians (from a two-finger twist). */
+  rotateBy(delta: number): void {
+    this.yaw += delta;
+    this.apply();
+  }
+
   /** Dolly zoom keeping the ground point under (sx,sy) roughly anchored. factor>1 zooms in. */
   zoomAt(factor: number, sx: number, sy: number, _w: number, _h: number): void {
     const before = this.screenToGround(sx, sy);

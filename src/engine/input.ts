@@ -2,6 +2,8 @@
 export interface CameraController {
   panByPixels(dx: number, dy: number): void;
   zoomAt(factor: number, sx: number, sy: number, canvasW: number, canvasH: number): void;
+  /** Optional: rotate the view yaw (implemented by the 3D camera; a no-op for 2D). */
+  rotateBy?(delta: number): void;
 }
 
 interface PointerRec {
@@ -25,6 +27,7 @@ export class InputManager {
   private pointers = new Map<number, PointerRec>();
   private lastPinchDist = 0;
   private lastCenter: [number, number] | null = null;
+  private lastAngle: number | null = null;
   private marqueeStart: [number, number] | null = null;
   mode: InputMode = 'normal';
   onTap: (sx: number, sy: number) => void = () => {};
@@ -63,6 +66,7 @@ export class InputManager {
     if (this.pointers.size === 2) {
       this.lastPinchDist = this.pinchDist();
       this.lastCenter = this.pinchCenter();
+      this.lastAngle = this.pinchAngle();
       if (this.marqueeStart) {
         this.marqueeStart = null;
         this.onMarqueeCancel(); // a second finger cancels the marquee and pans/zooms
@@ -94,9 +98,10 @@ export class InputManager {
         this.camera.panByPixels(dx, dy);
       }
     } else if (this.pointers.size === 2) {
-      // Two fingers: pinch-zoom plus pan by the movement of their midpoint.
+      // Two fingers: pinch-zoom, pan by the midpoint, and twist to rotate the view.
       const dist = this.pinchDist();
       const center = this.pinchCenter();
+      const angle = this.pinchAngle();
       if (this.lastCenter) {
         this.camera.panByPixels(center[0] - this.lastCenter[0], center[1] - this.lastCenter[1]);
       }
@@ -104,8 +109,15 @@ export class InputManager {
         const factor = dist / this.lastPinchDist;
         this.camera.zoomAt(factor, center[0], center[1], this.canvas.clientWidth, this.canvas.clientHeight);
       }
+      if (this.lastAngle !== null && this.camera.rotateBy) {
+        let d = angle - this.lastAngle;
+        if (d > Math.PI) d -= 2 * Math.PI;
+        else if (d < -Math.PI) d += 2 * Math.PI;
+        if (Math.abs(d) > 0.008) this.camera.rotateBy(-d); // small deadzone so pinches don't spin
+      }
       this.lastPinchDist = dist;
       this.lastCenter = center;
+      this.lastAngle = angle;
     }
   };
 
@@ -118,6 +130,7 @@ export class InputManager {
     if (this.pointers.size < 2) {
       this.lastPinchDist = 0;
       this.lastCenter = null;
+      this.lastAngle = null;
     }
     if (finishMarquee) {
       const [s0, s1] = this.marqueeStart!;
@@ -141,5 +154,10 @@ export class InputManager {
   private pinchCenter(): [number, number] {
     const pts = [...this.pointers.values()];
     return [(pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2];
+  }
+
+  private pinchAngle(): number {
+    const pts = [...this.pointers.values()];
+    return Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
   }
 }

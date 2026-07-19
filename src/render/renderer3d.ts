@@ -52,6 +52,24 @@ function buildingHeight(t: BuildingType): number {
   }
 }
 
+/** Buildings with a hearth/forge that puff chimney smoke while built. */
+const SMOKE_BUILDINGS = new Set<BuildingType>([
+  'house', 'stonehouse', 'tavern', 'blacksmith', 'tailor', 'woodcutter', 'hospital', 'herbalist',
+]);
+
+const SNOW_COLOR = new THREE.Color(0xeef3f7);
+
+interface SeasonPalette {
+  sky: number; fog: number; hemiSky: number; hemiGround: number; sun: number; sunI: number; snow: number;
+}
+// Indexed by GameState.season (Spring, Summer, Autumn, Winter).
+const SEASON_PALETTE: SeasonPalette[] = [
+  { sky: 0x9fd2e8, fog: 0x9fd2e8, hemiSky: 0xdcecff, hemiGround: 0x5a7d45, sun: 0xfff2da, sunI: 1.2, snow: 0 },
+  { sky: 0x9fc6e0, fog: 0x9fc6e0, hemiSky: 0xe6f2ff, hemiGround: 0x4a6b34, sun: 0xfff3d0, sunI: 1.35, snow: 0 },
+  { sky: 0xcabf9c, fog: 0xcabf9c, hemiSky: 0xf0e6cf, hemiGround: 0x6b5a2f, sun: 0xffd7a0, sunI: 1.1, snow: 0 },
+  { sky: 0xd8e6ef, fog: 0xd3e0ea, hemiSky: 0xeaf2fb, hemiGround: 0x93a4af, sun: 0xe6eef8, sunI: 0.95, snow: 1 },
+];
+
 /**
  * Three.js renderer. Reads GameState each frame and syncs a scene of low-poly placeholder
  * geometry (instanced tile blocks, trees, paths, citizens; per-building boxes). Static layers
@@ -61,12 +79,35 @@ export class Renderer3D {
   readonly scene = new THREE.Scene();
   ready = false;
   readonly models = new ModelLibrary();
+  readonly tier: 'high' | 'low';
 
   private renderer: THREE.WebGLRenderer;
   private dummy = new THREE.Object3D();
   private color = new THREE.Color();
   private treeInst: InstancedModel | null = null;
   private rockInst: InstancedModel | null = null;
+
+  // Lighting + season atmosphere.
+  private hemi!: THREE.HemisphereLight;
+  private sun!: THREE.DirectionalLight;
+  private skyColor = new THREE.Color(0x9fc6e0);
+  private fogColor = new THREE.Color(0x9fc6e0);
+  private hemiSky = new THREE.Color(0xe6f2ff);
+  private hemiGround = new THREE.Color(0x4a6b34);
+  private sunColor = new THREE.Color(0xfff3d0);
+  private sunIntensity = 1.35;
+  snowNow = 0; // smoothed 0..1 snow amount (exposed for tests)
+  private snowTarget = 0;
+  private seasonInit = false;
+
+  // Per-frame animation clock + effects.
+  private lastTime = -1;
+  private waterTime = 0;
+  private smoke: THREE.Points | null = null;
+  private smokeVel: Float32Array | null = null;
+  private smokeLife: Float32Array | null = null;
+  private emitters: number[][] = []; // [x,y,z] chimney positions
+  private heads: THREE.InstancedMesh | null = null; // villager heads (high tier only)
 
   // Instanced static/dynamic layers.
   private terrain!: THREE.InstancedMesh;
@@ -91,16 +132,31 @@ export class Renderer3D {
   private lastState: GameState | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
+    this.tier = detectTier();
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.scene.background = new THREE.Color(0x9fc6e0);
-    this.scene.fog = new THREE.Fog(0x9fc6e0, 60, 140);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.tier === 'low' ? 1.5 : 2));
+    if (this.tier === 'high') {
+      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    }
+    this.scene.background = this.skyColor;
+    this.scene.fog = new THREE.Fog(this.fogColor, 60, 150);
 
-    const hemi = new THREE.HemisphereLight(0xdcecff, 0x486b3f, 1.0);
-    this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xfff2da, 1.15);
-    sun.position.set(MAP_W * 0.7, 60, MAP_H * 0.3);
-    this.scene.add(sun);
+    this.hemi = new THREE.HemisphereLight(0xe6f2ff, 0x4a6b34, 1.0);
+    this.scene.add(this.hemi);
+    this.sun = new THREE.DirectionalLight(0xfff3d0, 1.35);
+    this.sun.position.set(28, 46, 12);
+    this.scene.add(this.sun);
+    this.scene.add(this.sun.target);
+    if (this.tier === 'high') {
+      this.sun.castShadow = true;
+      this.sun.shadow.mapSize.set(2048, 2048);
+      const c = this.sun.shadow.camera;
+      c.left = -30; c.right = 30; c.top = 30; c.bottom = -30;
+      c.near = 1; c.far = 140;
+      this.sun.shadow.bias = -0.0006;
+      this.sun.shadow.normalBias = 0.04;
+    }
 
     // Load optional glTF models; when one arrives, invalidate the affected layers so the
     // next frame swaps the placeholder for the real model.
@@ -126,6 +182,8 @@ export class Renderer3D {
     const terrGeo = new THREE.BoxGeometry(1, 1, 1);
     terrGeo.translate(0, 0.5, 0); // base at y=0, grows upward with Y-scale
     this.terrain = new THREE.InstancedMesh(terrGeo, matte(), this.landIdx.length);
+    this.terrain.receiveShadow = true;
+    this.terrain.castShadow = true;
     this.scene.add(this.terrain);
 
     // Trees on forest tiles (a simple two-cone pine).
@@ -135,6 +193,7 @@ export class Renderer3D {
     coneGeo.translate(0, 0.55, 0);
     this.trees = new THREE.InstancedMesh(coneGeo, matte(0x2f5a2a), Math.max(1, this.treeTiles.length));
     this.trees.count = this.treeTiles.length;
+    this.trees.castShadow = true;
     this.scene.add(this.trees);
 
     // Loose-stone deposits.
@@ -158,19 +217,41 @@ export class Renderer3D {
     this.marks.count = 0;
     this.scene.add(this.marks);
 
-    // Citizens: capsule instances, refreshed every frame.
+    // Citizens: capsule bodies (all tiers) + small heads (high tier), refreshed every frame.
     const capGeo = new THREE.CapsuleGeometry(0.16, 0.34, 3, 6);
     capGeo.translate(0, 0.33, 0);
     this.citizens = new THREE.InstancedMesh(capGeo, matte(0xffffff), 600);
     this.citizens.count = 0;
+    this.citizens.castShadow = this.tier === 'high';
     this.scene.add(this.citizens);
+    if (this.tier === 'high') {
+      const headGeo = new THREE.SphereGeometry(0.13, 8, 6);
+      this.heads = new THREE.InstancedMesh(headGeo, matte(0xffffff), 600);
+      this.heads.count = 0;
+      this.heads.castShadow = true;
+      this.scene.add(this.heads);
+    } else {
+      this.heads = null;
+    }
 
-    // Water plane just beneath the land surface.
-    const waterMat = new THREE.MeshStandardMaterial({ color: 0x2f6f9a, transparent: true, opacity: 0.82, roughness: 0.4 });
-    this.water = new THREE.Mesh(new THREE.PlaneGeometry(MAP_W, MAP_H), waterMat);
+    // Water plane just beneath the land surface — subdivided so it can ripple.
+    const waterMat = new THREE.MeshStandardMaterial({
+      color: 0x2f6f9a, transparent: true, opacity: 0.85, roughness: 0.25, metalness: 0.1,
+    });
+    const waterGeo = new THREE.PlaneGeometry(MAP_W, MAP_H, MAP_W, MAP_H);
+    this.water = new THREE.Mesh(waterGeo, waterMat);
     this.water.rotation.x = -Math.PI / 2;
     this.water.position.set(MAP_W / 2, 0.14, MAP_H / 2);
+    this.water.receiveShadow = true;
+    (this.water.geometry as THREE.PlaneGeometry).userData.base =
+      (waterGeo.attributes.position.array as Float32Array).slice();
     this.scene.add(this.water);
+
+    // Chimney smoke: one pooled Points cloud (high tier only).
+    this.smoke = null;
+    this.smokeVel = null;
+    this.smokeLife = null;
+    if (this.tier === 'high') this.initSmoke();
 
     // Reusable overlays.
     this.ghost = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x5ad06a, transparent: true, opacity: 0.5 }));
@@ -196,24 +277,134 @@ export class Renderer3D {
       this.init(s);
       this.lastState = s;
     }
+    const now = performance.now() / 1000;
+    const dt = this.lastTime < 0 ? 0 : Math.min(0.05, now - this.lastTime);
+    this.lastTime = now;
+
     cam.apply();
+    this.applySeason(s, dt);
+    this.trackSun(cam);
     this.syncTerrain(s);
     this.syncTrees(s);
     this.syncRocks(s);
     this.syncPaths(s);
     this.syncMarks(s);
     this.syncBuildings(s);
-    this.syncCitizens(s);
+    this.syncCitizens(s, now);
     this.syncOverlays(s, placement);
+    this.animate(dt, now);
     this.renderer.render(this.scene, cam.cam);
+  }
+
+  /** Keep the shadow-casting sun near the camera target so shadows stay crisp in view. */
+  private trackSun(cam: Camera3D): void {
+    const t = cam.target;
+    this.sun.position.set(t.x + 26, 48, t.z + 14);
+    this.sun.target.position.set(t.x, 0, t.z);
+    this.sun.target.updateMatrixWorld();
+  }
+
+  /** Ease the sky/fog/light palette and snow amount toward the current season. */
+  private applySeason(s: GameState, dt: number): void {
+    const p = SEASON_PALETTE[s.season] ?? SEASON_PALETTE[0];
+    const k = this.seasonInit ? Math.min(1, dt * 1.8) : 1; // snap on first frame, ease after
+    this.seasonInit = true;
+    this.skyColor.lerp(this.color.set(p.sky), k);
+    this.fogColor.lerp(this.color.set(p.fog), k);
+    this.hemiSky.lerp(this.color.set(p.hemiSky), k);
+    this.hemiGround.lerp(this.color.set(p.hemiGround), k);
+    this.sunColor.lerp(this.color.set(p.sun), k);
+    this.sunIntensity += (p.sunI - this.sunIntensity) * k;
+    this.snowTarget = p.snow;
+    this.snowNow += (this.snowTarget - this.snowNow) * k;
+    (this.scene.background as THREE.Color).copy(this.skyColor);
+    (this.scene.fog as THREE.Fog).color.copy(this.fogColor);
+    this.hemi.color.copy(this.hemiSky);
+    this.hemi.groundColor.copy(this.hemiGround);
+    this.sun.color.copy(this.sunColor);
+    this.sun.intensity = this.sunIntensity;
+  }
+
+  // ---- per-frame effects (water ripple, chimney smoke) ----
+  private smokeAccum = 0;
+
+  private animate(dt: number, _now: number): void {
+    if (dt <= 0) return;
+    this.animateWater(dt);
+    if (this.tier === 'high') this.updateSmoke(dt);
+  }
+
+  private animateWater(dt: number): void {
+    this.waterTime += dt * 1.2;
+    const geo = this.water.geometry as THREE.PlaneGeometry;
+    const base = geo.userData.base as Float32Array | undefined;
+    if (!base) return;
+    const arr = geo.attributes.position.array as Float32Array;
+    for (let i = 0; i < arr.length; i += 3) {
+      const x = base[i];
+      const y = base[i + 1];
+      arr[i + 2] = Math.sin(x * 0.6 + this.waterTime) * 0.06 + Math.sin(y * 0.7 + this.waterTime * 1.3) * 0.05;
+    }
+    geo.attributes.position.needsUpdate = true;
+    if (this.tier === 'high') geo.computeVertexNormals();
+  }
+
+  private initSmoke(): void {
+    const CAP = 140;
+    const geo = new THREE.BufferGeometry();
+    const positions = new Float32Array(CAP * 3).fill(-999);
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({
+      color: 0xd2d5d9, size: 0.55, transparent: true, opacity: 0.5, depthWrite: false, sizeAttenuation: true,
+    });
+    this.smoke = new THREE.Points(geo, mat);
+    this.smoke.frustumCulled = false;
+    this.smokeVel = new Float32Array(CAP * 3);
+    this.smokeLife = new Float32Array(CAP);
+    this.scene.add(this.smoke);
+  }
+
+  private updateSmoke(dt: number): void {
+    if (!this.smoke || !this.smokeLife || !this.smokeVel || this.emitters.length === 0) return;
+    const pos = this.smoke.geometry.attributes.position.array as Float32Array;
+    const life = this.smokeLife;
+    const vel = this.smokeVel;
+    const CAP = life.length;
+    for (let i = 0; i < CAP; i++) {
+      if (life[i] <= 0) continue;
+      life[i] -= dt;
+      pos[i * 3] += vel[i * 3] * dt;
+      pos[i * 3 + 1] += vel[i * 3 + 1] * dt;
+      pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
+      if (life[i] <= 0) { pos[i * 3] = -999; pos[i * 3 + 1] = -999; pos[i * 3 + 2] = -999; }
+    }
+    this.smokeAccum += dt * this.emitters.length * 1.1;
+    while (this.smokeAccum >= 1) {
+      this.smokeAccum -= 1;
+      const e = this.emitters[(Math.random() * this.emitters.length) | 0];
+      for (let i = 0; i < CAP; i++) {
+        if (life[i] > 0) continue;
+        pos[i * 3] = e[0] + (Math.random() - 0.5) * 0.2;
+        pos[i * 3 + 1] = e[1];
+        pos[i * 3 + 2] = e[2] + (Math.random() - 0.5) * 0.2;
+        vel[i * 3] = (Math.random() - 0.5) * 0.15;
+        vel[i * 3 + 1] = 0.5 + Math.random() * 0.3;
+        vel[i * 3 + 2] = (Math.random() - 0.5) * 0.15;
+        life[i] = 2.5 + Math.random() * 1.5;
+        break;
+      }
+    }
+    this.smoke.geometry.attributes.position.needsUpdate = true;
   }
 
   // ---- terrain ----
   private syncTerrain(s: GameState): void {
-    let sig = 0;
+    const snowQ = Math.round(this.snowNow * 8); // fold snow into the signature so it rebuilds
+    let sig = snowQ;
     for (const i of this.landIdx) sig = (sig + (s.tiles[i].type === 'forest' ? 2 : s.tiles[i].type === 'stone' ? 3 : 1) * (i + 1)) % 2147483647;
     if (sig === this.sig.land) return;
     this.sig.land = sig;
+    const snow = this.snowNow;
     let k = 0;
     for (const i of this.landIdx) {
       const t = s.tiles[i];
@@ -223,7 +414,9 @@ export class Renderer3D {
       this.dummy.rotation.set(0, 0, 0);
       this.dummy.updateMatrix();
       this.terrain.setMatrixAt(k, this.dummy.matrix);
-      this.terrain.setColorAt(k, this.color.set(TILE_COLOR[t.type] ?? TILE_COLOR.grass));
+      this.color.set(TILE_COLOR[t.type] ?? TILE_COLOR.grass);
+      if (snow > 0.001) this.color.lerp(SNOW_COLOR, snow * (t.type === 'stone' ? 0.5 : 0.85));
+      this.terrain.setColorAt(k, this.color);
       k++;
     }
     this.terrain.instanceMatrix.needsUpdate = true;
@@ -388,11 +581,31 @@ export class Renderer3D {
         }
         obj = wantModel ? this.makeBuildingModel(b.type) : this.makeBuildingBox(b.type);
         obj.position.set(b.x + def.w / 2, TOP, b.y + def.h / 2);
+        this.enableShadows(obj);
         this.buildingMeshes.set(b.id, obj);
         this.scene.add(obj);
       }
       this.styleBuilding(obj, b.type, b.built, !!b.fireTimer);
     }
+
+    // Chimney smoke emitters: hearth buildings that are built.
+    this.emitters = [];
+    for (const b of s.buildings) {
+      if (!b.built || b.fireTimer || !SMOKE_BUILDINGS.has(b.type)) continue;
+      const def = BUILDING_DEFS[b.type];
+      this.emitters.push([b.x + def.w / 2, TOP + buildingHeight(b.type) + 0.25, b.y + def.h / 2]);
+    }
+  }
+
+  private enableShadows(obj: THREE.Object3D): void {
+    if (this.tier !== 'high') return;
+    obj.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if ((m as unknown as { isMesh?: boolean }).isMesh) {
+        m.castShadow = true;
+        m.receiveShadow = true;
+      }
+    });
   }
 
   private makeBuildingBox(type: BuildingType): THREE.Object3D {
@@ -450,24 +663,41 @@ export class Renderer3D {
   }
 
   // ---- citizens ----
-  private syncCitizens(s: GameState): void {
+  private syncCitizens(s: GameState, now: number): void {
     const cap = (this.citizens.instanceMatrix.array.length / 16) | 0;
     const n = Math.min(s.citizens.length, cap);
     for (let i = 0; i < n; i++) {
       const c = s.citizens[i];
       const child = c.age < ADULT_AGE;
       const sc = child ? 0.62 : 1;
-      this.dummy.position.set(c.x, TOP, c.y);
+      // A little hop while walking so villagers read as moving, not sliding.
+      const moving = Math.abs(c.tx - c.x) + Math.abs(c.ty - c.y) > 0.03;
+      const bob = moving ? Math.abs(Math.sin(now * 6 + c.id)) * 0.06 : 0;
+      const yaw = moving ? Math.atan2(c.tx - c.x, c.ty - c.y) : 0;
+      this.dummy.position.set(c.x, TOP + bob, c.y);
       this.dummy.scale.set(sc, sc, sc);
-      this.dummy.rotation.set(0, 0, 0);
+      this.dummy.rotation.set(0, yaw, 0);
       this.dummy.updateMatrix();
       this.citizens.setMatrixAt(i, this.dummy.matrix);
       const base = c.sick ? 0xd24a4a : c.sex === 'm' ? 0x9ec7f0 : 0xf0b9d2;
       this.citizens.setColorAt(i, this.color.set(base));
+      if (this.heads) {
+        this.dummy.position.set(c.x, TOP + bob + 0.62 * sc, c.y);
+        this.dummy.scale.set(sc, sc, sc);
+        this.dummy.rotation.set(0, 0, 0);
+        this.dummy.updateMatrix();
+        this.heads.setMatrixAt(i, this.dummy.matrix);
+        this.heads.setColorAt(i, this.color.set(0xf1c9a5));
+      }
     }
     this.citizens.count = n;
     this.citizens.instanceMatrix.needsUpdate = true;
     if (this.citizens.instanceColor) this.citizens.instanceColor.needsUpdate = true;
+    if (this.heads) {
+      this.heads.count = n;
+      this.heads.instanceMatrix.needsUpdate = true;
+      if (this.heads.instanceColor) this.heads.instanceColor.needsUpdate = true;
+    }
   }
 
   // ---- overlays (placement ghost, selection ring, marquee) ----
@@ -523,7 +753,22 @@ export class Renderer3D {
     this.treeInst = null;
     this.rockInst?.dispose(this.scene);
     this.rockInst = null;
+    if (this.heads) {
+      this.scene.remove(this.heads);
+      this.heads.geometry.dispose();
+      (this.heads.material as THREE.Material).dispose();
+      this.heads = null;
+    }
+    if (this.smoke) {
+      this.scene.remove(this.smoke);
+      this.smoke.geometry.dispose();
+      (this.smoke.material as THREE.Material).dispose();
+      this.smoke = null;
+    }
+    this.emitters = [];
     this.scene.remove(this.water);
+    (this.water.material as THREE.Material).dispose();
+    this.water.geometry.dispose();
     for (const [, obj] of this.buildingMeshes) this.disposeBuilding(obj);
     this.buildingMeshes.clear();
     for (const o of [this.ghost, this.selRing, this.marquee]) this.scene.remove(o);
@@ -534,4 +779,15 @@ export class Renderer3D {
 
 function matte(color = 0xffffff): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, roughness: 1, metalness: 0 });
+}
+
+/** Choose a graphics tier. `?gfx=low|high` overrides; otherwise weak/small phones get `low`. */
+function detectTier(): 'high' | 'low' {
+  const g = new URLSearchParams(location.search).get('gfx');
+  if (g === 'low') return 'low';
+  if (g === 'high') return 'high';
+  const dpr = window.devicePixelRatio || 1;
+  const coarse = window.matchMedia?.('(pointer: coarse)')?.matches ?? false;
+  const small = Math.min(window.innerWidth, window.innerHeight) < 480;
+  return coarse && dpr <= 1 && small ? 'low' : 'high';
 }

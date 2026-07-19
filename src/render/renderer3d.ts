@@ -23,10 +23,10 @@ import { ModelLibrary, InstancedModel } from './models';
 
 const LAND_H = 0.3; // height of a normal land tile block
 const FOOTHILL_H = 0.5; // low rocky band at a mountain's base
-const MOUNTAIN_BASE_H = 0.9; // shortest mountain (edge) block height
-const MOUNTAIN_STEP_H = 0.6; // extra height per tile of depth into the mountain
-const MOUNTAIN_MAX_H = 3.2; // tallest peak
-const SNOWLINE_H = 1.8; // peaks above this get a permanent snow cap
+const MOUNTAIN_BASE_H = 1.4; // shortest mountain (edge) block height
+const MOUNTAIN_STEP_H = 1.3; // extra height per tile of depth into the mountain
+const MOUNTAIN_MAX_H = 5.5; // tallest peak
+const SNOWLINE_H = 2.6; // peaks above this get a permanent snow cap
 const TOP = LAND_H; // y of the walkable surface props sit on
 const TREE_MODEL_SIZE = 1.6; // world scale applied to a normalized (footprint=1) tree model
 const ROCK_MODEL_SIZE = 0.9; // world scale applied to a normalized loose-stone model

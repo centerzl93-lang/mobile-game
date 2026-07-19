@@ -128,8 +128,8 @@ export interface BuildingDef {
   buildTime: number;
   /** At least one border tile must be one of these types (terrain gating). */
   requiresAdjacent?: TileType[];
-  /** Every footprint tile must be one of these types (e.g. mines only on foothills). */
-  requiresTile?: TileType[];
+  /** At least one footprint tile must be one of these types (e.g. mines touch a foothill). */
+  requiresTileAny?: TileType[];
   /** Radius (tiles) of the circular work area, for forest-worked buildings. */
   workRadius?: number;
   desc: string;
@@ -301,7 +301,7 @@ export const LOOSE_STONE_MAX = 20;
 export const LOOSE_STONE_COVERAGE = 0.05; // fraction of grass tiles seeded with loose stone
 
 // ---- Mountains & foothills ----
-export const FOOTHILL_RADIUS = 2; // land tiles within this Chebyshev distance of a mountain become foothills
+export const FOOTHILL_RADIUS = 1; // one-tile foothill ring hugging the edge of each mountain
 
 // ---- Consumption (per season) — sized for the per-trip hauling economy ----
 export const FOOD_PER_CITIZEN_PER_SEASON = 60;
@@ -469,7 +469,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   mine: {
     type: 'mine', name: 'Mine', emoji: '🕳️', category: 'resources', w: 2, h: 2,
-    cost: { wood: 14, stone: 10 }, jobs: 2, buildTime: 8, requiresTile: ['foothill'],
+    cost: { wood: 14, stone: 10 }, jobs: 2, buildTime: 8, requiresTileAny: ['foothill'],
     desc: 'Digs coal or iron. Must be dug into a mountain\'s foothills (toggle coal/iron in the job board).',
   },
   blacksmith: {

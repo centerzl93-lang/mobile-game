@@ -60,8 +60,8 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
       let stone: number | undefined;
       if (isRiver || inLake(x, y)) {
         type = 'water';
-      } else if (elev[i] > 0.68 && moist[i] < 0.5) {
-        type = 'stone'; // rocky mountainside (for quarries/mines)
+      } else if (elev[i] > 0.78 && moist[i] < 0.55) {
+        type = 'stone'; // mountain peak — smaller footprint, only the highest ground
       } else if (moist[i] > 0.5 && elev[i] < 0.7) {
         type = 'forest';
         trees = 0.6 + moist[i] * 0.4;

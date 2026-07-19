@@ -29,6 +29,7 @@ import {
   igniteBuilding,
   acceptNomads,
   rejectNomads,
+  markHarvestRect,
 } from './game/simulation';
 import { canPlace, placeBuilding, canAfford, demolishBuilding } from './game/buildings';
 import { addNearest } from './game/storage';
@@ -53,6 +54,9 @@ class Game {
   selectedBuild: BuildingType | null = null;
   selectedPath: PathTier | null = null;
   demolish = false;
+  harvestMode = false;
+  /** Live harvest-marquee rectangle in world coords while dragging, else null. */
+  marquee: { x0: number; y0: number; x1: number; y1: number } | null = null;
   inspectSel: { kind: 'building' | 'citizen'; id: number } | null = null;
 
   dpr = 1;
@@ -76,10 +80,14 @@ class Game {
       onTrade: (give, get, qty) => this.trade(give, get, qty),
       onAcceptNomads: () => this.acceptNomads(),
       onRejectNomads: () => this.rejectNomads(),
+      onSelectHarvest: (a) => this.onSelectHarvest(a),
     });
     this.input = new InputManager(this.canvas, this.camera);
     this.input.onTap = (sx, sy) => this.onTap(sx, sy);
     this.input.onPaint = (sx, sy) => this.onPaint(sx, sy);
+    this.input.onMarqueeMove = (a, b, c, d) => this.onMarqueeMove(a, b, c, d);
+    this.input.onMarqueeEnd = (a, b, c, d) => this.onMarqueeEnd(a, b, c, d);
+    this.input.onMarqueeCancel = () => { this.marquee = null; };
 
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => {
@@ -152,9 +160,42 @@ class Game {
     if (active) {
       this.selectedBuild = null;
       this.selectedPath = null;
+      this.harvestMode = false;
       this.clearInspect();
       this.input.setMode('normal');
     }
+  }
+
+  private onSelectHarvest(active: boolean): void {
+    this.harvestMode = active;
+    this.marquee = null;
+    if (active) {
+      this.selectedBuild = null;
+      this.selectedPath = null;
+      this.demolish = false;
+      this.clearInspect();
+    }
+    this.input.setMode(active ? 'marquee' : 'normal');
+  }
+
+  private onMarqueeMove(sx0: number, sy0: number, sx1: number, sy1: number): void {
+    if (!this.harvestMode) return;
+    const [wx0, wy0] = this.camera.screenToWorld(sx0, sy0, this.cw, this.ch);
+    const [wx1, wy1] = this.camera.screenToWorld(sx1, sy1, this.cw, this.ch);
+    this.marquee = { x0: wx0, y0: wy0, x1: wx1, y1: wy1 };
+  }
+
+  private onMarqueeEnd(sx0: number, sy0: number, sx1: number, sy1: number): void {
+    this.marquee = null;
+    if (!this.harvestMode || !this.running || this.state.gameOver) return;
+    const [wx0, wy0] = this.camera.screenToWorld(sx0, sy0, this.cw, this.ch);
+    const [wx1, wy1] = this.camera.screenToWorld(sx1, sy1, this.cw, this.ch);
+    const n = markHarvestRect(
+      this.state,
+      Math.floor(wx0), Math.floor(wy0), Math.floor(wx1), Math.floor(wy1),
+    );
+    this.ui.flashHint(n > 0 ? `Marked ${n} tile${n > 1 ? 's' : ''} for harvest` : 'No trees or loose stone there');
+    if (n > 0) this.persist();
   }
 
   private clearInspect(): void {
@@ -304,10 +345,14 @@ class Game {
     const tx = Math.floor(wx);
     const ty = Math.floor(wy);
     const idx = ty * MAP_W + tx;
-    if (idx >= 0 && idx < this.state.paths.length && this.state.paths[idx] !== 0) {
+    if (idx < 0 || idx >= this.state.paths.length) return;
+    if (this.state.paths[idx] !== 0) {
       const wasStone = this.state.paths[idx] === PATH_STONE || this.state.paths[idx] === PATH_STONE_PLAN;
       this.state.paths[idx] = 0;
       if (wasStone) addNearest(this.state, { x: tx, y: ty }, 'stone', 0.25);
+      this.persist();
+    } else if (this.state.harvest[idx] !== 0) {
+      this.state.harvest[idx] = 0; // un-mark a harvest order
       this.persist();
     }
   }
@@ -433,6 +478,7 @@ class Game {
       pathTier: this.selectedPath,
       selBuildingId: this.inspectSel?.kind === 'building' ? this.inspectSel.id : null,
       selCitizenId: this.inspectSel?.kind === 'citizen' ? this.inspectSel.id : null,
+      marquee: this.marquee,
     };
     if (this.selectedBuild && this.running && !this.state.gameOver) {
       const { tx, ty } = this.reticleTile(this.selectedBuild);

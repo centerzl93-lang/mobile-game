@@ -1,4 +1,4 @@
-import { MAP_W, MAP_H, Tile, TileType, PATH_NONE } from '../types';
+import { MAP_W, MAP_H, Tile, TileType, PATH_NONE, HARVEST_NONE, LOOSE_STONE_MIN, LOOSE_STONE_MAX, LOOSE_STONE_COVERAGE } from '../types';
 
 export function tileIndex(x: number, y: number): number {
   return y * MAP_W + x;
@@ -7,6 +7,11 @@ export function tileIndex(x: number, y: number): number {
 /** A fresh, empty path layer (one entry per tile). */
 export function emptyPaths(): number[] {
   return new Array(MAP_W * MAP_H).fill(PATH_NONE);
+}
+
+/** A fresh, empty harvest-order layer (one entry per tile). */
+export function emptyHarvest(): number[] {
+  return new Array(MAP_W * MAP_H).fill(HARVEST_NONE);
 }
 
 export function inBounds(x: number, y: number): boolean {
@@ -19,44 +24,55 @@ export function getTile(tiles: Tile[], x: number, y: number): Tile | null {
 }
 
 /**
- * Value-noise style generator with a couple of octaves. No dependencies —
- * uses a seeded hash so a given seed always produces the same island.
+ * Value-noise style generator. No dependencies — a seeded hash makes a given seed
+ * reproducible. The map is mostly land: forest and rock clusters over grass, carved by a
+ * meandering north–south river down the middle plus lakes bleeding off the left/right edges.
+ * Loose stone is scattered on grass so villagers have something to hand-harvest.
  */
 export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
   const rand = mulberry32(seed);
-  const grid = new Float32Array(MAP_W * MAP_H);
-  const moist = new Float32Array(MAP_W * MAP_H);
-
   const elev = valueNoise(MAP_W, MAP_H, rand, 6);
-  const m = valueNoise(MAP_W, MAP_H, mulberry32(seed ^ 0x9e3779b9), 5);
-  for (let i = 0; i < grid.length; i++) {
-    grid[i] = elev[i];
-    moist[i] = m[i];
-  }
+  const moist = valueNoise(MAP_W, MAP_H, mulberry32(seed ^ 0x9e3779b9), 5);
+
+  // River centre-line meanders around the middle column (sine + slow noise), width ~2–3.
+  const wobble = valueNoise(MAP_W, MAP_H, mulberry32(seed ^ 0x2545f491), 3);
+  const riverCx = (y: number): number => {
+    const n = wobble[tileIndex(0, y)] - 0.5; // -0.5..0.5
+    return MAP_W / 2 + Math.sin(y / 7) * 4 + n * 8;
+  };
+  const riverHalf = (y: number): number => 1.2 + (wobble[tileIndex(MAP_W - 1, y)] - 0.5) * 0.9; // ~0.75..1.65
+
+  // Two lakes centred just past the left and right edges so they continue off-map.
+  const lakes = [
+    { cx: -2 + rand() * 3, cy: MAP_H * (0.25 + rand() * 0.15), rx: 8 + rand() * 3, ry: 6 + rand() * 3 },
+    { cx: MAP_W + 1 - rand() * 3, cy: MAP_H * (0.6 + rand() * 0.15), rx: 8 + rand() * 3, ry: 6 + rand() * 3 },
+  ];
+  const inLake = (x: number, y: number): boolean =>
+    lakes.some((l) => ((x - l.cx) / l.rx) ** 2 + ((y - l.cy) / l.ry) ** 2 < 1);
 
   const tiles: Tile[] = new Array(MAP_W * MAP_H);
   for (let y = 0; y < MAP_H; y++) {
     for (let x = 0; x < MAP_W; x++) {
       const i = tileIndex(x, y);
-      // Radial falloff so edges are water -> gives an island the camera stays on.
-      const nx = (x / MAP_W) * 2 - 1;
-      const ny = (y / MAP_H) * 2 - 1;
-      const dist = Math.sqrt(nx * nx + ny * ny);
-      const e = grid[i] - dist * 0.55;
-
+      const isRiver = Math.abs(x + 0.5 - riverCx(y)) <= riverHalf(y);
       let type: TileType;
       let trees = 0;
-      if (e < 0.02) {
+      let stone: number | undefined;
+      if (isRiver || inLake(x, y)) {
         type = 'water';
-      } else if (e > 0.62 && moist[i] < 0.45) {
-        type = 'stone';
-      } else if (moist[i] > 0.52 && e < 0.5) {
+      } else if (elev[i] > 0.68 && moist[i] < 0.5) {
+        type = 'stone'; // rocky mountainside (for quarries/mines)
+      } else if (moist[i] > 0.5 && elev[i] < 0.7) {
         type = 'forest';
         trees = 0.6 + moist[i] * 0.4;
       } else {
         type = 'grass';
+        // Scatter loose-stone deposits on some grass, in small clusters.
+        if (rand() < LOOSE_STONE_COVERAGE) {
+          stone = Math.round(LOOSE_STONE_MIN + rand() * (LOOSE_STONE_MAX - LOOSE_STONE_MIN));
+        }
       }
-      tiles[i] = { type, trees };
+      tiles[i] = stone !== undefined ? { type, trees, stone } : { type, trees };
     }
   }
   return tiles;

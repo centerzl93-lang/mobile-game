@@ -15,7 +15,7 @@ import {
   START_HAPPINESS,
   ResourceKind,
 } from '../types';
-import { generateWorld, findStartTile, emptyPaths } from './world';
+import { generateWorld, findStartTile, emptyPaths, emptyHarvest } from './world';
 
 export function makeCitizen(s: { nextId: number }, sex: Sex, age: number, x: number, y: number): Citizen {
   return {
@@ -73,6 +73,7 @@ export function newGame(seed?: number): GameState {
     everLived: true,
     merchant: { present: false, timer: MERCHANT_VISIT_EVERY, stock: {} },
     pendingNomads: null,
+    harvest: emptyHarvest(),
     pathProgress: 0,
   };
 

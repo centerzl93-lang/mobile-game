@@ -8,20 +8,26 @@ interface PointerRec {
   moved: boolean;
 }
 
-export type InputMode = 'normal' | 'path';
+export type InputMode = 'normal' | 'path' | 'marquee';
 
 /**
  * Unified pointer input (touch + mouse) for a tile map.
- *  normal mode: one-finger drag pans; quick tap fires onTap; two fingers pinch/pan.
- *  path mode:   one-finger drag paints (onPaint); two fingers pinch/pan.
+ *  normal mode:  one-finger drag pans; quick tap fires onTap; two fingers pinch/pan.
+ *  path mode:    one-finger drag paints (onPaint); two fingers pinch/pan.
+ *  marquee mode: one-finger drag rubber-bands a rectangle (onMarqueeMove) committed on
+ *                release (onMarqueeEnd); a second finger cancels it and pans/zooms.
  */
 export class InputManager {
   private pointers = new Map<number, PointerRec>();
   private lastPinchDist = 0;
   private lastCenter: [number, number] | null = null;
+  private marqueeStart: [number, number] | null = null;
   mode: InputMode = 'normal';
   onTap: (sx: number, sy: number) => void = () => {};
   onPaint: (sx: number, sy: number) => void = () => {};
+  onMarqueeMove: (sx0: number, sy0: number, sx1: number, sy1: number) => void = () => {};
+  onMarqueeEnd: (sx0: number, sy0: number, sx1: number, sy1: number) => void = () => {};
+  onMarqueeCancel: () => void = () => {};
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -53,8 +59,15 @@ export class InputManager {
     if (this.pointers.size === 2) {
       this.lastPinchDist = this.pinchDist();
       this.lastCenter = this.pinchCenter();
+      if (this.marqueeStart) {
+        this.marqueeStart = null;
+        this.onMarqueeCancel(); // a second finger cancels the marquee and pans/zooms
+      }
     } else if (this.pointers.size === 1 && this.mode === 'path') {
       this.onPaint(e.clientX, e.clientY);
+    } else if (this.pointers.size === 1 && this.mode === 'marquee') {
+      this.marqueeStart = [e.clientX, e.clientY];
+      this.onMarqueeMove(e.clientX, e.clientY, e.clientX, e.clientY);
     }
   };
 
@@ -71,6 +84,8 @@ export class InputManager {
     if (this.pointers.size === 1) {
       if (this.mode === 'path') {
         this.onPaint(e.clientX, e.clientY);
+      } else if (this.mode === 'marquee' && this.marqueeStart) {
+        this.onMarqueeMove(this.marqueeStart[0], this.marqueeStart[1], e.clientX, e.clientY);
       } else {
         this.camera.panByPixels(dx, dy);
       }
@@ -94,10 +109,16 @@ export class InputManager {
     const p = this.pointers.get(e.pointerId);
     if (!p) return;
     const wasTap = !p.moved && this.pointers.size === 1 && this.mode === 'normal';
+    const finishMarquee = this.mode === 'marquee' && this.marqueeStart !== null && this.pointers.size === 1;
     this.pointers.delete(e.pointerId);
     if (this.pointers.size < 2) {
       this.lastPinchDist = 0;
       this.lastCenter = null;
+    }
+    if (finishMarquee) {
+      const [s0, s1] = this.marqueeStart!;
+      this.marqueeStart = null;
+      this.onMarqueeEnd(s0, s1, p.x, p.y);
     }
     if (wasTap) this.onTap(p.startX, p.startY);
   };

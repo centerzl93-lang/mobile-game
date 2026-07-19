@@ -10,6 +10,8 @@ export interface Tile {
   type: TileType;
   /** Amount of tree resource on a forest tile (0..1). Regrows slowly. */
   trees: number;
+  /** Units of loose stone lying on this tile, harvestable by hand (0 = none). */
+  stone?: number;
 }
 
 export type ResourceKind =
@@ -195,6 +197,11 @@ export interface Citizen {
   happiness: number; // 0..100
   educated: boolean; // grew up with a staffed school -> more productive
   sick: boolean; // ill from a disease outbreak; can't work until recovered
+  // ---- transient navigation state (not persisted; recomputed after load) ----
+  route?: { x: number; y: number }[]; // cached A* waypoints toward the current destination
+  routeI?: number; // index of the next waypoint to reach
+  rdx?: number; // destination tile the cached route was computed for
+  rdy?: number;
 }
 
 /** Children can't work; they take a housing slot and grow up at ADULT_AGE. */
@@ -218,6 +225,13 @@ export const PATH_DIRT_PLAN = 1;
 export const PATH_DIRT = 2;
 export const PATH_STONE_PLAN = 3;
 export const PATH_STONE = 4;
+export const PATH_BRIDGE_PLAN = 5;
+export const PATH_BRIDGE = 6; // a built bridge — the only walkable water tile
+
+// Harvest layer values (per tile): what unemployed villagers should gather here.
+export const HARVEST_NONE = 0;
+export const HARVEST_WOOD = 1; // a marked forest tile (chop for wood, clear-cuts to grass)
+export const HARVEST_STONE = 2; // a marked loose-stone tile
 
 export interface Merchant {
   present: boolean;
@@ -248,6 +262,8 @@ export interface GameState {
   merchant: Merchant;
   /** A band of nomads awaiting an accept/reject decision, or null. */
   pendingNomads: NomadOffer | null;
+  /** Harvest orders (per tile): HARVEST_* — trees/loose stone marked for gathering. */
+  harvest: number[];
   /** Fractional accumulator for how many planned path tiles are built. */
   pathProgress: number;
 }
@@ -269,8 +285,16 @@ export const BUILD_SECONDS_PER_UNIT = 0.5; // on-site labor seconds per unit of 
 export const BASE_WALK_SPEED = 1.75; // ~33% slower than the old 2.6
 export const PATH_DIRT_MULT = 1.5;
 export const PATH_STONE_MULT = 2.0;
+export const PATH_BRIDGE_MULT = 1.5; // crossing a built bridge (like a dirt path)
 export const STONE_PATH_COST = 1; // stone per stone-path tile
+export const BRIDGE_WOOD_COST = 3; // wood per bridge tile
 export const PATH_BUILD_TILES_PER_SEC = 0.6; // per free builder
+
+// ---- Hand harvesting (unemployed villagers gathering marked wood / loose stone) ----
+export const HARVEST_WOOD_PER_TREE = 20; // wood a full forest tile (trees=1) yields when cleared
+export const LOOSE_STONE_MIN = 8; // units on a loose-stone deposit
+export const LOOSE_STONE_MAX = 20;
+export const LOOSE_STONE_COVERAGE = 0.05; // fraction of grass tiles seeded with loose stone
 
 // ---- Consumption (per season) — sized for the per-trip hauling economy ----
 export const FOOD_PER_CITIZEN_PER_SEASON = 60;

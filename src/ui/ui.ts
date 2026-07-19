@@ -26,7 +26,7 @@ import { housingCapacity } from '../game/state';
 import { totalStoredAll, totalStored, totalFood } from '../game/storage';
 import { LogKind, tradeCost, TradeResult, avgHealth, avgHappiness } from '../game/simulation';
 
-export type PathTier = 'dirt' | 'stone';
+export type PathTier = 'dirt' | 'stone' | 'bridge';
 
 export interface InspectRow {
   label: string;
@@ -46,6 +46,7 @@ export interface UICallbacks {
   onTrade: (give: ResourceKind, get: ResourceKind, qty: number) => TradeResult;
   onAcceptNomads: () => void;
   onRejectNomads: () => void;
+  onSelectHarvest: (active: boolean) => void;
 }
 
 const LOW_NEED: Partial<Record<ResourceKind, number>> = {
@@ -79,7 +80,7 @@ export class UI {
     nomad: byId('nomad'),
   };
   private resChips = new Map<ResourceKind, HTMLElement>();
-  private mode: 'inspect' | 'build' | 'path' | 'demolish' = 'inspect';
+  private mode: 'inspect' | 'build' | 'path' | 'demolish' | 'harvest' = 'inspect';
   private selectedBuild: BuildingType | null = null;
   private selectedPath: PathTier | null = null;
   private openCategory: BuildCategory | 'paths' | null = null;
@@ -175,6 +176,7 @@ export class UI {
           ],
       ),
       ['paths', '🛣️', () => this.toggleCategory('paths'), 'Paths'],
+      ['harvest', '🪓', () => this.setHarvest(), 'Harvest'],
       ['demolish', '💥', () => this.setDemolish(), 'Demolish'],
     ];
     for (const [key, emoji, fn, label] of tools) {
@@ -195,6 +197,7 @@ export class UI {
       const active =
         (key === 'inspect' && this.mode === 'inspect') ||
         (key === 'demolish' && this.mode === 'demolish') ||
+        (key === 'harvest' && this.mode === 'harvest') ||
         (key === this.openCategory) ||
         (this.mode === 'build' && this.selectedBuild && BUILDING_DEFS[this.selectedBuild].category === key) ||
         (this.mode === 'path' && key === 'paths');
@@ -203,6 +206,10 @@ export class UI {
   }
 
   private toggleCategory(cat: BuildCategory | 'paths'): void {
+    if (this.mode === 'harvest') {
+      this.mode = 'inspect';
+      this.cb.onSelectHarvest(false);
+    }
     this.openCategory = this.openCategory === cat ? null : cat;
     this.renderPopout();
     this.refreshToolbar();
@@ -220,6 +227,7 @@ export class UI {
       for (const [tier, emoji, label, cost] of [
         ['dirt', '🟤', 'Dirt Path', 'free'],
         ['stone', '⬜', 'Stone Path', '🪨1/tile'],
+        ['bridge', '🌉', 'Bridge', '🪵3/tile'],
       ] as [PathTier, string, string, string][]) {
         po.appendChild(this.buildBtn(emoji, label, cost, tier === this.selectedPath, () => this.selectPath(tier)));
       }
@@ -254,6 +262,7 @@ export class UI {
     this.cb.onSelectBuild(null);
     this.cb.onSelectPath(null);
     this.cb.onSetDemolish(false);
+    this.cb.onSelectHarvest(false);
     this.renderPopout();
     this.refreshToolbar();
     this.hideHint();
@@ -266,11 +275,29 @@ export class UI {
     this.openCategory = null;
     this.cb.onSelectBuild(null);
     this.cb.onSelectPath(null);
+    this.cb.onSelectHarvest(false);
     this.cb.onSetDemolish(true);
     this.hideInspect();
     this.renderPopout();
     this.refreshToolbar();
-    this.showHint('Tap a building or path to demolish it (25% of materials refunded).');
+    this.showHint('Tap a building or path to demolish it (25% of materials refunded). Tap a marked tile to un-mark it.');
+  }
+
+  private setHarvest(): void {
+    const activating = this.mode !== 'harvest';
+    this.mode = activating ? 'harvest' : 'inspect';
+    this.selectedBuild = null;
+    this.selectedPath = null;
+    this.openCategory = null;
+    this.cb.onSelectBuild(null);
+    this.cb.onSelectPath(null);
+    this.cb.onSetDemolish(false);
+    this.cb.onSelectHarvest(activating);
+    this.hideInspect();
+    this.renderPopout();
+    this.refreshToolbar();
+    if (activating) this.showHint('Drag a square over trees or loose stone to mark them for harvest; pan with two fingers.');
+    else this.hideHint();
   }
 
   private selectBuild(type: BuildingType): void {
@@ -278,6 +305,7 @@ export class UI {
     this.selectedBuild = this.selectedBuild === type ? null : type;
     this.selectedPath = null;
     this.cb.onSetDemolish(false);
+    this.cb.onSelectHarvest(false);
     this.cb.onSelectPath(null);
     this.cb.onSelectBuild(this.selectedBuild);
     if (!this.selectedBuild) this.mode = 'inspect';
@@ -293,14 +321,20 @@ export class UI {
     this.selectedPath = this.selectedPath === tier ? null : tier;
     this.selectedBuild = null;
     this.cb.onSetDemolish(false);
+    this.cb.onSelectHarvest(false);
     this.cb.onSelectBuild(null);
     this.cb.onSelectPath(this.selectedPath);
     if (!this.selectedPath) this.mode = 'inspect';
     this.hideInspect();
     this.renderPopout();
     this.refreshToolbar();
-    if (this.selectedPath) this.showHint('Drag one finger to draw a path; pan with two fingers.');
-    else this.hideHint();
+    if (this.selectedPath) {
+      const hint =
+        tier === 'bridge'
+          ? 'Drag one finger over water to plan a bridge; villagers build it out from the bank.'
+          : 'Drag one finger to draw a path; pan with two fingers.';
+      this.showHint(hint);
+    } else this.hideHint();
   }
 
   clearSelection(): void {

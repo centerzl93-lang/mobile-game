@@ -25,8 +25,8 @@ It works offline after the first load, and your village is saved automatically.
 
 - **Pan:** drag one finger. **Zoom:** pinch.
 - **Toolbar:** the bottom bar has **Inspect**, build categories (**Housing /
-  Food / Resources / Trade**), **Paths**, and **Demolish**. Tap a category to pop
-  out its buildings.
+  Food / Resources / Civic / Trade**), **Paths**, **Harvest**, and **Demolish**.
+  Tap a category to pop out its buildings.
 - **Build:** choose a building, **pan to line up the green outline at the centre
   of the screen, and tap to place it**. Placing only marks a **site** — it costs
   nothing yet. Your **builders walk to a barn, carry the materials to the site,
@@ -40,10 +40,18 @@ It works offline after the first load, and your village is saved automatically.
   contents, a workshop's buffer, or what a villager is carrying right now.
 - **Demolish (💥):** tap a building or path to remove it and reclaim **25%** of
   its materials into storage.
-- **Paths:** pick **Dirt Path** (free, 1.5× walk speed) or **Stone Path**
-  (1 stone/tile, 2× speed) and **drag one finger to draw** a route (pan with two
-  fingers while drawing). Villagers build the planned tiles; paths speed all
-  their hauling, so a well-paved village runs much faster.
+- **Paths:** pick **Dirt Path** (free, 1.5× walk speed), **Stone Path**
+  (1 stone/tile, 2× speed), or **Bridge** (3 wood/tile, spans water) and **drag one
+  finger to draw** a route (pan with two fingers while drawing). Villagers build the
+  planned tiles; paths speed all their hauling, so a well-paved village runs much faster.
+- **Harvest (🪓):** **drag a square** over the map to mark **trees** and **loose stone**
+  for gathering. Idle villagers (your builders) walk out, chop wood or dig stone, and
+  haul it back to a barn — a marked forest is **clear-cut to open ground** once emptied.
+  It's the way to get wood and stone early, before you've built a lumberyard or quarry.
+  (Tap a marked tile with **Demolish** to un-mark it.)
+- **Water blocks travel.** Villagers **cannot cross water** — they walk around it and
+  over bridges. A **river runs down the middle** of the map with **lakes off the sides**,
+  so your village starts on one bank; **build a bridge** to reach and settle the far side.
 
 ### Buildings
 

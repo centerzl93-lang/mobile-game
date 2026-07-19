@@ -12,6 +12,10 @@ import {
   PATH_DIRT_PLAN,
   PATH_STONE,
   PATH_STONE_PLAN,
+  PATH_BRIDGE,
+  PATH_BRIDGE_PLAN,
+  HARVEST_WOOD,
+  HARVEST_STONE,
 } from '../types';
 import { tileIndex } from '../game/world';
 
@@ -21,9 +25,11 @@ export interface PlacementView {
   ty: number;
   valid: boolean;
   /** True while in path-drawing mode (shows a hint reticle at screen centre). */
-  pathTier?: 'dirt' | 'stone' | null;
+  pathTier?: 'dirt' | 'stone' | 'bridge' | null;
   selBuildingId?: number | null;
   selCitizenId?: number | null;
+  /** Live harvest-marquee rectangle in world coords while dragging, else null. */
+  marquee?: { x0: number; y0: number; x1: number; y1: number } | null;
 }
 
 const RES_DOT: Record<string, string> = {
@@ -91,20 +97,53 @@ export class Renderer {
       }
     }
 
-    // Paths (over tiles, under buildings).
+    // Paths & bridges (over tiles, under buildings).
     for (let ty = minY; ty <= maxY; ty++) {
       for (let tx = minX; tx <= maxX; tx++) {
         const pv = s.paths[tileIndex(tx, ty)];
         if (!pv) continue;
         const [sx, sy] = this.camera.worldToScreen(tx, ty, w, h);
-        const built = pv === PATH_DIRT || pv === PATH_STONE;
-        const stone = pv === PATH_STONE || pv === PATH_STONE_PLAN;
+        const built = pv === PATH_DIRT || pv === PATH_STONE || pv === PATH_BRIDGE;
         ctx.globalAlpha = built ? 1 : 0.4;
-        ctx.fillStyle = stone ? '#a6a8af' : '#6b5236';
-        const inset = p * 0.16;
-        roundRect(ctx, sx + inset, sy + inset, p - 2 * inset, p - 2 * inset, Math.max(2, p * 0.16));
-        ctx.fill();
+        if (pv === PATH_BRIDGE || pv === PATH_BRIDGE_PLAN) {
+          // Wooden deck spanning the whole water tile, with plank lines.
+          ctx.fillStyle = '#7a5230';
+          ctx.fillRect(sx, sy, p + 1, p + 1);
+          if (p > 6) {
+            ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+            ctx.lineWidth = 1;
+            for (let k = 1; k < 3; k++) {
+              ctx.beginPath();
+              ctx.moveTo(sx, sy + (p * k) / 3);
+              ctx.lineTo(sx + p, sy + (p * k) / 3);
+              ctx.stroke();
+            }
+          }
+        } else {
+          const stone = pv === PATH_STONE || pv === PATH_STONE_PLAN;
+          ctx.fillStyle = stone ? '#a6a8af' : '#6b5236';
+          const inset = p * 0.16;
+          roundRect(ctx, sx + inset, sy + inset, p - 2 * inset, p - 2 * inset, Math.max(2, p * 0.16));
+          ctx.fill();
+        }
         ctx.globalAlpha = 1;
+      }
+    }
+
+    // Harvest orders (marked trees / loose stone) — a tint + outline on each marked tile.
+    for (let ty = minY; ty <= maxY; ty++) {
+      for (let tx = minX; tx <= maxX; tx++) {
+        const hv = s.harvest[tileIndex(tx, ty)];
+        if (!hv) continue;
+        const [sx, sy] = this.camera.worldToScreen(tx, ty, w, h);
+        const wood = hv === HARVEST_WOOD;
+        ctx.globalAlpha = 0.22;
+        ctx.fillStyle = wood ? '#7ce07c' : '#d2d2dc';
+        ctx.fillRect(sx, sy, p + 1, p + 1);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = wood ? 'rgba(120,220,120,0.9)' : 'rgba(210,210,220,0.95)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(sx + 1.5, sy + 1.5, p - 2, p - 2);
       }
     }
 
@@ -275,6 +314,18 @@ export class Renderer {
       ctx.fill();
       ctx.restore();
     }
+
+    // Live harvest-marquee rectangle.
+    if (placement.marquee) {
+      const m = placement.marquee;
+      const [ax, ay] = this.camera.worldToScreen(Math.min(m.x0, m.x1), Math.min(m.y0, m.y1), w, h);
+      const [bx, by] = this.camera.worldToScreen(Math.max(m.x0, m.x1), Math.max(m.y0, m.y1), w, h);
+      ctx.fillStyle = 'rgba(120,210,120,0.18)';
+      ctx.fillRect(ax, ay, bx - ax, by - ay);
+      ctx.strokeStyle = 'rgba(150,230,150,0.95)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(ax, ay, bx - ax, by - ay);
+    }
   }
 
   private drawTile(tile: Tile, tx: number, ty: number, sx: number, sy: number, p: number): void {
@@ -312,6 +363,19 @@ export class Renderer {
       ctx.lineTo(cx + s2 * 0.45, cy + s2 * 0.35);
       ctx.closePath();
       ctx.fill();
+    }
+
+    if (tile.type === 'grass' && (tile.stone ?? 0) > 0 && p > 6) {
+      // A little cluster of loose boulders, harvestable by hand.
+      const cx = sx + p / 2;
+      const cy = sy + p / 2;
+      const rr = Math.max(1.5, p * 0.12);
+      ctx.fillStyle = '#9a9ca1';
+      for (const [ox, oy] of [[-0.18, -0.08], [0.16, -0.16], [0.06, 0.18]] as [number, number][]) {
+        ctx.beginPath();
+        ctx.arc(cx + ox * p, cy + oy * p, rr, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
   }
 

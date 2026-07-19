@@ -5,6 +5,7 @@ import {
   ResourceKind,
   BUILDING_DEFS,
   MAP_W,
+  MAP_H,
   SEASON_LENGTH,
   SEASONS,
   BASE_WALK_SPEED,
@@ -14,6 +15,13 @@ import {
   PATH_STONE_PLAN,
   PATH_DIRT,
   PATH_STONE,
+  PATH_BRIDGE,
+  PATH_BRIDGE_PLAN,
+  BRIDGE_WOOD_COST,
+  HARVEST_NONE,
+  HARVEST_WOOD,
+  HARVEST_STONE,
+  HARVEST_WOOD_PER_TREE,
   FOOD_PER_CITIZEN_PER_SEASON,
   HEAT_PER_CITIZEN_WINTER,
   FIREWOOD_HEAT,
@@ -65,8 +73,9 @@ import {
 } from '../types';
 import { housingCapacity, buildingCenter, makeCitizen } from './state';
 import { forestInCircle, nearbyStone, nearbyWater } from './buildings';
-import { getTile } from './world';
+import { getTile, tileIndex, inBounds } from './world';
 import { pathSpeedMult } from './paths';
+import { findPath, isWalkable, labelComponents } from './pathfind';
 import {
   totalStored,
   addNearest,
@@ -101,8 +110,22 @@ const TAILOR_IN = 5, TAILOR_OUT = 4;
 
 const ARRIVE = 0.25; // tile distance considered "arrived"
 
+// Walkable-connectivity labels for the current update tick; two tiles with the same
+// non-negative label are mutually reachable. Rebuilt once per update() in labelComponents.
+let navLabels: Int32Array | null = null;
+
+/** Is the destination tile in the same walkable component as the citizen? */
+function reachableTile(c: Citizen, tx: number, ty: number): boolean {
+  if (!navLabels || !inBounds(tx, ty)) return false;
+  const from = navLabels[tileIndex(Math.floor(c.x), Math.floor(c.y))];
+  const to = navLabels[tileIndex(tx, ty)];
+  return from >= 0 && from === to;
+}
+
 export function update(s: GameState, dt: number, log: LogFn): void {
   if (s.gameOver) return;
+  routeBudget = 0;
+  navLabels = labelComponents(s); // walkable connectivity, for reachability checks this tick
   reconcileWorkers(s);
   assignHomesAndJobs(s);
   const toolFactor = totalStored(s, 'tools') > 0 ? 1 : NO_TOOLS_PENALTY;
@@ -182,11 +205,56 @@ function assignHomesAndJobs(s: GameState): void {
 }
 
 // ---- movement ----
+// A* recompute budget per update tick — routes are only recomputed when a citizen's
+// destination tile changes, so this cap is rarely approached.
+let routeBudget = 0;
+const ROUTE_BUDGET_MAX = 80;
+const WAYPOINT_ARRIVE = 0.18;
+
+/**
+ * Move a citizen toward (c.tx, c.ty) along a water-avoiding route, returning true once the
+ * final target is reached. Villagers cannot cross water except over built bridges; an
+ * unreachable target simply never arrives (the caller can pick other work).
+ */
 function stepTo(s: GameState, c: Citizen, dt: number): boolean {
-  const dx = c.tx - c.x;
-  const dy = c.ty - c.y;
+  const destTx = Math.floor(c.tx);
+  const destTy = Math.floor(c.ty);
+  if (c.route === undefined || c.rdx !== destTx || c.rdy !== destTy) {
+    if (routeBudget >= ROUTE_BUDGET_MAX) return false; // try again next tick
+    routeBudget++;
+    const path = findPath(s, Math.floor(c.x), Math.floor(c.y), destTx, destTy);
+    c.route = path ?? [];
+    c.routeI = 0;
+    c.rdx = destTx;
+    c.rdy = destTy;
+    if (path === null) {
+      // Unreachable: mark so we don't recompute every frame; caller moves on.
+      c.route = undefined;
+      c.rdx = -1;
+      c.rdy = -1;
+      return false;
+    }
+  }
+  const route = c.route;
+  let i = c.routeI ?? 0;
+  // Aim at the next waypoint, or the exact target once waypoints are exhausted.
+  let px = c.tx;
+  let py = c.ty;
+  if (i < route.length) {
+    px = route[i].x;
+    py = route[i].y;
+  }
+  const dx = px - c.x;
+  const dy = py - c.y;
   const d = Math.hypot(dx, dy);
-  if (d <= ARRIVE) return true;
+  const thresh = i < route.length ? WAYPOINT_ARRIVE : ARRIVE;
+  if (d <= thresh) {
+    if (i < route.length) {
+      c.routeI = i + 1;
+      return false;
+    }
+    return true;
+  }
   const speed = BASE_WALK_SPEED * pathSpeedMult(s, c.x, c.y);
   const step = Math.min(d, speed * dt);
   c.x += (dx / d) * step;
@@ -452,6 +520,7 @@ function pickSite(s: GameState, c: Citizen): SiteAction | null {
         : null;
     if (!action) continue;
     const p = buildingCenter(b);
+    if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) continue;
     const d = (p.x - c.x) ** 2 + (p.y - c.y) ** 2;
     if (d < bestD) {
       bestD = d;
@@ -523,8 +592,99 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
     return;
   }
 
-  // No sites: build a planned path if any, else wander.
+  // No construction: gather a marked harvest tile if any are reachable.
+  const hIdx = pickHarvest(s, c);
+  if (hIdx >= 0) {
+    runHarvest(s, c, hIdx, dt);
+    return;
+  }
+
+  // Else build a planned path/bridge, else wander.
   if (!buildPath(s, c, dt)) wander(s, c, dt);
+}
+
+// ---- harvest orders (hand-gathering marked wood / loose stone) ----
+
+/** Mark every harvestable tile (trees / loose stone) inside a tile rectangle. */
+export function markHarvestRect(s: GameState, x0: number, y0: number, x1: number, y1: number): number {
+  const lx = Math.max(0, Math.min(x0, x1));
+  const hx = Math.min(MAP_W - 1, Math.max(x0, x1));
+  const ly = Math.max(0, Math.min(y0, y1));
+  const hy = Math.min(MAP_H - 1, Math.max(y0, y1));
+  let marked = 0;
+  for (let ty = ly; ty <= hy; ty++) {
+    for (let tx = lx; tx <= hx; tx++) {
+      const i = tileIndex(tx, ty);
+      const t = s.tiles[i];
+      if (t.type === 'forest' && t.trees > 0.05) {
+        s.harvest[i] = HARVEST_WOOD;
+        marked++;
+      } else if ((t.stone ?? 0) > 0) {
+        s.harvest[i] = HARVEST_STONE;
+        marked++;
+      }
+    }
+  }
+  return marked;
+}
+
+/** Nearest reachable tile with a live harvest order, or -1. Clears stale (depleted) marks. */
+function pickHarvest(s: GameState, c: Citizen): number {
+  let best = -1;
+  let bestD = Infinity;
+  for (let i = 0; i < s.harvest.length; i++) {
+    const h = s.harvest[i];
+    if (h !== HARVEST_WOOD && h !== HARVEST_STONE) continue;
+    const t = s.tiles[i];
+    if (h === HARVEST_WOOD && t.trees <= 0.05) { s.harvest[i] = HARVEST_NONE; continue; }
+    if (h === HARVEST_STONE && (t.stone ?? 0) <= 0) { s.harvest[i] = HARVEST_NONE; continue; }
+    const tx = i % MAP_W;
+    const ty = (i / MAP_W) | 0;
+    if (!reachableTile(c, tx, ty)) continue;
+    const d = (tx + 0.5 - c.x) ** 2 + (ty + 0.5 - c.y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/** Walk to a marked tile and, on arrival, fill a carry-load of wood or stone from it. */
+function runHarvest(s: GameState, c: Citizen, idx: number, dt: number): void {
+  const tx = idx % MAP_W;
+  const ty = (idx / MAP_W) | 0;
+  c.tx = tx + 0.5;
+  c.ty = ty + 0.5;
+  if (!stepTo(s, c, dt)) return;
+  c.timer += dt;
+  if (c.timer < WORK_SECONDS) return;
+  c.timer = 0;
+  const t = s.tiles[idx];
+  if (s.harvest[idx] === HARVEST_WOOD) {
+    const woodAvail = t.trees * HARVEST_WOOD_PER_TREE;
+    const take = Math.min(CARRY_CAP, woodAvail);
+    if (take > 0.01) {
+      t.trees = Math.max(0, t.trees - take / HARVEST_WOOD_PER_TREE);
+      c.carry = { kind: 'wood', amount: take };
+    }
+    if (t.trees <= 0.05) {
+      t.trees = 0;
+      t.type = 'grass'; // clear-cut to open ground
+      s.harvest[idx] = HARVEST_NONE;
+    }
+  } else if (s.harvest[idx] === HARVEST_STONE) {
+    const avail = t.stone ?? 0;
+    const take = Math.min(CARRY_CAP, avail);
+    if (take > 0.01) {
+      t.stone = avail - take;
+      c.carry = { kind: 'stone', amount: take };
+    }
+    if ((t.stone ?? 0) <= 0) {
+      t.stone = 0;
+      s.harvest[idx] = HARVEST_NONE;
+    }
+  }
 }
 
 function nearestUnbuiltNeeding(s: GameState, c: Citizen, kind: ResourceKind): Building | null {
@@ -535,6 +695,7 @@ function nearestUnbuiltNeeding(s: GameState, c: Citizen, kind: ResourceKind): Bu
     const cost = BUILDING_DEFS[b.type].cost;
     if ((b.store[kind] ?? 0) >= (cost[kind] ?? 0)) continue;
     const p = buildingCenter(b);
+    if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) continue;
     const d = (p.x - c.x) ** 2 + (p.y - c.y) ** 2;
     if (d < bestD) {
       bestD = d;
@@ -555,29 +716,62 @@ function finishConstruction(b: Building): void {
   b.progress = BUILDING_DEFS[b.type].buildTime;
 }
 
+/** A reachable, walkable 4-neighbour of (tx,ty) the builder can stand on to work — or null. */
+function adjacentStand(s: GameState, c: Citizen, tx: number, ty: number): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null;
+  let bestD = Infinity;
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as [number, number][]) {
+    const nx = tx + dx;
+    const ny = ty + dy;
+    if (!isWalkable(s, nx, ny) || !reachableTile(c, nx, ny)) continue;
+    const d = (nx + 0.5 - c.x) ** 2 + (ny + 0.5 - c.y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = { x: nx + 0.5, y: ny + 0.5 };
+    }
+  }
+  return best;
+}
+
 function buildPath(s: GameState, c: Citizen, dt: number): boolean {
   let bestIdx = -1;
   let bestD = Infinity;
+  let bestStand: { x: number; y: number } | null = null;
   for (let i = 0; i < s.paths.length; i++) {
     const v = s.paths[i];
-    if (v !== PATH_DIRT_PLAN && v !== PATH_STONE_PLAN) continue;
     const tx = i % MAP_W;
     const ty = (i / MAP_W) | 0;
+    let stand: { x: number; y: number } | null = null;
+    if (v === PATH_DIRT_PLAN || v === PATH_STONE_PLAN) {
+      if (!reachableTile(c, tx, ty)) continue; // stand on the land tile itself
+      stand = { x: tx + 0.5, y: ty + 0.5 };
+    } else if (v === PATH_BRIDGE_PLAN) {
+      stand = adjacentStand(s, c, tx, ty); // bridges are laid from a walkable neighbour
+      if (!stand) continue;
+    } else {
+      continue;
+    }
     const d = (tx + 0.5 - c.x) ** 2 + (ty + 0.5 - c.y) ** 2;
     if (d < bestD) {
       bestD = d;
       bestIdx = i;
+      bestStand = stand;
     }
   }
-  if (bestIdx < 0) return false;
+  if (bestIdx < 0 || !bestStand) return false;
   const tx = bestIdx % MAP_W;
   const ty = (bestIdx / MAP_W) | 0;
-  c.tx = tx + 0.5;
-  c.ty = ty + 0.5;
+  c.tx = bestStand.x;
+  c.ty = bestStand.y;
   if (stepTo(s, c, dt)) {
     const v = s.paths[bestIdx];
     if (v === PATH_STONE_PLAN) {
       if (takeNearest(s, { x: tx, y: ty }, 'stone', 1) >= 1) s.paths[bestIdx] = PATH_STONE;
+    } else if (v === PATH_BRIDGE_PLAN) {
+      if (totalStored(s, 'wood') >= BRIDGE_WOOD_COST) {
+        takeNearest(s, bestStand, 'wood', BRIDGE_WOOD_COST);
+        s.paths[bestIdx] = PATH_BRIDGE;
+      }
     } else {
       s.paths[bestIdx] = PATH_DIRT;
     }
@@ -586,15 +780,28 @@ function buildPath(s: GameState, c: Citizen, dt: number): boolean {
 }
 
 function wander(s: GameState, c: Citizen, dt: number): void {
-  if (stepTo(s, c, dt)) {
-    c.timer -= dt;
-    if (c.timer <= 0) {
-      const centre = centreOfVillage(s);
-      c.tx = clampTile(centre.x + (Math.random() - 0.5) * 8);
-      c.ty = clampTile(centre.y + (Math.random() - 0.5) * 8);
-      c.timer = 2 + Math.random() * 3;
+  // Re-pick on a timer (not only on arrival) so an unreachable spot never freezes a villager.
+  c.timer -= dt;
+  if (c.timer <= 0) {
+    const centre = centreOfVillage(s);
+    let set = false;
+    for (let k = 0; k < 6; k++) {
+      const tx = clampTile(centre.x + (Math.random() - 0.5) * 8);
+      const ty = clampTile(centre.y + (Math.random() - 0.5) * 8);
+      if (reachableTile(c, Math.floor(tx), Math.floor(ty))) {
+        c.tx = tx;
+        c.ty = ty;
+        set = true;
+        break;
+      }
     }
+    if (!set) {
+      c.tx = c.x;
+      c.ty = c.y;
+    }
+    c.timer = 2 + Math.random() * 3;
   }
+  stepTo(s, c, dt);
 }
 
 // ---- season turnover ----

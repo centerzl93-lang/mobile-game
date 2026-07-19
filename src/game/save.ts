@@ -1,7 +1,7 @@
 import { GameState, MAP_W, MAP_H } from '../types';
 
-const KEY = 'little-village-save-v9';
-const VERSION = 9;
+const KEY = 'little-village-save-v10';
+const VERSION = 10;
 
 interface SaveEnvelope {
   v: number;
@@ -28,6 +28,7 @@ export function loadGame(): GameState | null {
     if (!Array.isArray(s.tiles) || s.tiles.length !== MAP_W * MAP_H) return null;
     if (!Array.isArray(s.buildings) || !Array.isArray(s.citizens)) return null;
     if (!Array.isArray(s.paths) || s.paths.length !== MAP_W * MAP_H) return null;
+    if (!Array.isArray(s.harvest) || s.harvest.length !== MAP_W * MAP_H) return null;
     if (!s.merchant || typeof s.pathProgress !== 'number') return null;
     return s;
   } catch {

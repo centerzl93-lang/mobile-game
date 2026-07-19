@@ -22,7 +22,11 @@ import type { PlacementView } from './renderer';
 import { ModelLibrary, InstancedModel } from './models';
 
 const LAND_H = 0.3; // height of a normal land tile block
-const STONE_H = 0.6; // rocky mountainside stands taller
+const FOOTHILL_H = 0.5; // low rocky band at a mountain's base
+const MOUNTAIN_BASE_H = 0.9; // shortest mountain (edge) block height
+const MOUNTAIN_STEP_H = 0.6; // extra height per tile of depth into the mountain
+const MOUNTAIN_MAX_H = 3.2; // tallest peak
+const SNOWLINE_H = 1.8; // peaks above this get a permanent snow cap
 const TOP = LAND_H; // y of the walkable surface props sit on
 const TREE_MODEL_SIZE = 1.6; // world scale applied to a normalized (footprint=1) tree model
 const ROCK_MODEL_SIZE = 0.9; // world scale applied to a normalized loose-stone model
@@ -31,6 +35,7 @@ const TILE_COLOR: Record<string, number> = {
   grass: 0x5b8f43,
   forest: 0x3f6f39,
   stone: 0x8b8e95,
+  foothill: 0x8a7f68,
 };
 
 const BUILDING_COLORS: Record<BuildingType, number> = {
@@ -120,6 +125,7 @@ export class Renderer3D {
   private marks!: THREE.InstancedMesh;
   private citizens!: THREE.InstancedMesh;
   private water!: THREE.Mesh;
+  private mountainH: Float32Array | null = null; // per-tile mountain block height (0 = not a mountain)
 
   // Per-building objects (box mesh or cloned model) + reused overlays.
   private buildingMeshes = new Map<number, THREE.Object3D>();
@@ -170,6 +176,14 @@ export class Renderer3D {
 
   get object(): THREE.WebGLRenderer { return this.renderer; }
 
+  /** Tallest mountain block height in the current map (0 if none) — exposed for tests. */
+  get maxPeak(): number {
+    if (!this.mountainH) return 0;
+    let m = 0;
+    for (const v of this.mountainH) if (v > m) m = v;
+    return m;
+  }
+
   setSize(w: number, h: number): void {
     this.renderer.setSize(w, h, false);
   }
@@ -179,6 +193,7 @@ export class Renderer3D {
     // Terrain: one block per land tile (water tiles are drawn by the water plane).
     this.landIdx = [];
     for (let i = 0; i < s.tiles.length; i++) if (s.tiles[i].type !== 'water') this.landIdx.push(i);
+    this.mountainH = computeMountainHeights(s);
     const terrGeo = new THREE.BoxGeometry(1, 1, 1);
     terrGeo.translate(0, 0.5, 0); // base at y=0, grows upward with Y-scale
     this.terrain = new THREE.InstancedMesh(terrGeo, matte(), this.landIdx.length);
@@ -401,21 +416,28 @@ export class Renderer3D {
   private syncTerrain(s: GameState): void {
     const snowQ = Math.round(this.snowNow * 8); // fold snow into the signature so it rebuilds
     let sig = snowQ;
-    for (const i of this.landIdx) sig = (sig + (s.tiles[i].type === 'forest' ? 2 : s.tiles[i].type === 'stone' ? 3 : 1) * (i + 1)) % 2147483647;
+    for (const i of this.landIdx) sig = (sig + tileKind(s.tiles[i].type) * (i + 1)) % 2147483647;
     if (sig === this.sig.land) return;
     this.sig.land = sig;
     const snow = this.snowNow;
+    const mh = this.mountainH;
     let k = 0;
     for (const i of this.landIdx) {
       const t = s.tiles[i];
-      const h = t.type === 'stone' ? STONE_H : LAND_H;
+      const isMountain = t.type === 'stone';
+      const h = isMountain ? (mh ? mh[i] : MOUNTAIN_BASE_H) : t.type === 'foothill' ? FOOTHILL_H : LAND_H;
       this.dummy.position.set((i % MAP_W) + 0.5, 0, ((i / MAP_W) | 0) + 0.5);
       this.dummy.scale.set(1, h, 1);
       this.dummy.rotation.set(0, 0, 0);
       this.dummy.updateMatrix();
       this.terrain.setMatrixAt(k, this.dummy.matrix);
       this.color.set(TILE_COLOR[t.type] ?? TILE_COLOR.grass);
-      if (snow > 0.001) this.color.lerp(SNOW_COLOR, snow * (t.type === 'stone' ? 0.5 : 0.85));
+      // Peaks wear a permanent snow cap; then every tile takes the seasonal snow tint.
+      if (isMountain && h > SNOWLINE_H) {
+        const cap = Math.min(1, (h - SNOWLINE_H) / (MOUNTAIN_MAX_H - SNOWLINE_H));
+        this.color.lerp(SNOW_COLOR, cap * 0.85);
+      }
+      if (snow > 0.001) this.color.lerp(SNOW_COLOR, snow * (isMountain ? 0.35 : t.type === 'foothill' ? 0.7 : 0.85));
       this.terrain.setColorAt(k, this.color);
       k++;
     }
@@ -779,6 +801,51 @@ export class Renderer3D {
 
 function matte(color = 0xffffff): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, roughness: 1, metalness: 0 });
+}
+
+/** Distinct small integer per tile kind, so terrain rebuilds when a tile's type changes. */
+function tileKind(t: string): number {
+  return t === 'forest' ? 2 : t === 'stone' ? 3 : t === 'foothill' ? 4 : 1;
+}
+
+/**
+ * Height of each mountain (`stone`) tile: a multi-source BFS gives each stone tile its depth
+ * (distance to the nearest non-mountain tile), so edges are low and interiors rise into peaks.
+ * A per-tile hash adds irregularity. Non-mountain tiles get 0.
+ */
+function computeMountainHeights(s: GameState): Float32Array {
+  const N = MAP_W * MAP_H;
+  const depth = new Int16Array(N).fill(-1);
+  const q: number[] = [];
+  for (let i = 0; i < N; i++) {
+    if (s.tiles[i].type !== 'stone') { depth[i] = 0; q.push(i); }
+  }
+  for (let head = 0; head < q.length; head++) {
+    const cur = q[head];
+    const cx = cur % MAP_W;
+    const cy = (cur / MAP_W) | 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+        const ni = ny * MAP_W + nx;
+        if (s.tiles[ni].type === 'stone' && depth[ni] < 0) {
+          depth[ni] = depth[cur] + 1;
+          q.push(ni);
+        }
+      }
+    }
+  }
+  const out = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    if (s.tiles[i].type !== 'stone') continue;
+    const hash = (((i * 2654435761) >>> 0) % 1000) / 1000; // 0..1 deterministic jitter
+    const h = MOUNTAIN_BASE_H + (depth[i] - 1) * MOUNTAIN_STEP_H + hash * 0.5;
+    out[i] = Math.min(MOUNTAIN_MAX_H, h);
+  }
+  return out;
 }
 
 /** Choose a graphics tier. `?gfx=low|high` overrides; otherwise weak/small phones get `low`. */

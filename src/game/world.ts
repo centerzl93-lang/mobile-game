@@ -1,4 +1,4 @@
-import { MAP_W, MAP_H, Tile, TileType, PATH_NONE, HARVEST_NONE, LOOSE_STONE_MIN, LOOSE_STONE_MAX, LOOSE_STONE_COVERAGE } from '../types';
+import { MAP_W, MAP_H, Tile, TileType, PATH_NONE, HARVEST_NONE, LOOSE_STONE_MIN, LOOSE_STONE_MAX, LOOSE_STONE_COVERAGE, FOOTHILL_RADIUS } from '../types';
 
 export function tileIndex(x: number, y: number): number {
   return y * MAP_W + x;
@@ -73,6 +73,25 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
         }
       }
       tiles[i] = stone !== undefined ? { type, trees, stone } : { type, trees };
+    }
+  }
+
+  // Carve foothills: the low, buildable rocky band at each mountain's base. Any land tile
+  // within FOOTHILL_RADIUS of a mountain (stone) tile becomes foothill (losing its trees /
+  // loose stone). This gives mountains a visible base and the only ground mines can sit on.
+  const mountainSrc: number[] = [];
+  for (let i = 0; i < tiles.length; i++) if (tiles[i].type === 'stone') mountainSrc.push(i);
+  for (const src of mountainSrc) {
+    const sx = src % MAP_W;
+    const sy = (src / MAP_W) | 0;
+    for (let dy = -FOOTHILL_RADIUS; dy <= FOOTHILL_RADIUS; dy++) {
+      for (let dx = -FOOTHILL_RADIUS; dx <= FOOTHILL_RADIUS; dx++) {
+        const t = getTile(tiles, sx + dx, sy + dy);
+        if (!t || (t.type !== 'grass' && t.type !== 'forest')) continue;
+        t.type = 'foothill';
+        t.trees = 0;
+        delete t.stone;
+      }
     }
   }
   return tiles;

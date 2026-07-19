@@ -4,7 +4,9 @@ export const TILE = 32; // base pixels per tile at zoom 1
 export const MAP_W = 48;
 export const MAP_H = 48;
 
-export type TileType = 'grass' | 'forest' | 'water' | 'stone';
+// 'stone' = tall, impassable mountain rock. 'foothill' = the low, buildable rocky band at a
+// mountain's base (the only place mines can be built).
+export type TileType = 'grass' | 'forest' | 'water' | 'stone' | 'foothill';
 
 export interface Tile {
   type: TileType;
@@ -126,6 +128,8 @@ export interface BuildingDef {
   buildTime: number;
   /** At least one border tile must be one of these types (terrain gating). */
   requiresAdjacent?: TileType[];
+  /** Every footprint tile must be one of these types (e.g. mines only on foothills). */
+  requiresTile?: TileType[];
   /** Radius (tiles) of the circular work area, for forest-worked buildings. */
   workRadius?: number;
   desc: string;
@@ -296,6 +300,9 @@ export const LOOSE_STONE_MIN = 8; // units on a loose-stone deposit
 export const LOOSE_STONE_MAX = 20;
 export const LOOSE_STONE_COVERAGE = 0.05; // fraction of grass tiles seeded with loose stone
 
+// ---- Mountains & foothills ----
+export const FOOTHILL_RADIUS = 2; // land tiles within this Chebyshev distance of a mountain become foothills
+
 // ---- Consumption (per season) — sized for the per-trip hauling economy ----
 export const FOOD_PER_CITIZEN_PER_SEASON = 60;
 export const HEAT_PER_CITIZEN_WINTER = 40; // heat units; firewood = 1, coal = 2
@@ -462,8 +469,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   mine: {
     type: 'mine', name: 'Mine', emoji: '🕳️', category: 'resources', w: 2, h: 2,
-    cost: { wood: 14, stone: 10 }, jobs: 2, buildTime: 8, requiresAdjacent: ['stone'],
-    desc: 'Digs coal or iron from the mountainside (toggle in the job board).',
+    cost: { wood: 14, stone: 10 }, jobs: 2, buildTime: 8, requiresTile: ['foothill'],
+    desc: 'Digs coal or iron. Must be dug into a mountain\'s foothills (toggle coal/iron in the job board).',
   },
   blacksmith: {
     type: 'blacksmith', name: 'Blacksmith', emoji: '⚒️', category: 'resources', w: 2, h: 2,

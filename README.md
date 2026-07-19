@@ -52,6 +52,10 @@ It works offline after the first load, and your village is saved automatically.
 - **Water blocks travel.** Villagers **cannot cross water** — they walk around it and
   over bridges. A **river runs down the middle** of the map with **lakes off the sides**,
   so your village starts on one bank; **build a bridge** to reach and settle the far side.
+- **Mountains block travel too.** The tall grey **mountains** are impassable — villagers
+  route around them (there are no tunnels). Each mountain has a low, rocky **foothill** band
+  at its base where the ground turns back to plain: it's buildable, and the **only** place a
+  **Mine** can go. **Quarries** are built against the mountainside to cut stone.
 
 ### Buildings
 
@@ -66,8 +70,8 @@ It works offline after the first load, and your village is saved automatically.
 | 🐄 | Ranch | 🍖 meat + leather | **livestock** (buy from traders) |
 | 🌲 | Lumberyard | wood | forest in its work-circle (it replants) |
 | 🪓 | Woodcutter | firewood (from wood) | — |
-| ⛏️ | Quarry | stone | built against **rock** |
-| 🕳️ | Mine | coal **or** iron (toggle) | built against **rock** |
+| ⛏️ | Quarry | stone | built against a **mountainside** |
+| 🕳️ | Mine | coal **or** iron (toggle) | built in a mountain's **foothills** |
 | ⚒️ | Blacksmith | tools (iron) or steel tools (iron+coal) | — |
 | 🧵 | Tailor | clothing (from leather) | — |
 | 🚢 | Trading Post | barter with merchants | built on the **shoreline** |

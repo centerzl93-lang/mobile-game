@@ -339,6 +339,9 @@ export class Renderer {
       case 'stone':
         base = (tx + ty) % 2 === 0 ? '#7c7e84' : '#868890';
         break;
+      case 'foothill':
+        base = (tx + ty) % 2 === 0 ? '#8a7f68' : '#93886f';
+        break;
       case 'forest':
         base = '#3f6f39';
         break;

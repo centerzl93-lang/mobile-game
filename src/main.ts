@@ -34,6 +34,7 @@ import {
   markHarvestRect,
 } from './game/simulation';
 import { canPlace, placeBuilding, canAfford, demolishBuilding } from './game/buildings';
+import { findPath } from './game/pathfind';
 import { addNearest } from './game/storage';
 import { planPath } from './game/paths';
 import { saveGame, loadGame } from './game/save';
@@ -451,6 +452,16 @@ class Game {
     for (let t = 0; t < seconds && !this.state.gameOver; t += step) {
       update(this.state, step, this.log);
     }
+  }
+
+  /** Debug/testing helper: check a placement at a tile. */
+  debugCanPlace(type: BuildingType, x: number, y: number): { ok: boolean; reason?: string } {
+    return canPlace(this.state, type, x, y);
+  }
+
+  /** Debug/testing helper: route between tiles, returns waypoint tiles or null. */
+  debugPath(fx: number, fy: number, tx: number, ty: number): { x: number; y: number }[] | null {
+    return findPath(this.state, fx, fy, tx, ty);
   }
 
   private reticleTile(type: BuildingType): { tx: number; ty: number } {

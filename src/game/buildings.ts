@@ -40,6 +40,18 @@ export function canPlace(s: GameState, type: BuildingType, x: number, y: number)
     const label = def.requiresAdjacent.includes('water') ? 'water' : 'rock';
     return { ok: false, reason: `Must be built next to ${label}` };
   }
+  // Footprint gating: every tile under the building must be an allowed type (mines → foothills).
+  if (def.requiresTile) {
+    for (let dy = 0; dy < def.h; dy++) {
+      for (let dx = 0; dx < def.w; dx++) {
+        const t = getTile(s.tiles, x + dx, y + dy)!;
+        if (!def.requiresTile.includes(t.type)) {
+          const foot = def.requiresTile.includes('foothill');
+          return { ok: false, reason: foot ? "Must be placed in a mountain's foothills" : 'Wrong ground here' };
+        }
+      }
+    }
+  }
   // Materials must exist in storage (consumed later, on delivery — not now).
   for (const [kind, amount] of Object.entries(def.cost) as [ResourceKind, number][]) {
     if (totalStored(s, kind) < amount) {

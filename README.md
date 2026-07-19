@@ -49,7 +49,8 @@ It works offline after the first load, and your village is saved automatically.
 
 | | Building | Makes | Needs |
 |---|---|---|---|
-| 🏠 | House | housing (grows the village) | — |
+| 🏠 | House | housing for 4 (grows the village) | — |
+| 🏡 | Stone House | housing for 5 — cheap winter heat | some **stone** |
 | 🧺 | Gatherer | 🍎 fruit | forest in its work-circle |
 | 🌱 | Field | 🌾 grain (autumn harvest) | — |
 | 🎣 | Fishing Hut | 🐟 fish | built on the **shoreline** |
@@ -62,6 +63,9 @@ It works offline after the first load, and your village is saved automatically.
 | ⚒️ | Blacksmith | tools (iron) or steel tools (iron+coal) | — |
 | 🧵 | Tailor | clothing (from leather) | — |
 | 🚢 | Trading Post | barter with merchants | built on the **shoreline** |
+| 🍺 | Tavern | happiness (brews grain into ale) | a worker + **grain** |
+| ⛪ | Chapel | happiness | — |
+| 🪦 | Cemetery | happiness; eases grief when villagers die | — |
 | 🛖 | Barn | more storage | — |
 
 ### Jobs & the job board (📋)
@@ -94,14 +98,25 @@ slot, eat a **half ration**, **can't work**, and grow into adults at **age 4**.
 **Old age** claims villagers from about **35 onward** (a rising yearly chance up to
 ~48), so keep raising the next generation.
 
+**Nomads (immigration).** You don't only grow from within: when you keep **spare housing
+and a comfortable food surplus**, wandering **nomads** occasionally arrive and settle
+(2–4 adults at a time). Now and then a newcomer shows up **already sick**, so a village
+with no way to treat illness takes a risk letting strangers in.
+
 **Health & Happiness** (shown as averages ❤️/😊 in the HUD, per-villager on inspect):
 - **Health** rises with a **varied diet** — the more of the **four food kinds** (fruit,
   grain, fish, meat) you keep in storage at once, the healthier the village. Living on a
   single crop keeps people fed but unwell; low health means more illness and earlier
   old-age death.
-- **Happiness** rises with **housing room**, **clothing**, and a **food surplus**;
-  happier villages have **more children**.
+- **Happiness** rises with **housing room**, **clothing**, and a **food surplus**, and is
+  lifted further by **amenities** — a staffed **🍺 Tavern** (it brews stored grain into
+  ale), a **⛪ Chapel**, and a **🪦 Cemetery**. When villagers die with **no cemetery** to
+  bury them, morale takes an extra hit. Happier villages have **more children**.
 - Both also affect **work output** — unhealthy or unhappy villagers produce less.
+
+**Warmth.** A **🏡 Stone House** shelters 5 and keeps its residents so warm that they burn
+far less **firewood** each winter than folk in a timber house — worth the stone once you
+can spare it.
 
 **Schools (🏫, Civic).** Staff a school with a teacher and the **children who grow up
 while it runs become educated adults who produce ~30% more**. The HUD's age chip shows

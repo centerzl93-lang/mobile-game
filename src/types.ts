@@ -81,6 +81,10 @@ export const SEASONS: Season[] = ['Spring', 'Summer', 'Autumn', 'Winter'];
 
 export type BuildingType =
   | 'house'
+  | 'stonehouse'
+  | 'tavern'
+  | 'chapel'
+  | 'cemetery'
   | 'gatherer'
   | 'farm'
   | 'fishing'
@@ -198,6 +202,16 @@ export function isAdult(c: { age: number }): boolean {
   return c.age >= ADULT_AGE;
 }
 
+/** House-type buildings that shelter villagers (plain and stone houses). */
+export function isHouse(type: BuildingType): boolean {
+  return type === 'house' || type === 'stonehouse';
+}
+
+/** How many villagers a given house type shelters. */
+export function houseCapacityOf(type: BuildingType): number {
+  return type === 'stonehouse' ? STONE_HOUSE_CAPACITY : HOUSING_PER_HOUSE;
+}
+
 // Path layer values (per tile).
 export const PATH_NONE = 0;
 export const PATH_DIRT_PLAN = 1;
@@ -268,6 +282,21 @@ export const MAX_AGE = 48; // by this age old-age death is near-certain each yea
 export const EDUCATED_BONUS = 1.3; // production multiplier for educated workers
 export const START_HEALTH = 80;
 export const START_HAPPINESS = 80;
+
+// ---- Housing & amenities ----
+export const STONE_HOUSE_CAPACITY = 5; // villagers a stone house shelters
+export const STONE_HOUSE_HEAT_FACTOR = 0.6; // stone-house residents need less winter fuel
+export const HAPPY_TAVERN = 12; // happiness from a staffed, stocked tavern
+export const HAPPY_CHAPEL = 10; // happiness from a chapel
+export const HAPPY_CEMETERY = 8; // happiness from a cemetery
+export const DEATH_UNREST = 10; // happiness hit when villagers die and there is no cemetery
+export const TAVERN_GRAIN_PER_SEASON = 10; // grain a staffed tavern brews into ale each season
+
+// ---- Immigration (nomads seeking a home) ----
+export const IMMIGRATION_CHANCE = 0.25; // per-season chance when housing + food surplus allow
+export const IMMIGRATION_MIN = 2; // fewest nomads in an arriving band
+export const IMMIGRATION_MAX = 4; // most nomads in an arriving band
+export const IMMIGRANT_SICK_CHANCE = 0.15; // chance a newcomer arrives already sick
 
 // ---- Disease & fire ----
 export const DISEASE_CHANCE = 0.06; // base chance per season of an outbreak
@@ -353,6 +382,11 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     cost: { wood: 12 }, jobs: 0, buildTime: 6,
     desc: 'Homes up to 4 villagers and lets families grow.',
   },
+  stonehouse: {
+    type: 'stonehouse', name: 'Stone House', emoji: '🏡', category: 'housing', w: 2, h: 2,
+    cost: { wood: 8, stone: 16 }, jobs: 0, buildTime: 8,
+    desc: 'A warm, sturdy home for up to 5 — residents burn much less fuel in winter.',
+  },
   gatherer: {
     type: 'gatherer', name: 'Gatherer', emoji: '🧺', category: 'food', w: 2, h: 2,
     cost: { wood: 10 }, jobs: 2, buildTime: 6, workRadius: 6,
@@ -418,6 +452,21 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     cost: { wood: 16, stone: 10 }, jobs: 1, buildTime: 7,
     desc: 'A teacher educates the children; kids who grow up here become skilled, more productive adults.',
   },
+  tavern: {
+    type: 'tavern', name: 'Tavern', emoji: '🍺', category: 'civic', w: 2, h: 2,
+    cost: { wood: 16, stone: 6 }, jobs: 1, buildTime: 7,
+    desc: 'A staffed alehouse brews grain into ale each season, keeping the village merry.',
+  },
+  chapel: {
+    type: 'chapel', name: 'Chapel', emoji: '⛪', category: 'civic', w: 2, h: 2,
+    cost: { wood: 14, stone: 14 }, jobs: 0, buildTime: 8,
+    desc: 'A place of worship and gathering that lifts the spirits of the whole village.',
+  },
+  cemetery: {
+    type: 'cemetery', name: 'Cemetery', emoji: '🪦', category: 'civic', w: 2, h: 2,
+    cost: { wood: 6, stone: 8 }, jobs: 0, buildTime: 6,
+    desc: 'A dignified resting place — villagers grieve less when the dead are honoured.',
+  },
   herbalist: {
     type: 'herbalist', name: 'Herbalist', emoji: '🌿', category: 'civic', w: 2, h: 2,
     cost: { wood: 12 }, jobs: 2, buildTime: 6, workRadius: 6,
@@ -456,6 +505,7 @@ export const CATEGORY_META: Record<BuildCategory, { label: string; emoji: string
 
 export const BUILD_ORDER: BuildingType[] = [
   'house',
+  'stonehouse',
   'gatherer',
   'farm',
   'fishing',
@@ -469,6 +519,9 @@ export const BUILD_ORDER: BuildingType[] = [
   'tailor',
   'trading',
   'school',
+  'tavern',
+  'chapel',
+  'cemetery',
   'herbalist',
   'hospital',
   'well',

@@ -5,7 +5,8 @@ import {
   BuildingType,
   Sex,
   BUILDING_DEFS,
-  HOUSING_PER_HOUSE,
+  isHouse,
+  houseCapacityOf,
   BARN_CAPACITY,
   MARKET_CAPACITY,
   START_RESOURCES,
@@ -93,7 +94,7 @@ export function newGame(seed?: number): GameState {
 
 export function housingCapacity(s: GameState): number {
   let cap = 0;
-  for (const b of s.buildings) if (b.built && b.type === 'house') cap += HOUSING_PER_HOUSE;
+  for (const b of s.buildings) if (b.built && isHouse(b.type)) cap += houseCapacityOf(b.type);
   return cap;
 }
 

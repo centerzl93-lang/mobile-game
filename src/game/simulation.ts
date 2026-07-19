@@ -28,13 +28,24 @@ import {
   TRADE_VALUE,
   MERCHANT_MARGIN,
   MERCHANT_VISIT_EVERY,
-  HOUSING_PER_HOUSE,
   CHILD_FOOD_FACTOR,
   BIRTH_CHANCE,
   ADULT_AGE,
   OLD_AGE_START,
   MAX_AGE,
   EDUCATED_BONUS,
+  isHouse,
+  houseCapacityOf,
+  STONE_HOUSE_HEAT_FACTOR,
+  HAPPY_TAVERN,
+  HAPPY_CHAPEL,
+  HAPPY_CEMETERY,
+  DEATH_UNREST,
+  TAVERN_GRAIN_PER_SEASON,
+  IMMIGRATION_CHANCE,
+  IMMIGRATION_MIN,
+  IMMIGRATION_MAX,
+  IMMIGRANT_SICK_CHANCE,
   DISEASE_CHANCE,
   DISEASE_INFECT_FRACTION,
   SICK_RECOVER_BASE,
@@ -121,7 +132,7 @@ function assignHomesAndJobs(s: GameState): void {
   const occ = new Map<number, number>();
   const hasM = new Set<number>();
   const hasF = new Set<number>();
-  const houses = s.buildings.filter((b) => b.built && b.type === 'house');
+  const houses = s.buildings.filter((b) => b.built && isHouse(b.type));
   for (const c of s.citizens) {
     if (c.homeId === null) continue;
     occ.set(c.homeId, (occ.get(c.homeId) ?? 0) + 1);
@@ -132,9 +143,9 @@ function assignHomesAndJobs(s: GameState): void {
     let target: Building | null = null;
     if (isAdult(c)) {
       const wantSet = c.sex === 'm' ? hasF : hasM; // a house holding the opposite sex
-      for (const h of houses) if ((occ.get(h.id) ?? 0) < HOUSING_PER_HOUSE && wantSet.has(h.id)) { target = h; break; }
+      for (const h of houses) if ((occ.get(h.id) ?? 0) < houseCapacityOf(h.type) && wantSet.has(h.id)) { target = h; break; }
     }
-    if (!target) for (const h of houses) if ((occ.get(h.id) ?? 0) < HOUSING_PER_HOUSE) { target = h; break; }
+    if (!target) for (const h of houses) if ((occ.get(h.id) ?? 0) < houseCapacityOf(h.type)) { target = h; break; }
     if (target) {
       c.homeId = target.id;
       occ.set(target.id, (occ.get(target.id) ?? 0) + 1);
@@ -588,6 +599,7 @@ function wander(s: GameState, c: Citizen, dt: number): void {
 
 // ---- season turnover ----
 function endSeason(s: GameState, log: LogFn): void {
+  const popStart = s.citizens.length; // for tallying deaths (affects morale)
   s.season = (s.season + 1) % SEASONS.length;
   if (s.season === 0) {
     s.year++;
@@ -653,7 +665,15 @@ function endSeason(s: GameState, log: LogFn): void {
 
   // Winter: heat (firewood then coal), then cold-sickness for the unclothed.
   if (season === 'Winter' && s.citizens.length > 0) {
-    const heatNeed = s.citizens.length * HEAT_PER_CITIZEN_WINTER;
+    // Each villager needs heat; those living in a stone house need much less.
+    const stoneHomes = new Set(
+      s.buildings.filter((b) => b.built && b.type === 'stonehouse').map((b) => b.id),
+    );
+    let heatNeed = 0;
+    for (const c of s.citizens) {
+      const factor = c.homeId !== null && stoneHomes.has(c.homeId) ? STONE_HOUSE_HEAT_FACTOR : 1;
+      heatNeed += HEAT_PER_CITIZEN_WINTER * factor;
+    }
     // firewood is 1 heat each; consume() returns the shortfall (heat still needed).
     let remaining = consume(s, 'firewood', heatNeed) * FIREWOOD_HEAT;
     if (remaining > 0) {
@@ -681,15 +701,31 @@ function endSeason(s: GameState, log: LogFn): void {
   diseaseSeason(s, log);
   fireSeason(s, log);
 
+  // Tally deaths so far this season (old age, starvation, cold, illness) — they weigh
+  // on morale unless the village keeps a cemetery.
+  const deaths = Math.max(0, popStart - s.citizens.length);
+
+  // Nomad immigration: with spare housing and a comfortable food surplus, a band of
+  // wanderers may ask to settle. A few can arrive already sick.
+  immigrate(s, log);
+
+  // Taverns brew stored grain into ale, cheering the village (staffed only).
+  let tavernActive = false;
+  for (const b of s.buildings) {
+    if (b.built && b.type === 'tavern' && b.workers.length > 0) {
+      if (consume(s, 'grain', TAVERN_GRAIN_PER_SEASON) === 0) tavernActive = true;
+    }
+  }
+
   // Reproduction: a house with an adult man + woman, spare room, and enough food
   // stored may bear a child. Happier villages breed faster.
   if (s.citizens.length > 0 && totalFood(s) > s.citizens.length * FOOD_PER_CITIZEN_PER_SEASON) {
     const chance = BIRTH_CHANCE * (0.4 + 0.6 * (avgHappiness(s) / 100));
     let born = 0;
     for (const h of s.buildings) {
-      if (!h.built || h.type !== 'house') continue;
+      if (!h.built || !isHouse(h.type)) continue;
       const residents = s.citizens.filter((c) => c.homeId === h.id);
-      if (residents.length >= HOUSING_PER_HOUSE) continue;
+      if (residents.length >= houseCapacityOf(h.type)) continue;
       const man = residents.some((c) => isAdult(c) && c.sex === 'm');
       const woman = residents.some((c) => isAdult(c) && c.sex === 'f');
       if (man && woman && Math.random() < chance) {
@@ -700,8 +736,8 @@ function endSeason(s: GameState, log: LogFn): void {
     if (born > 0) log(born > 1 ? `${born} children were born` : `A child was born`, 'good');
   }
 
-  // Well-being drifts toward conditions (food/variety -> health; space/goods -> happiness).
-  updateWellbeing(s, shortFood > 0);
+  // Well-being drifts toward conditions (food/variety -> health; space/goods/amenities -> happiness).
+  updateWellbeing(s, shortFood > 0, deaths, tavernActive);
 
   updateMerchant(s, log);
 
@@ -819,7 +855,7 @@ export function avgHappiness(s: GameState): number {
   return t / s.citizens.length;
 }
 
-function updateWellbeing(s: GameState, foodShort: boolean): void {
+function updateWellbeing(s: GameState, foodShort: boolean, deaths: number, tavernActive: boolean): void {
   const pop = s.citizens.length;
   if (pop === 0) return;
   const variety = foodVarietyStored(s); // distinct food types in stock (0..4)
@@ -827,11 +863,51 @@ function updateWellbeing(s: GameState, foodShort: boolean): void {
   const headroom = housingCapacity(s) - pop > 0;
   const clothed = totalStored(s, 'clothing') >= pop;
   const comfortable = totalFood(s) > pop * FOOD_PER_CITIZEN_PER_SEASON;
-  const happyTarget = clamp(50 + (headroom ? 15 : 0) + (clothed ? 15 : 0) + (comfortable ? 20 : 0), 0, 100);
+  const chapel = s.buildings.some((b) => b.built && b.type === 'chapel');
+  const cemetery = s.buildings.some((b) => b.built && b.type === 'cemetery');
+  // Basics can reach 75; amenities carry the village the rest of the way.
+  let happyTarget = 40 + (headroom ? 10 : 0) + (clothed ? 10 : 0) + (comfortable ? 15 : 0);
+  if (tavernActive) happyTarget += HAPPY_TAVERN;
+  if (chapel) happyTarget += HAPPY_CHAPEL;
+  if (cemetery) happyTarget += HAPPY_CEMETERY;
+  if (deaths > 0 && !cemetery) happyTarget -= DEATH_UNREST; // grief when the dead lie unhonoured
+  happyTarget = clamp(happyTarget, 0, 100);
   for (const c of s.citizens) {
     c.health += (healthTarget - c.health) * 0.25;
     c.happiness += (happyTarget - c.happiness) * 0.25;
   }
+}
+
+/** Nomads occasionally settle when there is spare housing and a food surplus. */
+function immigrate(s: GameState, log: LogFn): void {
+  const pop = s.citizens.length;
+  if (pop === 0) return;
+  const room = housingCapacity(s) - pop;
+  if (room < IMMIGRATION_MIN) return;
+  if (totalFood(s) <= pop * FOOD_PER_CITIZEN_PER_SEASON * 1.5) return; // need a comfortable surplus
+  if (Math.random() >= IMMIGRATION_CHANCE) return;
+
+  const band = IMMIGRATION_MIN + Math.floor(Math.random() * (IMMIGRATION_MAX - IMMIGRATION_MIN + 1));
+  const n = Math.min(room, band);
+  const centre = centreOfVillage(s);
+  let sick = 0;
+  for (let i = 0; i < n; i++) {
+    const age = Math.floor(ADULT_AGE + 2 + Math.random() * (OLD_AGE_START - ADULT_AGE - 4));
+    const c = makeCitizen(
+      s,
+      Math.random() < 0.5 ? 'm' : 'f',
+      age,
+      centre.x + (Math.random() - 0.5) * 2,
+      centre.y + (Math.random() - 0.5) * 2,
+    );
+    if (Math.random() < IMMIGRANT_SICK_CHANCE) {
+      c.sick = true;
+      sick++;
+    }
+    s.citizens.push(c);
+  }
+  log(`${n} nomad${n > 1 ? 's' : ''} settled in your village`, 'good');
+  if (sick > 0) log(`${sick} newcomer${sick > 1 ? 's' : ''} arrived sick`, 'bad');
 }
 
 // ---- disease & fire ----

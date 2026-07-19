@@ -19,10 +19,13 @@ import {
 import { tileIndex } from '../game/world';
 import { Camera3D } from '../engine/camera3d';
 import type { PlacementView } from './renderer';
+import { ModelLibrary, InstancedModel } from './models';
 
 const LAND_H = 0.3; // height of a normal land tile block
 const STONE_H = 0.6; // rocky mountainside stands taller
 const TOP = LAND_H; // y of the walkable surface props sit on
+const TREE_MODEL_SIZE = 1.6; // world scale applied to a normalized (footprint=1) tree model
+const ROCK_MODEL_SIZE = 0.9; // world scale applied to a normalized loose-stone model
 
 const TILE_COLOR: Record<string, number> = {
   grass: 0x5b8f43,
@@ -57,10 +60,13 @@ function buildingHeight(t: BuildingType): number {
 export class Renderer3D {
   readonly scene = new THREE.Scene();
   ready = false;
+  readonly models = new ModelLibrary();
 
   private renderer: THREE.WebGLRenderer;
   private dummy = new THREE.Object3D();
   private color = new THREE.Color();
+  private treeInst: InstancedModel | null = null;
+  private rockInst: InstancedModel | null = null;
 
   // Instanced static/dynamic layers.
   private terrain!: THREE.InstancedMesh;
@@ -74,8 +80,8 @@ export class Renderer3D {
   private citizens!: THREE.InstancedMesh;
   private water!: THREE.Mesh;
 
-  // Per-building meshes + reused overlays.
-  private buildingMeshes = new Map<number, THREE.Mesh>();
+  // Per-building objects (box mesh or cloned model) + reused overlays.
+  private buildingMeshes = new Map<number, THREE.Object3D>();
   private ghost!: THREE.Mesh;
   private selRing!: THREE.Mesh;
   private marquee!: THREE.Mesh;
@@ -95,6 +101,15 @@ export class Renderer3D {
     const sun = new THREE.DirectionalLight(0xfff2da, 1.15);
     sun.position.set(MAP_W * 0.7, 60, MAP_H * 0.3);
     this.scene.add(sun);
+
+    // Load optional glTF models; when one arrives, invalidate the affected layers so the
+    // next frame swaps the placeholder for the real model.
+    this.models.onLoad = () => {
+      this.sig.bld = '~'; // force building rebuild
+      this.sig.tree = -2;
+      this.sig.rock = -2;
+    };
+    void this.models.init();
   }
 
   get object(): THREE.WebGLRenderer { return this.renderer; }
@@ -217,6 +232,14 @@ export class Renderer3D {
 
   // ---- trees ----
   private syncTrees(s: GameState): void {
+    // Upgrade to a model the first frame one is available (hide the cone fallback).
+    const tpl = this.models.firstTree();
+    if (tpl && !this.treeInst) {
+      this.treeInst = new InstancedModel(tpl, this.treeTiles.length || 1);
+      this.treeInst.addTo(this.scene);
+      this.trees.count = 0;
+      this.sig.tree = -3;
+    }
     let sig = 0;
     for (const i of this.treeTiles) sig = (sig + (s.tiles[i].type === 'forest' ? Math.round(s.tiles[i].trees * 8) + 1 : 0) * (i + 1)) % 2147483647;
     if (sig === this.sig.tree) return;
@@ -225,19 +248,40 @@ export class Renderer3D {
     for (const i of this.treeTiles) {
       const t = s.tiles[i];
       const live = t.type === 'forest' && t.trees > 0.05;
-      const sc = live ? 0.5 + t.trees * 0.9 : 0;
-      this.dummy.position.set((i % MAP_W) + 0.5, live ? TOP : -5, ((i / MAP_W) | 0) + 0.5);
-      this.dummy.scale.set(sc, sc, sc);
-      this.dummy.rotation.set(0, 0, 0);
-      this.dummy.updateMatrix();
-      this.trees.setMatrixAt(k, this.dummy.matrix);
+      if (this.treeInst) {
+        const sc = live ? (0.7 + t.trees * 0.8) * TREE_MODEL_SIZE : 0.0001;
+        this.dummy.position.set((i % MAP_W) + 0.5, live ? TOP : -5, ((i / MAP_W) | 0) + 0.5);
+        this.dummy.scale.set(sc, sc, sc);
+        this.dummy.rotation.set(0, (i % 8) * 0.78, 0);
+        this.dummy.updateMatrix();
+        this.treeInst.setAt(k, this.dummy.matrix);
+      } else {
+        const sc = live ? 0.5 + t.trees * 0.9 : 0;
+        this.dummy.position.set((i % MAP_W) + 0.5, live ? TOP : -5, ((i / MAP_W) | 0) + 0.5);
+        this.dummy.scale.set(sc, sc, sc);
+        this.dummy.rotation.set(0, 0, 0);
+        this.dummy.updateMatrix();
+        this.trees.setMatrixAt(k, this.dummy.matrix);
+      }
       k++;
     }
-    this.trees.instanceMatrix.needsUpdate = true;
+    if (this.treeInst) {
+      this.treeInst.setCount(this.treeTiles.length);
+      this.treeInst.update();
+    } else {
+      this.trees.instanceMatrix.needsUpdate = true;
+    }
   }
 
   // ---- loose stone ----
   private syncRocks(s: GameState): void {
+    const tpl = this.models.firstRock();
+    if (tpl && !this.rockInst) {
+      this.rockInst = new InstancedModel(tpl, this.rockTiles.length || 1);
+      this.rockInst.addTo(this.scene);
+      this.rocks.count = 0;
+      this.sig.rock = -3;
+    }
     let sig = 0;
     for (const i of this.rockTiles) sig = (sig + ((s.tiles[i].stone ?? 0) > 0 ? 1 : 0) * (i + 1)) % 2147483647;
     if (sig === this.sig.rock) return;
@@ -245,14 +289,28 @@ export class Renderer3D {
     let k = 0;
     for (const i of this.rockTiles) {
       const has = (s.tiles[i].stone ?? 0) > 0;
-      this.dummy.position.set((i % MAP_W) + 0.5, has ? TOP + 0.1 : -5, ((i / MAP_W) | 0) + 0.5);
-      this.dummy.scale.set(has ? 1 : 0.0001, has ? 1 : 0.0001, has ? 1 : 0.0001);
-      this.dummy.rotation.set(0, i * 1.1, 0);
-      this.dummy.updateMatrix();
-      this.rocks.setMatrixAt(k, this.dummy.matrix);
+      if (this.rockInst) {
+        const sc = has ? ROCK_MODEL_SIZE : 0.0001;
+        this.dummy.position.set((i % MAP_W) + 0.5, has ? TOP : -5, ((i / MAP_W) | 0) + 0.5);
+        this.dummy.scale.set(sc, sc, sc);
+        this.dummy.rotation.set(0, (i % 6) * 1.05, 0);
+        this.dummy.updateMatrix();
+        this.rockInst.setAt(k, this.dummy.matrix);
+      } else {
+        this.dummy.position.set((i % MAP_W) + 0.5, has ? TOP + 0.1 : -5, ((i / MAP_W) | 0) + 0.5);
+        this.dummy.scale.set(has ? 1 : 0.0001, has ? 1 : 0.0001, has ? 1 : 0.0001);
+        this.dummy.rotation.set(0, i * 1.1, 0);
+        this.dummy.updateMatrix();
+        this.rocks.setMatrixAt(k, this.dummy.matrix);
+      }
       k++;
     }
-    this.rocks.instanceMatrix.needsUpdate = true;
+    if (this.rockInst) {
+      this.rockInst.setCount(this.rockTiles.length);
+      this.rockInst.update();
+    } else {
+      this.rocks.instanceMatrix.needsUpdate = true;
+    }
   }
 
   // ---- paths & bridges ----
@@ -308,39 +366,87 @@ export class Renderer3D {
   private syncBuildings(s: GameState): void {
     let sig = '';
     for (const b of s.buildings) sig += b.id + ':' + (b.built ? 1 : 0) + ':' + (b.fireTimer ? 1 : 0) + ';';
-    if (sig !== this.sig.bld) {
-      this.sig.bld = sig;
-      const alive = new Set(s.buildings.map((b) => b.id));
-      for (const [id, mesh] of this.buildingMeshes) {
-        if (!alive.has(id)) {
-          this.scene.remove(mesh);
-          (mesh.material as THREE.Material).dispose();
-          mesh.geometry.dispose();
-          this.buildingMeshes.delete(id);
-        }
-      }
-      for (const b of s.buildings) {
-        const def = BUILDING_DEFS[b.type];
-        let mesh = this.buildingMeshes.get(b.id);
-        const h = buildingHeight(b.type);
-        if (!mesh) {
-          const geo = new THREE.BoxGeometry(def.w * 0.9, h, def.h * 0.9);
-          geo.translate(0, h / 2, 0);
-          mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0 }));
-          mesh.position.set(b.x + def.w / 2, TOP, b.y + def.h / 2);
-          this.buildingMeshes.set(b.id, mesh);
-          this.scene.add(mesh);
-        }
-        const mat = mesh.material as THREE.MeshStandardMaterial;
-        if (b.fireTimer) {
-          mat.color.set(0xe05420); mat.emissive.set(0x812c10); mat.transparent = false; mat.opacity = 1; mat.wireframe = false;
-        } else if (!b.built) {
-          mat.color.set(BUILDING_COLORS[b.type]); mat.emissive.set(0x000000); mat.transparent = true; mat.opacity = 0.45; mat.wireframe = false;
-        } else {
-          mat.color.set(BUILDING_COLORS[b.type]); mat.emissive.set(0x000000); mat.transparent = false; mat.opacity = 1; mat.wireframe = false;
-        }
+    if (sig === this.sig.bld) return;
+    this.sig.bld = sig;
+
+    const alive = new Set(s.buildings.map((b) => b.id));
+    for (const [id, obj] of this.buildingMeshes) {
+      if (!alive.has(id)) {
+        this.disposeBuilding(obj);
+        this.buildingMeshes.delete(id);
       }
     }
+    for (const b of s.buildings) {
+      const def = BUILDING_DEFS[b.type];
+      const wantModel = !!this.models.buildingClone(b.type); // model available for this type?
+      let obj = this.buildingMeshes.get(b.id);
+      // Recreate if missing or if the desired kind (model vs box) changed since last build.
+      if (!obj || !!obj.userData.model !== wantModel) {
+        if (obj) {
+          this.disposeBuilding(obj);
+          this.buildingMeshes.delete(b.id);
+        }
+        obj = wantModel ? this.makeBuildingModel(b.type) : this.makeBuildingBox(b.type);
+        obj.position.set(b.x + def.w / 2, TOP, b.y + def.h / 2);
+        this.buildingMeshes.set(b.id, obj);
+        this.scene.add(obj);
+      }
+      this.styleBuilding(obj, b.type, b.built, !!b.fireTimer);
+    }
+  }
+
+  private makeBuildingBox(type: BuildingType): THREE.Object3D {
+    const def = BUILDING_DEFS[type];
+    const h = buildingHeight(type);
+    const geo = new THREE.BoxGeometry(def.w * 0.9, h, def.h * 0.9);
+    geo.translate(0, h / 2, 0);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0 }));
+    mesh.userData.model = false;
+    return mesh;
+  }
+
+  private makeBuildingModel(type: BuildingType): THREE.Object3D {
+    const def = BUILDING_DEFS[type];
+    const clone = this.models.buildingClone(type)!; // footprint normalized to 1×1
+    const k = Math.min(def.w, def.h) * 0.95; // scale up to the tile footprint, keep aspect
+    clone.scale.multiplyScalar(k);
+    clone.userData.model = true;
+    return clone;
+  }
+
+  /** Apply built / construction / fire appearance to whichever object represents a building. */
+  private styleBuilding(obj: THREE.Object3D, type: BuildingType, built: boolean, fire: boolean): void {
+    const isModel = !!obj.userData.model;
+    obj.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
+      const mat = m.material as THREE.MeshStandardMaterial;
+      if (!mat || Array.isArray(mat)) return;
+      // Box meshes get the flat building color; model meshes keep their own textures/colors.
+      if (!isModel && mat.color) mat.color.set(BUILDING_COLORS[type]);
+      if (fire) {
+        mat.emissive?.set(0x812c10);
+        mat.transparent = false;
+        mat.opacity = 1;
+      } else {
+        mat.emissive?.set(0x000000);
+        mat.transparent = !built;
+        mat.opacity = built ? 1 : 0.5;
+      }
+      mat.needsUpdate = true;
+    });
+  }
+
+  private disposeBuilding(obj: THREE.Object3D): void {
+    this.scene.remove(obj);
+    obj.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
+      m.geometry?.dispose();
+      const mat = m.material;
+      if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+      else mat?.dispose();
+    });
   }
 
   // ---- citizens ----
@@ -413,14 +519,15 @@ export class Renderer3D {
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
     }
+    this.treeInst?.dispose(this.scene);
+    this.treeInst = null;
+    this.rockInst?.dispose(this.scene);
+    this.rockInst = null;
     this.scene.remove(this.water);
-    for (const [, mesh] of this.buildingMeshes) {
-      this.scene.remove(mesh);
-      mesh.geometry.dispose();
-      (mesh.material as THREE.Material).dispose();
-    }
+    for (const [, obj] of this.buildingMeshes) this.disposeBuilding(obj);
     this.buildingMeshes.clear();
     for (const o of [this.ghost, this.selRing, this.marquee]) this.scene.remove(o);
+    this.sig = { land: -1, tree: -1, rock: -1, path: '', mark: '', bld: '' };
     this.ready = false;
   }
 }

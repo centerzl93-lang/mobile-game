@@ -198,9 +198,15 @@ node scripts/gen-icons.mjs
 ### 3D view
 
 The world renders in **3D** (Three.js): a low-poly medieval-village look with a tilted
-RTS camera — **drag to pan, pinch to zoom**, tap to inspect, exactly as before. The current
-buildings/props are stylised placeholder blocks; richer low-poly models come next. Append
+RTS camera — **drag to pan, pinch to zoom**, tap to inspect, exactly as before. Append
 **`?2d`** to the URL to fall back to the original flat 2D renderer (handy for comparison).
+
+Buildings, trees, and rocks show **placeholder shapes** until you drop in real low-poly
+`.glb` models. It's optional and incremental — add one or all. See
+[`public/models/README.md`](public/models/README.md) for the drop-in steps, the building keys,
+and where to get free **CC0** packs (KayKit, Kenney, Quaternius, Poly Pizza). The loader
+auto-centers and scales each model, so exact size/orientation in the file doesn't matter.
+Models are cached for offline use after the first online load.
 
 ## Project layout
 

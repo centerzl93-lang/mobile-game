@@ -1,7 +1,9 @@
 import './style.css';
 import { Camera } from './engine/camera';
+import { Camera3D } from './engine/camera3d';
 import { InputManager } from './engine/input';
 import { Renderer, PlacementView } from './render/renderer';
+import { Renderer3D } from './render/renderer3d';
 import { UI, PathTier } from './ui/ui';
 import {
   GameState,
@@ -41,9 +43,11 @@ const SPEEDS = [1, 2, 3];
 
 class Game {
   canvas = document.getElementById('game') as HTMLCanvasElement;
-  ctx = this.canvas.getContext('2d')!;
-  camera = new Camera();
-  renderer = new Renderer(this.ctx, this.camera);
+  /** `?2d` in the URL keeps the legacy flat renderer for side-by-side/rollback. */
+  use2d = new URLSearchParams(location.search).has('2d');
+  camera: Camera | Camera3D;
+  renderer: Renderer | Renderer3D;
+  private ctx?: CanvasRenderingContext2D;
   ui: UI;
   input: InputManager;
 
@@ -66,6 +70,16 @@ class Game {
   saveAccum = 0;
 
   constructor() {
+    if (this.use2d) {
+      const cam = new Camera();
+      this.ctx = this.canvas.getContext('2d')!;
+      this.camera = cam;
+      this.renderer = new Renderer(this.ctx, cam);
+    } else {
+      const cam = new Camera3D();
+      this.camera = cam;
+      this.renderer = new Renderer3D(this.canvas);
+    }
     this.state = newGame();
     this.ui = new UI({
       onSelectBuild: (t) => this.onSelectBuild(t),
@@ -114,29 +128,33 @@ class Game {
   }
 
   private resize(): void {
-    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.cw = this.canvas.clientWidth;
     this.ch = this.canvas.clientHeight;
-    this.canvas.width = Math.round(this.cw * this.dpr);
-    this.canvas.height = Math.round(this.ch * this.dpr);
+    if (this.use2d) {
+      this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+      this.canvas.width = Math.round(this.cw * this.dpr);
+      this.canvas.height = Math.round(this.ch * this.dpr);
+    } else {
+      (this.renderer as Renderer3D).setSize(this.cw, this.ch);
+      (this.camera as Camera3D).setAspect(this.cw, this.ch);
+    }
   }
 
   private centreOnVillage(): void {
     const cs = this.state.citizens;
+    let x = MAP_W / 2;
+    let y = MAP_H / 2;
     if (cs.length > 0) {
-      let x = 0;
-      let y = 0;
+      x = 0;
+      y = 0;
       for (const c of cs) {
         x += c.x;
         y += c.y;
       }
-      this.camera.x = x / cs.length;
-      this.camera.y = y / cs.length;
-    } else {
-      this.camera.x = MAP_W / 2;
-      this.camera.y = MAP_H / 2;
+      x /= cs.length;
+      y /= cs.length;
     }
-    this.camera.zoom = 1.3;
+    this.camera.focus(x, y);
   }
 
   private onSelectBuild(t: BuildingType | null): void {
@@ -180,16 +198,16 @@ class Game {
 
   private onMarqueeMove(sx0: number, sy0: number, sx1: number, sy1: number): void {
     if (!this.harvestMode) return;
-    const [wx0, wy0] = this.camera.screenToWorld(sx0, sy0, this.cw, this.ch);
-    const [wx1, wy1] = this.camera.screenToWorld(sx1, sy1, this.cw, this.ch);
+    const [wx0, wy0] = this.camera.screenToTile(sx0, sy0, this.cw, this.ch);
+    const [wx1, wy1] = this.camera.screenToTile(sx1, sy1, this.cw, this.ch);
     this.marquee = { x0: wx0, y0: wy0, x1: wx1, y1: wy1 };
   }
 
   private onMarqueeEnd(sx0: number, sy0: number, sx1: number, sy1: number): void {
     this.marquee = null;
     if (!this.harvestMode || !this.running || this.state.gameOver) return;
-    const [wx0, wy0] = this.camera.screenToWorld(sx0, sy0, this.cw, this.ch);
-    const [wx1, wy1] = this.camera.screenToWorld(sx1, sy1, this.cw, this.ch);
+    const [wx0, wy0] = this.camera.screenToTile(sx0, sy0, this.cw, this.ch);
+    const [wx1, wy1] = this.camera.screenToTile(sx1, sy1, this.cw, this.ch);
     const n = markHarvestRect(
       this.state,
       Math.floor(wx0), Math.floor(wy0), Math.floor(wx1), Math.floor(wy1),
@@ -248,7 +266,7 @@ class Game {
 
   private onPaint(sx: number, sy: number): void {
     if (!this.selectedPath || !this.running || this.state.gameOver) return;
-    const [wx, wy] = this.camera.screenToWorld(sx, sy, this.cw, this.ch);
+    const [wx, wy] = this.camera.screenToTile(sx, sy, this.cw, this.ch);
     planPath(this.state, Math.floor(wx), Math.floor(wy), this.selectedPath);
   }
 
@@ -284,7 +302,7 @@ class Game {
       this.placeAtReticle();
       return;
     }
-    const [wx, wy] = this.camera.screenToWorld(sx, sy, this.cw, this.ch);
+    const [wx, wy] = this.camera.screenToTile(sx, sy, this.cw, this.ch);
     if (this.demolish) {
       this.demolishAt(wx, wy);
       return;
@@ -437,9 +455,10 @@ class Game {
 
   private reticleTile(type: BuildingType): { tx: number; ty: number } {
     const def = BUILDING_DEFS[type];
+    const [cx, cy] = this.camera.centerTile();
     return {
-      tx: Math.round(this.camera.x - def.w / 2),
-      ty: Math.round(this.camera.y - def.h / 2),
+      tx: Math.round(cx - def.w / 2),
+      ty: Math.round(cy - def.h / 2),
     };
   }
 
@@ -488,8 +507,12 @@ class Game {
       placement.valid = canPlace(this.state, this.selectedBuild, tx, ty).ok;
     }
 
-    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.renderer.draw(this.state, this.cw, this.ch, placement);
+    if (this.use2d) {
+      this.ctx!.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      (this.renderer as Renderer).draw(this.state, this.cw, this.ch, placement);
+    } else {
+      (this.renderer as Renderer3D).render(this.state, this.camera as Camera3D, placement);
+    }
     this.ui.updateHud(this.state, SPEEDS[this.speedIndex], this.paused);
     this.ui.refreshPanels(this.state);
     if (this.inspectSel) this.refreshInspect();

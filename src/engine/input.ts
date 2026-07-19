@@ -1,4 +1,8 @@
-import { Camera } from './camera';
+/** Minimal camera surface the input manager drives — satisfied by both Camera and Camera3D. */
+export interface CameraController {
+  panByPixels(dx: number, dy: number): void;
+  zoomAt(factor: number, sx: number, sy: number, canvasW: number, canvasH: number): void;
+}
 
 interface PointerRec {
   x: number;
@@ -31,7 +35,7 @@ export class InputManager {
 
   constructor(
     private canvas: HTMLCanvasElement,
-    private camera: Camera,
+    private camera: CameraController,
   ) {
     canvas.addEventListener('pointerdown', this.onDown, { passive: false });
     canvas.addEventListener('pointermove', this.onMove, { passive: false });

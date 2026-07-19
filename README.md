@@ -195,6 +195,13 @@ Icons are generated (no image tools needed) with:
 node scripts/gen-icons.mjs
 ```
 
+### 3D view
+
+The world renders in **3D** (Three.js): a low-poly medieval-village look with a tilted
+RTS camera — **drag to pan, pinch to zoom**, tap to inspect, exactly as before. The current
+buildings/props are stylised placeholder blocks; richer low-poly models come next. Append
+**`?2d`** to the URL to fall back to the original flat 2D renderer (handy for comparison).
+
 ## Project layout
 
 ```

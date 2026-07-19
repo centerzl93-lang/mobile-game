@@ -25,6 +25,19 @@ export class Camera {
     return [(sx - canvasW / 2) / p + this.x, (sy - canvasH / 2) / p + this.y];
   }
 
+  // ---- Shared camera interface (also implemented by Camera3D) so Game/Input are agnostic ----
+  screenToTile(sx: number, sy: number, canvasW: number, canvasH: number): [number, number] {
+    return this.screenToWorld(sx, sy, canvasW, canvasH);
+  }
+  centerTile(): [number, number] {
+    return [this.x, this.y];
+  }
+  focus(tx: number, ty: number): void {
+    this.x = tx;
+    this.y = ty;
+    this.clamp();
+  }
+
   panByPixels(dx: number, dy: number): void {
     const p = this.pxPerTile;
     this.x -= dx / p;

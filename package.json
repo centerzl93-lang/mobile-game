@@ -13,5 +13,9 @@
     "typescript": "^5.5.4",
     "vite": "^5.4.2",
     "vite-plugin-pwa": "^0.20.5"
+  },
+  "dependencies": {
+    "@types/three": "^0.185.1",
+    "three": "^0.185.1"
   }
 }

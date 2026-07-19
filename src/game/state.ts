@@ -72,6 +72,7 @@ export function newGame(seed?: number): GameState {
     gameOver: false,
     everLived: true,
     merchant: { present: false, timer: MERCHANT_VISIT_EVERY, stock: {} },
+    pendingNomads: null,
     pathProgress: 0,
   };
 

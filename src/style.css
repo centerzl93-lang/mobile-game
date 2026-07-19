@@ -488,6 +488,71 @@ body {
   opacity: 0.5;
 }
 
+/* ---------- Nomad arrival prompt ---------- */
+#nomad {
+  position: absolute;
+  inset: 0;
+  z-index: 24;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 14, 8, 0.72);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  padding: 24px;
+}
+.nomad-card {
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 22px 20px;
+  max-width: 340px;
+  width: 100%;
+  text-align: center;
+}
+.nomad-card h2 {
+  margin: 0 0 6px;
+  font-size: 21px;
+}
+.nomad-card .big {
+  font-size: 40px;
+  margin: 4px 0 10px;
+}
+.nomad-card p {
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.nomad-warn {
+  margin: 8px 0 2px;
+  font-size: 13px;
+  color: #e6b25a;
+}
+.nomad-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+.nomad-actions button {
+  flex: 1 1 0;
+  padding: 12px;
+  border: none;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.nomad-actions .accept {
+  background: var(--accent);
+  color: #10240c;
+}
+.nomad-actions .reject {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
 /* path build buttons get a subtle accent */
 .build-btn.path .emoji {
   filter: saturate(0.6);

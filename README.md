@@ -98,10 +98,12 @@ slot, eat a **half ration**, **can't work**, and grow into adults at **age 4**.
 **Old age** claims villagers from about **35 onward** (a rising yearly chance up to
 ~48), so keep raising the next generation.
 
-**Nomads (immigration).** You don't only grow from within: when you keep **spare housing
-and a comfortable food surplus**, wandering **nomads** occasionally arrive and settle
-(2–4 adults at a time). Now and then a newcomer shows up **already sick**, so a village
-with no way to treat illness takes a risk letting strangers in.
+**Nomads (immigration).** You don't only grow from within: when you keep a **comfortable
+food surplus**, a band of wandering **nomads** (4–12 adults) may show up at the gate —
+whether or not you have spare housing. A prompt lets you **welcome them or turn them
+away**, so growth is your call. Now and then some newcomers arrive **already sick**
+(you'll get a warning), so a village with no way to treat illness takes a risk letting
+strangers in — and accepting more mouths than you can house or feed has its own cost.
 
 **Health & Happiness** (shown as averages ❤️/😊 in the HUD, per-villager on inspect):
 - **Health** rises with a **varied diet** — the more of the **four food kinds** (fruit,

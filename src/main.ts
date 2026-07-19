@@ -21,7 +21,15 @@ import {
   PATH_STONE_PLAN,
 } from './types';
 import { newGame } from './game/state';
-import { update, LogKind, tradeWithMerchant, TradeResult, igniteBuilding } from './game/simulation';
+import {
+  update,
+  LogKind,
+  tradeWithMerchant,
+  TradeResult,
+  igniteBuilding,
+  acceptNomads,
+  rejectNomads,
+} from './game/simulation';
 import { canPlace, placeBuilding, canAfford, demolishBuilding } from './game/buildings';
 import { addNearest } from './game/storage';
 import { planPath } from './game/paths';
@@ -66,6 +74,8 @@ class Game {
       onSetMineOutput: (id, o) => this.setMineOutput(id, o),
       onSetSmithRecipe: (id, r) => this.setSmithRecipe(id, r),
       onTrade: (give, get, qty) => this.trade(give, get, qty),
+      onAcceptNomads: () => this.acceptNomads(),
+      onRejectNomads: () => this.rejectNomads(),
     });
     this.input = new InputManager(this.canvas, this.camera);
     this.input.onTap = (sx, sy) => this.onTap(sx, sy);
@@ -183,6 +193,16 @@ class Game {
       this.persist();
     }
     return r;
+  }
+
+  private acceptNomads(): void {
+    acceptNomads(this.state, this.log);
+    this.persist();
+  }
+
+  private rejectNomads(): void {
+    rejectNomads(this.state, this.log);
+    this.persist();
   }
 
   private onPaint(sx: number, sy: number): void {

@@ -44,6 +44,8 @@ export interface UICallbacks {
   onSetMineOutput: (buildingId: number, output: MineOutput) => void;
   onSetSmithRecipe: (buildingId: number, recipe: SmithRecipe) => void;
   onTrade: (give: ResourceKind, get: ResourceKind, qty: number) => TradeResult;
+  onAcceptNomads: () => void;
+  onRejectNomads: () => void;
 }
 
 const LOW_NEED: Partial<Record<ResourceKind, number>> = {
@@ -74,6 +76,7 @@ export class UI {
     overlay: byId('overlay'),
     jobboard: byId('jobboard'),
     trade: byId('trade-overlay'),
+    nomad: byId('nomad'),
   };
   private resChips = new Map<ResourceKind, HTMLElement>();
   private mode: 'inspect' | 'build' | 'path' | 'demolish' = 'inspect';
@@ -329,6 +332,36 @@ export class UI {
   refreshPanels(s: GameState): void {
     if (this.jobBoardOpen) this.refreshJobBoard(s);
     if (!this.el.trade.classList.contains('hidden')) this.refreshTrade(s);
+    this.refreshNomadPrompt(s);
+  }
+
+  // ---- Nomad arrival prompt ----
+  private nomadSig = '';
+  private refreshNomadPrompt(s: GameState): void {
+    const offer = s.gameOver ? null : s.pendingNomads;
+    const sig = offer ? `${offer.count}:${offer.sick}` : '';
+    if (sig === this.nomadSig) return; // avoid rebuilding the card every frame
+    this.nomadSig = sig;
+    if (!offer) {
+      this.el.nomad.classList.add('hidden');
+      this.el.nomad.innerHTML = '';
+      return;
+    }
+    const warn = offer.sick > 0 ? `<div class="nomad-warn">⚠️ Some of them look unwell.</div>` : '';
+    this.el.nomad.innerHTML = `
+      <div class="nomad-card">
+        <h2>Nomads at the gate</h2>
+        <p class="big">🧳</p>
+        <p>A band of <strong>${offer.count}</strong> wandering adults asks to settle in your village. They will need food and housing like everyone else.</p>
+        ${warn}
+        <div class="nomad-actions">
+          <button class="reject" id="nomad-reject">Turn away</button>
+          <button class="accept" id="nomad-accept">Welcome them</button>
+        </div>
+      </div>`;
+    this.el.nomad.classList.remove('hidden');
+    byId('nomad-accept').addEventListener('click', () => this.cb.onAcceptNomads());
+    byId('nomad-reject').addEventListener('click', () => this.cb.onRejectNomads());
   }
 
   private refreshJobBoard(s: GameState): void {

@@ -227,6 +227,13 @@ export interface Merchant {
   stock: Partial<Record<ResourceKind, number>>;
 }
 
+/** A band of nomads awaiting the player's decision to let them settle or turn them away. */
+export interface NomadOffer {
+  count: number;
+  /** How many of the band arrived ill (revealed softly to the player as a warning). */
+  sick: number;
+}
+
 export interface GameState {
   tiles: Tile[]; // length MAP_W * MAP_H
   paths: number[]; // length MAP_W * MAP_H, PATH_* values
@@ -239,6 +246,8 @@ export interface GameState {
   gameOver: boolean;
   everLived: boolean;
   merchant: Merchant;
+  /** A band of nomads awaiting an accept/reject decision, or null. */
+  pendingNomads: NomadOffer | null;
   /** Fractional accumulator for how many planned path tiles are built. */
   pathProgress: number;
 }
@@ -293,9 +302,9 @@ export const DEATH_UNREST = 10; // happiness hit when villagers die and there is
 export const TAVERN_GRAIN_PER_SEASON = 10; // grain a staffed tavern brews into ale each season
 
 // ---- Immigration (nomads seeking a home) ----
-export const IMMIGRATION_CHANCE = 0.25; // per-season chance when housing + food surplus allow
-export const IMMIGRATION_MIN = 2; // fewest nomads in an arriving band
-export const IMMIGRATION_MAX = 4; // most nomads in an arriving band
+export const IMMIGRATION_CHANCE = 0.25; // per-season chance when a food surplus draws newcomers
+export const IMMIGRATION_MIN = 4; // fewest nomads in an arriving band
+export const IMMIGRATION_MAX = 12; // most nomads in an arriving band
 export const IMMIGRANT_SICK_CHANCE = 0.15; // chance a newcomer arrives already sick
 
 // ---- Disease & fire ----

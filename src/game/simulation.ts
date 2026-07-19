@@ -878,20 +878,33 @@ function updateWellbeing(s: GameState, foodShort: boolean, deaths: number, taver
   }
 }
 
-/** Nomads occasionally settle when there is spare housing and a food surplus. */
+/**
+ * A comfortable food surplus occasionally draws a band of nomads to the village gate.
+ * They don't move in on their own — the player must accept or turn them away — and they
+ * come whether or not there is spare housing.
+ */
 function immigrate(s: GameState, log: LogFn): void {
+  if (s.pendingNomads) return; // an offer is already awaiting the player's decision
   const pop = s.citizens.length;
   if (pop === 0) return;
-  const room = housingCapacity(s) - pop;
-  if (room < IMMIGRATION_MIN) return;
   if (totalFood(s) <= pop * FOOD_PER_CITIZEN_PER_SEASON * 1.5) return; // need a comfortable surplus
   if (Math.random() >= IMMIGRATION_CHANCE) return;
 
-  const band = IMMIGRATION_MIN + Math.floor(Math.random() * (IMMIGRATION_MAX - IMMIGRATION_MIN + 1));
-  const n = Math.min(room, band);
-  const centre = centreOfVillage(s);
+  const count = IMMIGRATION_MIN + Math.floor(Math.random() * (IMMIGRATION_MAX - IMMIGRATION_MIN + 1));
   let sick = 0;
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < count; i++) if (Math.random() < IMMIGRANT_SICK_CHANCE) sick++;
+  s.pendingNomads = { count, sick };
+  log(`${count} nomads ask to join your village`, 'info');
+}
+
+/** Player accepted the waiting nomads — settle them (some may be sick). */
+export function acceptNomads(s: GameState, log: LogFn): void {
+  const offer = s.pendingNomads;
+  if (!offer) return;
+  s.pendingNomads = null;
+  const centre = centreOfVillage(s);
+  let placedSick = 0;
+  for (let i = 0; i < offer.count; i++) {
     const age = Math.floor(ADULT_AGE + 2 + Math.random() * (OLD_AGE_START - ADULT_AGE - 4));
     const c = makeCitizen(
       s,
@@ -900,14 +913,21 @@ function immigrate(s: GameState, log: LogFn): void {
       centre.x + (Math.random() - 0.5) * 2,
       centre.y + (Math.random() - 0.5) * 2,
     );
-    if (Math.random() < IMMIGRANT_SICK_CHANCE) {
+    if (placedSick < offer.sick) {
       c.sick = true;
-      sick++;
+      placedSick++;
     }
     s.citizens.push(c);
   }
-  log(`${n} nomad${n > 1 ? 's' : ''} settled in your village`, 'good');
-  if (sick > 0) log(`${sick} newcomer${sick > 1 ? 's' : ''} arrived sick`, 'bad');
+  log(`${offer.count} nomad${offer.count > 1 ? 's' : ''} settled in your village`, 'good');
+  if (offer.sick > 0) log(`${offer.sick} newcomer${offer.sick > 1 ? 's' : ''} arrived sick`, 'bad');
+}
+
+/** Player turned the waiting nomads away. */
+export function rejectNomads(s: GameState, log: LogFn): void {
+  if (!s.pendingNomads) return;
+  s.pendingNomads = null;
+  log('You turned the nomads away', 'info');
 }
 
 // ---- disease & fire ----

@@ -11,6 +11,7 @@ import {
   Citizen,
   BuildingType,
   BUILDING_DEFS,
+  buildTimeOf,
   isHouse,
   houseCapacityOf,
   MapSize,
@@ -521,7 +522,7 @@ class Game {
       if (!b) return this.clearInspect();
       const def = BUILDING_DEFS[b.type];
       if (!b.built) {
-        rows.push({ label: 'Status', value: `Building ${Math.floor((b.progress / def.buildTime) * 100)}%` });
+        rows.push({ label: 'Status', value: `Building ${Math.floor((b.progress / buildTimeOf(b.type)) * 100)}%` });
         for (const [k, amt] of Object.entries(def.cost) as [ResourceKind, number][]) {
           rows.push({ label: `${RESOURCE_ICON[k]} ${k}`, value: `${Math.floor(b.store[k] ?? 0)}/${amt} delivered` });
         }

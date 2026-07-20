@@ -233,6 +233,8 @@ export interface Citizen {
   happiness: number; // 0..100
   educated: boolean; // grew up with a staffed school -> more productive
   sick: boolean; // ill from a disease outbreak; can't work until recovered
+  /** Seconds of leisure remaining; while > 0 the villager is on a break, not working. */
+  rest?: number;
   // ---- transient navigation state (not persisted; recomputed after load) ----
   route?: { x: number; y: number }[]; // cached A* waypoints toward the current destination
   routeI?: number; // index of the next waypoint to reach
@@ -253,6 +255,11 @@ export function isHouse(type: BuildingType): boolean {
 /** How many villagers a given house type shelters. */
 export function houseCapacityOf(type: BuildingType): number {
   return type === 'stonehouse' ? STONE_HOUSE_CAPACITY : HOUSING_PER_HOUSE;
+}
+
+/** A building's effective construction time in seconds (base time × the pace multiplier). */
+export function buildTimeOf(type: BuildingType): number {
+  return BUILDING_DEFS[type].buildTime * BUILD_TIME_SCALE;
 }
 
 // Path layer values (per tile).
@@ -327,11 +334,13 @@ export const MARKET_CAPACITY = 2000; // total units a market holds
 export const MARKET_STOCK_TARGET = 60; // per-resource amount a vendor keeps stocked
 export const CARRY_CAP = 12; // units a villager carries per trip
 export const REFUND_FRACTION = 0.25; // fraction of build cost reclaimed on demolish
-export const WORK_SECONDS = 4; // seconds of work to fill/convert one carry-load
+export const WORK_SECONDS = 8; // seconds of work to fill/convert one carry-load (slower pace)
 export const BUILD_SECONDS_PER_UNIT = 0.5; // on-site labor seconds per unit of construction
+/** Multiplier on every building's construction time — raising buildings takes this much longer. */
+export const BUILD_TIME_SCALE = 2;
 
 // ---- Movement / paths ----
-export const BASE_WALK_SPEED = 1.75; // ~33% slower than the old 2.6
+export const BASE_WALK_SPEED = 0.875; // villagers stroll — half the previous 1.75
 export const PATH_DIRT_MULT = 1.5;
 export const PATH_STONE_MULT = 2.0;
 export const PATH_BRIDGE_MULT = 1.5; // crossing a built bridge (like a dirt path)
@@ -360,6 +369,16 @@ export const SICKNESS_CHANCE = 0.5; // chance an unclothed villager sickens in w
 
 // ---- Demographics ----
 export const ADULT_AGE = 4; // children become working adults at this age (years)
+export const START_ADULTS = 8; // founding adult villagers
+export const START_CHILDREN = 4; // founding children
+export const ADULT_MIN_AGE = 20; // founding adults' age range
+export const ADULT_MAX_AGE = 29;
+export const CHILD_MIN_AGE = 3; // founding children spawn in [CHILD_MIN_AGE, ADULT_AGE)
+
+// ---- Leisure (villagers take occasional breaks from work) ----
+export const LEISURE_CHANCE_PER_SEC = 1 / 90; // ~one break per 90s of work
+export const LEISURE_MIN_SECONDS = 12;
+export const LEISURE_MAX_SECONDS = 24;
 export const CHILD_FOOD_FACTOR = 0.5; // children eat this fraction of an adult ration
 export const BIRTH_CHANCE = 0.35; // base chance per qualifying house, per season
 export const OLD_AGE_START = 35; // old-age deaths begin at this age
@@ -446,6 +465,8 @@ export const START_CITIZENS = 4;
  * `EASY_START_HOUSES` houses). Normal is half of the basics only — food, wood, stone, firewood,
  * clothing, tools. Hard is the same as Normal minus wood and stone.
  */
+/** Opening stockpiles are multiplied by this, matching the founding population (4 → 12). */
+export const STARTING_STOCK_SCALE = 3;
 export const DIFFICULTY_RESOURCES: Record<Difficulty, Partial<Resources>> = {
   easy: { ...START_RESOURCES },
   normal: { fruit: 60, grain: 60, fish: 45, meat: 45, wood: 110, stone: 20, firewood: 100, clothing: 40, tools: 60 },

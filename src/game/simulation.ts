@@ -4,6 +4,7 @@ import {
   Citizen,
   ResourceKind,
   BUILDING_DEFS,
+  buildTimeOf,
   MAP_W,
   MAP_H,
   SEASON_LENGTH,
@@ -12,6 +13,9 @@ import {
   BASE_WALK_SPEED,
   CARRY_CAP,
   WORK_SECONDS,
+  LEISURE_CHANCE_PER_SEC,
+  LEISURE_MIN_SECONDS,
+  LEISURE_MAX_SECONDS,
   PATH_DIRT_PLAN,
   PATH_STONE_PLAN,
   PATH_DIRT,
@@ -308,9 +312,53 @@ function runCitizen(s: GameState, c: Citizen, dt: number, toolFactor: number): v
     wander(s, c, dt); // children play; the sick rest — neither can work or haul
     return;
   }
+  // Villagers don't toil non-stop — every so often an adult takes a break (never mid-haul, so no
+  // load is stranded) to visit a tavern/chapel or head home before returning to work.
+  if ((c.rest ?? 0) > 0) {
+    leisure(s, c, dt);
+    return;
+  }
+  if (!c.carry && Math.random() < dt * LEISURE_CHANCE_PER_SEC) {
+    c.rest = LEISURE_MIN_SECONDS + Math.random() * (LEISURE_MAX_SECONDS - LEISURE_MIN_SECONDS);
+    leisure(s, c, dt);
+    return;
+  }
   const job = c.jobId !== null ? s.buildings.find((b) => b.id === c.jobId) : null;
   if (job && job.built) runWorker(s, c, job, dt, toolFactor);
   else runBuilder(s, c, dt);
+}
+
+/** Spend a leisure break: amble to a tavern/chapel/home and idle there until the break ends. */
+function leisure(s: GameState, c: Citizen, dt: number): void {
+  c.rest = (c.rest ?? 0) - dt;
+  const dest = leisureDestination(s, c);
+  if (dest) {
+    goTo(c, dest);
+    stepTo(s, c, dt);
+  } else {
+    wander(s, c, dt);
+  }
+}
+
+/** Where a villager on a break heads: nearest staffed tavern, then chapel, then their home. */
+function leisureDestination(s: GameState, c: Citizen): { x: number; y: number } | null {
+  const nearestBuilt = (pred: (b: Building) => boolean): { x: number; y: number } | null => {
+    let best: { x: number; y: number } | null = null;
+    let bestD = Infinity;
+    for (const b of s.buildings) {
+      if (!b.built || !pred(b)) continue;
+      const p = buildingApproach(s, b);
+      if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) continue;
+      const d = (p.x - c.x) ** 2 + (p.y - c.y) ** 2;
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    return best;
+  };
+  return (
+    nearestBuilt((b) => b.type === 'tavern' && b.workers.length > 0) ??
+    nearestBuilt((b) => b.type === 'chapel') ??
+    nearestBuilt((b) => b.id === c.homeId)
+  );
 }
 
 // ---- workers (production logistics) ----
@@ -620,7 +668,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
     goTo(c, buildingApproach(s, pick.site));
     if (stepTo(s, c, dt)) {
       pick.site.progress += dt;
-      if (pick.site.progress >= BUILDING_DEFS[pick.site.type].buildTime) {
+      if (pick.site.progress >= buildTimeOf(pick.site.type)) {
         finishConstruction(pick.site);
       }
     }

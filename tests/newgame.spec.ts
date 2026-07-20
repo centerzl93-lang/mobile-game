@@ -42,21 +42,50 @@ test.describe('difficulties', () => {
       };
       return { easy: setup('easy'), normal: setup('normal'), hard: setup('hard') };
     });
+    // Opening stock is the difficulty baseline × 3 (scaled for the 12-villager founding pop).
     // Easy: full stock + 3 houses.
     expect(d.easy.houses).toBe(3);
-    expect(d.easy.store.wood).toBe(220);
-    expect(d.easy.store.medicine).toBe(40);
-    // Normal: no houses, halved basics, no non-basics.
+    expect(d.easy.store.wood).toBe(660);
+    expect(d.easy.store.medicine).toBe(120);
+    // Normal: no houses, halved basics (×3), no non-basics.
     expect(d.normal.houses).toBe(0);
-    expect(d.normal.store.wood).toBe(110);
-    expect(d.normal.store.stone).toBe(20);
+    expect(d.normal.store.wood).toBe(330);
+    expect(d.normal.store.stone).toBe(60);
     expect(d.normal.store.medicine ?? 0).toBe(0);
     expect(d.normal.store.coal ?? 0).toBe(0);
-    // Hard: no wood or stone, but keeps food/firewood/tools.
+    // Hard: no wood or stone, but keeps food/firewood/tools (×3).
     expect(d.hard.store.wood ?? 0).toBe(0);
     expect(d.hard.store.stone ?? 0).toBe(0);
-    expect(d.hard.store.firewood).toBe(100);
-    expect(d.hard.store.tools).toBe(60);
+    expect(d.hard.store.firewood).toBe(300);
+    expect(d.hard.store.tools).toBe(180);
+  });
+
+  test('a fresh game founds 8 adults and 4 children', async ({ page }) => {
+    await open(page);
+    const pop = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const ADULT_AGE = 4;
+      const counts: Record<string, any> = {};
+      for (const diff of ['easy', 'normal', 'hard']) {
+        g.startNewGame('small', diff, true);
+        const cs = g.state.citizens;
+        counts[diff] = {
+          total: cs.length,
+          adults: cs.filter((c: any) => c.age >= ADULT_AGE).length,
+          children: cs.filter((c: any) => c.age < ADULT_AGE).length,
+          adultAgesOk: cs.filter((c: any) => c.age >= ADULT_AGE).every((c: any) => c.age >= 20 && c.age <= 29),
+          childAgesOk: cs.filter((c: any) => c.age < ADULT_AGE).every((c: any) => c.age >= 3 && c.age < ADULT_AGE),
+        };
+      }
+      return counts;
+    });
+    for (const diff of ['easy', 'normal', 'hard']) {
+      expect(pop[diff].total).toBe(12);
+      expect(pop[diff].adults).toBe(8);
+      expect(pop[diff].children).toBe(4);
+      expect(pop[diff].adultAgesOk).toBe(true);
+      expect(pop[diff].childAgesOk).toBe(true);
+    }
   });
 });
 

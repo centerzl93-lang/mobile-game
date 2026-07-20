@@ -20,7 +20,14 @@ import {
   setMapSize,
   Difficulty,
   DIFFICULTY_RESOURCES,
+  STARTING_STOCK_SCALE,
   EASY_START_HOUSES,
+  START_ADULTS,
+  START_CHILDREN,
+  ADULT_MIN_AGE,
+  ADULT_MAX_AGE,
+  CHILD_MIN_AGE,
+  ADULT_AGE,
 } from '../types';
 import { generateWorld, findStartTile, getTile, emptyPaths, emptyHarvest } from './world';
 import { randomName } from './names';
@@ -97,11 +104,12 @@ export function newGame(
     pathProgress: 0,
   };
 
-  // A starting barn holds the opening stockpile for the chosen difficulty.
+  // A starting barn holds the opening stockpile for the chosen difficulty, scaled up for the
+  // larger founding population so the village isn't starving on day one.
   const barn = makeBuilding(state, 'barn', start.x, start.y, true);
   const stock = DIFFICULTY_RESOURCES[difficulty];
   for (const k of Object.keys(stock) as ResourceKind[]) {
-    const amt = stock[k] ?? 0;
+    const amt = (stock[k] ?? 0) * STARTING_STOCK_SCALE;
     if (amt > 0) barn.store[k] = amt;
   }
   state.buildings.push(barn);
@@ -109,12 +117,18 @@ export function newGame(
   // Easy grants a few built houses on the surrounding plains.
   if (difficulty === 'easy') placeStartHouses(state, start, EASY_START_HOUSES);
 
-  // Four founding adults: two men, two women, so couples can form. Spawn each on a grass tile
-  // near the barn so nobody starts stranded on water.
-  const sexes: Sex[] = ['m', 'm', 'f', 'f'];
-  for (const sex of sexes) {
+  const spawn = (sex: Sex, age: number) => {
     const spot = grassSpawnNear(state, start.x + 1, start.y + 1);
-    state.citizens.push(makeCitizen(state, sex, 20 + Math.floor(Math.random() * 15), spot.x, spot.y));
+    state.citizens.push(makeCitizen(state, sex, age, spot.x, spot.y));
+  };
+  // Founding adults (20–29), balanced men/women so couples can form.
+  for (let i = 0; i < START_ADULTS; i++) {
+    const sex: Sex = i % 2 === 0 ? 'm' : 'f';
+    spawn(sex, ADULT_MIN_AGE + Math.floor(Math.random() * (ADULT_MAX_AGE - ADULT_MIN_AGE + 1)));
+  }
+  // Founding children (age 3 up to — but not reaching — adulthood, so they read as "3–4").
+  for (let i = 0; i < START_CHILDREN; i++) {
+    spawn(Math.random() < 0.5 ? 'm' : 'f', CHILD_MIN_AGE + Math.random() * (ADULT_AGE - CHILD_MIN_AGE));
   }
   return state;
 }

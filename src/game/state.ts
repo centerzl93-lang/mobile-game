@@ -9,7 +9,6 @@ import {
   houseCapacityOf,
   BARN_CAPACITY,
   MARKET_CAPACITY,
-  START_RESOURCES,
   MERCHANT_VISIT_EVERY,
   START_HEALTH,
   START_HAPPINESS,
@@ -19,8 +18,11 @@ import {
   MAP_W,
   MAP_H,
   setMapSize,
+  Difficulty,
+  DIFFICULTY_RESOURCES,
+  EASY_START_HOUSES,
 } from '../types';
-import { generateWorld, findStartTile, emptyPaths, emptyHarvest } from './world';
+import { generateWorld, findStartTile, getTile, emptyPaths, emptyHarvest } from './world';
 
 export function makeCitizen(s: { nextId: number }, sex: Sex, age: number, x: number, y: number): Citizen {
   return {
@@ -61,7 +63,12 @@ function makeBuilding(s: { nextId: number }, type: BuildingType, x: number, y: n
   };
 }
 
-export function newGame(size: MapSize = 'small', seed?: number): GameState {
+export function newGame(
+  size: MapSize = 'small',
+  difficulty: Difficulty = 'normal',
+  disasters = true,
+  seed?: number,
+): GameState {
   const dim = MAP_SIZES[size];
   setMapSize(dim, dim); // must run before generateWorld so the world fills the chosen size
   const tiles = generateWorld(seed);
@@ -70,6 +77,8 @@ export function newGame(size: MapSize = 'small', seed?: number): GameState {
   const state: GameState = {
     w: MAP_W,
     h: MAP_H,
+    difficulty,
+    disasters,
     tiles,
     paths: emptyPaths(),
     buildings: [],
@@ -86,21 +95,75 @@ export function newGame(size: MapSize = 'small', seed?: number): GameState {
     pathProgress: 0,
   };
 
-  // A starting barn holds the initial stockpile.
+  // A starting barn holds the opening stockpile for the chosen difficulty.
   const barn = makeBuilding(state, 'barn', start.x, start.y, true);
-  for (const k of Object.keys(START_RESOURCES) as ResourceKind[]) {
-    if (START_RESOURCES[k] > 0) barn.store[k] = START_RESOURCES[k];
+  const stock = DIFFICULTY_RESOURCES[difficulty];
+  for (const k of Object.keys(stock) as ResourceKind[]) {
+    const amt = stock[k] ?? 0;
+    if (amt > 0) barn.store[k] = amt;
   }
   state.buildings.push(barn);
 
-  // Four founding adults: two men, two women, so couples can form.
+  // Easy grants a few built houses on the surrounding plains.
+  if (difficulty === 'easy') placeStartHouses(state, start, EASY_START_HOUSES);
+
+  // Four founding adults: two men, two women, so couples can form. Spawn each on a grass tile
+  // near the barn so nobody starts stranded on water.
   const sexes: Sex[] = ['m', 'm', 'f', 'f'];
   for (const sex of sexes) {
-    const cx = start.x + 2 + (Math.random() * 2 - 1);
-    const cy = start.y + 2 + (Math.random() * 2 - 1);
-    state.citizens.push(makeCitizen(state, sex, 20 + Math.floor(Math.random() * 15), cx, cy));
+    const spot = grassSpawnNear(state, start.x + 1, start.y + 1);
+    state.citizens.push(makeCitizen(state, sex, 20 + Math.floor(Math.random() * 15), spot.x, spot.y));
   }
   return state;
+}
+
+/** A grass point (with a little jitter) near (x,y) for spawning a founder — never on water. */
+function grassSpawnNear(s: GameState, x: number, y: number): { x: number; y: number } {
+  for (let r = 0; r <= 4; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const t = getTile(s.tiles, x + dx, y + dy);
+        if (t && t.type === 'grass') {
+          return { x: x + dx + 0.2 + Math.random() * 0.6, y: y + dy + 0.2 + Math.random() * 0.6 };
+        }
+      }
+    }
+  }
+  return { x: x + 0.5, y: y + 0.5 };
+}
+
+/**
+ * Place up to `count` built 2x2 houses on grass near the barn, without overlapping other
+ * buildings. Scans outward rings, so it degrades gracefully (places fewer) on a cramped map.
+ */
+function placeStartHouses(s: GameState, start: { x: number; y: number }, count: number): void {
+  const fits = (x: number, y: number): boolean => {
+    for (let dy = 0; dy < 2; dy++) {
+      for (let dx = 0; dx < 2; dx++) {
+        const t = getTile(s.tiles, x + dx, y + dy);
+        if (!t || t.type !== 'grass') return false;
+      }
+    }
+    for (const b of s.buildings) {
+      const bd = BUILDING_DEFS[b.type];
+      if (x < b.x + bd.w && x + 2 > b.x && y < b.y + bd.h && y + 2 > b.y) return false;
+    }
+    return true;
+  };
+  let placed = 0;
+  for (let r = 2; r <= 8 && placed < count; r++) {
+    for (let dy = -r; dy <= r && placed < count; dy++) {
+      for (let dx = -r; dx <= r && placed < count; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; // only the new ring each pass
+        const x = start.x + dx;
+        const y = start.y + dy;
+        if (!fits(x, y)) continue;
+        const house = makeBuilding(s, 'house', x, y, true);
+        s.buildings.push(house);
+        placed++;
+      }
+    }
+  }
 }
 
 export function housingCapacity(s: GameState): number {

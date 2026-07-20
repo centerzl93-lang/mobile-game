@@ -12,6 +12,17 @@ export type MapSize = 'small' | 'medium' | 'large';
 /** Side length (tiles) for each selectable map size. Medium/Large double each side. */
 export const MAP_SIZES: Record<MapSize, number> = { small: 48, medium: 96, large: 192 };
 
+/** Starting difficulty chosen at New Game — governs the opening stockpile and starter houses. */
+export type Difficulty = 'easy' | 'normal' | 'hard';
+export const DIFFICULTIES: Difficulty[] = ['easy', 'normal', 'hard'];
+export const DIFFICULTY_META: Record<Difficulty, { label: string; desc: string }> = {
+  easy: { label: 'Easy', desc: '3 houses and a full stockpile to start' },
+  normal: { label: 'Normal', desc: 'Half the basics, no houses' },
+  hard: { label: 'Hard', desc: 'Half the basics — and no wood or stone' },
+};
+/** Built houses granted at the start on Easy. */
+export const EASY_START_HOUSES = 3;
+
 /** Set the active map dimensions. Call before generating or loading a world. */
 export function setMapSize(w: number, h: number): void {
   MAP_W = w;
@@ -270,6 +281,10 @@ export interface GameState {
   /** Map dimensions this state was generated at (also restored on load). */
   w: number;
   h: number;
+  /** Difficulty this game was started on (affects only the opening setup). */
+  difficulty: Difficulty;
+  /** Whether fire and disease outbreaks can occur (toggled at New Game). */
+  disasters: boolean;
   tiles: Tile[]; // length w * h
   paths: number[]; // length w * h, PATH_* values
   buildings: Building[];
@@ -418,6 +433,17 @@ export const START_RESOURCES: Resources = {
   medicine: 40,
 };
 export const START_CITIZENS = 4;
+
+/**
+ * Opening stockpile per difficulty. Easy is the full `START_RESOURCES` (and also grants
+ * `EASY_START_HOUSES` houses). Normal is half of the basics only — food, wood, stone, firewood,
+ * clothing, tools. Hard is the same as Normal minus wood and stone.
+ */
+export const DIFFICULTY_RESOURCES: Record<Difficulty, Partial<Resources>> = {
+  easy: { ...START_RESOURCES },
+  normal: { fruit: 60, grain: 60, fish: 45, meat: 45, wood: 110, stone: 20, firewood: 100, clothing: 40, tools: 60 },
+  hard: { fruit: 60, grain: 60, fish: 45, meat: 45, firewood: 100, clothing: 40, tools: 60 },
+};
 
 // ---- Trade (barter by relative value; merchant keeps a margin) ----
 export const TRADE_VALUE: Record<ResourceKind, number> = {

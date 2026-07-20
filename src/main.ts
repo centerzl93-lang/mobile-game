@@ -12,6 +12,7 @@ import {
   BuildingType,
   BUILDING_DEFS,
   MapSize,
+  Difficulty,
   MAP_W,
   MAP_H,
   MineOutput,
@@ -277,10 +278,10 @@ class Game {
     this.ui.updateHud(this.state, SPEEDS[this.speedIndex], this.paused);
   }
 
-  /** Start a fresh game at the chosen size in a slot. Directly startable (size-select + drivers). */
-  startNewGame(size: MapSize = 'small', slot = 0): void {
+  /** Start a fresh game in a slot. Directly startable (difficulty-select + headless drivers). */
+  startNewGame(size: MapSize = 'small', difficulty: Difficulty = 'normal', disasters = true, slot = 0): void {
     this.currentSlot = slot;
-    this.state = newGame(size);
+    this.state = newGame(size, difficulty, disasters);
     this.centreOnVillage();
     this.paused = false;
     this.selectedBuild = null;
@@ -314,8 +315,23 @@ class Game {
     const cameFromGame = this.running;
     this.running = false;
     this.ui.showSizeSelect({
-      onPick: (size) => this.startNewGame(size, this.firstEmptySlot()),
+      onPick: (size) => this.openDifficultySelect(size),
       onBack: () => (cameFromGame ? this.openPauseMenu() : this.openMainMenu()),
+    });
+  }
+
+  /** Difficulty chooser with the disasters toggle — the last step before a game starts. */
+  private newGameDisasters = true;
+  private openDifficultySelect(size: MapSize): void {
+    this.running = false;
+    this.ui.showDifficultySelect({
+      disasters: this.newGameDisasters,
+      onToggleDisasters: (on) => {
+        this.newGameDisasters = on;
+        this.openDifficultySelect(size); // re-render with the new toggle state
+      },
+      onPick: (difficulty) => this.startNewGame(size, difficulty, this.newGameDisasters, this.firstEmptySlot()),
+      onBack: () => this.openSizeSelect(),
     });
   }
 

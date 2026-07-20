@@ -5,6 +5,9 @@ import {
   BUILDING_DEFS,
   MapSize,
   MAP_SIZES,
+  Difficulty,
+  DIFFICULTIES,
+  DIFFICULTY_META,
   RESOURCE_ICON,
   RESOURCE_KINDS,
   HUD_RESOURCES,
@@ -613,6 +616,33 @@ export class UI {
       byId(`sz-${size}`).addEventListener('click', () => opts.onPick(size)),
     );
     byId('sz-back').addEventListener('click', () => opts.onBack());
+  }
+
+  /** Difficulty chooser (Easy/Normal/Hard) with an On/Off disasters toggle. */
+  showDifficultySelect(opts: {
+    disasters: boolean;
+    onToggleDisasters: (on: boolean) => void;
+    onPick: (difficulty: Difficulty) => void;
+    onBack: () => void;
+  }): void {
+    const diffBtn = (d: Difficulty) =>
+      `<button id="diff-${d}">${DIFFICULTY_META[d].label}<span class="sub">${DIFFICULTY_META[d].desc}</span></button>`;
+    const seg = (on: boolean, label: string) =>
+      `<button class="seg${opts.disasters === on ? ' on' : ''}" id="diff-dis-${on ? 'on' : 'off'}">${label}</button>`;
+    this.overlayCard(
+      `<h2>Choose difficulty</h2>` +
+        `<div class="menu-list">` +
+        DIFFICULTIES.map(diffBtn).join('') +
+        `<div class="set-label">Disasters (fire &amp; disease)</div>` +
+        `<div class="seg-row">${seg(true, 'On')}${seg(false, 'Off')}</div>` +
+        `<button class="ghost" id="diff-back">Back</button>` +
+        `</div>`,
+      'menu-card',
+    );
+    DIFFICULTIES.forEach((d) => byId(`diff-${d}`).addEventListener('click', () => opts.onPick(d)));
+    byId('diff-dis-on').addEventListener('click', () => opts.onToggleDisasters(true));
+    byId('diff-dis-off').addEventListener('click', () => opts.onToggleDisasters(false));
+    byId('diff-back').addEventListener('click', () => opts.onBack());
   }
 
   /** In-game pause menu: Resume, Save, Load, Settings, New Game, Main Menu. */

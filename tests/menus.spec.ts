@@ -45,10 +45,11 @@ test.describe('main menu', () => {
     expect(await page.evaluate(() => (document.getElementById('mm-account') as HTMLButtonElement).disabled)).toBe(true);
   });
 
-  test('New Game → size select → Large starts a 192 game', async ({ page }) => {
+  test('New Game → size select → difficulty → Large starts a 192 game', async ({ page }) => {
     await open(page);
     await page.click('#mm-new');
     await page.click('#sz-large');
+    await page.click('#diff-normal'); // difficulty screen now sits between size and start
     await page.waitForTimeout(150);
     const started = await page.evaluate(() => ({ w: (window as any).__village.state.w, running: (window as any).__village.running, hidden: document.getElementById('overlay')!.classList.contains('hidden') }));
     expect(started.w).toBe(192);
@@ -60,7 +61,7 @@ test.describe('main menu', () => {
 test.describe('save slots', () => {
   test('a game saved to a slot round-trips through reload + Continue', async ({ page }) => {
     await open(page);
-    await page.evaluate(() => (window as any).__village.startNewGame('medium', 1)); // slot 2, persists
+    await page.evaluate(() => (window as any).__village.startNewGame('medium', 'normal', true, 1)); // slot 2, persists
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
     await expect(page.locator('#mm-continue')).toBeVisible();
@@ -75,8 +76,8 @@ test.describe('save slots', () => {
   test('Load Game lists occupied slots and resumes the chosen one', async ({ page }) => {
     await open(page);
     // Put a small game in slot 0 and a large game in slot 2.
-    await page.evaluate(() => (window as any).__village.startNewGame('small', 0));
-    await page.evaluate(() => (window as any).__village.startNewGame('large', 2));
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'normal', true, 0));
+    await page.evaluate(() => (window as any).__village.startNewGame('large', 'normal', true, 2));
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
     await page.click('#mm-load');
@@ -92,7 +93,7 @@ test.describe('save slots', () => {
 test.describe('pause menu', () => {
   test('opens & pauses; Resume, Save-to-slot, Settings, New Game, Main Menu all work', async ({ page }) => {
     await open(page);
-    await page.evaluate(() => (window as any).__village.startNewGame('small', 0));
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'normal', true, 0));
     await page.waitForTimeout(100);
 
     await page.click('#btn-menu');
@@ -118,10 +119,11 @@ test.describe('pause menu', () => {
     await expect(page.locator('#set-gfx-low')).toBeVisible();
     await page.click('#set-back');
 
-    // New Game → size select.
+    // New Game → size select → difficulty.
     await page.click('#pm-new');
     await expect(page.locator('#sz-small')).toBeVisible();
     await page.click('#sz-medium');
+    await page.click('#diff-easy');
     await page.waitForTimeout(120);
     expect(await page.evaluate(() => (window as any).__village.state.w)).toBe(96);
 

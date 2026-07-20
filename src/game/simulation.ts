@@ -1189,8 +1189,10 @@ function diseaseSeason(s: GameState, log: LogFn): void {
   const pop = s.citizens.length;
   if (pop === 0) return;
 
-  // Outbreak: infect a share of the healthy (likelier when the village is unwell).
-  if (pop >= 4 && Math.random() < DISEASE_CHANCE) {
+  // Outbreak: infect a share of the healthy (likelier when the village is unwell). Skipped when
+  // disasters are turned off — but the recovery loop below still runs so villagers who arrived
+  // sick with a nomad band can heal.
+  if (s.disasters && pop >= 4 && Math.random() < DISEASE_CHANCE) {
     const healthy = s.citizens.filter((c) => !c.sick);
     healthy.sort(() => Math.random() - 0.5);
     const n = Math.min(healthy.length, Math.max(1, Math.floor(healthy.length * DISEASE_INFECT_FRACTION)));
@@ -1224,6 +1226,7 @@ function diseaseSeason(s: GameState, log: LogFn): void {
 }
 
 function fireSeason(s: GameState, log: LogFn): void {
+  if (!s.disasters) return; // disasters toggled off — no fires ignite
   const flammable = s.buildings.filter((b) => b.built && b.type !== 'well' && !b.fireTimer);
   if (flammable.length === 0) return;
   if (Math.random() < FIRE_CHANCE) tryIgnite(s, flammable[(Math.random() * flammable.length) | 0], log, true);

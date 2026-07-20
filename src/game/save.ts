@@ -42,6 +42,9 @@ export function loadGame(slot = 0): GameState | null {
     setMapSize(w, h);
     s.w = w;
     s.h = h;
+    // Default fields added after this save format shipped, so older saves keep working.
+    if (typeof s.disasters !== 'boolean') s.disasters = true;
+    if (s.difficulty !== 'easy' && s.difficulty !== 'normal' && s.difficulty !== 'hard') s.difficulty = 'normal';
     // Sanity check the shape so a corrupt save can't crash the game.
     if (!Array.isArray(s.tiles) || s.tiles.length !== MAP_W * MAP_H) return null;
     if (!Array.isArray(s.buildings) || !Array.isArray(s.citizens)) return null;

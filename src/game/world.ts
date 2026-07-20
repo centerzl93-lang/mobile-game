@@ -40,7 +40,7 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
     const n = wobble[tileIndex(0, y)] - 0.5; // -0.5..0.5
     return MAP_W / 2 + Math.sin(y / 7) * 4 + n * 8;
   };
-  const riverHalf = (y: number): number => 1.2 + (wobble[tileIndex(MAP_W - 1, y)] - 0.5) * 0.9; // ~0.75..1.65
+  const riverHalf = (y: number): number => 1.8 + (wobble[tileIndex(MAP_W - 1, y)] - 0.5) * 1.35; // ~1.1..2.5 (≈50% wider)
 
   // Two lakes centred just past the left and right edges so they continue off-map.
   const lakes = [
@@ -97,21 +97,72 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
   return tiles;
 }
 
-/** Find a buildable grass patch near the map centre to start the village on. */
+/** Radius (Euclidean) of the plains patch we score candidate start tiles by. */
+const START_PLAINS_RADIUS = 3;
+
+/**
+ * Find a genuinely grassy spot to start the village on — one whose *core* (the barn footprint
+ * plus a small spawn ring) is entirely grass, maximising the surrounding plains and preferring
+ * locations near the map centre. This keeps the barn and villagers off the river/lakes so a new
+ * game can never soft-lock on water. If no core is perfectly clear (pathological maps), we still
+ * return the grassiest candidate found.
+ */
 export function findStartTile(tiles: Tile[]): { x: number; y: number } {
-  const cx = Math.floor(MAP_W / 2);
-  const cy = Math.floor(MAP_H / 2);
-  for (let r = 0; r < Math.max(MAP_W, MAP_H); r++) {
-    for (let dy = -r; dy <= r; dy++) {
-      for (let dx = -r; dx <= r; dx++) {
-        const x = cx + dx;
-        const y = cy + dy;
-        const t = getTile(tiles, x, y);
-        if (t && t.type === 'grass') return { x, y };
+  const cx = MAP_W / 2;
+  const cy = MAP_H / 2;
+  const R = START_PLAINS_RADIUS;
+  const R2 = R * R;
+
+  // Is the barn footprint (2x2 from the top-left corner) plus the immediate spawn ring (a
+  // radius-2 disc around it) all grass? That's the region the barn + founders occupy.
+  const coreIsGrass = (x: number, y: number): boolean => {
+    for (let dy = -2; dy <= 3; dy++) {
+      for (let dx = -2; dx <= 3; dx++) {
+        if (dx * dx + dy * dy > 8) continue; // ~radius-2 disc around the 2x2 footprint
+        const t = getTile(tiles, x + dx, y + dy);
+        if (!t || t.type !== 'grass') return false;
+      }
+    }
+    return true;
+  };
+
+  // Count grass within START_PLAINS_RADIUS — how roomy the surrounding plains are.
+  const plainsScore = (x: number, y: number): number => {
+    let n = 0;
+    for (let dy = -R; dy <= R; dy++) {
+      for (let dx = -R; dx <= R; dx++) {
+        if (dx * dx + dy * dy > R2) continue;
+        const t = getTile(tiles, x + dx, y + dy);
+        if (t && t.type === 'grass') n++;
+      }
+    }
+    return n;
+  };
+
+  let best: { x: number; y: number } | null = null;
+  let bestClearScore = -1;
+  let bestClearDist = Infinity;
+  let fallback: { x: number; y: number } = { x: Math.floor(cx), y: Math.floor(cy) };
+  let fallbackScore = -1;
+
+  for (let y = 0; y < MAP_H; y++) {
+    for (let x = 0; x < MAP_W; x++) {
+      const score = plainsScore(x, y);
+      if (score > fallbackScore) {
+        fallbackScore = score;
+        fallback = { x, y };
+      }
+      if (!coreIsGrass(x, y)) continue;
+      const dist = (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2;
+      // Prefer the roomiest plains; tie-break toward the centre of the map.
+      if (score > bestClearScore || (score === bestClearScore && dist < bestClearDist)) {
+        bestClearScore = score;
+        bestClearDist = dist;
+        best = { x, y };
       }
     }
   }
-  return { x: cx, y: cy };
+  return best ?? fallback;
 }
 
 // ---- noise helpers ----

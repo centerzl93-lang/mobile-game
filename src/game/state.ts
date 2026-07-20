@@ -68,6 +68,7 @@ function makeBuilding(s: { nextId: number }, type: BuildingType, x: number, y: n
     growth: 0,
     output: 'coal',
     recipe: 'iron',
+    replant: type === 'lumberyard', // new Foresters replant by default
     store: {},
   };
 }

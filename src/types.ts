@@ -188,6 +188,8 @@ export interface Building {
   store: Partial<Record<ResourceKind, number>>;
   /** Seconds of fire remaining while burning down (undefined = not on fire). */
   fireTimer?: number;
+  /** Forester: plant saplings on grass in the work circle to grow a renewable forest. */
+  replant?: boolean;
 }
 
 /** What a villager is doing right now in the logistics loop. */
@@ -262,6 +264,24 @@ export function buildTimeOf(type: BuildingType): number {
   return BUILDING_DEFS[type].buildTime * BUILD_TIME_SCALE;
 }
 
+/** Extra work-circle radius the Forester gains per worker beyond the first. */
+export const FORESTER_RADIUS_PER_WORKER = 2;
+
+/**
+ * The current work-circle radius (tiles) of a building, or `undefined` if it has no work area.
+ * The Forester's circle expands with its worker target (base at 1 worker, +per-worker up to its
+ * job cap); other forest-worked buildings keep their fixed radius.
+ */
+export function workRadiusOf(b: Building): number | undefined {
+  const def = BUILDING_DEFS[b.type];
+  if (def.workRadius === undefined) return undefined;
+  if (b.type === 'lumberyard') {
+    const workers = Math.max(1, Math.min(def.jobs, b.desiredWorkers));
+    return def.workRadius + (workers - 1) * FORESTER_RADIUS_PER_WORKER;
+  }
+  return def.workRadius;
+}
+
 // Path layer values (per tile).
 export const PATH_NONE = 0;
 export const PATH_DIRT_PLAN = 1;
@@ -322,6 +342,9 @@ export interface GameState {
    * (or the state identity) changes — keeping per-tick nav ~O(1) on large maps.
    */
   navVersion?: number;
+  /** Bumped when a tile becomes / stops being forest (replanting or clear-cutting), so the
+   * renderer knows to rebuild its tree layer to show the new/removed trees. */
+  forestVersion?: number;
 }
 
 // ---- Time ----
@@ -530,9 +553,9 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     desc: 'Raises livestock for food and leather. Buy animals from traders.',
   },
   lumberyard: {
-    type: 'lumberyard', name: 'Lumberyard', emoji: '🌲', category: 'resources', w: 2, h: 2,
-    cost: { wood: 12 }, jobs: 2, buildTime: 6, workRadius: 5,
-    desc: 'Foresters tend and fell trees for wood within their work circle.',
+    type: 'lumberyard', name: 'Forester', emoji: '🌲', category: 'resources', w: 2, h: 2,
+    cost: { wood: 12 }, jobs: 3, buildTime: 6, workRadius: 4,
+    desc: 'Foresters fell trees for wood in their work circle — the circle grows with each worker (up to 3). Toggle replanting to sow and grow a renewable forest.',
   },
   woodcutter: {
     type: 'woodcutter', name: 'Woodcutter', emoji: '🪓', category: 'resources', w: 2, h: 2,

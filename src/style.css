@@ -734,6 +734,41 @@ body {
 .inv-row span:first-child {
   color: var(--muted);
 }
+/* Interactive controls at the foot of the inspect sheet (worker stepper + toggle). */
+.inv-ctrl {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.inv-ctrl > span {
+  color: var(--muted);
+}
+.inv-ctrl > span small {
+  opacity: 0.7;
+}
+.inv-ctrl .jr-toggle {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+.inv-ctrl .jr-toggle button {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.inv-ctrl .jr-toggle button.on {
+  background: var(--accent);
+  color: #10240c;
+  border-color: var(--accent);
+}
 
 .hidden {
   display: none !important;

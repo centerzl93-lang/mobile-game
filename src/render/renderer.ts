@@ -4,6 +4,7 @@ import {
   Tile,
   BUILDING_DEFS,
   BuildingType,
+  workRadiusOf,
   ResourceKind,
   ADULT_AGE,
   MAP_W,
@@ -275,6 +276,16 @@ export class Renderer {
         ctx.lineWidth = 2.5;
         roundRect(ctx, sx, sy, def.w * p, def.h * p, 5);
         ctx.stroke();
+        // Work-area circle for forest-worked buildings.
+        const wr = workRadiusOf(b);
+        if (wr && b.built) {
+          const [ccx, ccy] = this.camera.worldToScreen(b.x + def.w / 2, b.y + def.h / 2, w, h);
+          ctx.beginPath();
+          ctx.arc(ccx, ccy, wr * p, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(122,224,106,0.85)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
       }
     }
     if (placement.selCitizenId != null) {

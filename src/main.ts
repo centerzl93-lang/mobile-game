@@ -12,6 +12,7 @@ import {
   BuildingType,
   BUILDING_DEFS,
   buildTimeOf,
+  workRadiusOf,
   isHouse,
   houseCapacityOf,
   MapSize,
@@ -44,7 +45,7 @@ import { findPath } from './game/pathfind';
 import { addNearest } from './game/storage';
 import { planPath } from './game/paths';
 import { saveGame, loadGame, hasSave, clearSave, slotInfo, lastSlot, SLOTS } from './game/save';
-import { InspectRow } from './ui/ui';
+import { InspectRow, InspectControls } from './ui/ui';
 
 const SPEEDS = [1, 2, 3];
 
@@ -101,6 +102,7 @@ class Game {
       onSetWorkers: (id, d) => this.setWorkers(id, d),
       onSetMineOutput: (id, o) => this.setMineOutput(id, o),
       onSetSmithRecipe: (id, r) => this.setSmithRecipe(id, r),
+      onSetForesterReplant: (id, on) => this.setForesterReplant(id, on),
       onTrade: (give, get, qty) => this.trade(give, get, qty),
       onAcceptNomads: () => this.acceptNomads(),
       onRejectNomads: () => this.rejectNomads(),
@@ -241,6 +243,14 @@ class Game {
     const b = this.state.buildings.find((x) => x.id === id);
     if (b) {
       b.recipe = recipe;
+      this.persist();
+    }
+  }
+
+  private setForesterReplant(id: number, on: boolean): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (b) {
+      b.replant = on;
       this.persist();
     }
   }
@@ -553,7 +563,29 @@ class Game {
           if (v > 0.5) rows.push({ label: `${RESOURCE_ICON[k]} ${k}`, value: `${Math.floor(v)}` });
         }
       }
-      this.ui.showInspect(`${def.emoji} ${def.name}`, rows);
+      // Interactive controls: set workers and building-specific toggles right from the sheet.
+      let controls: InspectControls | undefined;
+      if (b.built && def.jobs > 0) {
+        controls = { buildingId: b.id, workers: { value: b.desiredWorkers, max: def.jobs } };
+        if (b.type === 'mine') {
+          controls.toggle = { group: 'mine', options: [
+            { v: 'coal', label: 'Coal', on: b.output === 'coal' },
+            { v: 'iron', label: 'Iron', on: b.output === 'iron' },
+          ] };
+        } else if (b.type === 'blacksmith') {
+          controls.toggle = { group: 'smith', options: [
+            { v: 'iron', label: 'Iron', on: b.recipe === 'iron' },
+            { v: 'steel', label: 'Steel', on: b.recipe === 'steel' },
+          ] };
+        } else if (b.type === 'lumberyard') {
+          const on = b.replant ?? true;
+          controls.toggle = { group: 'forester', options: [
+            { v: 'on', label: '🌱 Replant', on },
+            { v: 'off', label: 'Fell only', on: !on },
+          ] };
+        }
+      }
+      this.ui.showInspect(`${def.emoji} ${def.name}`, rows, controls);
     } else {
       const c = this.state.citizens.find((x) => x.id === this.inspectSel!.id);
       if (!c) return this.clearInspect();
@@ -600,6 +632,12 @@ class Game {
   debugPlace(type: BuildingType, x: number, y: number): number | null {
     const b = placeBuilding(this.state, type, x, y);
     return b ? b.id : null;
+  }
+
+  /** Debug/testing helper: the current work-circle radius of a building (undefined if none). */
+  debugWorkRadius(id: number): number | undefined {
+    const b = this.state.buildings.find((x) => x.id === id);
+    return b ? workRadiusOf(b) : undefined;
   }
 
   /** Debug/testing helper: route between tiles, returns waypoint tiles or null. */

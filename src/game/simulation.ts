@@ -5,6 +5,7 @@ import {
   ResourceKind,
   BUILDING_DEFS,
   buildTimeOf,
+  workRadiusOf,
   MAP_W,
   MAP_H,
   SEASON_LENGTH,
@@ -527,6 +528,7 @@ function workOutput(
         : { kind: 'leather', amount: LOAD_MAT * f };
     }
     case 'lumberyard': {
+      if (b.replant ?? true) plantCircle(s, b); // sow saplings on grass so the forest renews
       const f = factorCircle(s, b);
       depleteCircleTrees(s, b, 0.25 * f);
       tendCircle(s, b, WORK_SECONDS);
@@ -755,6 +757,7 @@ function runHarvest(s: GameState, c: Citizen, idx: number, dt: number): void {
       t.trees = 0;
       t.type = 'grass'; // clear-cut to open ground
       s.harvest[idx] = HARVEST_NONE;
+      s.forestVersion = (s.forestVersion ?? 0) + 1; // a forest tile is gone — refresh the render layer
     }
   } else if (s.harvest[idx] === HARVEST_STONE) {
     const avail = t.stone ?? 0;
@@ -1368,7 +1371,7 @@ function regrowForest(s: GameState, dt: number): void {
 
 function circleTiles(s: GameState, b: Building, fn: (t: { trees: number }) => void): void {
   const def = BUILDING_DEFS[b.type];
-  const r = def.workRadius ?? 4;
+  const r = workRadiusOf(b) ?? 4;
   const cx = b.x + def.w / 2;
   const cy = b.y + def.h / 2;
   const r2 = r * r;
@@ -1387,6 +1390,39 @@ function tendCircle(s: GameState, b: Building, dt: number): void {
   circleTiles(s, b, (t) => {
     if (t.trees < 1) t.trees = Math.min(1, t.trees + TREE_REGROW * dt * 0.5);
   });
+}
+
+/** True if any building's footprint covers tile (tx,ty). */
+function tileUnderBuilding(s: GameState, tx: number, ty: number): boolean {
+  for (const b of s.buildings) {
+    const d = BUILDING_DEFS[b.type];
+    if (tx >= b.x && tx < b.x + d.w && ty >= b.y && ty < b.y + d.h) return true;
+  }
+  return false;
+}
+
+/** Sow a few saplings on plain grass in the work circle, growing new forest to harvest later. */
+function plantCircle(s: GameState, b: Building): void {
+  const def = BUILDING_DEFS[b.type];
+  const r = workRadiusOf(b) ?? 4;
+  const cx = b.x + def.w / 2;
+  const cy = b.y + def.h / 2;
+  const r2 = r * r;
+  let planted = 0;
+  for (let ty = Math.floor(cy - r); ty <= Math.ceil(cy + r) && planted < 2; ty++) {
+    for (let tx = Math.floor(cx - r); tx <= Math.ceil(cx + r) && planted < 2; tx++) {
+      const ddx = tx + 0.5 - cx;
+      const ddy = ty + 0.5 - cy;
+      if (ddx * ddx + ddy * ddy > r2) continue;
+      const t = getTile(s.tiles, tx, ty);
+      if (!t || t.type !== 'grass' || (t.stone ?? 0) > 0) continue;
+      if (tileUnderBuilding(s, tx, ty)) continue;
+      t.type = 'forest';
+      t.trees = 0.12; // a young sapling; tendCircle grows it toward maturity
+      planted++;
+      s.forestVersion = (s.forestVersion ?? 0) + 1; // a new forest tile — refresh the render layer
+    }
+  }
 }
 
 function depleteCircleTrees(s: GameState, b: Building, amount: number): void {

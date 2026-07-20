@@ -38,6 +38,15 @@ export interface InspectRow {
   value: string;
 }
 
+/** Interactive controls shown at the foot of the inspect sheet for a built workplace. */
+export interface InspectControls {
+  buildingId: number;
+  /** Worker allocation stepper (current desired vs the job cap). */
+  workers?: { value: number; max: number };
+  /** A single option toggle (mine output / smith recipe / forester replant). */
+  toggle?: { group: 'mine' | 'smith' | 'forester'; options: { v: string; label: string; on: boolean }[] };
+}
+
 export interface UICallbacks {
   onSelectBuild: (type: BuildingType | null) => void;
   onSelectPath: (tier: PathTier | null) => void;
@@ -49,6 +58,7 @@ export interface UICallbacks {
   onSetWorkers: (buildingId: number, delta: number) => void;
   onSetMineOutput: (buildingId: number, output: MineOutput) => void;
   onSetSmithRecipe: (buildingId: number, recipe: SmithRecipe) => void;
+  onSetForesterReplant: (buildingId: number, on: boolean) => void;
   onTrade: (give: ResourceKind, get: ResourceKind, qty: number) => TradeResult;
   onAcceptNomads: () => void;
   onRejectNomads: () => void;
@@ -346,15 +356,54 @@ export class UI {
   }
 
   // ---- Inspect panel ----
-  showInspect(title: string, rows: InspectRow[]): void {
-    const body = rows.map((r) => `<div class="inv-row"><span>${r.label}</span><span>${r.value}</span></div>`).join('');
-    this.el.inspect.innerHTML = `<div class="inv-head">${title}<button class="close" id="insp-close">×</button></div>${body || '<div class="inv-row"><span>Empty</span></div>'}`;
+  private inspectSig = '';
+  showInspect(title: string, rows: InspectRow[], controls?: InspectControls): void {
+    // Only rebuild the DOM when something changed — otherwise per-frame refreshes would clobber
+    // the interactive controls (and reset any in-progress tap).
+    const sig = JSON.stringify([title, rows, controls]);
     this.el.inspect.classList.remove('hidden');
+    if (sig === this.inspectSig) return;
+    this.inspectSig = sig;
+
+    const body = rows.map((r) => `<div class="inv-row"><span>${r.label}</span><span>${r.value}</span></div>`).join('');
+    let ctrlHtml = '';
+    if (controls?.workers) {
+      const wk = controls.workers;
+      ctrlHtml += `<div class="inv-ctrl"><span>Workers <small>(max ${wk.max})</small></span>
+        <div class="stepper"><button data-step="-1">−</button><span class="count">${wk.value}</span><button data-step="1">+</button></div></div>`;
+    }
+    if (controls?.toggle) {
+      const opts = controls.toggle.options
+        .map((o) => `<button data-v="${o.v}" class="${o.on ? 'on' : ''}">${o.label}</button>`)
+        .join('');
+      ctrlHtml += `<div class="inv-ctrl"><div class="jr-toggle">${opts}</div></div>`;
+    }
+    this.el.inspect.innerHTML =
+      `<div class="inv-head">${title}<button class="close" id="insp-close">×</button></div>` +
+      (body || '<div class="inv-row"><span>Empty</span></div>') + ctrlHtml;
     byId('insp-close').addEventListener('click', () => this.hideInspect());
+
+    if (controls) {
+      const id = controls.buildingId;
+      this.el.inspect.querySelector('[data-step="-1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, -1));
+      this.el.inspect.querySelector('[data-step="1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, 1));
+      const tog = controls.toggle;
+      if (tog) {
+        this.el.inspect.querySelectorAll('.jr-toggle button').forEach((btn) =>
+          btn.addEventListener('click', () => {
+            const v = (btn as HTMLElement).dataset.v!;
+            if (tog.group === 'mine') this.cb.onSetMineOutput(id, v as MineOutput);
+            else if (tog.group === 'smith') this.cb.onSetSmithRecipe(id, v as SmithRecipe);
+            else this.cb.onSetForesterReplant(id, v === 'on');
+          }),
+        );
+      }
+    }
   }
   hideInspect(): void {
     this.el.inspect.classList.add('hidden');
     this.el.inspect.innerHTML = '';
+    this.inspectSig = '';
   }
   isInspectOpen(): boolean {
     return !this.el.inspect.classList.contains('hidden');

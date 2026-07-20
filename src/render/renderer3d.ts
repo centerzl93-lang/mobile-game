@@ -4,6 +4,7 @@ import {
   Tile,
   BUILDING_DEFS,
   BuildingType,
+  workRadiusOf,
   MAP_W,
   MAP_H,
   ADULT_AGE,
@@ -134,10 +135,12 @@ export class Renderer3D {
   private buildingMeshes = new Map<number, THREE.Object3D>();
   private ghost!: THREE.Mesh;
   private selRing!: THREE.Mesh;
+  private workRing!: THREE.Group; // ground circle (fill + outline) for a selected building's work radius
   private marquee!: THREE.Mesh;
 
   // Cached signatures so we only rebuild a layer when its data changes.
   private sig = { land: -1, tree: -1, rock: -1, path: -1, mark: -1, bld: '' };
+  private forestVer = -1; // last-seen GameState.forestVersion (rebuild trees when it changes)
   private lastState: GameState | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -207,6 +210,7 @@ export class Renderer3D {
     // Trees on forest tiles (a simple two-cone pine).
     this.treeTiles = [];
     for (let i = 0; i < s.tiles.length; i++) if (s.tiles[i].type === 'forest') this.treeTiles.push(i);
+    this.forestVer = s.forestVersion ?? 0;
     const coneGeo = new THREE.ConeGeometry(0.42, 1.1, 6);
     coneGeo.translate(0, 0.55, 0);
     this.trees = new THREE.InstancedMesh(coneGeo, matte(0x2f5a2a), Math.max(1, this.treeTiles.length));
@@ -279,6 +283,20 @@ export class Renderer3D {
     this.selRing.rotation.x = -Math.PI / 2;
     this.selRing.visible = false;
     this.scene.add(this.selRing);
+    // Work-area circle: a faint fill disc + a crisp outline ring, both unit-radius and scaled to fit.
+    this.workRing = new THREE.Group();
+    const workFill = new THREE.Mesh(
+      new THREE.CircleGeometry(1, 48),
+      new THREE.MeshBasicMaterial({ color: 0x6fe06f, transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    const workEdge = new THREE.Mesh(
+      new THREE.RingGeometry(0.965, 1, 48),
+      new THREE.MeshBasicMaterial({ color: 0x8aff6a, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    this.workRing.add(workFill, workEdge);
+    this.workRing.rotation.x = -Math.PI / 2;
+    this.workRing.visible = false;
+    this.scene.add(this.workRing);
     this.marquee = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0x9ae69a, transparent: true, opacity: 0.3, side: THREE.DoubleSide }));
     this.marquee.rotation.x = -Math.PI / 2;
     this.marquee.visible = false;
@@ -449,7 +467,33 @@ export class Renderer3D {
   }
 
   // ---- trees ----
+  /** Rescan the forest tiles and re-size the tree meshes — called when the forest set changes
+   *  (replanting or clear-cutting), so newly-grown / felled trees appear or disappear. */
+  private rebuildTreeLayer(s: GameState): void {
+    this.treeTiles = [];
+    for (let i = 0; i < s.tiles.length; i++) if (s.tiles[i].type === 'forest') this.treeTiles.push(i);
+    const cap = Math.max(1, this.treeTiles.length);
+    // Rebuild the cone fallback mesh at the new capacity.
+    this.scene.remove(this.trees);
+    const geo = this.trees.geometry;
+    (this.trees.material as THREE.Material).dispose();
+    this.trees = new THREE.InstancedMesh(geo, matte(0x2f5a2a), cap);
+    this.trees.count = this.treeInst ? 0 : this.treeTiles.length;
+    this.trees.castShadow = true;
+    this.scene.add(this.trees);
+    // Rebuild the model instances at the new capacity if models are in use.
+    if (this.treeInst) {
+      const tpl = this.models.firstTree();
+      this.treeInst.dispose(this.scene);
+      this.treeInst = tpl ? new InstancedModel(tpl, cap) : null;
+      this.treeInst?.addTo(this.scene);
+    }
+    this.forestVer = s.forestVersion ?? 0;
+    this.sig.tree = -4; // force a redraw of the new tile set
+  }
+
   private syncTrees(s: GameState): void {
+    if ((s.forestVersion ?? 0) !== this.forestVer) this.rebuildTreeLayer(s);
     // Upgrade to a model the first frame one is available (hide the cone fallback).
     const tpl = this.models.firstTree();
     if (tpl && !this.treeInst) {
@@ -740,9 +784,15 @@ export class Renderer3D {
     }
 
     let selPos: { x: number; y: number; r: number } | null = null;
+    let workCircle: { x: number; y: number; r: number } | null = null;
     if (pv.selBuildingId != null) {
       const b = s.buildings.find((x) => x.id === pv.selBuildingId);
-      if (b) { const d = BUILDING_DEFS[b.type]; selPos = { x: b.x + d.w / 2, y: b.y + d.h / 2, r: Math.max(d.w, d.h) * 0.6 }; }
+      if (b) {
+        const d = BUILDING_DEFS[b.type];
+        selPos = { x: b.x + d.w / 2, y: b.y + d.h / 2, r: Math.max(d.w, d.h) * 0.6 };
+        const wr = workRadiusOf(b);
+        if (wr && b.built) workCircle = { x: b.x + d.w / 2, y: b.y + d.h / 2, r: wr };
+      }
     } else if (pv.selCitizenId != null) {
       const c = s.citizens.find((x) => x.id === pv.selCitizenId);
       if (c) selPos = { x: c.x, y: c.y, r: 0.5 };
@@ -753,6 +803,13 @@ export class Renderer3D {
       this.selRing.scale.setScalar(selPos.r);
     } else {
       this.selRing.visible = false;
+    }
+    if (workCircle) {
+      this.workRing.visible = true;
+      this.workRing.position.set(workCircle.x, TOP + 0.05, workCircle.y);
+      this.workRing.scale.set(workCircle.r, workCircle.r, 1);
+    } else {
+      this.workRing.visible = false;
     }
 
     if (pv.marquee) {
@@ -797,7 +854,7 @@ export class Renderer3D {
     this.water.geometry.dispose();
     for (const [, obj] of this.buildingMeshes) this.disposeBuilding(obj);
     this.buildingMeshes.clear();
-    for (const o of [this.ghost, this.selRing, this.marquee]) this.scene.remove(o);
+    for (const o of [this.ghost, this.selRing, this.workRing, this.marquee]) this.scene.remove(o);
     this.sig = { land: -1, tree: -1, rock: -1, path: -1, mark: -1, bld: '' };
     this.ready = false;
   }

@@ -89,6 +89,29 @@ test.describe('difficulties', () => {
   });
 });
 
+test.describe('forester', () => {
+  test('the building is named Forester with up to 3 workers and a replant toggle', async ({ page }) => {
+    await open(page);
+    const insp = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // A synthetic, built Forester so we can inspect it deterministically.
+      const f = { id: s.nextId++, type: 'lumberyard', x: barn.x, y: barn.y, built: true, progress: 9, workers: [], desiredWorkers: 3, growth: 0, output: 'coal', recipe: 'iron', replant: true, store: {} };
+      s.buildings.push(f);
+      g.inspectSel = { kind: 'building', id: f.id };
+      g.refreshInspect();
+      const el = document.getElementById('inspect')!;
+      return { text: el.innerText, r1: g.debugWorkRadius(f.id) };
+    });
+    expect(insp.text).toContain('Forester');
+    expect(insp.text).toContain('max 3');
+    expect(insp.text).toContain('Replant');
+    expect(insp.r1).toBe(8); // 3 workers ⇒ base 4 + 2*2
+  });
+});
+
 test.describe('disasters toggle', () => {
   test('the toggle flows from the difficulty screen and persists through save/load', async ({ page }) => {
     await open(page);

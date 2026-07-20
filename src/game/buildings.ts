@@ -6,6 +6,7 @@ import {
   ResourceKind,
   TileType,
   REFUND_FRACTION,
+  workRadiusOf,
 } from '../types';
 import { getTile, inBounds } from './world';
 import { totalStored, addNearest } from './storage';
@@ -172,8 +173,7 @@ export function buildingCenterTile(b: Building): { cx: number; cy: number } {
 
 /** Sum of forest tree-resource within a building's circular work radius. */
 export function forestInCircle(s: GameState, b: Building): number {
-  const def = BUILDING_DEFS[b.type];
-  const r = def.workRadius ?? 4;
+  const r = workRadiusOf(b) ?? 4;
   const { cx, cy } = buildingCenterTile(b);
   let total = 0;
   const r2 = r * r;

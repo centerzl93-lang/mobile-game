@@ -101,7 +101,7 @@ export type LogFn = (msg: string, kind?: LogKind) => void;
 
 // Local balance for the per-trip economy.
 const FOREST_CIRCLE_IDEAL = 24;
-const WATER_IDEAL = 8;
+const WATER_IDEAL = 14; // water tiles in the fishing circle for full yield (circle scales with workers)
 const STONE_IDEAL = 6;
 const MIN_FACTOR = 0.15;
 const TREE_REGROW = 0.02;
@@ -495,7 +495,8 @@ function factorCircle(s: GameState, b: Building): number {
   return clamp(forestInCircle(s, b) / FOREST_CIRCLE_IDEAL, MIN_FACTOR, 1);
 }
 function factorWater(s: GameState, b: Building): number {
-  return clamp(nearbyWater(s, b) / WATER_IDEAL, MIN_FACTOR, 1);
+  // Count water within the (worker-scaled) work circle, so more water and more workers = more fish.
+  return clamp(nearbyWater(s, b, workRadiusOf(b) ?? 3) / WATER_IDEAL, MIN_FACTOR, 1);
 }
 function factorStone(s: GameState, b: Building): number {
   return clamp(nearbyStone(s, BUILDING_DEFS[b.type], b.x, b.y) / STONE_IDEAL, MIN_FACTOR, 1);

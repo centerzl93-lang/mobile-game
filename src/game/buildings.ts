@@ -189,13 +189,17 @@ export function forestInCircle(s: GameState, b: Building): number {
   return total;
 }
 
-/** Count of water tiles adjacent to a fishing hut / trading post footprint. */
+/** Count of water tiles within a building's circular work radius (drives fishing-hut yield). */
 export function nearbyWater(s: GameState, b: Building, radius = 3): number {
   const { cx, cy } = buildingCenterTile(b);
   let total = 0;
-  for (let dy = -radius; dy <= radius; dy++) {
-    for (let dx = -radius; dx <= radius; dx++) {
-      const t = getTile(s.tiles, Math.floor(cx) + dx, Math.floor(cy) + dy);
+  const r2 = radius * radius;
+  for (let ty = Math.floor(cy - radius); ty <= Math.ceil(cy + radius); ty++) {
+    for (let tx = Math.floor(cx - radius); tx <= Math.ceil(cx + radius); tx++) {
+      const ddx = tx + 0.5 - cx;
+      const ddy = ty + 0.5 - cy;
+      if (ddx * ddx + ddy * ddy > r2) continue;
+      const t = getTile(s.tiles, tx, ty);
       if (t && t.type === 'water') total += 1;
     }
   }

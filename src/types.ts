@@ -264,22 +264,19 @@ export function buildTimeOf(type: BuildingType): number {
   return BUILDING_DEFS[type].buildTime * BUILD_TIME_SCALE;
 }
 
-/** Extra work-circle radius the Forester gains per worker beyond the first. */
-export const FORESTER_RADIUS_PER_WORKER = 2;
+/** Extra work-circle radius a building gains per worker beyond the first. */
+export const WORK_RADIUS_PER_WORKER = 2;
 
 /**
  * The current work-circle radius (tiles) of a building, or `undefined` if it has no work area.
- * The Forester's circle expands with its worker target (base at 1 worker, +per-worker up to its
- * job cap); other forest-worked buildings keep their fixed radius.
+ * Every work-circle building's circle expands with its worker target — a base radius at 1 worker,
+ * growing by WORK_RADIUS_PER_WORKER for each additional worker up to its job cap.
  */
 export function workRadiusOf(b: Building): number | undefined {
   const def = BUILDING_DEFS[b.type];
   if (def.workRadius === undefined) return undefined;
-  if (b.type === 'lumberyard') {
-    const workers = Math.max(1, Math.min(def.jobs, b.desiredWorkers));
-    return def.workRadius + (workers - 1) * FORESTER_RADIUS_PER_WORKER;
-  }
-  return def.workRadius;
+  const workers = Math.max(1, Math.min(def.jobs, b.desiredWorkers));
+  return def.workRadius + (workers - 1) * WORK_RADIUS_PER_WORKER;
 }
 
 // Path layer values (per tile).
@@ -539,8 +536,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   fishing: {
     type: 'fishing', name: 'Fishing Hut', emoji: '🎣', category: 'food', w: 2, h: 2,
-    cost: { wood: 12 }, jobs: 2, buildTime: 6, requiresAdjacent: ['water'],
-    desc: 'Catches fish. Must be built on the shoreline (next to water).',
+    cost: { wood: 12 }, jobs: 2, buildTime: 6, requiresAdjacent: ['water'], workRadius: 4,
+    desc: 'Catches fish from water in its work circle — more water and more workers, more fish. Must be built on the shoreline.',
   },
   hunting: {
     type: 'hunting', name: 'Hunting Cabin', emoji: '🏹', category: 'food', w: 2, h: 2,

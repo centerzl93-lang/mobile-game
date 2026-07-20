@@ -1,25 +1,36 @@
-import { GameState, MAP_W, MAP_H, setMapSize } from '../types';
+import { GameState, MAP_W, MAP_H, MapSize, setMapSize } from '../types';
 
-const KEY = 'little-village-save-v12';
+// Legacy single-slot key (pre-slots). Migrated into slot 0 on first run, then left in place.
+const LEGACY_KEY = 'little-village-save-v12';
 const VERSION = 12;
+
+/** Number of fixed save slots the player can use. */
+export const SLOTS = 3;
+const slotKey = (slot: number): string => `little-village-save-v12-slot${slot}`;
+const LAST_SLOT_KEY = 'little-village-last-slot';
+const MIGRATED_KEY = 'little-village-migrated';
 
 interface SaveEnvelope {
   v: number;
   state: GameState;
 }
 
-export function saveGame(s: GameState): void {
+/** Persist a game to a slot (default slot 0) and remember it as the most recently used. */
+export function saveGame(s: GameState, slot = 0): void {
   try {
     const envelope: SaveEnvelope = { v: VERSION, state: s };
-    localStorage.setItem(KEY, JSON.stringify(envelope));
+    localStorage.setItem(slotKey(slot), JSON.stringify(envelope));
+    setLastSlot(slot);
   } catch {
     /* storage full or unavailable — ignore, game keeps running in memory */
   }
 }
 
-export function loadGame(): GameState | null {
+/** Load and validate the game in a slot, restoring its map size first. Null if empty/corrupt. */
+export function loadGame(slot = 0): GameState | null {
   try {
-    const raw = localStorage.getItem(KEY);
+    migrateLegacy();
+    const raw = localStorage.getItem(slotKey(slot));
     if (!raw) return null;
     const env = JSON.parse(raw) as SaveEnvelope;
     if (!env || env.v !== VERSION || !env.state) return null;
@@ -43,18 +54,89 @@ export function loadGame(): GameState | null {
   }
 }
 
-/** True if a save exists in storage (used to show the menu's Continue button). */
-export function hasSave(): boolean {
+/** True if a slot holds a save. With no slot, true if *any* slot is occupied. */
+export function hasSave(slot?: number): boolean {
   try {
-    return localStorage.getItem(KEY) != null;
+    migrateLegacy();
+    if (typeof slot === 'number') return localStorage.getItem(slotKey(slot)) != null;
+    for (let i = 0; i < SLOTS; i++) if (localStorage.getItem(slotKey(i)) != null) return true;
+    return false;
   } catch {
     return false;
   }
 }
 
-export function clearSave(): void {
+/** A cheap summary of a slot's save for the load/save list, or null if empty/corrupt. */
+export function slotInfo(slot: number): { year: number; pop: number; size: MapSize } | null {
   try {
-    localStorage.removeItem(KEY);
+    migrateLegacy();
+    const raw = localStorage.getItem(slotKey(slot));
+    if (!raw) return null;
+    const env = JSON.parse(raw) as SaveEnvelope;
+    if (!env || env.v !== VERSION || !env.state) return null;
+    const s = env.state;
+    const w = typeof s.w === 'number' ? s.w : 48;
+    const size: MapSize = w >= 192 ? 'large' : w >= 96 ? 'medium' : 'small';
+    return { year: s.year ?? 1, pop: Array.isArray(s.citizens) ? s.citizens.length : 0, size };
+  } catch {
+    return null;
+  }
+}
+
+/** The most recently used slot (for Continue), or null if none saved. */
+export function lastSlot(): number | null {
+  try {
+    migrateLegacy();
+    const raw = localStorage.getItem(LAST_SLOT_KEY);
+    if (raw != null) {
+      const i = Number(raw);
+      if (Number.isInteger(i) && i >= 0 && i < SLOTS && localStorage.getItem(slotKey(i)) != null) return i;
+    }
+    for (let i = 0; i < SLOTS; i++) if (localStorage.getItem(slotKey(i)) != null) return i;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Clear a single slot, or every slot when no slot is given. */
+export function clearSave(slot?: number): void {
+  try {
+    if (typeof slot === 'number') {
+      localStorage.removeItem(slotKey(slot));
+      return;
+    }
+    for (let i = 0; i < SLOTS; i++) localStorage.removeItem(slotKey(i));
+    localStorage.removeItem(LAST_SLOT_KEY);
+    localStorage.removeItem(LEGACY_KEY);
+    localStorage.setItem(MIGRATED_KEY, '1'); // don't resurrect the legacy save after a clear-all
+  } catch {
+    /* ignore */
+  }
+}
+
+function setLastSlot(slot: number): void {
+  try {
+    localStorage.setItem(LAST_SLOT_KEY, String(slot));
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Copy a pre-slots save into slot 0 the first time we run with slots. Runs once (guarded by a
+ * flag) and never deletes the legacy key, so rolling back to the old build still finds the save.
+ */
+function migrateLegacy(): void {
+  try {
+    if (localStorage.getItem(MIGRATED_KEY) != null) return;
+    localStorage.setItem(MIGRATED_KEY, '1');
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if (legacy == null) return;
+    if (localStorage.getItem(slotKey(0)) == null) {
+      localStorage.setItem(slotKey(0), legacy);
+      if (localStorage.getItem(LAST_SLOT_KEY) == null) localStorage.setItem(LAST_SLOT_KEY, '0');
+    }
   } catch {
     /* ignore */
   }

@@ -39,7 +39,7 @@ import { canPlace, placeBuilding, canAfford, demolishBuilding } from './game/bui
 import { findPath } from './game/pathfind';
 import { addNearest } from './game/storage';
 import { planPath } from './game/paths';
-import { saveGame, loadGame, hasSave } from './game/save';
+import { saveGame, loadGame, hasSave, clearSave, slotInfo, lastSlot, SLOTS } from './game/save';
 import { InspectRow } from './ui/ui';
 
 const SPEEDS = [1, 2, 3];
@@ -57,6 +57,8 @@ class Game {
   state: GameState;
   running = false;
   paused = false;
+  /** Save slot the current game reads from and autosaves to. */
+  currentSlot = 0;
   speedIndex = 0;
   selectedBuild: BuildingType | null = null;
   selectedPath: PathTier | null = null;
@@ -275,8 +277,9 @@ class Game {
     this.ui.updateHud(this.state, SPEEDS[this.speedIndex], this.paused);
   }
 
-  /** Start a fresh game at the chosen size. Directly startable (size-select + headless drivers). */
-  startNewGame(size: MapSize = 'small'): void {
+  /** Start a fresh game at the chosen size in a slot. Directly startable (size-select + drivers). */
+  startNewGame(size: MapSize = 'small', slot = 0): void {
+    this.currentSlot = slot;
     this.state = newGame(size);
     this.centreOnVillage();
     this.paused = false;
@@ -293,7 +296,7 @@ class Game {
   }
 
   // ---- menu flow ----
-  /** The title screen: New Game, Continue (if a save exists), account placeholder. */
+  /** The title screen: New Game, Continue / Load (if a save exists), Settings. */
   private openMainMenu(): void {
     this.running = false;
     this.paused = false;
@@ -301,6 +304,8 @@ class Game {
       hasSave: hasSave(),
       onNew: () => this.openSizeSelect(),
       onContinue: () => this.continueGame(),
+      onLoad: () => this.openSlotSelect('load', () => this.openMainMenu()),
+      onSettings: () => this.openSettings(() => this.openMainMenu()),
     });
   }
 
@@ -309,19 +314,64 @@ class Game {
     const cameFromGame = this.running;
     this.running = false;
     this.ui.showSizeSelect({
-      onPick: (size) => this.startNewGame(size),
+      onPick: (size) => this.startNewGame(size, this.firstEmptySlot()),
       onBack: () => (cameFromGame ? this.openPauseMenu() : this.openMainMenu()),
     });
   }
 
-  /** Load the saved village and resume play. Falls back to the main menu if no valid save. */
-  private continueGame(): void {
-    const saved = loadGame();
-    if (!saved) {
+  /** First unoccupied slot for a new game (falls back to slot 0 when every slot is full). */
+  private firstEmptySlot(): number {
+    for (let i = 0; i < SLOTS; i++) if (!hasSave(i)) return i;
+    return 0;
+  }
+
+  /** Slot picker for loading or saving. `back` returns to whichever menu opened it. */
+  private openSlotSelect(mode: 'load' | 'save', back: () => void): void {
+    const slots = Array.from({ length: SLOTS }, (_, i) => ({ index: i, info: slotInfo(i) }));
+    this.ui.showSlotSelect({
+      mode,
+      slots,
+      onPick: (slot) => {
+        if (mode === 'load') {
+          this.continueGame(slot);
+        } else {
+          this.currentSlot = slot;
+          this.persist();
+          this.ui.flashHint(`Saved to Slot ${slot + 1}`);
+          this.openPauseMenu();
+        }
+      },
+      onBack: back,
+    });
+  }
+
+  /** Settings: graphics tier (applies on reload) and clear-all-saves. `back` returns to caller. */
+  private openSettings(back: () => void): void {
+    this.ui.showSettings({
+      gfx: (localStorage.getItem('village-gfx') as 'low' | 'high' | null) ?? 'auto',
+      onSetGfx: (g) => {
+        if (g === 'auto') localStorage.removeItem('village-gfx');
+        else localStorage.setItem('village-gfx', g);
+      },
+      onClearSaves: () => {
+        clearSave();
+        this.ui.flashHint('All saves cleared');
+      },
+      onReload: () => location.reload(),
+      onBack: back,
+    });
+  }
+
+  /** Load a slot's village and resume play. Falls back to the main menu if no valid save. */
+  private continueGame(slot?: number): void {
+    const target = typeof slot === 'number' ? slot : lastSlot();
+    const saved = target != null ? loadGame(target) : null;
+    if (saved == null || target == null) {
       this.ui.flashHint('No saved village to load');
       this.openMainMenu();
       return;
     }
+    this.currentSlot = target;
     this.state = saved;
     this.centreOnVillage();
     this.paused = false;
@@ -332,7 +382,7 @@ class Game {
     this.ui.log('Welcome back to your village', 'good');
   }
 
-  /** In-game pause menu: Resume, Save, Load, New Game, Main Menu. */
+  /** In-game pause menu: Resume, Save, Load, Settings, New Game, Main Menu. */
   private openPauseMenu(): void {
     this.paused = true;
     this.ui.showPauseMenu({
@@ -340,11 +390,9 @@ class Game {
         this.paused = false;
         this.ui.hideOverlay();
       },
-      onSave: () => {
-        this.persist();
-        this.ui.flashHint('Village saved');
-      },
-      onLoad: () => this.continueGame(),
+      onSave: () => this.openSlotSelect('save', () => this.openPauseMenu()),
+      onLoad: () => this.openSlotSelect('load', () => this.openPauseMenu()),
+      onSettings: () => this.openSettings(() => this.openPauseMenu()),
       onNewGame: () => this.openSizeSelect(),
       onMainMenu: () => this.openMainMenu(),
     });
@@ -529,7 +577,7 @@ class Game {
   }
 
   private persist(): void {
-    saveGame(this.state);
+    saveGame(this.state, this.currentSlot);
   }
 
   private log = (msg: string, kind: LogKind = 'info') => this.ui.log(msg, kind);

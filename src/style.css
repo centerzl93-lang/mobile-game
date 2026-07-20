@@ -329,6 +329,44 @@ body {
 .card button.ghost:disabled:active {
   transform: none;
 }
+/* A regular menu button that's disabled (e.g. an empty slot in load mode). */
+.menu-card .menu-list button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.menu-card .menu-list button:disabled:active {
+  transform: none;
+}
+/* Settings: a label, a segmented Auto/Low/High row, and a small note. */
+.menu-card .set-label {
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.menu-card .seg-row {
+  display: flex;
+  gap: 8px;
+}
+.menu-card .seg-row button.seg {
+  margin-top: 0;
+  flex: 1;
+  padding: 10px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.menu-card .seg-row button.seg.on {
+  background: var(--accent);
+  color: #10240c;
+  border-color: var(--accent);
+}
+.menu-card .set-note {
+  font-size: 12px;
+  color: var(--muted);
+  opacity: 0.8;
+}
 
 /* ---------- Job board (right sidebar) ---------- */
 .panel {

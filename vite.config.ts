@@ -7,6 +7,17 @@ const BASE = '/mobile-game/';
 
 export default defineConfig({
   base: BASE,
+  build: {
+    rollupOptions: {
+      output: {
+        // Split Three.js into its own chunk so the app code stays small and the large,
+        // rarely-changing vendor bundle can be cached across app updates.
+        manualChunks: {
+          'vendor-three': ['three'],
+        },
+      },
+    },
+  },
   plugins: [
     VitePWA({
       registerType: 'autoUpdate',

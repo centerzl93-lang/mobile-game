@@ -852,11 +852,22 @@ function computeMountainHeights(s: GameState): Float32Array {
   return out;
 }
 
-/** Choose a graphics tier. `?gfx=low|high` overrides; otherwise weak/small phones get `low`. */
+/**
+ * Choose a graphics tier. Precedence: `?gfx=low|high` URL override (for testing) → the player's
+ * saved Settings preference (`localStorage 'village-gfx'`) → auto-detect (weak/small phones get
+ * `low`).
+ */
 function detectTier(): 'high' | 'low' {
   const g = new URLSearchParams(location.search).get('gfx');
   if (g === 'low') return 'low';
   if (g === 'high') return 'high';
+  try {
+    const saved = localStorage.getItem('village-gfx');
+    if (saved === 'low') return 'low';
+    if (saved === 'high') return 'high';
+  } catch {
+    /* ignore storage errors — fall through to auto-detect */
+  }
   const dpr = window.devicePixelRatio || 1;
   const coarse = window.matchMedia?.('(pointer: coarse)')?.matches ?? false;
   const small = Math.min(window.innerWidth, window.innerHeight) < 480;

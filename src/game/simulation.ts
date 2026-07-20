@@ -8,6 +8,7 @@ import {
   MAP_H,
   SEASON_LENGTH,
   SEASONS,
+  Season,
   BASE_WALK_SPEED,
   CARRY_CAP,
   WORK_SECONDS,
@@ -917,6 +918,10 @@ function endSeason(s: GameState, log: LogFn): void {
     }
   }
 
+  // Proactive survival hints — warn the player *before* the shortfall bites, once per season
+  // (endSeason is the natural throttle). These ride the existing event log; no new UI.
+  warnOfShortfalls(s, season, log);
+
   diseaseSeason(s, log);
   fireSeason(s, log);
 
@@ -963,6 +968,32 @@ function endSeason(s: GameState, log: LogFn): void {
   if (s.citizens.length === 0) {
     s.gameOver = true;
     log('Your village has died out.', 'bad');
+  }
+}
+
+/**
+ * Emit proactive, one-off warnings so the player can react before a shortfall kills anyone.
+ * Called once per season from endSeason (the throttle). Reads current stores after this season's
+ * consumption, so a warning means "you are short for what's coming next".
+ */
+function warnOfShortfalls(s: GameState, season: Season, log: LogFn): void {
+  const pop = s.citizens.length;
+  if (pop === 0) return;
+
+  // Entering Autumn: the player has one season to stock fuel and clothing for Winter.
+  if (season === 'Autumn') {
+    const heatHave = totalStored(s, 'firewood') * FIREWOOD_HEAT + totalStored(s, 'coal') * COAL_HEAT;
+    if (heatHave < pop * HEAT_PER_CITIZEN_WINTER) {
+      log('❄️ Winter is coming and fuel is low — stock firewood or coal', 'bad');
+    }
+    if (totalStored(s, 'clothing') < pop * CLOTHING_PER_CITIZEN_WINTER) {
+      log('🧥 Winter is coming and warm clothing is short', 'bad');
+    }
+  }
+
+  // Any season: less than a full season of food left in the barns.
+  if (totalFood(s) < pop * FOOD_PER_CITIZEN_PER_SEASON) {
+    log('🍽️ Food stores are running low', 'bad');
   }
 }
 

@@ -564,20 +564,33 @@ export class UI {
     });
   }
 
-  /** The title screen shown on open: New Game, Continue (if a save exists), account placeholder. */
-  showMainMenu(opts: { hasSave: boolean; onNew: () => void; onContinue: () => void }): void {
-    const cont = opts.hasSave ? `<button id="mm-continue">Continue</button>` : '';
+  /** The title screen: New Game, Continue / Load Game (if a save exists), Settings, placeholder. */
+  showMainMenu(opts: {
+    hasSave: boolean;
+    onNew: () => void;
+    onContinue: () => void;
+    onLoad: () => void;
+    onSettings: () => void;
+  }): void {
+    const saved = opts.hasSave
+      ? `<button id="mm-continue">Continue</button><button id="mm-load">Load Game</button>`
+      : '';
     this.overlayCard(
       `<h1>Little Village</h1><p class="big">🏡🌲🌾</p>` +
         `<div class="menu-list">` +
         `<button id="mm-new">New Game</button>` +
-        cont +
+        saved +
+        `<button class="ghost" id="mm-settings">Settings</button>` +
         `<button class="ghost" id="mm-account" disabled>Sign In / Create Account — coming soon</button>` +
         `</div>`,
       'menu-card',
     );
     byId('mm-new').addEventListener('click', () => opts.onNew());
-    if (opts.hasSave) byId('mm-continue').addEventListener('click', () => opts.onContinue());
+    if (opts.hasSave) {
+      byId('mm-continue').addEventListener('click', () => opts.onContinue());
+      byId('mm-load').addEventListener('click', () => opts.onLoad());
+    }
+    byId('mm-settings').addEventListener('click', () => opts.onSettings());
   }
 
   /** Map-size chooser reached from New Game. */
@@ -602,11 +615,12 @@ export class UI {
     byId('sz-back').addEventListener('click', () => opts.onBack());
   }
 
-  /** In-game pause menu: Resume, Save, Load, New Game, Main Menu. */
+  /** In-game pause menu: Resume, Save, Load, Settings, New Game, Main Menu. */
   showPauseMenu(opts: {
     onResume: () => void;
     onSave: () => void;
     onLoad: () => void;
+    onSettings: () => void;
     onNewGame: () => void;
     onMainMenu: () => void;
   }): void {
@@ -616,6 +630,7 @@ export class UI {
         `<button id="pm-resume">Resume</button>` +
         `<button id="pm-save">Save</button>` +
         `<button id="pm-load">Load</button>` +
+        `<button id="pm-settings">Settings</button>` +
         `<button id="pm-new">New Game</button>` +
         `<button class="ghost" id="pm-main">Main Menu</button>` +
         `</div>`,
@@ -624,8 +639,74 @@ export class UI {
     byId('pm-resume').addEventListener('click', () => opts.onResume());
     byId('pm-save').addEventListener('click', () => opts.onSave());
     byId('pm-load').addEventListener('click', () => opts.onLoad());
+    byId('pm-settings').addEventListener('click', () => opts.onSettings());
     byId('pm-new').addEventListener('click', () => opts.onNewGame());
     byId('pm-main').addEventListener('click', () => opts.onMainMenu());
+  }
+
+  /** Slot picker for loading or saving. Empty slots are disabled in load mode. */
+  showSlotSelect(opts: {
+    mode: 'load' | 'save';
+    slots: { index: number; info: { year: number; pop: number; size: MapSize } | null }[];
+    onPick: (slot: number) => void;
+    onBack: () => void;
+  }): void {
+    const sizeLabel: Record<MapSize, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
+    const rows = opts.slots
+      .map(({ index, info }) => {
+        const label = info
+          ? `Yr ${info.year} · ${info.pop} people · ${sizeLabel[info.size]}`
+          : 'Empty';
+        const disabled = opts.mode === 'load' && !info ? ' disabled' : '';
+        return `<button id="slot-${index}"${disabled}>Slot ${index + 1}<span class="sub">${label}</span></button>`;
+      })
+      .join('');
+    this.overlayCard(
+      `<h2>${opts.mode === 'load' ? 'Load Game' : 'Save Game'}</h2>` +
+        `<div class="menu-list">${rows}<button class="ghost" id="slot-back">Back</button></div>`,
+      'menu-card',
+    );
+    for (const { index, info } of opts.slots) {
+      if (opts.mode === 'load' && !info) continue;
+      byId(`slot-${index}`).addEventListener('click', () => opts.onPick(index));
+    }
+    byId('slot-back').addEventListener('click', () => opts.onBack());
+  }
+
+  /** Settings: graphics tier (applies on reload) and clear-all-saves. */
+  showSettings(opts: {
+    gfx: 'auto' | 'low' | 'high';
+    onSetGfx: (g: 'auto' | 'low' | 'high') => void;
+    onClearSaves: () => void;
+    onReload: () => void;
+    onBack: () => void;
+  }): void {
+    const gfxBtn = (g: 'auto' | 'low' | 'high', label: string) =>
+      `<button class="seg${opts.gfx === g ? ' on' : ''}" id="set-gfx-${g}">${label}</button>`;
+    this.overlayCard(
+      `<h2>Settings</h2>` +
+        `<div class="menu-list">` +
+        `<div class="set-label">Graphics</div>` +
+        `<div class="seg-row">${gfxBtn('auto', 'Auto')}${gfxBtn('low', 'Low')}${gfxBtn('high', 'High')}</div>` +
+        `<div class="set-note">Graphics changes apply after reloading.</div>` +
+        `<button id="set-reload">Reload now</button>` +
+        `<button class="ghost" id="set-clear">Clear all saves</button>` +
+        `<button class="ghost" id="set-back">Back</button>` +
+        `</div>`,
+      'menu-card',
+    );
+    (['auto', 'low', 'high'] as const).forEach((g) =>
+      byId(`set-gfx-${g}`).addEventListener('click', () => {
+        opts.onSetGfx(g);
+        // Re-render the panel so the selected segment updates.
+        this.showSettings({ ...opts, gfx: g });
+      }),
+    );
+    byId('set-reload').addEventListener('click', () => opts.onReload());
+    byId('set-clear').addEventListener('click', () => {
+      if (confirm('Delete all saved villages? This cannot be undone.')) opts.onClearSaves();
+    });
+    byId('set-back').addEventListener('click', () => opts.onBack());
   }
 
   showGameOver(s: GameState, onNew: () => void, onMainMenu: () => void): void {

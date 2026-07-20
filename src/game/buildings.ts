@@ -18,15 +18,29 @@ export interface PlaceResult {
 /** Can a building of `type` be placed with its top-left corner at (x,y)? */
 export function canPlace(s: GameState, type: BuildingType, x: number, y: number): PlaceResult {
   const def = BUILDING_DEFS[type];
+  const allowsWater = def.requiresWaterFraction !== undefined; // a dock may sit partly on water
+  let waterTiles = 0;
+  let landTiles = 0;
   for (let dy = 0; dy < def.h; dy++) {
     for (let dx = 0; dx < def.w; dx++) {
       const tx = x + dx;
       const ty = y + dy;
       if (!inBounds(tx, ty)) return { ok: false, reason: 'Off the map' };
       const t = getTile(s.tiles, tx, ty)!;
-      if (t.type === 'water') return { ok: false, reason: 'Cannot build on water' };
       if (t.type === 'stone') return { ok: false, reason: 'Cannot build on rock' };
+      if (t.type === 'water') {
+        if (!allowsWater) return { ok: false, reason: 'Cannot build on water' };
+        waterTiles++;
+      } else {
+        landTiles++;
+      }
     }
+  }
+  // Docks: enough of the footprint over water, and the rest anchored on land.
+  if (allowsWater) {
+    const need = Math.ceil(def.w * def.h * def.requiresWaterFraction!);
+    if (waterTiles < need) return { ok: false, reason: 'Part of it must reach over the water' };
+    if (landTiles === 0) return { ok: false, reason: 'It must also touch the shore' };
   }
   // No overlap with existing buildings.
   for (const b of s.buildings) {

@@ -1,4 +1,5 @@
 import { GameState, MAP_W, MAP_H, MapSize, setMapSize } from '../types';
+import { randomName } from './names';
 
 // Legacy single-slot key (pre-slots). Migrated into slot 0 on first run, then left in place.
 const LEGACY_KEY = 'little-village-save-v12';
@@ -51,6 +52,8 @@ export function loadGame(slot = 0): GameState | null {
     if (!Array.isArray(s.paths) || s.paths.length !== MAP_W * MAP_H) return null;
     if (!Array.isArray(s.harvest) || s.harvest.length !== MAP_W * MAP_H) return null;
     if (!s.merchant || typeof s.pathProgress !== 'number') return null;
+    // Backfill names for citizens saved before villagers had names.
+    for (const c of s.citizens) if (!c.name) c.name = randomName(c.sex);
     return s;
   } catch {
     return null;

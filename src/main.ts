@@ -11,6 +11,8 @@ import {
   Citizen,
   BuildingType,
   BUILDING_DEFS,
+  isHouse,
+  houseCapacityOf,
   MapSize,
   Difficulty,
   MAP_W,
@@ -525,6 +527,19 @@ class Game {
         }
       } else {
         if (def.jobs > 0) rows.push({ label: 'Workers', value: `${b.workers.length}/${b.desiredWorkers}` });
+        if (isHouse(b.type)) {
+          const residents = this.state.citizens.filter((c) => c.homeId === b.id);
+          rows.push({ label: 'Residents', value: `${residents.length}/${houseCapacityOf(b.type)}` });
+          if (residents.length === 0) {
+            rows.push({ label: '—', value: 'Nobody lives here yet' });
+          } else {
+            for (const r of residents) {
+              const face = r.age < ADULT_AGE ? '🧒' : r.sex === 'm' ? '👨' : '👩';
+              const note = r.age < ADULT_AGE ? 'child' : `${Math.floor(r.age)} yr`;
+              rows.push({ label: `${face} ${r.name}`, value: note });
+            }
+          }
+        }
         if (b.type === 'mine') rows.push({ label: 'Digging', value: b.output });
         if (b.type === 'blacksmith') rows.push({ label: 'Forging', value: `${b.recipe} tools` });
         if (b.type === 'barn') {
@@ -543,7 +558,9 @@ class Game {
       if (!c) return this.clearInspect();
       const adult = c.age >= ADULT_AGE;
       const job = c.jobId !== null ? this.state.buildings.find((b) => b.id === c.jobId) : null;
+      const home = c.homeId !== null ? this.state.buildings.find((b) => b.id === c.homeId) : null;
       rows.push({ label: 'Sex', value: c.sex === 'm' ? '♂ Male' : '♀ Female' });
+      rows.push({ label: 'Home', value: home ? `${BUILDING_DEFS[home.type].name} #${home.id}` : 'Homeless' });
       rows.push({ label: 'Stage', value: adult ? 'Adult' : `Child · grows up at ${ADULT_AGE}` });
       rows.push({ label: 'Age', value: `${Math.floor(c.age)} yr` });
       rows.push({ label: 'Health', value: `❤️ ${Math.round(c.health)}%${c.sick ? ' · 🤒 sick' : ''}` });
@@ -554,8 +571,8 @@ class Game {
         label: 'Carrying',
         value: c.carry ? `${RESOURCE_ICON[c.carry.kind]} ${Math.floor(c.carry.amount)} ${c.carry.kind}` : 'nothing',
       });
-      const title = !adult ? '🧒 Child' : c.sex === 'm' ? '👨 Villager' : '👩 Villager';
-      this.ui.showInspect(title, rows);
+      const face = !adult ? '🧒' : c.sex === 'm' ? '👨' : '👩';
+      this.ui.showInspect(`${face} ${c.name}`, rows);
     }
   }
 
@@ -576,6 +593,12 @@ class Game {
   /** Debug/testing helper: check a placement at a tile. */
   debugCanPlace(type: BuildingType, x: number, y: number): { ok: boolean; reason?: string } {
     return canPlace(this.state, type, x, y);
+  }
+
+  /** Debug/testing helper: place a building (as a construction site) at a tile. */
+  debugPlace(type: BuildingType, x: number, y: number): number | null {
+    const b = placeBuilding(this.state, type, x, y);
+    return b ? b.id : null;
   }
 
   /** Debug/testing helper: route between tiles, returns waypoint tiles or null. */

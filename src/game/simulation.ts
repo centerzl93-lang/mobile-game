@@ -279,6 +279,29 @@ function goTo(c: Citizen, p: { x: number; y: number }): void {
   c.ty = p.y;
 }
 
+/**
+ * A walkable tile to stand at to interact with a building. Usually its centre, but for a dock
+ * whose centre falls on water (e.g. the trading post) this returns the nearest walkable footprint
+ * tile, then a walkable neighbour — so builders and workers can actually reach it.
+ */
+function buildingApproach(s: GameState, b: Building): { x: number; y: number } {
+  const c = buildingCenter(b);
+  if (isWalkable(s, Math.floor(c.x), Math.floor(c.y))) return c;
+  const def = BUILDING_DEFS[b.type];
+  let best: { x: number; y: number } | null = null;
+  let bestD = Infinity;
+  const consider = (tx: number, ty: number) => {
+    if (!isWalkable(s, tx, ty)) return;
+    const d = (tx + 0.5 - c.x) ** 2 + (ty + 0.5 - c.y) ** 2;
+    if (d < bestD) { bestD = d; best = { x: tx + 0.5, y: ty + 0.5 }; }
+  };
+  for (let dy = 0; dy < def.h; dy++) for (let dx = 0; dx < def.w; dx++) consider(b.x + dx, b.y + dy);
+  if (best) return best;
+  for (let dx = -1; dx <= def.w; dx++) { consider(b.x + dx, b.y - 1); consider(b.x + dx, b.y + def.h); }
+  for (let dy = 0; dy < def.h; dy++) { consider(b.x - 1, b.y + dy); consider(b.x + def.w, b.y + dy); }
+  return best ?? c;
+}
+
 // ---- per-citizen behaviour ----
 function runCitizen(s: GameState, c: Citizen, dt: number, toolFactor: number): void {
   if (!isAdult(c) || c.sick) {
@@ -322,7 +345,7 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
   if (c.carry) {
     const barn = nearestBarnWithRoom(s, { x: c.x, y: c.y });
     if (!barn) {
-      goTo(c, buildingCenter(b));
+      goTo(c, buildingApproach(s, b));
       stepTo(s, c, dt);
       return;
     }
@@ -338,7 +361,7 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
   const missing = firstMissingInput(b);
   if (missing) {
     if (totalStored(s, missing) <= 0) {
-      goTo(c, buildingCenter(b)); // wait at the shop
+      goTo(c, buildingApproach(s, b)); // wait at the shop
       stepTo(s, c, dt);
       c.timer = 0;
       return;
@@ -361,7 +384,7 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
   }
 
   // 3. Work at the building; on completion, fill carry with a produced load.
-  goTo(c, buildingCenter(b));
+  goTo(c, buildingApproach(s, b));
   if (stepTo(s, c, dt)) {
     c.timer += dt;
     if (c.timer >= WORK_SECONDS) {
@@ -531,7 +554,7 @@ function pickSite(s: GameState, c: Citizen): SiteAction | null {
         ? { site: b, action: 'fetch', kind: fetchKind }
         : null;
     if (!action) continue;
-    const p = buildingCenter(b);
+    const p = buildingApproach(s, b);
     if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) continue;
     const d = (p.x - c.x) ** 2 + (p.y - c.y) ** 2;
     if (d < bestD) {
@@ -548,7 +571,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
     const kind = c.carry.kind;
     const site = nearestUnbuiltNeeding(s, c, kind);
     if (site) {
-      goTo(c, buildingCenter(site));
+      goTo(c, buildingApproach(s, site));
       if (stepTo(s, c, dt)) {
         const cost = BUILDING_DEFS[site.type].cost;
         const need = (cost[kind] ?? 0) - (site.store[kind] ?? 0);
@@ -594,7 +617,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
       return;
     }
     // build: stand at the site and labour.
-    goTo(c, buildingCenter(pick.site));
+    goTo(c, buildingApproach(s, pick.site));
     if (stepTo(s, c, dt)) {
       pick.site.progress += dt;
       if (pick.site.progress >= BUILDING_DEFS[pick.site.type].buildTime) {
@@ -706,7 +729,7 @@ function nearestUnbuiltNeeding(s: GameState, c: Citizen, kind: ResourceKind): Bu
     if (b.built) continue;
     const cost = BUILDING_DEFS[b.type].cost;
     if ((b.store[kind] ?? 0) >= (cost[kind] ?? 0)) continue;
-    const p = buildingCenter(b);
+    const p = buildingApproach(s, b);
     if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) continue;
     const d = (p.x - c.x) ** 2 + (p.y - c.y) ** 2;
     if (d < bestD) {

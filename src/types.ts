@@ -155,6 +155,11 @@ export interface BuildingDef {
   requiresAdjacent?: TileType[];
   /** At least one footprint tile must be one of these types (e.g. mines touch a foothill). */
   requiresTileAny?: TileType[];
+  /**
+   * Fraction of the footprint that must sit on water (a dock — e.g. the trading post reaches out
+   * over the water for boats). The rest of the footprint must be on buildable land.
+   */
+  requiresWaterFraction?: number;
   /** Radius (tiles) of the circular work area, for forest-worked buildings. */
   workRadius?: number;
   desc: string;
@@ -209,6 +214,8 @@ export type Sex = 'm' | 'f';
 
 export interface Citizen {
   id: number;
+  /** Given name, assigned at birth/arrival (by sex). */
+  name: string;
   x: number; // world position in tile units (float)
   y: number;
   tx: number; // current move target
@@ -533,8 +540,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   trading: {
     type: 'trading', name: 'Trading Post', emoji: '🚢', category: 'trade', w: 3, h: 2,
-    cost: { wood: 20, stone: 10 }, jobs: 1, buildTime: 8, requiresAdjacent: ['water'],
-    desc: 'Merchants dock here to barter goods — and to sell you livestock.',
+    cost: { wood: 20, stone: 10 }, jobs: 1, buildTime: 8, requiresWaterFraction: 1 / 3,
+    desc: 'A dock for traders arriving by boat — part of it must reach out over the water.',
   },
   school: {
     type: 'school', name: 'School', emoji: '🏫', category: 'civic', w: 2, h: 2,

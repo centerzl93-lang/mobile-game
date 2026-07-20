@@ -23,10 +23,12 @@ import {
   EASY_START_HOUSES,
 } from '../types';
 import { generateWorld, findStartTile, getTile, emptyPaths, emptyHarvest } from './world';
+import { randomName } from './names';
 
 export function makeCitizen(s: { nextId: number }, sex: Sex, age: number, x: number, y: number): Citizen {
   return {
     id: s.nextId++,
+    name: randomName(sex),
     x,
     y,
     tx: x,

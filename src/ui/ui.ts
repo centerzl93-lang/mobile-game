@@ -3,6 +3,8 @@ import {
   BuildingType,
   BUILD_ORDER,
   BUILDING_DEFS,
+  MapSize,
+  MAP_SIZES,
   RESOURCE_ICON,
   RESOURCE_KINDS,
   HUD_RESOURCES,
@@ -40,6 +42,7 @@ export interface UICallbacks {
   onPauseToggle: () => void;
   onSpeedCycle: () => void;
   onNewGame: () => void;
+  onOpenMenu: () => void;
   onSetWorkers: (buildingId: number, delta: number) => void;
   onSetMineOutput: (buildingId: number, output: MineOutput) => void;
   onSetSmithRecipe: (buildingId: number, recipe: SmithRecipe) => void;
@@ -68,7 +71,7 @@ export class UI {
     speed: byId('btn-speed'),
     jobs: byId('btn-jobs'),
     merchant: byId('btn-merchant'),
-    newBtn: byId('btn-new'),
+    menuBtn: byId('btn-menu'),
     log: byId('log'),
     hint: byId('hint'),
     toolbar: byId('toolbar'),
@@ -97,9 +100,7 @@ export class UI {
     this.el.speed.addEventListener('click', () => this.cb.onSpeedCycle());
     this.el.jobs.addEventListener('click', () => this.toggleJobBoard());
     this.el.merchant.addEventListener('click', () => this.openTrade());
-    this.el.newBtn.addEventListener('click', () => {
-      if (confirm('Start a new village? Your current one will be lost.')) this.cb.onNewGame();
-    });
+    this.el.menuBtn.addEventListener('click', () => this.cb.onOpenMenu());
   }
 
   // ---- HUD ----
@@ -562,17 +563,88 @@ export class UI {
       onStart();
     });
   }
-  showGameOver(s: GameState, onNew: () => void): void {
+
+  /** The title screen shown on open: New Game, Continue (if a save exists), account placeholder. */
+  showMainMenu(opts: { hasSave: boolean; onNew: () => void; onContinue: () => void }): void {
+    const cont = opts.hasSave ? `<button id="mm-continue">Continue</button>` : '';
     this.overlayCard(
-      `<h2>Your village is gone</h2><p class="big">🪦</p><p>The last villager is gone after ${s.year} year${s.year > 1 ? 's' : ''}. Store enough food and fuel, and keep everyone clothed for winter.</p><button id="ov-new">Try Again</button>`,
+      `<h1>Little Village</h1><p class="big">🏡🌲🌾</p>` +
+        `<div class="menu-list">` +
+        `<button id="mm-new">New Game</button>` +
+        cont +
+        `<button class="ghost" id="mm-account" disabled>Sign In / Create Account — coming soon</button>` +
+        `</div>`,
+      'menu-card',
+    );
+    byId('mm-new').addEventListener('click', () => opts.onNew());
+    if (opts.hasSave) byId('mm-continue').addEventListener('click', () => opts.onContinue());
+  }
+
+  /** Map-size chooser reached from New Game. */
+  showSizeSelect(opts: { onPick: (size: MapSize) => void; onBack: () => void }): void {
+    const btn = (id: MapSize, label: string) => {
+      const dim = MAP_SIZES[id];
+      return `<button id="sz-${id}">${label}<span class="sub">${dim}×${dim} tiles</span></button>`;
+    };
+    this.overlayCard(
+      `<h2>Choose a map size</h2>` +
+        `<div class="menu-list">` +
+        btn('small', 'Small') +
+        btn('medium', 'Medium') +
+        btn('large', 'Large') +
+        `<button class="ghost" id="sz-back">Back</button>` +
+        `</div>`,
+      'menu-card',
+    );
+    (['small', 'medium', 'large'] as MapSize[]).forEach((size) =>
+      byId(`sz-${size}`).addEventListener('click', () => opts.onPick(size)),
+    );
+    byId('sz-back').addEventListener('click', () => opts.onBack());
+  }
+
+  /** In-game pause menu: Resume, Save, Load, New Game, Main Menu. */
+  showPauseMenu(opts: {
+    onResume: () => void;
+    onSave: () => void;
+    onLoad: () => void;
+    onNewGame: () => void;
+    onMainMenu: () => void;
+  }): void {
+    this.overlayCard(
+      `<h2>Paused</h2>` +
+        `<div class="menu-list">` +
+        `<button id="pm-resume">Resume</button>` +
+        `<button id="pm-save">Save</button>` +
+        `<button id="pm-load">Load</button>` +
+        `<button id="pm-new">New Game</button>` +
+        `<button class="ghost" id="pm-main">Main Menu</button>` +
+        `</div>`,
+      'menu-card',
+    );
+    byId('pm-resume').addEventListener('click', () => opts.onResume());
+    byId('pm-save').addEventListener('click', () => opts.onSave());
+    byId('pm-load').addEventListener('click', () => opts.onLoad());
+    byId('pm-new').addEventListener('click', () => opts.onNewGame());
+    byId('pm-main').addEventListener('click', () => opts.onMainMenu());
+  }
+
+  showGameOver(s: GameState, onNew: () => void, onMainMenu: () => void): void {
+    this.overlayCard(
+      `<h2>Your village is gone</h2><p class="big">🪦</p><p>The last villager is gone after ${s.year} year${s.year > 1 ? 's' : ''}. Store enough food and fuel, and keep everyone clothed for winter.</p>` +
+        `<div class="menu-list"><button id="ov-new">Try Again</button><button class="ghost" id="ov-main">Main Menu</button></div>`,
+      'menu-card',
     );
     byId('ov-new').addEventListener('click', () => {
       this.hideOverlay();
       onNew();
     });
+    byId('ov-main').addEventListener('click', () => {
+      this.hideOverlay();
+      onMainMenu();
+    });
   }
-  private overlayCard(inner: string): void {
-    this.el.overlay.innerHTML = `<div class="card">${inner}</div>`;
+  private overlayCard(inner: string, extraClass = ''): void {
+    this.el.overlay.innerHTML = `<div class="card${extraClass ? ' ' + extraClass : ''}">${inner}</div>`;
     this.el.overlay.classList.remove('hidden');
   }
   hideOverlay(): void {

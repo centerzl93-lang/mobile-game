@@ -1,8 +1,22 @@
 // Shared types and tunable balance constants for Little Village.
 
 export const TILE = 32; // base pixels per tile at zoom 1
-export const MAP_W = 48;
-export const MAP_H = 48;
+
+// Map dimensions are mutable so New Game / Load can pick a size. They are exported as `let`
+// so importers see the current value through ES-module live bindings — `setMapSize` must run
+// before a world is generated or loaded (enforced in newGame / loadGame).
+export let MAP_W = 48;
+export let MAP_H = 48;
+
+export type MapSize = 'small' | 'medium' | 'large';
+/** Side length (tiles) for each selectable map size. Medium/Large double each side. */
+export const MAP_SIZES: Record<MapSize, number> = { small: 48, medium: 96, large: 192 };
+
+/** Set the active map dimensions. Call before generating or loading a world. */
+export function setMapSize(w: number, h: number): void {
+  MAP_W = w;
+  MAP_H = h;
+}
 
 // 'stone' = tall, impassable mountain rock. 'foothill' = the low, buildable rocky band at a
 // mountain's base (the only place mines can be built).
@@ -253,8 +267,11 @@ export interface NomadOffer {
 }
 
 export interface GameState {
-  tiles: Tile[]; // length MAP_W * MAP_H
-  paths: number[]; // length MAP_W * MAP_H, PATH_* values
+  /** Map dimensions this state was generated at (also restored on load). */
+  w: number;
+  h: number;
+  tiles: Tile[]; // length w * h
+  paths: number[]; // length w * h, PATH_* values
   buildings: Building[];
   citizens: Citizen[];
   season: number; // index into SEASONS
@@ -270,6 +287,12 @@ export interface GameState {
   harvest: number[];
   /** Fractional accumulator for how many planned path tiles are built. */
   pathProgress: number;
+  /**
+   * Bumped whenever walkability changes (a bridge laid or a path/bridge cleared). The
+   * simulation caches its per-tick reachability flood-fill and only recomputes when this
+   * (or the state identity) changes — keeping per-tick nav ~O(1) on large maps.
+   */
+  navVersion?: number;
 }
 
 // ---- Time ----

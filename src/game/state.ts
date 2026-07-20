@@ -14,6 +14,11 @@ import {
   START_HEALTH,
   START_HAPPINESS,
   ResourceKind,
+  MapSize,
+  MAP_SIZES,
+  MAP_W,
+  MAP_H,
+  setMapSize,
 } from '../types';
 import { generateWorld, findStartTile, emptyPaths, emptyHarvest } from './world';
 
@@ -56,11 +61,15 @@ function makeBuilding(s: { nextId: number }, type: BuildingType, x: number, y: n
   };
 }
 
-export function newGame(seed?: number): GameState {
+export function newGame(size: MapSize = 'small', seed?: number): GameState {
+  const dim = MAP_SIZES[size];
+  setMapSize(dim, dim); // must run before generateWorld so the world fills the chosen size
   const tiles = generateWorld(seed);
   const start = findStartTile(tiles);
 
   const state: GameState = {
+    w: MAP_W,
+    h: MAP_H,
     tiles,
     paths: emptyPaths(),
     buildings: [],

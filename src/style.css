@@ -297,6 +297,39 @@ body {
   transform: scale(0.98);
 }
 
+/* Vertical button column for the menu cards (main menu, size select, pause). */
+.menu-card .menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+.menu-card .menu-list button {
+  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.menu-card .menu-list button .sub {
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.75;
+}
+/* A quieter, secondary button (Back, Main Menu, disabled account entry). */
+.card button.ghost {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.card button.ghost:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.card button.ghost:disabled:active {
+  transform: none;
+}
+
 /* ---------- Job board (right sidebar) ---------- */
 .panel {
   position: absolute;

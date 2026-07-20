@@ -110,9 +110,20 @@ const TAILOR_IN = 5, TAILOR_OUT = 4;
 
 const ARRIVE = 0.25; // tile distance considered "arrived"
 
-// Walkable-connectivity labels for the current update tick; two tiles with the same
-// non-negative label are mutually reachable. Rebuilt once per update() in labelComponents.
+// Walkable-connectivity labels; two tiles with the same non-negative label are mutually
+// reachable. Cached across ticks and recomputed only when walkability changes (a new state
+// identity, or a bumped navVersion) — the O(N) flood fill would otherwise dominate on Large maps.
 let navLabels: Int32Array | null = null;
+let navLabelsFor: GameState | null = null;
+let navLabelsVersion = -1;
+
+function ensureNavLabels(s: GameState): void {
+  const version = s.navVersion ?? 0;
+  if (navLabels && navLabelsFor === s && navLabelsVersion === version) return;
+  navLabels = labelComponents(s);
+  navLabelsFor = s;
+  navLabelsVersion = version;
+}
 
 /** Is the destination tile in the same walkable component as the citizen? */
 function reachableTile(c: Citizen, tx: number, ty: number): boolean {
@@ -125,7 +136,7 @@ function reachableTile(c: Citizen, tx: number, ty: number): boolean {
 export function update(s: GameState, dt: number, log: LogFn): void {
   if (s.gameOver) return;
   routeBudget = 0;
-  navLabels = labelComponents(s); // walkable connectivity, for reachability checks this tick
+  ensureNavLabels(s); // walkable connectivity, recomputed only when it actually changed
   reconcileWorkers(s);
   assignHomesAndJobs(s);
   const toolFactor = totalStored(s, 'tools') > 0 ? 1 : NO_TOOLS_PENALTY;
@@ -771,6 +782,7 @@ function buildPath(s: GameState, c: Citizen, dt: number): boolean {
       if (totalStored(s, 'wood') >= BRIDGE_WOOD_COST) {
         takeNearest(s, bestStand, 'wood', BRIDGE_WOOD_COST);
         s.paths[bestIdx] = PATH_BRIDGE;
+        s.navVersion = (s.navVersion ?? 0) + 1; // a new bridge changed walkability
       }
     } else {
       s.paths[bestIdx] = PATH_DIRT;

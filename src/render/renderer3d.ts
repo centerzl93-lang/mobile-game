@@ -64,6 +64,9 @@ const SMOKE_BUILDINGS = new Set<BuildingType>([
 
 const SNOW_COLOR = new THREE.Color(0xeef3f7);
 
+// Instanced-mesh capacity for villagers — sized for a busy Large map's population.
+const CITIZEN_CAP = 1200;
+
 interface SeasonPalette {
   sky: number; fog: number; hemiSky: number; hemiGround: number; sun: number; sunI: number; snow: number;
 }
@@ -134,7 +137,7 @@ export class Renderer3D {
   private marquee!: THREE.Mesh;
 
   // Cached signatures so we only rebuild a layer when its data changes.
-  private sig = { land: -1, tree: -1, rock: -1, path: '', mark: '', bld: '' };
+  private sig = { land: -1, tree: -1, rock: -1, path: -1, mark: -1, bld: '' };
   private lastState: GameState | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -235,13 +238,13 @@ export class Renderer3D {
     // Citizens: capsule bodies (all tiers) + small heads (high tier), refreshed every frame.
     const capGeo = new THREE.CapsuleGeometry(0.16, 0.34, 3, 6);
     capGeo.translate(0, 0.33, 0);
-    this.citizens = new THREE.InstancedMesh(capGeo, matte(0xffffff), 600);
+    this.citizens = new THREE.InstancedMesh(capGeo, matte(0xffffff), CITIZEN_CAP);
     this.citizens.count = 0;
     this.citizens.castShadow = this.tier === 'high';
     this.scene.add(this.citizens);
     if (this.tier === 'high') {
       const headGeo = new THREE.SphereGeometry(0.13, 8, 6);
-      this.heads = new THREE.InstancedMesh(headGeo, matte(0xffffff), 600);
+      this.heads = new THREE.InstancedMesh(headGeo, matte(0xffffff), CITIZEN_CAP);
       this.heads.count = 0;
       this.heads.castShadow = true;
       this.scene.add(this.heads);
@@ -281,7 +284,7 @@ export class Renderer3D {
     this.marquee.visible = false;
     this.scene.add(this.marquee);
 
-    this.sig = { land: -1, tree: -1, rock: -1, path: '', mark: '', bld: '' };
+    this.sig = { land: -1, tree: -1, rock: -1, path: -1, mark: -1, bld: '' };
     this.ready = true;
   }
 
@@ -530,8 +533,9 @@ export class Renderer3D {
 
   // ---- paths & bridges ----
   private syncPaths(s: GameState): void {
-    let sig = '';
-    for (let i = 0; i < s.paths.length; i++) if (s.paths[i]) sig += i + ':' + s.paths[i] + ';';
+    // Rolling numeric hash over set tiles — sub-millisecond even at 37k tiles (Large map).
+    let sig = 0;
+    for (let i = 0; i < s.paths.length; i++) if (s.paths[i]) sig = (Math.imul(sig, 31) + (i + 1) * s.paths[i]) >>> 0;
     if (sig === this.sig.path) return;
     this.sig.path = sig;
     let k = 0;
@@ -556,8 +560,8 @@ export class Renderer3D {
 
   // ---- harvest marks ----
   private syncMarks(s: GameState): void {
-    let sig = '';
-    for (let i = 0; i < s.harvest.length; i++) if (s.harvest[i]) sig += i + ':' + s.harvest[i] + ';';
+    let sig = 0;
+    for (let i = 0; i < s.harvest.length; i++) if (s.harvest[i]) sig = (Math.imul(sig, 31) + (i + 1) * s.harvest[i]) >>> 0;
     if (sig === this.sig.mark) return;
     this.sig.mark = sig;
     let k = 0;
@@ -794,7 +798,7 @@ export class Renderer3D {
     for (const [, obj] of this.buildingMeshes) this.disposeBuilding(obj);
     this.buildingMeshes.clear();
     for (const o of [this.ghost, this.selRing, this.marquee]) this.scene.remove(o);
-    this.sig = { land: -1, tree: -1, rock: -1, path: '', mark: '', bld: '' };
+    this.sig = { land: -1, tree: -1, rock: -1, path: -1, mark: -1, bld: '' };
     this.ready = false;
   }
 }

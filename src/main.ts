@@ -11,6 +11,7 @@ import {
   Citizen,
   BuildingType,
   BUILDING_DEFS,
+  MapSize,
   MAP_W,
   MAP_H,
   MineOutput,
@@ -21,6 +22,7 @@ import {
   ADULT_AGE,
   PATH_STONE,
   PATH_STONE_PLAN,
+  PATH_BRIDGE,
 } from './types';
 import { newGame } from './game/state';
 import {
@@ -37,7 +39,7 @@ import { canPlace, placeBuilding, canAfford, demolishBuilding } from './game/bui
 import { findPath } from './game/pathfind';
 import { addNearest } from './game/storage';
 import { planPath } from './game/paths';
-import { saveGame, loadGame } from './game/save';
+import { saveGame, loadGame, hasSave } from './game/save';
 import { InspectRow } from './ui/ui';
 
 const SPEEDS = [1, 2, 3];
@@ -88,7 +90,8 @@ class Game {
       onSetDemolish: (a) => this.onSetDemolish(a),
       onPauseToggle: () => this.togglePause(),
       onSpeedCycle: () => this.cycleSpeed(),
-      onNewGame: () => this.startNewGame(),
+      onNewGame: () => this.openSizeSelect(),
+      onOpenMenu: () => this.openPauseMenu(),
       onSetWorkers: (id, d) => this.setWorkers(id, d),
       onSetMineOutput: (id, o) => this.setMineOutput(id, o),
       onSetSmithRecipe: (id, r) => this.setSmithRecipe(id, r),
@@ -110,20 +113,10 @@ class Game {
     });
     this.resize();
 
-    const saved = loadGame();
-    if (saved && saved.citizens.length > 0 && !saved.gameOver) {
-      this.state = saved;
-      this.centreOnVillage();
-      this.running = true;
-      this.ui.log('Welcome back to your village', 'good');
-    } else {
-      this.ui.showStart(() => {
-        this.state = newGame();
-        this.centreOnVillage();
-        this.running = true;
-        this.ui.log('Place a house to get started', 'info');
-      });
-    }
+    // Open on the main menu. The default (small) map generated above renders as an idle
+    // backdrop behind it because `running` is false; picking New Game / Continue starts play.
+    this.centreOnVillage();
+    this.openMainMenu();
 
     requestAnimationFrame((t) => this.frame(t));
   }
@@ -282,8 +275,9 @@ class Game {
     this.ui.updateHud(this.state, SPEEDS[this.speedIndex], this.paused);
   }
 
-  private startNewGame(): void {
-    this.state = newGame();
+  /** Start a fresh game at the chosen size. Directly startable (size-select + headless drivers). */
+  startNewGame(size: MapSize = 'small'): void {
+    this.state = newGame(size);
     this.centreOnVillage();
     this.paused = false;
     this.selectedBuild = null;
@@ -292,9 +286,68 @@ class Game {
     this.clearInspect();
     this.input.setMode('normal');
     this.ui.clearSelection();
+    this.ui.hideOverlay();
     this.running = true;
     this.persist();
     this.ui.log('A fresh village begins', 'good');
+  }
+
+  // ---- menu flow ----
+  /** The title screen: New Game, Continue (if a save exists), account placeholder. */
+  private openMainMenu(): void {
+    this.running = false;
+    this.paused = false;
+    this.ui.showMainMenu({
+      hasSave: hasSave(),
+      onNew: () => this.openSizeSelect(),
+      onContinue: () => this.continueGame(),
+    });
+  }
+
+  /** Map-size chooser, reachable from the main menu or the pause menu's New Game. */
+  private openSizeSelect(): void {
+    const cameFromGame = this.running;
+    this.running = false;
+    this.ui.showSizeSelect({
+      onPick: (size) => this.startNewGame(size),
+      onBack: () => (cameFromGame ? this.openPauseMenu() : this.openMainMenu()),
+    });
+  }
+
+  /** Load the saved village and resume play. Falls back to the main menu if no valid save. */
+  private continueGame(): void {
+    const saved = loadGame();
+    if (!saved) {
+      this.ui.flashHint('No saved village to load');
+      this.openMainMenu();
+      return;
+    }
+    this.state = saved;
+    this.centreOnVillage();
+    this.paused = false;
+    this.clearInspect();
+    this.ui.clearSelection();
+    this.ui.hideOverlay();
+    this.running = saved.citizens.length > 0 && !saved.gameOver;
+    this.ui.log('Welcome back to your village', 'good');
+  }
+
+  /** In-game pause menu: Resume, Save, Load, New Game, Main Menu. */
+  private openPauseMenu(): void {
+    this.paused = true;
+    this.ui.showPauseMenu({
+      onResume: () => {
+        this.paused = false;
+        this.ui.hideOverlay();
+      },
+      onSave: () => {
+        this.persist();
+        this.ui.flashHint('Village saved');
+      },
+      onLoad: () => this.continueGame(),
+      onNewGame: () => this.openSizeSelect(),
+      onMainMenu: () => this.openMainMenu(),
+    });
   }
 
   private onTap(sx: number, sy: number): void {
@@ -367,8 +420,10 @@ class Game {
     if (idx < 0 || idx >= this.state.paths.length) return;
     if (this.state.paths[idx] !== 0) {
       const wasStone = this.state.paths[idx] === PATH_STONE || this.state.paths[idx] === PATH_STONE_PLAN;
+      const wasBridge = this.state.paths[idx] === PATH_BRIDGE;
       this.state.paths[idx] = 0;
       if (wasStone) addNearest(this.state, { x: tx, y: ty }, 'stone', 0.25);
+      if (wasBridge) this.state.navVersion = (this.state.navVersion ?? 0) + 1; // walkability changed
       this.persist();
     } else if (this.state.harvest[idx] !== 0) {
       this.state.harvest[idx] = 0; // un-mark a harvest order
@@ -495,7 +550,7 @@ class Game {
       }
       if (this.state.gameOver && !wasOver) {
         this.persist();
-        this.ui.showGameOver(this.state, () => this.startNewGame());
+        this.ui.showGameOver(this.state, () => this.openSizeSelect(), () => this.openMainMenu());
       }
     }
 

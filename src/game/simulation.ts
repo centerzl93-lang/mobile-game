@@ -36,12 +36,15 @@ import {
   TOOL_WEAR_PER_WORKER,
   NO_TOOLS_PENALTY,
   SICKNESS_CHANCE,
-  RANCH_LIVESTOCK_IDEAL,
-  LIVESTOCK_GROWTH_PER_SEASON,
   FARM_FOOD_PER_WORKER,
+  CROP_META,
+  ANIMAL_META,
+  RANCH_ANIMALS,
+  RanchAnimal,
   TRADE_VALUE,
   MERCHANT_MARGIN,
   MERCHANT_VISIT_EVERY,
+  FOOD_KINDS,
   CHILD_FOOD_FACTOR,
   BIRTH_CHANCE,
   ADULT_AGE,
@@ -521,12 +524,23 @@ function workOutput(
         : { kind: 'leather', amount: LOAD_MAT * f };
     }
     case 'ranch': {
-      const herd = Math.min(1, totalStored(s, 'livestock') / RANCH_LIVESTOCK_IDEAL);
+      const animal = b.animal ?? 'cattle';
+      const meta = ANIMAL_META[animal];
+      const herd = Math.min(1, totalStored(s, animal) / meta.ideal);
       if (herd <= 0) return null;
       const f = herd * tf;
-      return Math.random() < 0.7
-        ? { kind: 'meat', amount: LOAD_FOOD * f }
-        : { kind: 'leather', amount: LOAD_MAT * f };
+      // Pick a product from this animal's weighted mix.
+      let roll = Math.random();
+      for (const p of meta.products) {
+        if (roll < p.chance) {
+          const base = p.kind === 'meat' || p.kind === 'eggs' ? LOAD_FOOD : LOAD_MAT;
+          return { kind: p.kind, amount: base * p.mult * f };
+        }
+        roll -= p.chance;
+      }
+      const last = meta.products[meta.products.length - 1];
+      const base = last.kind === 'meat' || last.kind === 'eggs' ? LOAD_FOOD : LOAD_MAT;
+      return { kind: last.kind, amount: base * last.mult * f };
     }
     case 'lumberyard': {
       if (b.replant ?? true) plantCircle(s, b); // sow saplings on grass so the forest renews
@@ -557,12 +571,13 @@ function workOutput(
     case 'tailor':
       return consumeStore(b, [['leather', TAILOR_IN]]) ? { kind: 'clothing', amount: TAILOR_OUT * tf } : null;
     case 'farm': {
-      const have = b.store.grain ?? 0;
+      const food = CROP_META[b.crop ?? 'wheat'].food;
+      const have = b.store[food] ?? 0;
       if (have <= 0) return null;
       const take = Math.min(CARRY_CAP, have);
-      b.store.grain = have - take;
-      if ((b.store.grain ?? 0) <= 0) delete b.store.grain;
-      return { kind: 'grain', amount: take };
+      b.store[food] = have - take;
+      if ((b.store[food] ?? 0) <= 0) delete b.store[food];
+      return { kind: food, amount: take };
     }
   }
   return null;
@@ -918,25 +933,28 @@ function endSeason(s: GameState, log: LogFn): void {
   }
   const season = SEASONS[s.season];
 
-  // Farms grow through spring/summer; deposit the harvest into their store at autumn.
+  // Farms grow through spring/summer; deposit the chosen crop's harvest into their store at autumn.
   for (const b of s.buildings) {
     if (b.built && b.type === 'farm') {
       if (season === 'Spring' || season === 'Summer') b.growth = Math.min(1, b.growth + 0.5);
       if (season === 'Autumn' && b.workers.length > 0) {
-        const yield_ = b.workers.length * FARM_FOOD_PER_WORKER * b.growth;
+        const crop = CROP_META[b.crop ?? 'wheat'];
+        const yield_ = b.workers.length * FARM_FOOD_PER_WORKER * b.growth * crop.yieldMult;
         if (yield_ > 1) {
-          b.store.grain = (b.store.grain ?? 0) + yield_;
-          log(`A field yielded ${Math.round(yield_)} grain to harvest`, 'good');
+          b.store[crop.food] = (b.store[crop.food] ?? 0) + yield_;
+          log(`A field yielded ${Math.round(yield_)} ${crop.label.toLowerCase()} to harvest`, 'good');
         }
         b.growth = 0;
       }
     }
   }
 
-  // Livestock breeds if a ranch keeps them.
-  const herd = totalStored(s, 'livestock');
-  if (herd > 0 && s.buildings.some((b) => b.built && b.type === 'ranch')) {
-    addNearest(s, centreOfVillage(s), 'livestock', herd * LIVESTOCK_GROWTH_PER_SEASON);
+  // Each animal breeds its own herd if a ranch raising it is kept.
+  for (const animal of RANCH_ANIMALS) {
+    const herd = totalStored(s, animal);
+    if (herd <= 0) continue;
+    if (!s.buildings.some((b) => b.built && b.type === 'ranch' && (b.animal ?? 'cattle') === animal)) continue;
+    addNearest(s, centreOfVillage(s), animal, herd * ANIMAL_META[animal].growth);
   }
 
   let pop = s.citizens.length;
@@ -1089,7 +1107,7 @@ function updateMerchant(s: GameState, log: LogFn): void {
     if (m.timer <= 0) {
       m.present = true;
       m.timer = 1;
-      m.stock = { livestock: 6, iron: 120, coal: 120, tools: 80, grain: 120, fish: 80, clothing: 80 };
+      m.stock = { cattle: 6, pigs: 6, chickens: 8, iron: 120, coal: 120, tools: 80, grain: 120, fish: 80, clothing: 80 };
       log('A merchant has docked — barter at the trading post', 'good');
     }
   }
@@ -1183,8 +1201,8 @@ export function avgHappiness(s: GameState): number {
 function updateWellbeing(s: GameState, foodShort: boolean, deaths: number, tavernActive: boolean): void {
   const pop = s.citizens.length;
   if (pop === 0) return;
-  const variety = foodVarietyStored(s); // distinct food types in stock (0..4)
-  const healthTarget = clamp(40 + 15 * variety - (foodShort ? 30 : 0), 0, 100);
+  const variety = foodVarietyStored(s); // distinct food types in stock (0..FOOD_KINDS.length)
+  const healthTarget = clamp(40 + 60 * (variety / FOOD_KINDS.length) - (foodShort ? 30 : 0), 0, 100);
   const headroom = housingCapacity(s) - pop > 0;
   const clothed = totalStored(s, 'clothing') >= pop;
   const comfortable = totalFood(s) > pop * FOOD_PER_CITIZEN_PER_SEASON;

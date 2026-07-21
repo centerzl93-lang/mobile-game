@@ -112,6 +112,51 @@ test.describe('forester', () => {
   });
 });
 
+test.describe('crops and livestock', () => {
+  test('a fresh farm defaults to wheat and a ranch to cattle, each with a selector', async ({ page }) => {
+    await open(page);
+    const res = await page.evaluate(() => {
+      const g = (window as any).__village;
+      // Easy start has plenty of wood/stone to afford the placements.
+      g.startNewGame('small', 'easy', true);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // Place real farm + ranch (via makeBuilding) at the first tiles that accept them.
+      const place = (type: string) => {
+        for (let r = 2; r < 12; r++)
+          for (let dy = -r; dy <= r; dy++)
+            for (let dx = -r; dx <= r; dx++) {
+              const x = barn.x + dx, y = barn.y + dy;
+              if (g.debugCanPlace(type, x, y).ok) {
+                const id = g.debugPlace(type, x, y);
+                if (id != null) return s.buildings.find((b: any) => b.id === id);
+              }
+            }
+        return null;
+      };
+      const farm = place('farm');
+      const ranch = place('ranch');
+      // The defaults come straight from makeBuilding — no explicit crop/animal set here.
+      const out: any = { farmCrop: farm && farm.crop, ranchAnimal: ranch && ranch.animal };
+      // Mark them built so the inspect panel renders the selectors.
+      if (farm) { farm.built = true; farm.progress = 99; }
+      if (ranch) { ranch.built = true; ranch.progress = 99; }
+      if (farm) { g.inspectSel = { kind: 'building', id: farm.id }; g.refreshInspect(); out.farmText = document.getElementById('inspect')!.innerText; }
+      if (ranch) { g.inspectSel = { kind: 'building', id: ranch.id }; g.refreshInspect(); out.ranchText = document.getElementById('inspect')!.innerText; }
+      return out;
+    });
+    expect(res.farmCrop).toBe('wheat');
+    expect(res.ranchAnimal).toBe('cattle');
+    // Farm inspect offers the three crops; ranch inspect the three animals.
+    expect(res.farmText).toContain('Wheat');
+    expect(res.farmText).toContain('Vegetables');
+    expect(res.farmText).toContain('Fruit');
+    expect(res.ranchText).toContain('Cattle');
+    expect(res.ranchText).toContain('Pigs');
+    expect(res.ranchText).toContain('Chickens');
+  });
+});
+
 test.describe('disasters toggle', () => {
   test('the toggle flows from the difficulty screen and persists through save/load', async ({ page }) => {
     await open(page);

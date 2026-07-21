@@ -44,6 +44,8 @@ export interface Tile {
 export type ResourceKind =
   | 'fruit'
   | 'grain'
+  | 'vegetables'
+  | 'eggs'
   | 'fish'
   | 'meat'
   | 'wood'
@@ -54,17 +56,21 @@ export type ResourceKind =
   | 'tools'
   | 'leather'
   | 'clothing'
-  | 'livestock'
+  | 'cattle'
+  | 'pigs'
+  | 'chickens'
   | 'medicine';
 
 export type Resources = Record<ResourceKind, number>;
 
 /** The distinct food types. A varied diet (more of these in stock) means better health. */
-export const FOOD_KINDS: ResourceKind[] = ['fruit', 'grain', 'fish', 'meat'];
+export const FOOD_KINDS: ResourceKind[] = ['fruit', 'grain', 'vegetables', 'eggs', 'fish', 'meat'];
 
 export const RESOURCE_KINDS: ResourceKind[] = [
   'fruit',
   'grain',
+  'vegetables',
+  'eggs',
   'fish',
   'meat',
   'wood',
@@ -75,7 +81,9 @@ export const RESOURCE_KINDS: ResourceKind[] = [
   'tools',
   'leather',
   'clothing',
-  'livestock',
+  'cattle',
+  'pigs',
+  'chickens',
   'medicine',
 ];
 
@@ -88,6 +96,8 @@ export const FOOD_ICON = '🍽️';
 export const RESOURCE_ICON: Record<ResourceKind, string> = {
   fruit: '🍎',
   grain: '🌾',
+  vegetables: '🥕',
+  eggs: '🥚',
   fish: '🐟',
   meat: '🍖',
   wood: '🪵',
@@ -98,7 +108,9 @@ export const RESOURCE_ICON: Record<ResourceKind, string> = {
   tools: '🛠️',
   leather: '🟫',
   clothing: '🧥',
-  livestock: '🐄',
+  cattle: '🐄',
+  pigs: '🐖',
+  chickens: '🐔',
   medicine: '💊',
 };
 
@@ -135,6 +147,34 @@ export type BuildingType =
 
 export type MineOutput = 'coal' | 'iron';
 export type SmithRecipe = 'iron' | 'steel';
+
+/** What a farm grows. Each crop harvests into a different food resource for dietary variety. */
+export type Crop = 'wheat' | 'vegetables' | 'fruit';
+export const CROPS: Crop[] = ['wheat', 'vegetables', 'fruit'];
+export const CROP_META: Record<Crop, { label: string; emoji: string; food: ResourceKind; yieldMult: number }> = {
+  wheat: { label: 'Wheat', emoji: '🌾', food: 'grain', yieldMult: 1 },
+  vegetables: { label: 'Vegetables', emoji: '🥕', food: 'vegetables', yieldMult: 1 },
+  fruit: { label: 'Fruit', emoji: '🍎', food: 'fruit', yieldMult: 0.85 },
+};
+
+/** What a ranch raises. Each animal has its own herd (a tradeable resource) and product mix. */
+export type RanchAnimal = 'cattle' | 'pigs' | 'chickens';
+export const RANCH_ANIMALS: RanchAnimal[] = ['cattle', 'pigs', 'chickens'];
+export const ANIMAL_META: Record<
+  RanchAnimal,
+  { label: string; emoji: string; ideal: number; growth: number; products: { kind: ResourceKind; chance: number; mult: number }[] }
+> = {
+  // `chance` weights are cumulative-rolled; `mult` scales that product's load.
+  cattle: { label: 'Cattle', emoji: '🐄', ideal: 8, growth: 0.12, products: [
+    { kind: 'meat', chance: 0.7, mult: 1 }, { kind: 'leather', chance: 0.3, mult: 1 },
+  ] },
+  pigs: { label: 'Pigs', emoji: '🐖', ideal: 8, growth: 0.18, products: [
+    { kind: 'meat', chance: 0.9, mult: 1.15 }, { kind: 'leather', chance: 0.1, mult: 1 },
+  ] },
+  chickens: { label: 'Chickens', emoji: '🐔', ideal: 12, growth: 0.25, products: [
+    { kind: 'eggs', chance: 0.6, mult: 1 }, { kind: 'meat', chance: 0.4, mult: 0.6 },
+  ] },
+};
 
 export type BuildCategory = 'housing' | 'food' | 'resources' | 'civic' | 'trade';
 
@@ -190,6 +230,10 @@ export interface Building {
   fireTimer?: number;
   /** Forester: plant saplings on grass in the work circle to grow a renewable forest. */
   replant?: boolean;
+  /** Farm: which crop it grows (defaults to wheat). */
+  crop?: Crop;
+  /** Ranch: which animal it raises (defaults to cattle). */
+  animal?: RanchAnimal;
 }
 
 /** What a villager is doing right now in the logistics loop. */
@@ -443,8 +487,6 @@ export const HUNT_FOOD_PER_SEASON = 10;
 export const HUNT_LEATHER_PER_SEASON = 4;
 export const RANCH_FOOD_PER_SEASON = 12;
 export const RANCH_LEATHER_PER_SEASON = 5;
-export const RANCH_LIVESTOCK_IDEAL = 8; // herd size for full output
-export const LIVESTOCK_GROWTH_PER_SEASON = 0.12; // herd breeds ~12%/season per ranch
 export const LUMBER_WOOD_PER_SEASON = 13;
 export const WOODCUT_FIREWOOD_PER_SEASON = 18;
 export const WOODCUT_WOOD_PER_SEASON = 11;
@@ -465,6 +507,8 @@ export const TAILOR_CLOTHING_OUT = 6;
 export const START_RESOURCES: Resources = {
   fruit: 120,
   grain: 120,
+  vegetables: 0,
+  eggs: 0,
   fish: 90,
   meat: 90,
   wood: 220,
@@ -475,7 +519,9 @@ export const START_RESOURCES: Resources = {
   tools: 120,
   leather: 0,
   clothing: 80,
-  livestock: 0,
+  cattle: 0,
+  pigs: 0,
+  chickens: 0,
   medicine: 40,
 };
 export const START_CITIZENS = 4;
@@ -497,6 +543,8 @@ export const DIFFICULTY_RESOURCES: Record<Difficulty, Partial<Resources>> = {
 export const TRADE_VALUE: Record<ResourceKind, number> = {
   fruit: 1,
   grain: 1,
+  vegetables: 1,
+  eggs: 1.5,
   fish: 1,
   meat: 1.5,
   wood: 1,
@@ -507,7 +555,9 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
   tools: 8,
   leather: 3,
   clothing: 6,
-  livestock: 20,
+  cattle: 20,
+  pigs: 14,
+  chickens: 8,
   medicine: 5,
 };
 export const MERCHANT_MARGIN = 0.8; // you receive 80% of the value you hand over
@@ -532,7 +582,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   farm: {
     type: 'farm', name: 'Field', emoji: '🌱', category: 'food', w: 3, h: 3,
     cost: { wood: 6 }, jobs: 2, buildTime: 5,
-    desc: 'Grows crops through the year; harvested each autumn.',
+    desc: 'Grows a chosen crop (wheat, vegetables, or fruit) through the year; harvested each autumn.',
   },
   fishing: {
     type: 'fishing', name: 'Fishing Hut', emoji: '🎣', category: 'food', w: 2, h: 2,
@@ -547,7 +597,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   ranch: {
     type: 'ranch', name: 'Ranch', emoji: '🐄', category: 'food', w: 3, h: 3,
     cost: { wood: 16 }, jobs: 2, buildTime: 7,
-    desc: 'Raises livestock for food and leather. Buy animals from traders.',
+    desc: 'Raises a chosen animal — cattle, pigs, or chickens — for food and leather. Buy the herd from traders.',
   },
   lumberyard: {
     type: 'lumberyard', name: 'Forester', emoji: '🌲', category: 'resources', w: 2, h: 2,

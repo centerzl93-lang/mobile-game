@@ -64,10 +64,10 @@ It works offline after the first load, and your village is saved automatically.
 | 🏠 | House | housing for 4 (grows the village) | — |
 | 🏡 | Stone House | housing for 5 — cheap winter heat | some **stone** |
 | 🧺 | Gatherer | 🍎 fruit | forest in its work-circle |
-| 🌱 | Field | 🌾 grain (autumn harvest) | — |
+| 🌱 | Field | a chosen crop — 🌾 grain, 🥕 vegetables, or 🍎 fruit (autumn harvest) | — |
 | 🎣 | Fishing Hut | 🐟 fish | built on the **shoreline** |
 | 🏹 | Hunting Cabin | 🍖 meat + leather | forest in its work-circle |
-| 🐄 | Ranch | 🍖 meat + leather | **livestock** (buy from traders) |
+| 🐄 | Ranch | a chosen animal — 🐄 cattle (meat + leather), 🐖 pigs (meat), or 🐔 chickens (🥚 eggs + meat) | that animal's herd (buy from traders) |
 | 🌲 | Lumberyard | wood | forest in its work-circle (it replants) |
 | 🪓 | Woodcutter | firewood (from wood) | — |
 | ⛏️ | Quarry | stone | built against a **mountainside** |
@@ -156,7 +156,7 @@ capacity now = your barns (5000 each) + markets (2000 each).
 
 Build a **Trading Post** on the shore and staff it. Every few seasons a
 **merchant** docks (a 📦 button appears) — open it to **barter** goods by value
-(no money). Traders are the only place to buy **livestock** to start a ranch.
+(no money). Traders are the only place to buy **cattle, pigs, or chickens** to stock a ranch.
 
 ### Time
 

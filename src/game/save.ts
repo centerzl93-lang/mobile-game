@@ -54,6 +54,18 @@ export function loadGame(slot = 0): GameState | null {
     if (!s.merchant || typeof s.pathProgress !== 'number') return null;
     // Backfill names for citizens saved before villagers had names.
     for (const c of s.citizens) if (!c.name) c.name = randomName(c.sex);
+    // Migrate the old single 'livestock' herd into 'cattle' (per-animal herds).
+    for (const b of s.buildings) {
+      const store = b.store as Record<string, number>;
+      if (store.livestock) {
+        store.cattle = (store.cattle ?? 0) + store.livestock;
+        delete store.livestock;
+      }
+    }
+    if (s.merchant.stock) {
+      const ms = s.merchant.stock as Record<string, number>;
+      if (ms.livestock) { ms.cattle = (ms.cattle ?? 0) + ms.livestock; delete ms.livestock; }
+    }
     return s;
   } catch {
     return null;

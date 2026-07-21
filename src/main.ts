@@ -15,6 +15,12 @@ import {
   workRadiusOf,
   isHouse,
   houseCapacityOf,
+  Crop,
+  RanchAnimal,
+  CROPS,
+  CROP_META,
+  RANCH_ANIMALS,
+  ANIMAL_META,
   MapSize,
   Difficulty,
   MAP_W,
@@ -103,6 +109,8 @@ class Game {
       onSetMineOutput: (id, o) => this.setMineOutput(id, o),
       onSetSmithRecipe: (id, r) => this.setSmithRecipe(id, r),
       onSetForesterReplant: (id, on) => this.setForesterReplant(id, on),
+      onSetCrop: (id, crop) => this.setCrop(id, crop),
+      onSetAnimal: (id, animal) => this.setAnimal(id, animal),
       onTrade: (give, get, qty) => this.trade(give, get, qty),
       onAcceptNomads: () => this.acceptNomads(),
       onRejectNomads: () => this.rejectNomads(),
@@ -251,6 +259,22 @@ class Game {
     const b = this.state.buildings.find((x) => x.id === id);
     if (b) {
       b.replant = on;
+      this.persist();
+    }
+  }
+
+  private setCrop(id: number, crop: Crop): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (b) {
+      b.crop = crop;
+      this.persist();
+    }
+  }
+
+  private setAnimal(id: number, animal: RanchAnimal): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (b) {
+      b.animal = animal;
       this.persist();
     }
   }
@@ -553,6 +577,8 @@ class Game {
         }
         if (b.type === 'mine') rows.push({ label: 'Digging', value: b.output });
         if (b.type === 'blacksmith') rows.push({ label: 'Forging', value: `${b.recipe} tools` });
+        if (b.type === 'farm') { const c = CROP_META[b.crop ?? 'wheat']; rows.push({ label: 'Crop', value: `${c.emoji} ${c.label}` }); }
+        if (b.type === 'ranch') { const a = ANIMAL_META[b.animal ?? 'cattle']; rows.push({ label: 'Raising', value: `${a.emoji} ${a.label}` }); }
         if (b.type === 'barn') {
           let load = 0;
           for (const k of RESOURCE_KINDS) load += b.store[k] ?? 0;
@@ -583,6 +609,12 @@ class Game {
             { v: 'on', label: '🌱 Replant', on },
             { v: 'off', label: 'Fell only', on: !on },
           ] };
+        } else if (b.type === 'farm') {
+          const cur = b.crop ?? 'wheat';
+          controls.toggle = { group: 'crop', options: CROPS.map((c) => ({ v: c, label: `${CROP_META[c].emoji} ${CROP_META[c].label}`, on: cur === c })) };
+        } else if (b.type === 'ranch') {
+          const cur = b.animal ?? 'cattle';
+          controls.toggle = { group: 'animal', options: RANCH_ANIMALS.map((a) => ({ v: a, label: `${ANIMAL_META[a].emoji} ${ANIMAL_META[a].label}`, on: cur === a })) };
         }
       }
       this.ui.showInspect(`${def.emoji} ${def.name}`, rows, controls);

@@ -34,10 +34,11 @@ export interface PlacementView {
 }
 
 const RES_DOT: Record<string, string> = {
-  fruit: '#e05a6a', grain: '#e2c15a', fish: '#6fb0d0', meat: '#b5665a',
+  fruit: '#e05a6a', grain: '#e2c15a', vegetables: '#e0913a', eggs: '#f2e4b0',
+  fish: '#6fb0d0', meat: '#b5665a',
   wood: '#8a6a3c', firewood: '#d1642f', stone: '#a6a8af', coal: '#333',
   iron: '#9aa0aa', tools: '#c0c4cc', leather: '#8a5a3a', clothing: '#7bb0d8',
-  livestock: '#d8b98a', medicine: '#c98fd8',
+  cattle: '#d8b98a', pigs: '#e0a6b0', chickens: '#e6d28a', medicine: '#c98fd8',
 };
 
 const BUILDING_COLORS: Record<BuildingType, string> = {

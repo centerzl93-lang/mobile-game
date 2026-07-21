@@ -101,6 +101,9 @@ export function placeBuilding(
     growth: 0,
     output: 'coal',
     recipe: 'iron',
+    replant: type === 'lumberyard', // new Foresters replant by default
+    crop: 'wheat',
+    animal: 'cattle',
     store: {},
   };
   s.buildings.push(b);

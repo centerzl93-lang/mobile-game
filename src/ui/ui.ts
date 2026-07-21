@@ -17,6 +17,12 @@ import {
   SEASONS,
   MineOutput,
   SmithRecipe,
+  Crop,
+  RanchAnimal,
+  CROPS,
+  CROP_META,
+  RANCH_ANIMALS,
+  ANIMAL_META,
   BuildCategory,
   CATEGORY_ORDER,
   CATEGORY_META,
@@ -43,8 +49,8 @@ export interface InspectControls {
   buildingId: number;
   /** Worker allocation stepper (current desired vs the job cap). */
   workers?: { value: number; max: number };
-  /** A single option toggle (mine output / smith recipe / forester replant). */
-  toggle?: { group: 'mine' | 'smith' | 'forester'; options: { v: string; label: string; on: boolean }[] };
+  /** A single option toggle (mine output / smith recipe / forester replant / farm crop / ranch animal). */
+  toggle?: { group: 'mine' | 'smith' | 'forester' | 'crop' | 'animal'; options: { v: string; label: string; on: boolean }[] };
 }
 
 export interface UICallbacks {
@@ -59,6 +65,8 @@ export interface UICallbacks {
   onSetMineOutput: (buildingId: number, output: MineOutput) => void;
   onSetSmithRecipe: (buildingId: number, recipe: SmithRecipe) => void;
   onSetForesterReplant: (buildingId: number, on: boolean) => void;
+  onSetCrop: (buildingId: number, crop: Crop) => void;
+  onSetAnimal: (buildingId: number, animal: RanchAnimal) => void;
   onTrade: (give: ResourceKind, get: ResourceKind, qty: number) => TradeResult;
   onAcceptNomads: () => void;
   onRejectNomads: () => void;
@@ -103,7 +111,7 @@ export class UI {
   private jobBoardOpen = false;
   private jobSig = '';
   private tradeGive: ResourceKind = 'grain';
-  private tradeGet: ResourceKind = 'livestock';
+  private tradeGet: ResourceKind = 'cattle';
   private tradeQty = 1;
 
   constructor(private cb: UICallbacks) {
@@ -394,6 +402,8 @@ export class UI {
             const v = (btn as HTMLElement).dataset.v!;
             if (tog.group === 'mine') this.cb.onSetMineOutput(id, v as MineOutput);
             else if (tog.group === 'smith') this.cb.onSetSmithRecipe(id, v as SmithRecipe);
+            else if (tog.group === 'crop') this.cb.onSetCrop(id, v as Crop);
+            else if (tog.group === 'animal') this.cb.onSetAnimal(id, v as RanchAnimal);
             else this.cb.onSetForesterReplant(id, v === 'on');
           }),
         );
@@ -458,7 +468,7 @@ export class UI {
     const employed = s.citizens.reduce((n, c) => n + (c.jobId !== null ? 1 : 0), 0);
     const builders = adults - employed;
     const sig =
-      jobs.map((b) => `${b.id}:${b.workers.length}:${b.desiredWorkers}:${b.output}:${b.recipe}`).join('|') +
+      jobs.map((b) => `${b.id}:${b.workers.length}:${b.desiredWorkers}:${b.output}:${b.recipe}:${b.crop}:${b.animal}`).join('|') +
       `#${adults},${children},${employed}`;
     if (sig === this.jobSig) return;
     this.jobSig = sig;
@@ -489,6 +499,12 @@ export class UI {
         extra = `<div class="jr-toggle" data-toggle="mine"><button data-v="coal" class="${b.output === 'coal' ? 'on' : ''}">Coal</button><button data-v="iron" class="${b.output === 'iron' ? 'on' : ''}">Iron</button></div>`;
       } else if (b.type === 'blacksmith') {
         extra = `<div class="jr-toggle" data-toggle="smith"><button data-v="iron" class="${b.recipe === 'iron' ? 'on' : ''}">Iron</button><button data-v="steel" class="${b.recipe === 'steel' ? 'on' : ''}">Steel</button></div>`;
+      } else if (b.type === 'farm') {
+        const cur = b.crop ?? 'wheat';
+        extra = `<div class="jr-toggle" data-toggle="crop">${CROPS.map((c) => `<button data-v="${c}" class="${cur === c ? 'on' : ''}">${CROP_META[c].emoji}</button>`).join('')}</div>`;
+      } else if (b.type === 'ranch') {
+        const cur = b.animal ?? 'cattle';
+        extra = `<div class="jr-toggle" data-toggle="animal">${RANCH_ANIMALS.map((a) => `<button data-v="${a}" class="${cur === a ? 'on' : ''}">${ANIMAL_META[a].emoji}</button>`).join('')}</div>`;
       }
       row.innerHTML = `
         <span class="jr-emoji">${def.emoji}</span>
@@ -503,7 +519,9 @@ export class UI {
           btn.addEventListener('click', () => {
             const v = (btn as HTMLElement).dataset.v!;
             if (b.type === 'mine') this.cb.onSetMineOutput(b.id, v as MineOutput);
-            else this.cb.onSetSmithRecipe(b.id, v as SmithRecipe);
+            else if (b.type === 'blacksmith') this.cb.onSetSmithRecipe(b.id, v as SmithRecipe);
+            else if (b.type === 'farm') this.cb.onSetCrop(b.id, v as Crop);
+            else if (b.type === 'ranch') this.cb.onSetAnimal(b.id, v as RanchAnimal);
           }),
         );
       p.appendChild(row);

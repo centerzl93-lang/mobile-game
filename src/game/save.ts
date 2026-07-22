@@ -73,6 +73,22 @@ export function loadGame(slot = 0): GameState | null {
       const ms = s.merchant.stock as Record<string, number>;
       if (ms.livestock) { ms.cattle = (ms.cattle ?? 0) + ms.livestock; delete ms.livestock; }
     }
+    // The merchant grew a boat, categories, and a stay counter. Upgrade the old
+    // { present, timer, stock } shape so a mid-game save loads without a docked ghost merchant.
+    const m = s.merchant as unknown as Record<string, unknown>;
+    if (typeof m.phase !== 'string') {
+      const wasPresent = m.present === true;
+      m.phase = wasPresent ? 'docked' : 'away';
+      m.seasonsLeft = wasPresent ? 1 : 0;
+      m.cooldown = false;
+      m.category = wasPresent ? 'goods' : null;
+      if (!m.stock || typeof m.stock !== 'object') m.stock = {};
+      m.seedStock = [];
+      m.boat = null;
+    }
+    if (!Array.isArray(s.merchant.seedStock)) s.merchant.seedStock = [];
+    // Trading posts gained a player-set stock-order table.
+    for (const b of s.buildings) if (b.type === 'trading' && !b.orders) b.orders = {};
     return s;
   } catch {
     return null;

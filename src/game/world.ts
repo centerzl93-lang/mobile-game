@@ -24,6 +24,28 @@ export function getTile(tiles: Tile[], x: number, y: number): Tile | null {
 }
 
 /**
+ * World x of the central river at row `y`. The river meanders down the map's middle, so we
+ * pick the water tile nearest the horizontal centre (ignoring the edge lakes). Derived from the
+ * actual tiles rather than the generator's noise, so a merchant boat can follow it on any seed.
+ * Falls back to the map centre for the odd row that holds no central water.
+ */
+export function riverColumnX(tiles: Tile[], y: number): number {
+  const yi = Math.max(0, Math.min(MAP_H - 1, Math.round(y)));
+  const mid = MAP_W / 2;
+  let bestX = mid;
+  let bestD = Infinity;
+  for (let x = 0; x < MAP_W; x++) {
+    if (tiles[tileIndex(x, yi)].type !== 'water') continue;
+    const d = Math.abs(x + 0.5 - mid);
+    if (d < bestD) {
+      bestD = d;
+      bestX = x + 0.5;
+    }
+  }
+  return bestX;
+}
+
+/**
  * Value-noise style generator. No dependencies — a seeded hash makes a given seed
  * reproducible. The map is mostly land: forest and rock clusters over grass, carved by a
  * meandering north–south river down the middle plus lakes bleeding off the left/right edges.

@@ -194,6 +194,135 @@ test.describe('crops and livestock', () => {
   });
 });
 
+test.describe('trading post & merchant', () => {
+  // Build a synthetic, docked merchant + a built trading post holding `store`, for deterministic tests.
+  const setup = `(store, orders, merchant) => {
+    const g = window.__village;
+    g.startNewGame('small', 'normal', true);
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    const post = { id: s.nextId++, type: 'trading', x: barn.x, y: barn.y, built: true, progress: 99,
+      workers: [], desiredWorkers: 0, growth: 0, output: 'coal', recipe: 'iron', store: store, orders: orders };
+    s.buildings.push(post);
+    Object.assign(s.merchant, merchant);
+    return { s, post };
+  }`;
+
+  test('the global merchant button is gone — access is only via the post', async ({ page }) => {
+    await open(page);
+    expect(await page.evaluate(() => !!document.getElementById('btn-merchant'))).toBe(false);
+  });
+
+  test('a value-matched basket settles through the post inventory', async ({ page }) => {
+    await open(page);
+    const res = await page.evaluate(`(${setup})({ wood: 100 }, {}, { phase: 'docked', present: true, seasonsLeft: 1, category: 'basics', stock: { iron: 10 }, seedStock: [], boat: { x: 0, y: 0 } })`) as any;
+    void res;
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const s = g.state;
+      const post = s.buildings.find((b: any) => b.type === 'trading');
+      // iron value 4, wood value 1, margin 0.8 → buying 2 iron (value 8) needs offer ≥ 10 wood.
+      const low = g.trade({ give: { wood: 5 }, get: { iron: 2 }, buySeeds: [] });
+      const good = g.trade({ give: { wood: 10 }, get: { iron: 2 }, buySeeds: [] });
+      return { lowOk: low.ok, goodOk: good.ok, wood: post.store.wood, iron: post.store.iron, stockIron: s.merchant.stock.iron };
+    });
+    expect(out.lowOk).toBe(false); // under-valued offer rejected
+    expect(out.goodOk).toBe(true);
+    expect(out.wood).toBe(90); // 10 wood spent from the post
+    expect(out.iron).toBe(2); // 2 iron received into the post
+    expect(out.stockIron).toBe(8); // merchant stock drawn down
+  });
+
+  test('a seed merchant unlocks a crop when its value is matched', async ({ page }) => {
+    await open(page);
+    await page.evaluate(`(${setup})({ grain: 200 }, {}, { phase: 'docked', present: true, seasonsLeft: 1, category: 'seeds', stock: {}, seedStock: ['corn'], boat: { x: 0, y: 0 } })`);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const s = g.state;
+      const post = s.buildings.find((b: any) => b.type === 'trading');
+      const before = s.seeds.includes('corn');
+      // Seed costs 30 value; margin 0.8 → need 38 grain (value 1 each).
+      const r = g.trade({ give: { grain: 38 }, get: {}, buySeeds: ['corn'] });
+      return { before, ok: r.ok, has: s.seeds.includes('corn'), grain: post.store.grain, offered: s.merchant.seedStock.includes('corn') };
+    });
+    expect(out.before).toBe(false);
+    expect(out.ok).toBe(true);
+    expect(out.has).toBe(true); // permanent unlock
+    expect(out.grain).toBe(162); // 38 grain spent
+    expect(out.offered).toBe(false); // removed from the merchant's offer
+  });
+
+  test('dismissing sends the docked merchant away', async ({ page }) => {
+    await open(page);
+    await page.evaluate(`(${setup})({}, {}, { phase: 'docked', present: true, seasonsLeft: 1, category: 'foods', stock: { grain: 50 }, seedStock: [], boat: { x: 1, y: 1 } })`);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.dismissMerchant();
+      return { phase: g.state.merchant.phase, present: g.state.merchant.present };
+    });
+    expect(out.phase).toBe('leaving');
+    expect(out.present).toBe(false);
+  });
+
+  test('no back-to-back visits: a cooldown season never spawns a merchant', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // A staffed trading post so arrivals are *possible*, plus an active cooldown.
+      s.buildings.push({ id: s.nextId++, type: 'trading', x: barn.x, y: barn.y, built: true, progress: 99,
+        workers: [s.citizens[0].id], desiredWorkers: 1, growth: 0, output: 'coal', recipe: 'iron', store: {}, orders: {} });
+      Object.assign(s.merchant, { phase: 'away', present: false, cooldown: true, category: null, stock: {}, seedStock: [], boat: null });
+      g.debugAdvance(600); // one full season
+      return { phase: s.merchant.phase, cooldown: s.merchant.cooldown };
+    });
+    expect(out.phase).toBe('away'); // cooldown blocked the arrival this season
+    expect(out.cooldown).toBe(false); // and the cooldown is now cleared for next season
+  });
+
+  test('an arriving boat sails to the dock and moors for one season', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      s.buildings.push({ id: s.nextId++, type: 'trading', x: barn.x, y: barn.y, built: true, progress: 99,
+        workers: [s.citizens[0].id], desiredWorkers: 1, growth: 0, output: 'coal', recipe: 'iron', store: {}, orders: {} });
+      // Launch a boat from the top of the river; the per-tick sim should sail it in and dock it.
+      Object.assign(s.merchant, { phase: 'arriving', present: false, category: 'basics',
+        stock: { wood: 100 }, seedStock: [], boat: { x: s.w / 2, y: 0 } });
+      g.debugAdvance(30); // a few seconds of travel
+      return { phase: s.merchant.phase, present: s.merchant.present, seasonsLeft: s.merchant.seasonsLeft, boat: !!s.merchant.boat };
+    });
+    expect(out.phase).toBe('docked');
+    expect(out.present).toBe(true);
+    expect(out.seasonsLeft).toBe(1); // MERCHANT_STAY_SEASONS
+    expect(out.boat).toBe(true); // the boat stays moored at the dock
+  });
+
+  test('a stock order pulls goods from the barns into the post', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true); // easy has a full barn (incl. wood)
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      const woodBefore = barn.store.wood ?? 0;
+      const post = { id: s.nextId++, type: 'trading', x: barn.x, y: barn.y, built: true, progress: 99,
+        workers: [], desiredWorkers: 1, growth: 0, output: 'coal', recipe: 'iron', store: {} as any, orders: { wood: 20 } };
+      s.buildings.push(post);
+      g.debugAdvance(200); // let the assigned trader haul a few loads
+      return { woodBefore, postWood: post.store.wood ?? 0, hasWorker: post.workers.length };
+    });
+    expect(out.woodBefore).toBeGreaterThan(20);
+    expect(out.hasWorker).toBe(1); // an idle adult took the trading-post job
+    expect(out.postWood).toBeGreaterThan(0); // and hauled wood in toward the order
+  });
+});
+
 test.describe('disasters toggle', () => {
   test('the toggle flows from the difficulty screen and persists through save/load', async ({ page }) => {
     await open(page);

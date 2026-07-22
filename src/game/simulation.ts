@@ -42,10 +42,15 @@ import {
   RANCH_ANIMALS,
   RanchAnimal,
   Crop,
+  CROPS,
   SEED_COST,
   TRADE_VALUE,
   MERCHANT_MARGIN,
-  MERCHANT_VISIT_EVERY,
+  MERCHANT_STAY_SEASONS,
+  MERCHANT_ARRIVAL_CHANCE,
+  MERCHANT_CATEGORIES,
+  MERCHANT_CATEGORY_STOCK,
+  MERCHANT_CATEGORY_META,
   DIET_VARIETY_TARGET,
   CHILD_FOOD_FACTOR,
   BIRTH_CHANCE,
@@ -84,7 +89,7 @@ import {
 } from '../types';
 import { housingCapacity, buildingCenter, makeCitizen } from './state';
 import { forestInCircle, nearbyStone, nearbyWater } from './buildings';
-import { getTile, tileIndex, inBounds } from './world';
+import { getTile, tileIndex, inBounds, riverColumnX } from './world';
 import { pathSpeedMult } from './paths';
 import { findPath, isWalkable, labelComponents } from './pathfind';
 import {
@@ -154,6 +159,7 @@ export function update(s: GameState, dt: number, log: LogFn): void {
   for (const c of s.citizens) runCitizen(s, c, dt, toolFactor);
   processFires(s, dt, log);
   regrowForest(s, dt);
+  updateMerchantBoat(s, dt, log);
 
   s.seasonTimer += dt;
   if (s.seasonTimer >= SEASON_LENGTH) {
@@ -395,6 +401,10 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
     runVendor(s, c, b, dt);
     return;
   }
+  if (b.type === 'trading') {
+    runTrader(s, c, b, dt);
+    return;
+  }
   // 1. Carrying output? Haul it to the nearest barn with room.
   if (c.carry) {
     const barn = nearestBarnWithRoom(s, { x: c.x, y: c.y });
@@ -494,6 +504,83 @@ function runVendor(s: GameState, c: Citizen, b: Building, dt: number): void {
       c.carry = { kind: want.kind, amount: take };
     }
   }
+}
+
+/**
+ * Trading-post keeper: keep the post's own inventory matched to the player's stock orders,
+ * hauling shortfalls up from the barns and returning any surplus back to them. Trades draw
+ * only from this inventory, so the player pre-stocks the post through these orders.
+ */
+function runTrader(s: GameState, c: Citizen, b: Building, dt: number): void {
+  const orders = b.orders ?? {};
+  b.store = b.store ?? {};
+
+  // Drop whatever we're carrying: into the post if it's still wanted there, else back to a barn.
+  if (c.carry) {
+    const k = c.carry.kind;
+    const room = (orders[k] ?? 0) - (b.store[k] ?? 0);
+    if (room > 0) {
+      goTo(c, buildingCenter(b));
+      if (stepTo(s, c, dt)) {
+        const put = Math.min(c.carry.amount, room);
+        if (put > 0) b.store[k] = (b.store[k] ?? 0) + put;
+        c.carry.amount -= put;
+        if (c.carry.amount > 0.01) {
+          const left = addNearest(s, { x: c.x, y: c.y }, k, c.carry.amount);
+          c.carry = left > 0 ? { kind: k, amount: left } : null;
+        } else c.carry = null;
+      }
+    } else {
+      const barn = nearestBarnWithRoom(s, { x: c.x, y: c.y });
+      if (!barn) {
+        goTo(c, buildingCenter(b));
+        stepTo(s, c, dt);
+        return;
+      }
+      goTo(c, buildingCenter(barn));
+      if (stepTo(s, c, dt)) {
+        const left = addNearest(s, { x: c.x, y: c.y }, k, c.carry.amount);
+        c.carry = left > 0 ? { kind: k, amount: left } : null;
+      }
+    }
+    return;
+  }
+
+  // Errand 1: fetch an under-stocked ordered good from the nearest barn that has it.
+  for (const k of RESOURCE_KINDS) {
+    const need = (orders[k] ?? 0) - (b.store[k] ?? 0);
+    if (need <= 0) continue;
+    const barn = nearestBarnOnlyWith(s, buildingCenter(b), k);
+    if (!barn) continue;
+    goTo(c, buildingCenter(barn));
+    if (stepTo(s, c, dt)) {
+      const take = Math.min(CARRY_CAP, need, barn.store[k] ?? 0);
+      if (take > 0) {
+        barn.store[k] = (barn.store[k] ?? 0) - take;
+        if ((barn.store[k] ?? 0) <= 0) delete barn.store[k];
+        c.carry = { kind: k, amount: take };
+      }
+    }
+    return;
+  }
+
+  // Errand 2: clear a surplus (post holds more than ordered, e.g. goods just bought) to the barns.
+  for (const k of RESOURCE_KINDS) {
+    const surplus = (b.store[k] ?? 0) - (orders[k] ?? 0);
+    if (surplus <= 0.01) continue;
+    goTo(c, buildingCenter(b));
+    if (stepTo(s, c, dt)) {
+      const take = Math.min(CARRY_CAP, surplus);
+      b.store[k] = (b.store[k] ?? 0) - take;
+      if ((b.store[k] ?? 0) <= 0) delete b.store[k];
+      c.carry = { kind: k, amount: take };
+    }
+    return;
+  }
+
+  // Nothing to move — mind the post.
+  goTo(c, buildingCenter(b));
+  stepTo(s, c, dt);
 }
 
 function factorCircle(s: GameState, b: Building): number {
@@ -1095,25 +1182,127 @@ function warnOfShortfalls(s: GameState, season: Season, log: LogFn): void {
 }
 
 // ---- merchant ----
+
+/** The built trading post, if any (goods are traded through its own inventory). */
+export function tradingPost(s: GameState): Building | null {
+  return s.buildings.find((b) => b.built && b.type === 'trading') ?? null;
+}
+
+const BOAT_SPEED = 5; // tiles per second the merchant boat travels along the river
+
+/**
+ * Seasonal merchant bookkeeping (called once per season from endSeason). Handles departure
+ * after the allotted stay and rolls for a new arrival. Arrivals are probabilistic and never
+ * back-to-back: the season immediately after a departure is a guaranteed gap.
+ */
 function updateMerchant(s: GameState, log: LogFn): void {
   const m = s.merchant;
-  const hasPost = s.buildings.some((b) => b.built && b.type === 'trading' && b.workers.length > 0);
-  if (m.present) {
-    m.timer -= 1;
-    if (m.timer <= 0) {
+
+  // A docked merchant counts down its stay, then casts off.
+  if (m.phase === 'docked') {
+    m.seasonsLeft -= 1;
+    if (m.seasonsLeft <= 0) {
+      m.phase = 'leaving';
       m.present = false;
-      m.stock = {};
-      m.timer = MERCHANT_VISIT_EVERY;
-      log('The merchant sailed away', 'info');
     }
-  } else if (hasPost) {
-    m.timer -= 1;
-    if (m.timer <= 0) {
+    return;
+  }
+
+  // Only roll for a fresh arrival when fully away (never while a boat is still sailing).
+  if (m.phase !== 'away') return;
+
+  // The season after a departure is always merchant-free — no back-to-back visits.
+  if (m.cooldown) {
+    m.cooldown = false;
+    return;
+  }
+
+  const hasPost = s.buildings.some((b) => b.built && b.type === 'trading' && b.workers.length > 0);
+  if (hasPost && Math.random() < MERCHANT_ARRIVAL_CHANCE) spawnMerchant(s, log);
+}
+
+/** Roll a merchant category, stock its goods, and launch its boat from the top of the river. */
+function spawnMerchant(s: GameState, log: LogFn): void {
+  const m = s.merchant;
+  let cats = MERCHANT_CATEGORIES.slice();
+  // A seed merchant has nothing to sell once every crop is unlocked — drop it then.
+  if (CROPS.every((c) => s.seeds.includes(c))) cats = cats.filter((c) => c !== 'seeds');
+  const category = cats[Math.floor(Math.random() * cats.length)];
+
+  m.category = category;
+  m.stock = {};
+  m.seedStock = [];
+  if (category === 'seeds') {
+    m.seedStock = CROPS.filter((c) => !s.seeds.includes(c));
+  } else {
+    for (const [k, qty] of Object.entries(MERCHANT_CATEGORY_STOCK[category]) as [ResourceKind, number][]) {
+      m.stock[k] = qty;
+    }
+  }
+  m.phase = 'arriving';
+  m.present = false;
+  m.boat = { x: riverColumnX(s.tiles, 0), y: 0 };
+  const meta = MERCHANT_CATEGORY_META[category];
+  log(`${meta.emoji} A ${meta.label.toLowerCase()}'s boat is sailing in`, 'info');
+}
+
+/** Per-tick boat motion: sail in to the dock, hold there, then sail off downstream. */
+function updateMerchantBoat(s: GameState, dt: number, log: LogFn): void {
+  const m = s.merchant;
+  if (!m.boat) return;
+  const post = tradingPost(s);
+
+  if (m.phase === 'arriving') {
+    if (!post) {
+      // Trading post demolished mid-approach — turn the boat around.
+      m.phase = 'leaving';
+      m.present = false;
+      return;
+    }
+    const dockY = buildingCenter(post).y;
+    if (moveBoatTo(s, m.boat, dockY, dt)) {
+      m.phase = 'docked';
       m.present = true;
-      m.timer = 1;
-      m.stock = { cattle: 6, pigs: 6, chickens: 8, iron: 120, coal: 120, tools: 80, grain: 120, fish: 80, clothing: 80 };
-      log('A merchant has docked — barter at the trading post', 'good');
+      m.seasonsLeft = MERCHANT_STAY_SEASONS;
+      const meta = m.category ? MERCHANT_CATEGORY_META[m.category] : { emoji: '⚓', label: 'merchant' };
+      log(`${meta.emoji} A ${meta.label.toLowerCase()} has docked — trade at the post`, 'good');
     }
+  } else if (m.phase === 'docked') {
+    // Hold station beside the dock.
+    if (post) {
+      const dockY = buildingCenter(post).y;
+      m.boat.y = dockY;
+      m.boat.x = riverColumnX(s.tiles, dockY);
+    }
+  } else if (m.phase === 'leaving') {
+    m.present = false;
+    if (moveBoatTo(s, m.boat, MAP_H + 2, dt)) {
+      m.phase = 'away';
+      m.boat = null;
+      m.stock = {};
+      m.seedStock = [];
+      m.category = null;
+      m.cooldown = true; // guarantees next season has no merchant
+      log('⛵ The merchant sailed away', 'info');
+    }
+  }
+}
+
+/** Move the boat toward river row `goalY`, tracking the river's x. Returns true once arrived. */
+function moveBoatTo(s: GameState, boat: { x: number; y: number }, goalY: number, dt: number): boolean {
+  const step = BOAT_SPEED * dt;
+  const dy = goalY - boat.y;
+  boat.y = Math.abs(dy) <= step ? goalY : boat.y + Math.sign(dy) * step;
+  boat.x = riverColumnX(s.tiles, boat.y);
+  return Math.abs(goalY - boat.y) < 0.01;
+}
+
+/** End a merchant visit early at the player's request. */
+export function dismissMerchant(s: GameState): void {
+  const m = s.merchant;
+  if (m.phase === 'docked' || m.phase === 'arriving') {
+    m.phase = 'leaving';
+    m.present = false;
   }
 }
 
@@ -1123,48 +1312,83 @@ export interface TradeResult {
   gave?: number;
 }
 
-export function tradeWithMerchant(
-  s: GameState,
-  give: ResourceKind,
-  get: ResourceKind,
-  getQty: number,
-): TradeResult {
+/**
+ * A value-matching trade. `give` goods are drawn from the trading post's own inventory; `get`
+ * goods (and `buySeeds` unlocks) come from the docked merchant. The player must offer at least
+ * the required value (the merchant keeps MERCHANT_MARGIN's cut).
+ */
+export interface TradeBasket {
+  give: Partial<Record<ResourceKind, number>>;
+  get: Partial<Record<ResourceKind, number>>;
+  buySeeds: Crop[];
+}
+
+function sumValue(goods: Partial<Record<ResourceKind, number>>): number {
+  let v = 0;
+  for (const k in goods) v += TRADE_VALUE[k as ResourceKind] * (goods[k as ResourceKind] ?? 0);
+  return v;
+}
+
+/** Total value the player is offering (the give side). */
+export function offerValue(b: TradeBasket): number {
+  return sumValue(b.give);
+}
+
+/** Total value of the goods being bought (the get side plus any seed unlocks). */
+export function purchaseValue(b: TradeBasket): number {
+  return sumValue(b.get) + b.buySeeds.length * SEED_COST;
+}
+
+/** Minimum offer value needed to buy the basket (purchase value grossed up by the merchant's cut). */
+export function requiredValue(b: TradeBasket): number {
+  return purchaseValue(b) / MERCHANT_MARGIN;
+}
+
+export function basketTrade(s: GameState, basket: TradeBasket): TradeResult {
   const m = s.merchant;
-  if (!m.present) return { ok: false, reason: 'No merchant here' };
-  if (give === get) return { ok: false, reason: 'Pick two different goods' };
-  const stock = m.stock[get] ?? 0;
-  if (getQty <= 0 || stock < getQty) return { ok: false, reason: 'Not enough in stock' };
-  const giveQty = Math.ceil((TRADE_VALUE[get] * getQty) / MERCHANT_MARGIN / TRADE_VALUE[give]);
-  if (totalStored(s, give) < giveQty) return { ok: false, reason: `Need ${giveQty} ${give}` };
-  const post = s.buildings.find((b) => b.built && b.type === 'trading');
-  const pos = post ? buildingCenter(post) : centreOfVillage(s);
-  takeNearest(s, pos, give, giveQty);
-  addNearest(s, pos, get, getQty);
-  m.stock[get] = stock - getQty;
-  return { ok: true, gave: giveQty };
-}
+  if (!m.present) return { ok: false, reason: 'No merchant docked' };
+  const post = tradingPost(s);
+  if (!post) return { ok: false, reason: 'No trading post' };
+  post.store = post.store ?? {};
 
-export function tradeCost(give: ResourceKind, get: ResourceKind, qty: number): number {
-  return Math.ceil((TRADE_VALUE[get] * qty) / MERCHANT_MARGIN / TRADE_VALUE[give]);
-}
+  // Something must actually be bought.
+  if (purchaseValue(basket) <= 0) return { ok: false, reason: 'Nothing selected to buy' };
 
-/** What a seed costs in units of `payWith` (its flat trade value converted to that good). */
-export function seedCost(payWith: ResourceKind): number {
-  return Math.ceil(SEED_COST / TRADE_VALUE[payWith]);
-}
+  // Buy side within the merchant's stock / seed offer.
+  for (const [k, qty] of Object.entries(basket.get) as [ResourceKind, number][]) {
+    if (!qty || qty <= 0) continue;
+    if ((m.stock[k] ?? 0) < qty) return { ok: false, reason: `Merchant is out of ${k}` };
+  }
+  for (const crop of basket.buySeeds) {
+    if (!m.seedStock.includes(crop)) return { ok: false, reason: 'That seed is not on offer' };
+    if (s.seeds.includes(crop)) return { ok: false, reason: 'Seed already owned' };
+  }
+  // Give side must be sitting in the post inventory.
+  for (const [k, qty] of Object.entries(basket.give) as [ResourceKind, number][]) {
+    if (!qty || qty <= 0) continue;
+    if ((post.store[k] ?? 0) < qty) return { ok: false, reason: `Post has too little ${k}` };
+  }
+  // Values must match (offer ≥ required).
+  const have = offerValue(basket);
+  if (have + 1e-6 < requiredValue(basket)) return { ok: false, reason: 'Offer value too low' };
 
-/** Buy a crop's seed from the docked merchant — a permanent unlock, paid for in `payWith`. */
-export function buySeed(s: GameState, crop: Crop, payWith: ResourceKind): TradeResult {
-  const m = s.merchant;
-  if (!m.present) return { ok: false, reason: 'No merchant here' };
-  if (s.seeds.includes(crop)) return { ok: false, reason: 'Already own this seed' };
-  const cost = seedCost(payWith);
-  if (totalStored(s, payWith) < cost) return { ok: false, reason: `Need ${cost} ${payWith}` };
-  const post = s.buildings.find((b) => b.built && b.type === 'trading');
-  const pos = post ? buildingCenter(post) : centreOfVillage(s);
-  takeNearest(s, pos, payWith, cost);
-  s.seeds.push(crop);
-  return { ok: true, gave: cost };
+  // Settle: spend the give goods, receive the bought goods (both in the post inventory), unlock seeds.
+  for (const [k, qty] of Object.entries(basket.give) as [ResourceKind, number][]) {
+    if (!qty || qty <= 0) continue;
+    post.store[k] = (post.store[k] ?? 0) - qty;
+    if ((post.store[k] ?? 0) <= 1e-6) delete post.store[k];
+  }
+  for (const [k, qty] of Object.entries(basket.get) as [ResourceKind, number][]) {
+    if (!qty || qty <= 0) continue;
+    post.store[k] = (post.store[k] ?? 0) + qty;
+    m.stock[k] = (m.stock[k] ?? 0) - qty;
+    if ((m.stock[k] ?? 0) <= 1e-6) delete m.stock[k];
+  }
+  for (const crop of basket.buySeeds) {
+    s.seeds.push(crop);
+    m.seedStock = m.seedStock.filter((c) => c !== crop);
+  }
+  return { ok: true, gave: Math.round(have) };
 }
 
 // ---- population helpers ----

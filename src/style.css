@@ -505,47 +505,107 @@ body {
   justify-content: space-between;
   align-items: center;
 }
-.trade-card .stocklist {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 8px 0;
-}
-.trade-card .stock {
-  font-size: 12px;
-  background: rgba(255, 255, 255, 0.05);
+/* ---- Trading post overlay ---- */
+.tp-card {
+  background: var(--panel-solid);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 3px 8px;
+  border-radius: 16px;
+  padding: 18px;
+  max-width: 720px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
 }
-.trade-row {
+.tp-card h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 8px;
-  margin: 8px 0;
 }
-.trade-row label {
-  font-size: 12px;
-  color: var(--muted);
-  width: 44px;
+.tp-cols {
+  display: flex;
+  gap: 14px;
+  margin-top: 10px;
 }
-.trade-row select {
-  flex: 1 1 auto;
-  background: var(--panel);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px;
+.tp-pane {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.tp-pane h3 {
+  margin: 0 0 8px;
   font-size: 14px;
 }
-.trade-cost {
-  text-align: center;
-  font-size: 13px;
+.tp-sub {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--muted);
-  margin: 6px 0;
+  margin: 10px 0 4px;
 }
-.trade-card .do-trade {
-  width: 100%;
+.tp-sub small {
+  text-transform: none;
+  letter-spacing: 0;
+}
+.tp-scroll {
+  max-height: 46vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.tp-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  font-size: 12px;
+}
+.tp-good {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tp-val {
+  color: var(--accent);
+  font-size: 11px;
+  min-width: 34px;
+  text-align: right;
+}
+.tp-have {
+  min-width: 46px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.tp-have small {
+  color: var(--muted);
+}
+.tp-wait {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 8px 0;
+}
+.tp-totals {
+  text-align: center;
+  font-weight: 700;
+  font-size: 13px;
+  margin: 10px 0;
+  padding: 6px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+}
+.tp-totals.ok {
+  color: var(--accent);
+}
+.tp-totals.short {
+  color: #d98a6a;
+}
+.tp-actions {
+  display: flex;
+  gap: 8px;
+}
+.tp-actions .do-trade {
+  flex: 1 1 auto;
   padding: 12px;
   border: none;
   border-radius: 10px;
@@ -555,41 +615,59 @@ body {
   font-weight: 700;
   cursor: pointer;
 }
-.trade-card .do-trade:disabled {
+.tp-actions .do-trade:disabled {
   opacity: 0.5;
+  cursor: default;
 }
-.seed-shop {
-  margin-top: 14px;
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
+.tp-dismiss {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
 }
-.seed-head {
-  font-size: 12px;
-  color: var(--muted);
-  margin-bottom: 8px;
+.tp-open {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
 }
-.seed-none {
-  font-size: 12px;
-  color: var(--muted);
-}
-.seed-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 6px;
+.tp-open.docked {
+  background: var(--accent);
+  color: #10240c;
+  border-color: transparent;
 }
 .seed-buy {
-  padding: 8px 6px;
+  padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.05);
   color: var(--text);
   font-size: 12px;
   cursor: pointer;
-  text-align: left;
 }
-.seed-buy:disabled {
-  opacity: 0.45;
-  cursor: default;
+.seed-buy.on {
+  background: var(--accent);
+  color: #10240c;
+  border-color: transparent;
+}
+.tp-row.seed .seed-buy {
+  margin-left: auto;
+}
+@media (max-width: 560px) {
+  .tp-cols {
+    flex-direction: column;
+  }
+  .tp-scroll {
+    max-height: 30vh;
+  }
 }
 .job-row .jr-note {
   margin-top: 3px;

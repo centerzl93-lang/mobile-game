@@ -244,6 +244,43 @@ export class Renderer {
       ctx.restore();
     }
 
+    // Merchant boat, sailing the river to/from the dock.
+    if (s.merchant.boat) {
+      const [bx, by] = this.camera.worldToScreen(s.merchant.boat.x, s.merchant.boat.y, w, h);
+      const hull = Math.max(6, p * 0.9);
+      ctx.save();
+      ctx.translate(bx, by);
+      // Hull.
+      ctx.beginPath();
+      ctx.moveTo(-hull * 0.5, -hull * 0.12);
+      ctx.lineTo(hull * 0.5, -hull * 0.12);
+      ctx.lineTo(hull * 0.32, hull * 0.28);
+      ctx.lineTo(-hull * 0.32, hull * 0.28);
+      ctx.closePath();
+      ctx.fillStyle = '#6b4a2b';
+      ctx.fill();
+      ctx.strokeStyle = '#3f2b18';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      // Mast + sail.
+      ctx.beginPath();
+      ctx.moveTo(0, -hull * 0.12);
+      ctx.lineTo(0, -hull * 0.8);
+      ctx.strokeStyle = '#3f2b18';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, -hull * 0.75);
+      ctx.lineTo(hull * 0.34, -hull * 0.34);
+      ctx.lineTo(0, -hull * 0.2);
+      ctx.closePath();
+      ctx.fillStyle = '#eae3d2';
+      ctx.fill();
+      ctx.strokeStyle = '#c7bda3';
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // Citizens.
     const cr = Math.max(2, p * 0.12);
     for (const c of s.citizens) {

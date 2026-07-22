@@ -338,6 +338,11 @@ export interface Building {
   crop?: Crop;
   /** Ranch: which animal it raises (defaults to cattle). */
   animal?: RanchAnimal;
+  /**
+   * Trading post: player-set stock targets (resource -> desired units). The assigned
+   * trader hauls goods from the barns up to these levels and returns any surplus.
+   */
+  orders?: Partial<Record<ResourceKind, number>>;
 }
 
 /** What a villager is doing right now in the logistics loop. */
@@ -441,12 +446,32 @@ export const HARVEST_NONE = 0;
 export const HARVEST_WOOD = 1; // a marked forest tile (chop for wood, clear-cuts to grass)
 export const HARVEST_STONE = 2; // a marked loose-stone tile
 
+/** The single kind of goods a visiting merchant deals in. */
+export type MerchantCategory = 'basics' | 'seeds' | 'animals' | 'foods' | 'goods';
+export const MERCHANT_CATEGORIES: MerchantCategory[] = ['basics', 'seeds', 'animals', 'foods', 'goods'];
+
 export interface Merchant {
+  /**
+   * away    — no merchant (traveling between visits).
+   * arriving — a boat is sailing down the river toward the dock.
+   * docked  — moored at the trading post; the player can trade.
+   * leaving — the boat is sailing back downstream and off the map.
+   */
+  phase: 'away' | 'arriving' | 'docked' | 'leaving';
+  /** Convenience mirror of `phase === 'docked'` — trading is only possible while docked. */
   present: boolean;
-  /** Seasons until the merchant leaves (if present) or next arrives. */
-  timer: number;
-  /** What the merchant will trade this visit: resource -> units remaining. */
+  /** Seasons of moorage left before the boat departs on its own (set on docking). */
+  seasonsLeft: number;
+  /** True the season after a merchant leaves — blocks a back-to-back arrival. */
+  cooldown: boolean;
+  /** What this merchant deals in (null while away). */
+  category: MerchantCategory | null;
+  /** Goods for sale this visit: resource -> units remaining. */
   stock: Partial<Record<ResourceKind, number>>;
+  /** Seeds category only: the (still-unowned) crop seeds on offer. */
+  seedStock: Crop[];
+  /** Animated boat position on the water while arriving/docked/leaving (null when away). */
+  boat: { x: number; y: number } | null;
 }
 
 /** A band of nomads awaiting the player's decision to let them settle or turn them away. */
@@ -694,8 +719,32 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
   chickens: 8,
   medicine: 5,
 };
-export const MERCHANT_MARGIN = 0.8; // you receive 80% of the value you hand over
-export const MERCHANT_VISIT_EVERY = 2; // seasons between arrivals (needs a trading post)
+export const MERCHANT_MARGIN = 0.8; // you must offer value ≥ goods' value / margin (merchant's cut); 1 = exact parity
+export const MERCHANT_STAY_SEASONS = 1; // how many seasons a docked merchant lingers before sailing off
+export const MERCHANT_ARRIVAL_CHANCE = 0.5; // per-season chance a merchant appears (staffed post, not just departed)
+
+/**
+ * What each kind of merchant carries, and roughly how much. A visiting merchant rolls one
+ * category and stocks these goods. Tweak freely — the trade UI reads straight from here and
+ * from TRADE_VALUE. The 'seeds' merchant is special: it offers crop-seed unlocks (see
+ * `seedStock`) rather than resources, so its table is empty.
+ */
+export const MERCHANT_CATEGORY_STOCK: Record<MerchantCategory, Partial<Record<ResourceKind, number>>> = {
+  basics: { wood: 150, stone: 120, coal: 100, iron: 80, firewood: 120 },
+  seeds: {},
+  animals: { cattle: 6, pigs: 8, chickens: 12 },
+  foods: { grain: 160, corn: 120, potato: 120, fish: 140, meat: 80, eggs: 80 },
+  goods: { tools: 60, clothing: 60, leather: 90, medicine: 40 },
+};
+
+/** Label + emoji for each merchant category (shown in the trade UI header). */
+export const MERCHANT_CATEGORY_META: Record<MerchantCategory, { label: string; emoji: string }> = {
+  basics: { label: 'Materials Trader', emoji: '🪵' },
+  seeds: { label: 'Seed Merchant', emoji: '🌱' },
+  animals: { label: 'Livestock Trader', emoji: '🐄' },
+  foods: { label: 'Food Merchant', emoji: '🍞' },
+  goods: { label: 'Goods Merchant', emoji: '🛠️' },
+};
 
 export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   house: {

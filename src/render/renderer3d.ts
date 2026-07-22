@@ -137,6 +137,7 @@ export class Renderer3D {
   private selRing!: THREE.Mesh;
   private workRing!: THREE.Group; // ground circle (fill + outline) for a selected building's work radius
   private marquee!: THREE.Mesh;
+  private boat!: THREE.Group; // merchant boat, shown while sailing to/from the dock
 
   // Cached signatures so we only rebuild a layer when its data changes.
   private sig = { land: -1, tree: -1, rock: -1, path: -1, mark: -1, bld: '' };
@@ -302,6 +303,19 @@ export class Renderer3D {
     this.marquee.visible = false;
     this.scene.add(this.marquee);
 
+    // Merchant boat: a little hull with a mast and sail, floating on the water.
+    this.boat = new THREE.Group();
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.4, 0.8), matte(0x6b4a2b));
+    hull.position.y = 0.2;
+    const mast = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.1, 0.08), matte(0x3f2b18));
+    mast.position.y = 0.9;
+    const sail = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.8), new THREE.MeshStandardMaterial({ color: 0xeae3d2, roughness: 1, side: THREE.DoubleSide }));
+    sail.position.set(0, 0.95, 0);
+    sail.rotation.y = Math.PI / 2;
+    this.boat.add(hull, mast, sail);
+    this.boat.visible = false;
+    this.scene.add(this.boat);
+
     this.sig = { land: -1, tree: -1, rock: -1, path: -1, mark: -1, bld: '' };
     this.ready = true;
   }
@@ -327,6 +341,7 @@ export class Renderer3D {
     this.syncMarks(s);
     this.syncBuildings(s);
     this.syncCitizens(s, now);
+    this.syncBoat(s);
     this.syncOverlays(s, placement);
     this.animate(dt, now);
     this.renderer.render(this.scene, cam.cam);
@@ -825,6 +840,17 @@ export class Renderer3D {
   }
 
   /** Drop the instanced layers and building meshes (called before rebuilding on a new map). */
+  /** Position and show the merchant boat while it's on the water. */
+  private syncBoat(s: GameState): void {
+    const b = s.merchant.boat;
+    if (!b) {
+      this.boat.visible = false;
+      return;
+    }
+    this.boat.visible = true;
+    this.boat.position.set(b.x, 0.16, b.y);
+  }
+
   private teardown(): void {
     if (!this.ready) return;
     for (const m of [this.terrain, this.trees, this.rocks, this.paths, this.marks, this.citizens]) {
@@ -854,7 +880,7 @@ export class Renderer3D {
     this.water.geometry.dispose();
     for (const [, obj] of this.buildingMeshes) this.disposeBuilding(obj);
     this.buildingMeshes.clear();
-    for (const o of [this.ghost, this.selRing, this.workRing, this.marquee]) this.scene.remove(o);
+    for (const o of [this.ghost, this.selRing, this.workRing, this.marquee, this.boat]) this.scene.remove(o);
     this.sig = { land: -1, tree: -1, rock: -1, path: -1, mark: -1, bld: '' };
     this.ready = false;
   }

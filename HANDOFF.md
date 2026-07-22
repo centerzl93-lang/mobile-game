@@ -1,7 +1,7 @@
 # Session Handoff — Banished-inspired Village Builder PWA
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-07-22
+> Last updated: 2026-07-22 (trading-post & merchant overhaul)
 
 ## Project
 Original Banished-inspired 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -12,8 +12,39 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never Banished's copyrighted assets.
 
 ## Current State
-All work through **manual staffing + 16 seed-gated crops** is complete, committed, and pushed.
-Branch HEAD = `a4d43a8` ("Add 16 seed-gated crop varieties and manual workplace staffing").
+Latest feature: the **trading-post & merchant overhaul** (this session) — see below. The prior
+milestone (manual staffing + 16 seed-gated crops, feature commit `a4d43a8`) is still in place. The
+SHA here is intentionally omitted; reference commits by message since this doc sits one commit
+behind its own history.
+
+### Trading post & merchant overhaul
+Merchants are now a real trading loop rather than a global barter button.
+- **Boats.** A merchant arrives as a boat that sails down the central river (`riverColumnX` in
+  `world.ts`, derived from actual water tiles) and moors at the trading post. `Merchant` is now a
+  state machine: `phase: 'away' | 'arriving' | 'docked' | 'leaving'`, with an animated
+  `boat: {x,y} | null`. Boat motion is per-tick (`updateMerchantBoat`); arrivals/departures are
+  per-season (`updateMerchant`).
+- **Cadence.** Each season a *staffed* post has a `MERCHANT_ARRIVAL_CHANCE` (0.5) roll; a
+  `cooldown` flag guarantees **never back-to-back** visits. A docked merchant stays
+  `MERCHANT_STAY_SEASONS` (1) and is **dismissible** early (`dismissMerchant`).
+- **Access only via the post.** The global `#btn-merchant` top-bar button is **removed**; the
+  merchant opens from the Trading Post inspect sheet (`controls.tradingPost`).
+- **Specialization.** Each visit rolls one `MerchantCategory`: `basics | seeds | animals | foods |
+  goods`, stocked from `MERCHANT_CATEGORY_STOCK` (customizable). Seed merchants offer unowned crops
+  via `seedStock`.
+- **Post inventory + manual orders.** Trades draw from the post's **own** `store`, which a trader
+  (the post's worker) stocks from the barns to match player-set `Building.orders` targets, returning
+  surplus (`runTrader`, mirrors `runVendor`). Orders are set with `onSetTradeOrder` (steps of 10).
+- **Value-matching basket.** `basketTrade` settles a `TradeBasket { give, get, buySeeds }`: give
+  goods (from the post) must total ≥ `requiredValue` (buy value ÷ `MERCHANT_MARGIN`). Per-unit
+  values live in the customizable `TRADE_VALUE` table; seeds priced at `SEED_COST`. UI is the
+  two-column Trading Post overlay (`#trade-overlay`, `.tp-*` styles).
+- **Boat rendering** in both 2D (`renderer.ts`) and 3D (`renderer3d.ts`, a `THREE.Group` synced in
+  `syncBoat`).
+- **Save migration** (still v12, load-time defaults): legacy `{present,timer,stock}` merchant →
+  new shape; `Building.orders` defaulted to `{}`.
+
+### Prior milestone: manual staffing + 16 seed-gated crops
 
 ### Manual workplace staffing
 Placed work buildings start at `desiredWorkers: 0` (no auto-fill); player assigns workers via the
@@ -35,14 +66,20 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   crop selections cleared on load.
 
 ## Key files
-- `src/types.ts` — crops/foods, `CROP_META`, `SEED_COST`, `DIET_VARIETY_TARGET`, resource tables.
-- `src/game/state.ts` — `seeds` seeding by difficulty; `makeBuilding` defaults (`desiredWorkers 0`).
-- `src/game/buildings.ts` — `placeBuilding` (`desiredWorkers 0` + crop default).
-- `src/game/simulation.ts` — seed-gated farm output/harvest, diet rebalance, `buySeed`/`seedCost`.
-- `src/game/save.ts` — `seeds` default + stale-crop reset.
-- `src/ui/ui.ts` / `src/main.ts` — seeded-only crop toggle, Seeds buy section, `onBuySeed`.
-- `src/render/renderer.ts` — 2D colour map for the new foods.
-- `tests/newgame.spec.ts` — seed-gate + unstaffed-placement tests.
+- `src/types.ts` — `Merchant`/`MerchantCategory`, `Building.orders`, `MERCHANT_*` constants +
+  category tables; crops/foods, `CROP_META`, `SEED_COST`, `TRADE_VALUE`, resource tables.
+- `src/game/simulation.ts` — `updateMerchant`/`updateMerchantBoat`/`spawnMerchant`/`moveBoatTo`,
+  `runTrader` (post stocking), `basketTrade` + value helpers (`offerValue`/`requiredValue`),
+  `dismissMerchant`, `tradingPost`.
+- `src/game/world.ts` — `riverColumnX` (boat's river path).
+- `src/game/state.ts` — merchant init (new shape); `seeds` seeding; `desiredWorkers 0` defaults.
+- `src/game/save.ts` — merchant-shape + `orders` migration; `seeds` default + stale-crop reset.
+- `src/ui/ui.ts` / `src/main.ts` — Trading Post overlay (inventory/orders + basket), inspect
+  `tradingPost` control, `onSetTradeOrder`/`onBasketTrade`/`onDismissMerchant`.
+- `src/render/renderer.ts` / `src/render/renderer3d.ts` — merchant boat (2D shape / 3D group).
+- `index.html` — removed `#btn-merchant`. `src/style.css` — `.tp-*` overlay styles.
+- `tests/newgame.spec.ts` — merchant/trading-post suite (boat dock, basket value-match, seed
+  unlock, dismiss, cooldown, order hauling) + prior seed-gate/staffing tests.
 
 ## Architecture notes
 - Resource system is table-driven: everything iterates `RESOURCE_KINDS`/`FOOD_KINDS`, so
@@ -72,4 +109,9 @@ Claude-Session: https://claude.ai/code/session_01JZUkqYfASDALSC37iDWrtr
 Never put the model ID in commits/PRs/code/comments — chat replies only.
 
 ## Next steps
-- None pending. Awaiting new direction.
+- Possible polish on the trading-post feature (not required, ideas only):
+  - Boat only follows the *central* river; a post built on an edge lake still parks the boat in the
+    river at that row. Fine in practice, but could path to the nearest water tile to the dock.
+  - Tune `MERCHANT_ARRIVAL_CHANCE` / category stock quantities for balance.
+  - Consider a HUD cue when a boat is arriving/docked (the top-bar button was removed).
+- Otherwise awaiting new direction.

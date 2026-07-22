@@ -19,13 +19,15 @@ import {
   SmithRecipe,
   Crop,
   RanchAnimal,
-  CROPS,
   CROP_META,
   RANCH_ANIMALS,
   ANIMAL_META,
   BuildCategory,
   CATEGORY_ORDER,
   CATEGORY_META,
+  TRADE_VALUE,
+  SEED_COST,
+  MERCHANT_CATEGORY_META,
   FOOD_PER_CITIZEN_PER_SEASON,
   HEAT_PER_CITIZEN_WINTER,
   CLOTHING_PER_CITIZEN_WINTER,
@@ -34,8 +36,17 @@ import {
   isAdult,
 } from '../types';
 import { housingCapacity } from '../game/state';
-import { totalStoredAll, totalStored, totalFood } from '../game/storage';
-import { LogKind, tradeCost, seedCost, TradeResult, avgHealth, avgHappiness } from '../game/simulation';
+import { totalStoredAll, totalFood } from '../game/storage';
+import {
+  LogKind,
+  TradeResult,
+  TradeBasket,
+  offerValue,
+  purchaseValue,
+  requiredValue,
+  avgHealth,
+  avgHappiness,
+} from '../game/simulation';
 
 export type PathTier = 'dirt' | 'stone' | 'bridge';
 
@@ -51,6 +62,8 @@ export interface InspectControls {
   workers?: { value: number; max: number };
   /** A single option toggle (mine output / smith recipe / forester replant / farm crop / ranch animal). */
   toggle?: { group: 'mine' | 'smith' | 'forester' | 'crop' | 'animal'; options: { v: string; label: string; on: boolean }[] };
+  /** Trading post: show a button that opens the inventory/trade panel; flags a docked merchant. */
+  tradingPost?: { merchantDocked: boolean };
 }
 
 export interface UICallbacks {
@@ -67,8 +80,9 @@ export interface UICallbacks {
   onSetForesterReplant: (buildingId: number, on: boolean) => void;
   onSetCrop: (buildingId: number, crop: Crop) => void;
   onSetAnimal: (buildingId: number, animal: RanchAnimal) => void;
-  onTrade: (give: ResourceKind, get: ResourceKind, qty: number) => TradeResult;
-  onBuySeed: (crop: Crop, payWith: ResourceKind) => TradeResult;
+  onSetTradeOrder: (buildingId: number, kind: ResourceKind, delta: number) => void;
+  onBasketTrade: (basket: TradeBasket) => TradeResult;
+  onDismissMerchant: () => void;
   onAcceptNomads: () => void;
   onRejectNomads: () => void;
   onSelectHarvest: (active: boolean) => void;
@@ -92,7 +106,6 @@ export class UI {
     pause: byId('btn-pause'),
     speed: byId('btn-speed'),
     jobs: byId('btn-jobs'),
-    merchant: byId('btn-merchant'),
     menuBtn: byId('btn-menu'),
     log: byId('log'),
     hint: byId('hint'),
@@ -111,9 +124,12 @@ export class UI {
   private openCategory: BuildCategory | 'paths' | null = null;
   private jobBoardOpen = false;
   private jobSig = '';
-  private tradeGive: ResourceKind = 'grain';
-  private tradeGet: ResourceKind = 'cattle';
-  private tradeQty = 1;
+  // Trading post overlay: which post is open, and the in-progress value-matching basket.
+  private tradingPostId: number | null = null;
+  private basketGive: Partial<Record<ResourceKind, number>> = {};
+  private basketGet: Partial<Record<ResourceKind, number>> = {};
+  private basketSeeds: Crop[] = [];
+  private tradeSig = '';
 
   constructor(private cb: UICallbacks) {
     this.buildResourceChips();
@@ -121,7 +137,6 @@ export class UI {
     this.el.pause.addEventListener('click', () => this.cb.onPauseToggle());
     this.el.speed.addEventListener('click', () => this.cb.onSpeedCycle());
     this.el.jobs.addEventListener('click', () => this.toggleJobBoard());
-    this.el.merchant.addEventListener('click', () => this.openTrade());
     this.el.menuBtn.addEventListener('click', () => this.cb.onOpenMenu());
   }
 
@@ -180,7 +195,6 @@ export class UI {
     this.el.season.querySelector('.val')!.textContent = `${SEASONS[s.season]} · Yr ${s.year}`;
     this.el.pause.textContent = paused ? '▶' : '⏸';
     this.el.speed.textContent = `${speed}×`;
-    this.el.merchant.classList.toggle('hidden', !s.merchant.present);
   }
 
   // ---- Toolbar / categorized build menu ----
@@ -387,6 +401,10 @@ export class UI {
         .join('');
       ctrlHtml += `<div class="inv-ctrl"><div class="jr-toggle">${opts}</div></div>`;
     }
+    if (controls?.tradingPost) {
+      const docked = controls.tradingPost.merchantDocked;
+      ctrlHtml += `<div class="inv-ctrl"><button class="tp-open${docked ? ' docked' : ''}" id="insp-tp">${docked ? '🤝 Trade with merchant' : '📦 Manage trading post'}</button></div>`;
+    }
     this.el.inspect.innerHTML =
       `<div class="inv-head">${title}<button class="close" id="insp-close">×</button></div>` +
       (body || '<div class="inv-row"><span>Empty</span></div>') + ctrlHtml;
@@ -396,6 +414,7 @@ export class UI {
       const id = controls.buildingId;
       this.el.inspect.querySelector('[data-step="-1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, -1));
       this.el.inspect.querySelector('[data-step="1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, 1));
+      this.el.inspect.querySelector('#insp-tp')?.addEventListener('click', () => this.openTradingPost(id));
       const tog = controls.toggle;
       if (tog) {
         this.el.inspect.querySelectorAll('.jr-toggle button').forEach((btn) =>
@@ -429,7 +448,7 @@ export class UI {
 
   refreshPanels(s: GameState): void {
     if (this.jobBoardOpen) this.refreshJobBoard(s);
-    if (!this.el.trade.classList.contains('hidden')) this.refreshTrade(s);
+    if (this.tradingPostId !== null) this.refreshTradingPost(s);
     this.refreshNomadPrompt(s);
   }
 
@@ -531,102 +550,187 @@ export class UI {
     }
   }
 
-  // ---- Trade ----
-  private openTrade(): void {
+  // ---- Trading post: inventory orders + value-matching merchant basket ----
+  private openTradingPost(id: number): void {
+    this.tradingPostId = id;
+    this.resetBasket();
     this.el.trade.classList.remove('hidden');
-    this.buildTrade();
+    this.el.trade.innerHTML = `<div class="tp-card">
+        <h2 id="tp-title">🚢 Trading Post <button class="close" id="tp-close">×</button></h2>
+        <div class="summary">Set stock orders and a trader hauls those goods here from your barns. Trades are settled by matching values — offer goods worth at least the price.</div>
+        <div class="tp-cols">
+          <div class="tp-pane"><h3>Inventory &amp; orders</h3><div class="tp-scroll" id="tp-orders"></div></div>
+          <div class="tp-pane" id="tp-merchant"></div>
+        </div>
+      </div>`;
+    byId('tp-close').addEventListener('click', () => this.closeTradingPost());
+    this.el.trade.onclick = (e) => {
+      if (e.target === this.el.trade) this.closeTradingPost();
+    };
+    this.tradeSig = '';
   }
-  closeTrade(): void {
+  closeTradingPost(): void {
+    this.tradingPostId = null;
     this.el.trade.classList.add('hidden');
-  }
-  private buildTrade(): void {
-    const card = document.createElement('div');
-    card.className = 'trade-card';
-    card.innerHTML = `
-      <h2>Merchant <button class="close" id="tr-close">×</button></h2>
-      <div class="summary">Barter goods by value. The merchant keeps a small cut.</div>
-      <div class="stocklist" id="tr-stock"></div>
-      <div class="trade-row"><label>Get</label><select id="tr-get"></select></div>
-      <div class="trade-row"><label>Amount</label><div class="stepper"><button id="tr-minus">−</button><span class="count" id="tr-qty">1</span><button id="tr-plus">+</button></div></div>
-      <div class="trade-row"><label>Pay in</label><select id="tr-give"></select></div>
-      <div class="trade-cost" id="tr-cost"></div>
-      <button class="do-trade" id="tr-do">Trade</button>
-      <div class="seed-shop" id="tr-seeds"></div>`;
     this.el.trade.innerHTML = '';
-    this.el.trade.appendChild(card);
-    card.querySelector('#tr-close')!.addEventListener('click', () => this.closeTrade());
-    this.el.trade.addEventListener('click', (e) => {
-      if (e.target === this.el.trade) this.closeTrade();
-    });
-    (card.querySelector('#tr-give') as HTMLSelectElement).innerHTML = RESOURCE_KINDS.map(
-      (k) => `<option value="${k}">${RESOURCE_ICON[k]} ${k}</option>`,
-    ).join('');
-    card.querySelector('#tr-get')!.addEventListener('change', (e) => {
-      this.tradeGet = (e.target as HTMLSelectElement).value as ResourceKind;
-    });
-    card.querySelector('#tr-give')!.addEventListener('change', (e) => {
-      this.tradeGive = (e.target as HTMLSelectElement).value as ResourceKind;
-    });
-    card.querySelector('#tr-minus')!.addEventListener('click', () => {
-      this.tradeQty = Math.max(1, this.tradeQty - 1);
-    });
-    card.querySelector('#tr-plus')!.addEventListener('click', () => {
-      this.tradeQty += 1;
-    });
-    card.querySelector('#tr-do')!.addEventListener('click', () => {
-      const r = this.cb.onTrade(this.tradeGive, this.tradeGet, this.tradeQty);
-      this.flashHint(r.ok ? `Traded for ${this.tradeQty} ${this.tradeGet}` : r.reason ?? 'Trade failed');
-    });
-    // Seed shop: buy a crop's seed (one-time unlock), paid in the selected "Pay in" good.
-    card.querySelector('#tr-seeds')!.addEventListener('click', (e) => {
-      const btn = (e.target as HTMLElement).closest('[data-crop]') as HTMLElement | null;
-      if (!btn) return;
-      const crop = btn.dataset.crop as Crop;
-      const r = this.cb.onBuySeed(crop, this.tradeGive);
-      this.flashHint(r.ok ? `Bought ${CROP_META[crop].label} seed` : r.reason ?? 'Purchase failed');
-    });
+    this.el.trade.onclick = null;
   }
-  private refreshTrade(s: GameState): void {
-    const stockKinds = (Object.keys(s.merchant.stock) as ResourceKind[]).filter((k) => (s.merchant.stock[k] ?? 0) > 0);
-    if (!s.merchant.present || stockKinds.length === 0) {
-      this.closeTrade();
+  private resetBasket(): void {
+    this.basketGive = {};
+    this.basketGet = {};
+    this.basketSeeds = [];
+  }
+  private currentBasket(): TradeBasket {
+    return { give: this.basketGive, get: this.basketGet, buySeeds: this.basketSeeds };
+  }
+
+  private refreshTradingPost(s: GameState): void {
+    const post = this.tradingPostId === null ? null : s.buildings.find((b) => b.id === this.tradingPostId && b.built);
+    if (!post) {
+      this.closeTradingPost();
       return;
     }
-    byId('tr-stock').innerHTML = stockKinds
-      .map((k) => `<span class="stock">${RESOURCE_ICON[k]} ${k}: ${Math.floor(s.merchant.stock[k]!)}</span>`)
+    const m = s.merchant;
+    const store = post.store ?? {};
+    const orders = post.orders ?? {};
+    // Signature so we only rebuild when something the panel shows actually changed.
+    const sig = JSON.stringify([
+      m.present,
+      m.category,
+      m.stock,
+      m.seedStock,
+      RESOURCE_KINDS.map((k) => [Math.floor(store[k] ?? 0), orders[k] ?? 0]),
+      this.basketGive,
+      this.basketGet,
+      this.basketSeeds,
+      s.seeds.length,
+    ]);
+    if (sig === this.tradeSig) return;
+    this.tradeSig = sig;
+
+    // Inventory & orders: every resource with its unit value, current stock, and an order stepper.
+    byId('tp-orders').innerHTML = RESOURCE_KINDS.map((k) => {
+      const have = Math.floor(store[k] ?? 0);
+      const ord = orders[k] ?? 0;
+      return `<div class="tp-row">
+          <span class="tp-good">${RESOURCE_ICON[k]} ${k}</span>
+          <span class="tp-val" title="Trade value per unit">◈${TRADE_VALUE[k]}</span>
+          <span class="tp-have">${have}<small>/${ord}</small></span>
+          <span class="stepper"><button data-ord="-1" data-k="${k}">−</button><button data-ord="1" data-k="${k}">+</button></span>
+        </div>`;
+    }).join('');
+    byId('tp-orders')
+      .querySelectorAll('button[data-ord]')
+      .forEach((btn) =>
+        btn.addEventListener('click', () => {
+          const el = btn as HTMLElement;
+          this.cb.onSetTradeOrder(post.id, el.dataset.k as ResourceKind, Number(el.dataset.ord) * 10);
+        }),
+      );
+
+    this.renderMerchantPane(s, post.store ?? {});
+  }
+
+  /** The right-hand pane: the docked merchant's goods and the value-matching basket, or a wait note. */
+  private renderMerchantPane(s: GameState, store: Partial<Record<ResourceKind, number>>): void {
+    const pane = byId('tp-merchant');
+    const m = s.merchant;
+    if (!m.present || !m.category) {
+      pane.innerHTML = `<h3>Merchant</h3><div class="tp-wait">No merchant docked. One may sail in at the turn of a season.</div>`;
+      return;
+    }
+    const meta = MERCHANT_CATEGORY_META[m.category];
+    const basket = this.currentBasket();
+    const offer = offerValue(basket);
+    const need = requiredValue(basket);
+    const buy = purchaseValue(basket);
+    const ok = buy > 0 && offer + 1e-6 >= need;
+
+    // Buy side: merchant resource stock, then seed unlocks.
+    const buyRows = (Object.keys(m.stock) as ResourceKind[])
+      .filter((k) => (m.stock[k] ?? 0) > 0)
+      .map((k) => {
+        const stock = Math.floor(m.stock[k] ?? 0);
+        const picked = this.basketGet[k] ?? 0;
+        return `<div class="tp-row">
+            <span class="tp-good">${RESOURCE_ICON[k]} ${k}</span>
+            <span class="tp-val">◈${TRADE_VALUE[k]}</span>
+            <span class="tp-have">${picked}<small>/${stock}</small></span>
+            <span class="stepper"><button data-buy="-1" data-k="${k}">−</button><button data-buy="1" data-k="${k}">+</button></span>
+          </div>`;
+      })
       .join('');
-    const getSel = byId('tr-get') as HTMLSelectElement;
-    if (!stockKinds.includes(this.tradeGet)) this.tradeGet = stockKinds[0];
-    getSel.innerHTML = stockKinds.map((k) => `<option value="${k}">${RESOURCE_ICON[k]} ${k}</option>`).join('');
-    getSel.value = this.tradeGet;
-    (byId('tr-give') as HTMLSelectElement).value = this.tradeGive;
-    byId('tr-qty').textContent = `${this.tradeQty}`;
-    const cost = tradeCost(this.tradeGive, this.tradeGet, this.tradeQty);
-    byId('tr-cost').textContent = `Give ${cost} ${RESOURCE_ICON[this.tradeGive]} ${this.tradeGive} → get ${this.tradeQty} ${RESOURCE_ICON[this.tradeGet]} ${this.tradeGet}`;
-    const affordable = totalStored(s, this.tradeGive) >= cost && (s.merchant.stock[this.tradeGet] ?? 0) >= this.tradeQty;
-    (byId('tr-do') as HTMLButtonElement).disabled = !affordable || this.tradeGive === this.tradeGet;
-    this.refreshSeedShop(s);
-  }
-  /** The merchant's seed shop: every crop the village hasn't unlocked yet, with a buy button. */
-  private refreshSeedShop(s: GameState): void {
-    const el = byId('tr-seeds');
-    const locked = CROPS.filter((c) => !s.seeds.includes(c));
-    if (locked.length === 0) {
-      el.innerHTML = '<div class="seed-head">Seeds</div><div class="seed-none">Every crop unlocked.</div>';
-      return;
-    }
-    const price = seedCost(this.tradeGive);
-    const canPay = totalStored(s, this.tradeGive) >= price;
-    el.innerHTML =
-      `<div class="seed-head">Seeds · ${price} ${RESOURCE_ICON[this.tradeGive]} ${this.tradeGive} each</div>` +
-      '<div class="seed-grid">' +
-      locked
-        .map(
-          (c) =>
-            `<button class="seed-buy" data-crop="${c}"${canPay ? '' : ' disabled'}>${CROP_META[c].emoji} ${CROP_META[c].label}</button>`,
-        )
-        .join('') +
-      '</div>';
+    const seedRows = m.seedStock
+      .map((c) => {
+        const picked = this.basketSeeds.includes(c);
+        return `<div class="tp-row seed">
+            <span class="tp-good">${CROP_META[c].emoji} ${CROP_META[c].label} seed</span>
+            <span class="tp-val">◈${SEED_COST}</span>
+            <button class="seed-buy${picked ? ' on' : ''}" data-seed="${c}">${picked ? '✓ in cart' : 'add'}</button>
+          </div>`;
+      })
+      .join('');
+
+    // Give side: only goods actually sitting in the post inventory can be offered.
+    const giveKinds = RESOURCE_KINDS.filter((k) => (store[k] ?? 0) > 0);
+    const giveRows = giveKinds.length
+      ? giveKinds
+          .map((k) => {
+            const have = Math.floor(store[k] ?? 0);
+            const picked = this.basketGive[k] ?? 0;
+            return `<div class="tp-row">
+                <span class="tp-good">${RESOURCE_ICON[k]} ${k}</span>
+                <span class="tp-val">◈${TRADE_VALUE[k]}</span>
+                <span class="tp-have">${picked}<small>/${have}</small></span>
+                <span class="stepper"><button data-give="-1" data-k="${k}">−</button><button data-give="1" data-k="${k}">+</button></span>
+              </div>`;
+          })
+          .join('')
+      : `<div class="tp-wait">Nothing in the post yet — set stock orders on the left so your trader brings goods to sell.</div>`;
+
+    pane.innerHTML = `<h3>${meta.emoji} ${meta.label}</h3>
+      <div class="tp-sub">You buy</div>${buyRows || '<div class="tp-wait">Sold out.</div>'}${seedRows}
+      <div class="tp-sub">You give <small>(from post stock)</small></div>${giveRows}
+      <div class="tp-totals ${ok ? 'ok' : 'short'}">Offer ◈${offer.toFixed(0)} / need ◈${need.toFixed(0)} ${buy > 0 ? (ok ? '✓' : '✗') : ''}</div>
+      <div class="tp-actions">
+        <button class="do-trade" id="tp-do"${ok ? '' : ' disabled'}>Trade</button>
+        <button class="tp-dismiss" id="tp-dismiss">⛵ Dismiss</button>
+      </div>`;
+
+    pane.querySelectorAll('button[data-buy]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        const el = btn as HTMLElement;
+        const k = el.dataset.k as ResourceKind;
+        const max = Math.floor(m.stock[k] ?? 0);
+        this.basketGet[k] = clampInt((this.basketGet[k] ?? 0) + Number(el.dataset.buy), 0, max);
+        if (!this.basketGet[k]) delete this.basketGet[k];
+        this.tradeSig = '';
+      }),
+    );
+    pane.querySelectorAll('button[data-give]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        const el = btn as HTMLElement;
+        const k = el.dataset.k as ResourceKind;
+        const max = Math.floor(store[k] ?? 0);
+        this.basketGive[k] = clampInt((this.basketGive[k] ?? 0) + Number(el.dataset.give), 0, max);
+        if (!this.basketGive[k]) delete this.basketGive[k];
+        this.tradeSig = '';
+      }),
+    );
+    pane.querySelectorAll('button[data-seed]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        const c = (btn as HTMLElement).dataset.seed as Crop;
+        this.basketSeeds = this.basketSeeds.includes(c) ? this.basketSeeds.filter((x) => x !== c) : [...this.basketSeeds, c];
+        this.tradeSig = '';
+      }),
+    );
+    byId('tp-dismiss').addEventListener('click', () => this.cb.onDismissMerchant());
+    byId('tp-do').addEventListener('click', () => {
+      const r = this.cb.onBasketTrade(this.currentBasket());
+      if (r.ok) this.resetBasket();
+      this.flashHint(r.ok ? 'Trade complete' : r.reason ?? 'Trade failed');
+      this.tradeSig = '';
+    });
   }
 
   // ---- Hints / log ----
@@ -869,4 +973,8 @@ function byId(id: string): HTMLElement {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Missing element #${id}`);
   return el;
+}
+
+function clampInt(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, Math.round(v)));
 }

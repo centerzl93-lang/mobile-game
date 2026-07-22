@@ -38,8 +38,9 @@ import { newGame } from './game/state';
 import {
   update,
   LogKind,
-  tradeWithMerchant,
-  buySeed,
+  basketTrade,
+  dismissMerchant,
+  TradeBasket,
   TradeResult,
   igniteBuilding,
   acceptNomads,
@@ -111,8 +112,9 @@ class Game {
       onSetForesterReplant: (id, on) => this.setForesterReplant(id, on),
       onSetCrop: (id, crop) => this.setCrop(id, crop),
       onSetAnimal: (id, animal) => this.setAnimal(id, animal),
-      onTrade: (give, get, qty) => this.trade(give, get, qty),
-      onBuySeed: (crop, payWith) => this.buySeed(crop, payWith),
+      onSetTradeOrder: (id, kind, delta) => this.setTradeOrder(id, kind, delta),
+      onBasketTrade: (basket) => this.trade(basket),
+      onDismissMerchant: () => this.dismissMerchant(),
       onAcceptNomads: () => this.acceptNomads(),
       onRejectNomads: () => this.rejectNomads(),
       onSelectHarvest: (a) => this.onSelectHarvest(a),
@@ -280,22 +282,29 @@ class Game {
     }
   }
 
-  private trade(give: ResourceKind, get: ResourceKind, qty: number): TradeResult {
-    const r = tradeWithMerchant(this.state, give, get, qty);
+  private trade(basket: TradeBasket): TradeResult {
+    const r = basketTrade(this.state, basket);
     if (r.ok) {
-      this.log(`Traded ${r.gave} ${give} for ${qty} ${get}`, 'good');
+      this.log('Trade complete', 'good');
       this.persist();
     }
     return r;
   }
 
-  private buySeed(crop: Crop, payWith: ResourceKind): TradeResult {
-    const r = buySeed(this.state, crop, payWith);
-    if (r.ok) {
-      this.log(`Bought ${CROP_META[crop].label} seed for ${r.gave} ${payWith}`, 'good');
-      this.persist();
-    }
-    return r;
+  private dismissMerchant(): void {
+    dismissMerchant(this.state);
+    this.persist();
+  }
+
+  /** Adjust a trading post's stock order for a good (clamped at zero). */
+  private setTradeOrder(buildingId: number, kind: ResourceKind, delta: number): void {
+    const b = this.state.buildings.find((x) => x.id === buildingId);
+    if (!b) return;
+    b.orders = b.orders ?? {};
+    const next = Math.max(0, (b.orders[kind] ?? 0) + delta);
+    if (next === 0) delete b.orders[kind];
+    else b.orders[kind] = next;
+    this.persist();
   }
 
   private acceptNomads(): void {
@@ -630,6 +639,8 @@ class Game {
         } else if (b.type === 'ranch') {
           const cur = b.animal ?? 'cattle';
           controls.toggle = { group: 'animal', options: RANCH_ANIMALS.map((a) => ({ v: a, label: `${ANIMAL_META[a].emoji} ${ANIMAL_META[a].label}`, on: cur === a })) };
+        } else if (b.type === 'trading') {
+          controls.tradingPost = { merchantDocked: this.state.merchant.present };
         }
       }
       this.ui.showInspect(`${def.emoji} ${def.name}`, rows, controls);

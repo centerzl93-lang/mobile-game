@@ -34,7 +34,11 @@ export interface PlacementView {
 }
 
 const RES_DOT: Record<string, string> = {
-  fruit: '#e05a6a', grain: '#e2c15a', vegetables: '#e0913a', eggs: '#f2e4b0',
+  fruit: '#e05a6a', grain: '#e2c15a', eggs: '#f2e4b0',
+  corn: '#f2cf4a', potato: '#c99a5e', rice: '#efe9d6', barley: '#d8c98a',
+  carrot: '#e0913a', tomato: '#d6483c', onion: '#c9a9d0', pepper: '#d43f34',
+  cabbage: '#7fb05a', beans: '#a5794a', pumpkin: '#e08a34',
+  apple: '#8fc04a', grapes: '#8a5ac0', strawberry: '#e0455a', melon: '#8fce6a',
   fish: '#6fb0d0', meat: '#b5665a',
   wood: '#8a6a3c', firewood: '#d1642f', stone: '#a6a8af', coal: '#333',
   iron: '#9aa0aa', tools: '#c0c4cc', leather: '#8a5a3a', clothing: '#7bb0d8',

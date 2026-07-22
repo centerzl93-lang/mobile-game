@@ -35,7 +35,7 @@ import {
 } from '../types';
 import { housingCapacity } from '../game/state';
 import { totalStoredAll, totalStored, totalFood } from '../game/storage';
-import { LogKind, tradeCost, TradeResult, avgHealth, avgHappiness } from '../game/simulation';
+import { LogKind, tradeCost, seedCost, TradeResult, avgHealth, avgHappiness } from '../game/simulation';
 
 export type PathTier = 'dirt' | 'stone' | 'bridge';
 
@@ -68,6 +68,7 @@ export interface UICallbacks {
   onSetCrop: (buildingId: number, crop: Crop) => void;
   onSetAnimal: (buildingId: number, animal: RanchAnimal) => void;
   onTrade: (give: ResourceKind, get: ResourceKind, qty: number) => TradeResult;
+  onBuySeed: (crop: Crop, payWith: ResourceKind) => TradeResult;
   onAcceptNomads: () => void;
   onRejectNomads: () => void;
   onSelectHarvest: (active: boolean) => void;
@@ -469,7 +470,7 @@ export class UI {
     const builders = adults - employed;
     const sig =
       jobs.map((b) => `${b.id}:${b.workers.length}:${b.desiredWorkers}:${b.output}:${b.recipe}:${b.crop}:${b.animal}`).join('|') +
-      `#${adults},${children},${employed}`;
+      `#${adults},${children},${employed}#${s.seeds.join(',')}`;
     if (sig === this.jobSig) return;
     this.jobSig = sig;
 
@@ -500,8 +501,10 @@ export class UI {
       } else if (b.type === 'blacksmith') {
         extra = `<div class="jr-toggle" data-toggle="smith"><button data-v="iron" class="${b.recipe === 'iron' ? 'on' : ''}">Iron</button><button data-v="steel" class="${b.recipe === 'steel' ? 'on' : ''}">Steel</button></div>`;
       } else if (b.type === 'farm') {
-        const cur = b.crop ?? 'wheat';
-        extra = `<div class="jr-toggle" data-toggle="crop">${CROPS.map((c) => `<button data-v="${c}" class="${cur === c ? 'on' : ''}">${CROP_META[c].emoji}</button>`).join('')}</div>`;
+        // Only crops the village has seeds for; none owned ⇒ prompt to buy one from a trader.
+        extra = s.seeds.length
+          ? `<div class="jr-toggle" data-toggle="crop">${s.seeds.map((c) => `<button data-v="${c}" class="${b.crop === c ? 'on' : ''}">${CROP_META[c].emoji}</button>`).join('')}</div>`
+          : `<div class="jr-note">🌱 Buy a seed from a trader</div>`;
       } else if (b.type === 'ranch') {
         const cur = b.animal ?? 'cattle';
         extra = `<div class="jr-toggle" data-toggle="animal">${RANCH_ANIMALS.map((a) => `<button data-v="${a}" class="${cur === a ? 'on' : ''}">${ANIMAL_META[a].emoji}</button>`).join('')}</div>`;
@@ -547,7 +550,8 @@ export class UI {
       <div class="trade-row"><label>Amount</label><div class="stepper"><button id="tr-minus">−</button><span class="count" id="tr-qty">1</span><button id="tr-plus">+</button></div></div>
       <div class="trade-row"><label>Pay in</label><select id="tr-give"></select></div>
       <div class="trade-cost" id="tr-cost"></div>
-      <button class="do-trade" id="tr-do">Trade</button>`;
+      <button class="do-trade" id="tr-do">Trade</button>
+      <div class="seed-shop" id="tr-seeds"></div>`;
     this.el.trade.innerHTML = '';
     this.el.trade.appendChild(card);
     card.querySelector('#tr-close')!.addEventListener('click', () => this.closeTrade());
@@ -573,6 +577,14 @@ export class UI {
       const r = this.cb.onTrade(this.tradeGive, this.tradeGet, this.tradeQty);
       this.flashHint(r.ok ? `Traded for ${this.tradeQty} ${this.tradeGet}` : r.reason ?? 'Trade failed');
     });
+    // Seed shop: buy a crop's seed (one-time unlock), paid in the selected "Pay in" good.
+    card.querySelector('#tr-seeds')!.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest('[data-crop]') as HTMLElement | null;
+      if (!btn) return;
+      const crop = btn.dataset.crop as Crop;
+      const r = this.cb.onBuySeed(crop, this.tradeGive);
+      this.flashHint(r.ok ? `Bought ${CROP_META[crop].label} seed` : r.reason ?? 'Purchase failed');
+    });
   }
   private refreshTrade(s: GameState): void {
     const stockKinds = (Object.keys(s.merchant.stock) as ResourceKind[]).filter((k) => (s.merchant.stock[k] ?? 0) > 0);
@@ -593,6 +605,28 @@ export class UI {
     byId('tr-cost').textContent = `Give ${cost} ${RESOURCE_ICON[this.tradeGive]} ${this.tradeGive} → get ${this.tradeQty} ${RESOURCE_ICON[this.tradeGet]} ${this.tradeGet}`;
     const affordable = totalStored(s, this.tradeGive) >= cost && (s.merchant.stock[this.tradeGet] ?? 0) >= this.tradeQty;
     (byId('tr-do') as HTMLButtonElement).disabled = !affordable || this.tradeGive === this.tradeGet;
+    this.refreshSeedShop(s);
+  }
+  /** The merchant's seed shop: every crop the village hasn't unlocked yet, with a buy button. */
+  private refreshSeedShop(s: GameState): void {
+    const el = byId('tr-seeds');
+    const locked = CROPS.filter((c) => !s.seeds.includes(c));
+    if (locked.length === 0) {
+      el.innerHTML = '<div class="seed-head">Seeds</div><div class="seed-none">Every crop unlocked.</div>';
+      return;
+    }
+    const price = seedCost(this.tradeGive);
+    const canPay = totalStored(s, this.tradeGive) >= price;
+    el.innerHTML =
+      `<div class="seed-head">Seeds · ${price} ${RESOURCE_ICON[this.tradeGive]} ${this.tradeGive} each</div>` +
+      '<div class="seed-grid">' +
+      locked
+        .map(
+          (c) =>
+            `<button class="seed-buy" data-crop="${c}"${canPay ? '' : ' disabled'}>${CROP_META[c].emoji} ${CROP_META[c].label}</button>`,
+        )
+        .join('') +
+      '</div>';
   }
 
   // ---- Hints / log ----

@@ -97,12 +97,12 @@ export function placeBuilding(
     built: false,
     progress: 0,
     workers: [],
-    desiredWorkers: def.jobs,
+    desiredWorkers: 0, // start unstaffed — the player assigns workers with the stepper
     growth: 0,
     output: 'coal',
     recipe: 'iron',
     replant: type === 'lumberyard', // new Foresters replant by default
-    crop: 'wheat',
+    crop: s.seeds[0], // default to a crop the village can plant (undefined if it owns no seeds)
     animal: 'cattle',
     store: {},
   };

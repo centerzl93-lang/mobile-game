@@ -113,16 +113,14 @@ test.describe('forester', () => {
 });
 
 test.describe('crops and livestock', () => {
-  test('a fresh farm defaults to wheat and a ranch to cattle, each with a selector', async ({ page }) => {
+  test('placed work buildings start unstaffed with default crop/animal', async ({ page }) => {
     await open(page);
     const res = await page.evaluate(() => {
       const g = (window as any).__village;
-      // Easy start has plenty of wood/stone to afford the placements.
-      g.startNewGame('small', 'easy', true);
-      const s = g.state;
-      const barn = s.buildings.find((b: any) => b.type === 'barn');
-      // Place real farm + ranch (via makeBuilding) at the first tiles that accept them.
+      // Place a real building via the game's placement path at the first accepting tile.
       const place = (type: string) => {
+        const s = g.state;
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
         for (let r = 2; r < 12; r++)
           for (let dy = -r; dy <= r; dy++)
             for (let dx = -r; dx <= r; dx++) {
@@ -134,26 +132,65 @@ test.describe('crops and livestock', () => {
             }
         return null;
       };
+      g.startNewGame('small', 'easy', true); // Easy has stock to afford placements + one seed
+      const s = g.state;
       const farm = place('farm');
       const ranch = place('ranch');
-      // The defaults come straight from makeBuilding — no explicit crop/animal set here.
-      const out: any = { farmCrop: farm && farm.crop, ranchAnimal: ranch && ranch.animal };
-      // Mark them built so the inspect panel renders the selectors.
-      if (farm) { farm.built = true; farm.progress = 99; }
-      if (ranch) { ranch.built = true; ranch.progress = 99; }
-      if (farm) { g.inspectSel = { kind: 'building', id: farm.id }; g.refreshInspect(); out.farmText = document.getElementById('inspect')!.innerText; }
-      if (ranch) { g.inspectSel = { kind: 'building', id: ranch.id }; g.refreshInspect(); out.ranchText = document.getElementById('inspect')!.innerText; }
+      const out: any = {
+        seedCount: s.seeds.length,
+        firstSeed: s.seeds[0],
+        farmDesired: farm && farm.desiredWorkers,
+        farmWorkers: farm && farm.workers.length,
+        farmCrop: farm && farm.crop,
+        ranchAnimal: ranch && ranch.animal,
+      };
+      if (farm) { farm.built = true; farm.progress = 99; g.inspectSel = { kind: 'building', id: farm.id }; g.refreshInspect(); out.farmToggleBtns = document.querySelectorAll('#inspect .jr-toggle button').length; }
+      if (ranch) { ranch.built = true; ranch.progress = 99; g.inspectSel = { kind: 'building', id: ranch.id }; g.refreshInspect(); out.ranchText = document.getElementById('inspect')!.innerText; }
       return out;
     });
-    expect(res.farmCrop).toBe('wheat');
+    // Manual staffing: a freshly placed work building wants zero workers until the player assigns.
+    expect(res.farmDesired).toBe(0);
+    expect(res.farmWorkers).toBe(0);
+    // Easy grants exactly one random seed; a new farm defaults to it; a ranch defaults to cattle.
+    expect(res.seedCount).toBe(1);
+    expect(res.farmCrop).toBe(res.firstSeed);
     expect(res.ranchAnimal).toBe('cattle');
-    // Farm inspect offers the three crops; ranch inspect the three animals.
-    expect(res.farmText).toContain('Wheat');
-    expect(res.farmText).toContain('Vegetables');
-    expect(res.farmText).toContain('Fruit');
+    // The farm crop toggle lists only the one owned seed; the ranch offers all three animals.
+    expect(res.farmToggleBtns).toBe(1);
     expect(res.ranchText).toContain('Cattle');
     expect(res.ranchText).toContain('Pigs');
     expect(res.ranchText).toContain('Chickens');
+  });
+
+  test('a field needs a seed — Normal starts with none and cannot plant', async ({ page }) => {
+    await open(page);
+    const res = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const place = (type: string) => {
+        const s = g.state;
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        for (let r = 2; r < 12; r++)
+          for (let dy = -r; dy <= r; dy++)
+            for (let dx = -r; dx <= r; dx++) {
+              const x = barn.x + dx, y = barn.y + dy;
+              if (g.debugCanPlace(type, x, y).ok) {
+                const id = g.debugPlace(type, x, y);
+                if (id != null) return s.buildings.find((b: any) => b.id === id);
+              }
+            }
+        return null;
+      };
+      g.startNewGame('small', 'normal', true); // Normal ⇒ no seeds
+      const s = g.state;
+      const farm = place('farm');
+      const out: any = { seedCount: s.seeds.length, farmCrop: farm && farm.crop };
+      if (farm) { farm.built = true; farm.progress = 99; g.inspectSel = { kind: 'building', id: farm.id }; g.refreshInspect(); const el = document.getElementById('inspect')!; out.text = el.innerText; out.toggleBtns = el.querySelectorAll('.jr-toggle button').length; }
+      return out;
+    });
+    expect(res.seedCount).toBe(0);
+    expect(res.farmCrop).toBeUndefined(); // seeds[0] is undefined when the village owns none
+    expect(res.text).toContain('No seed');
+    expect(res.toggleBtns).toBe(0); // no crop toggle without a seed to plant
   });
 });
 

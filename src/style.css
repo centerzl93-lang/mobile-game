@@ -558,6 +558,44 @@ body {
 .trade-card .do-trade:disabled {
   opacity: 0.5;
 }
+.seed-shop {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.seed-head {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.seed-none {
+  font-size: 12px;
+  color: var(--muted);
+}
+.seed-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+.seed-buy {
+  padding: 8px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.seed-buy:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.job-row .jr-note {
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
 
 /* ---------- Nomad arrival prompt ---------- */
 #nomad {

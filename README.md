@@ -64,7 +64,7 @@ It works offline after the first load, and your village is saved automatically.
 | 🏠 | House | housing for 4 (grows the village) | — |
 | 🏡 | Stone House | housing for 5 — cheap winter heat | some **stone** |
 | 🧺 | Gatherer | 🍎 fruit | forest in its work-circle |
-| 🌱 | Field | a chosen crop — 🌾 grain, 🥕 vegetables, or 🍎 fruit (autumn harvest) | — |
+| 🌱 | Field | a chosen crop, harvested each autumn — pick from any of the **16 varieties** you have the **seed** for | that crop's **seed** (buy from traders) |
 | 🎣 | Fishing Hut | 🐟 fish | built on the **shoreline** |
 | 🏹 | Hunting Cabin | 🍖 meat + leather | forest in its work-circle |
 | 🐄 | Ranch | a chosen animal — 🐄 cattle (meat + leather), 🐖 pigs (meat), or 🐔 chickens (🥚 eggs + meat) | that animal's herd (buy from traders) |
@@ -83,16 +83,19 @@ It works offline after the first load, and your village is saved automatically.
 ### Jobs & the job board (📋)
 
 Villagers are **builders** by default — they raise your placed buildings and
-paths. Open the **job board** (📋, top-right) to set how many workers each
-workplace should have with **− / +**. Mines toggle **Coal/Iron**, blacksmiths
-toggle **Iron/Steel**. On the map, a badge shows staffing (`2/2` green = full).
-The 🔨 HUD number is how many free builders remain.
+paths. A newly built workplace starts **unstaffed** — open the **job board**
+(📋, top-right) or tap the building to set how many workers it should have with
+**− / +**. Mines toggle **Coal/Iron**, blacksmiths toggle **Iron/Steel**, fields
+pick a **crop**, ranches pick an **animal**. On the map, a badge shows staffing
+(`2/2` green = full). The 🔨 HUD number is how many free builders remain.
 
 ### Survival
 
-- Every season villagers eat **food**. Food comes in **four kinds** — 🍎 fruit,
-  🌾 grain, 🐟 fish, 🍖 meat — but the HUD shows them as a **single 🍽️ food total**;
-  a meal is drawn from whatever's in stock. Every **winter** they burn fuel
+- Every season villagers eat **food**. Food comes in **many kinds** — wild 🍎 fruit,
+  🐟 fish, 🍖 meat, 🥚 eggs, and the **16 farm crops** (grain, corn, potato, carrot,
+  tomato, apple, grapes…) — but the HUD shows them as a **single 🍽️ food total**;
+  a meal is drawn from whatever's in stock. A **varied diet** (several kinds in
+  stock at once) keeps villagers healthier. Every **winter** they burn fuel
   (**firewood** first, then **coal** — coal burns twice as hot) *and* need
   **clothing**; the unclothed can fall ill. Keep all three stocked for winter.
 - **Tools** wear out as people work. If the tool stockpile empties, everyone
@@ -156,7 +159,10 @@ capacity now = your barns (5000 each) + markets (2000 each).
 
 Build a **Trading Post** on the shore and staff it. Every few seasons a
 **merchant** docks (a 📦 button appears) — open it to **barter** goods by value
-(no money). Traders are the only place to buy **cattle, pigs, or chickens** to stock a ranch.
+(no money). Traders are the only place to buy **cattle, pigs, or chickens** to
+stock a ranch, and **crop seeds** to unlock new fields — each seed is a one-time
+purchase that lets you plant that crop on any field from then on. (Easy mode
+starts you with one random seed; Normal and Hard start with none.)
 
 ### Time
 

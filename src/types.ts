@@ -44,7 +44,21 @@ export interface Tile {
 export type ResourceKind =
   | 'fruit'
   | 'grain'
-  | 'vegetables'
+  | 'corn'
+  | 'potato'
+  | 'rice'
+  | 'barley'
+  | 'carrot'
+  | 'tomato'
+  | 'onion'
+  | 'pepper'
+  | 'cabbage'
+  | 'beans'
+  | 'pumpkin'
+  | 'apple'
+  | 'grapes'
+  | 'strawberry'
+  | 'melon'
   | 'eggs'
   | 'fish'
   | 'meat'
@@ -64,12 +78,47 @@ export type ResourceKind =
 export type Resources = Record<ResourceKind, number>;
 
 /** The distinct food types. A varied diet (more of these in stock) means better health. */
-export const FOOD_KINDS: ResourceKind[] = ['fruit', 'grain', 'vegetables', 'eggs', 'fish', 'meat'];
+export const FOOD_KINDS: ResourceKind[] = [
+  'fruit',
+  'grain',
+  'corn',
+  'potato',
+  'rice',
+  'barley',
+  'carrot',
+  'tomato',
+  'onion',
+  'pepper',
+  'cabbage',
+  'beans',
+  'pumpkin',
+  'apple',
+  'grapes',
+  'strawberry',
+  'melon',
+  'eggs',
+  'fish',
+  'meat',
+];
 
 export const RESOURCE_KINDS: ResourceKind[] = [
   'fruit',
   'grain',
-  'vegetables',
+  'corn',
+  'potato',
+  'rice',
+  'barley',
+  'carrot',
+  'tomato',
+  'onion',
+  'pepper',
+  'cabbage',
+  'beans',
+  'pumpkin',
+  'apple',
+  'grapes',
+  'strawberry',
+  'melon',
   'eggs',
   'fish',
   'meat',
@@ -96,7 +145,21 @@ export const FOOD_ICON = '🍽️';
 export const RESOURCE_ICON: Record<ResourceKind, string> = {
   fruit: '🍎',
   grain: '🌾',
-  vegetables: '🥕',
+  corn: '🌽',
+  potato: '🥔',
+  rice: '🍚',
+  barley: '🌿',
+  carrot: '🥕',
+  tomato: '🍅',
+  onion: '🧅',
+  pepper: '🌶️',
+  cabbage: '🥬',
+  beans: '🫘',
+  pumpkin: '🎃',
+  apple: '🍏',
+  grapes: '🍇',
+  strawberry: '🍓',
+  melon: '🍈',
   eggs: '🥚',
   fish: '🐟',
   meat: '🍖',
@@ -148,14 +211,55 @@ export type BuildingType =
 export type MineOutput = 'coal' | 'iron';
 export type SmithRecipe = 'iron' | 'steel';
 
-/** What a farm grows. Each crop harvests into a different food resource for dietary variety. */
-export type Crop = 'wheat' | 'vegetables' | 'fruit';
-export const CROPS: Crop[] = ['wheat', 'vegetables', 'fruit'];
+/**
+ * What a farm grows. There are 16 varieties, each harvesting into its own food resource for
+ * dietary variety. A crop can only be planted once the village owns its seed (see `GameState.seeds`)
+ * — seeds are one-time unlocks bought from merchants (Easy starts with one random seed).
+ */
+export type Crop =
+  | 'wheat'
+  | 'corn'
+  | 'potato'
+  | 'rice'
+  | 'barley'
+  | 'carrot'
+  | 'tomato'
+  | 'onion'
+  | 'pepper'
+  | 'cabbage'
+  | 'beans'
+  | 'pumpkin'
+  | 'apple'
+  | 'grapes'
+  | 'strawberry'
+  | 'melon';
+export const CROPS: Crop[] = [
+  'wheat', 'corn', 'potato', 'rice', 'barley', 'carrot', 'tomato', 'onion',
+  'pepper', 'cabbage', 'beans', 'pumpkin', 'apple', 'grapes', 'strawberry', 'melon',
+];
 export const CROP_META: Record<Crop, { label: string; emoji: string; food: ResourceKind; yieldMult: number }> = {
   wheat: { label: 'Wheat', emoji: '🌾', food: 'grain', yieldMult: 1 },
-  vegetables: { label: 'Vegetables', emoji: '🥕', food: 'vegetables', yieldMult: 1 },
-  fruit: { label: 'Fruit', emoji: '🍎', food: 'fruit', yieldMult: 0.85 },
+  corn: { label: 'Corn', emoji: '🌽', food: 'corn', yieldMult: 1 },
+  potato: { label: 'Potato', emoji: '🥔', food: 'potato', yieldMult: 1.1 },
+  rice: { label: 'Rice', emoji: '🍚', food: 'rice', yieldMult: 1 },
+  barley: { label: 'Barley', emoji: '🌿', food: 'barley', yieldMult: 1 },
+  carrot: { label: 'Carrot', emoji: '🥕', food: 'carrot', yieldMult: 1 },
+  tomato: { label: 'Tomato', emoji: '🍅', food: 'tomato', yieldMult: 0.95 },
+  onion: { label: 'Onion', emoji: '🧅', food: 'onion', yieldMult: 1 },
+  pepper: { label: 'Pepper', emoji: '🌶️', food: 'pepper', yieldMult: 0.9 },
+  cabbage: { label: 'Cabbage', emoji: '🥬', food: 'cabbage', yieldMult: 1 },
+  beans: { label: 'Beans', emoji: '🫘', food: 'beans', yieldMult: 1 },
+  pumpkin: { label: 'Pumpkin', emoji: '🎃', food: 'pumpkin', yieldMult: 1.1 },
+  apple: { label: 'Apple', emoji: '🍏', food: 'apple', yieldMult: 0.85 },
+  grapes: { label: 'Grapes', emoji: '🍇', food: 'grapes', yieldMult: 0.85 },
+  strawberry: { label: 'Strawberry', emoji: '🍓', food: 'strawberry', yieldMult: 0.8 },
+  melon: { label: 'Melon', emoji: '🍈', food: 'melon', yieldMult: 0.85 },
 };
+
+/** Trade value a merchant charges to sell a crop's seed (a permanent one-time unlock). */
+export const SEED_COST = 30;
+/** Distinct foods in stock that earn the full diet-variety health bonus (it saturates here). */
+export const DIET_VARIETY_TARGET = 5;
 
 /** What a ranch raises. Each animal has its own herd (a tradeable resource) and product mix. */
 export type RanchAnimal = 'cattle' | 'pigs' | 'chickens';
@@ -371,6 +475,8 @@ export interface GameState {
   gameOver: boolean;
   everLived: boolean;
   merchant: Merchant;
+  /** Crops the village has unlocked (owns the seed for) and can plant. Empty ⇒ no field grows. */
+  seeds: Crop[];
   /** A band of nomads awaiting an accept/reject decision, or null. */
   pendingNomads: NomadOffer | null;
   /** Harvest orders (per tile): HARVEST_* — trees/loose stone marked for gathering. */
@@ -507,7 +613,21 @@ export const TAILOR_CLOTHING_OUT = 6;
 export const START_RESOURCES: Resources = {
   fruit: 120,
   grain: 120,
-  vegetables: 0,
+  corn: 0,
+  potato: 0,
+  rice: 0,
+  barley: 0,
+  carrot: 0,
+  tomato: 0,
+  onion: 0,
+  pepper: 0,
+  cabbage: 0,
+  beans: 0,
+  pumpkin: 0,
+  apple: 0,
+  grapes: 0,
+  strawberry: 0,
+  melon: 0,
   eggs: 0,
   fish: 90,
   meat: 90,
@@ -543,7 +663,21 @@ export const DIFFICULTY_RESOURCES: Record<Difficulty, Partial<Resources>> = {
 export const TRADE_VALUE: Record<ResourceKind, number> = {
   fruit: 1,
   grain: 1,
-  vegetables: 1,
+  corn: 1,
+  potato: 1,
+  rice: 1,
+  barley: 1,
+  carrot: 1,
+  tomato: 1,
+  onion: 1,
+  pepper: 1.5,
+  cabbage: 1,
+  beans: 1,
+  pumpkin: 1,
+  apple: 1.5,
+  grapes: 1.5,
+  strawberry: 1.5,
+  melon: 1.5,
   eggs: 1.5,
   fish: 1,
   meat: 1.5,

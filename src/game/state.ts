@@ -19,6 +19,7 @@ import {
   MAP_H,
   setMapSize,
   Difficulty,
+  CROPS,
   DIFFICULTY_RESOURCES,
   STARTING_STOCK_SCALE,
   EASY_START_HOUSES,
@@ -64,12 +65,11 @@ function makeBuilding(s: { nextId: number }, type: BuildingType, x: number, y: n
     built,
     progress: built ? def.buildTime : 0,
     workers: [],
-    desiredWorkers: def.jobs,
+    desiredWorkers: 0, // start unstaffed — the player assigns workers with the stepper
     growth: 0,
     output: 'coal',
     recipe: 'iron',
     replant: type === 'lumberyard', // new Foresters replant by default
-    crop: 'wheat',
     animal: 'cattle',
     store: {},
   };
@@ -105,6 +105,9 @@ export function newGame(
     pendingNomads: null,
     harvest: emptyHarvest(),
     pathProgress: 0,
+    // Crops the village can plant. Easy starts with one random seed; Normal/Hard start with none
+    // and must buy seeds from a merchant before any field will grow.
+    seeds: difficulty === 'easy' ? [CROPS[Math.floor(Math.random() * CROPS.length)]] : [],
   };
 
   // A starting barn holds the opening stockpile for the chosen difficulty, scaled up for the

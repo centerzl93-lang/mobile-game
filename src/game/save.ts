@@ -1,4 +1,4 @@
-import { GameState, MAP_W, MAP_H, MapSize, setMapSize } from '../types';
+import { GameState, MAP_W, MAP_H, MapSize, setMapSize, CROPS } from '../types';
 import { randomName } from './names';
 
 // Legacy single-slot key (pre-slots). Migrated into slot 0 on first run, then left in place.
@@ -54,6 +54,13 @@ export function loadGame(slot = 0): GameState | null {
     if (!s.merchant || typeof s.pathProgress !== 'number') return null;
     // Backfill names for citizens saved before villagers had names.
     for (const c of s.citizens) if (!c.name) c.name = randomName(c.sex);
+    // Seeds (crop unlocks) were added after this format shipped. Saves without them predate the
+    // gate, when every field could grow — grant all crops so old farms keep working.
+    if (!Array.isArray(s.seeds)) s.seeds = [...CROPS];
+    // Drop crop selections that are no longer valid varieties (e.g. the old 'vegetables'/'fruit').
+    for (const b of s.buildings) {
+      if (b.crop && !CROPS.includes(b.crop)) b.crop = undefined;
+    }
     // Migrate the old single 'livestock' herd into 'cattle' (per-animal herds).
     for (const b of s.buildings) {
       const store = b.store as Record<string, number>;

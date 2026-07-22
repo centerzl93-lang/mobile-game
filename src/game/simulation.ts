@@ -41,10 +41,12 @@ import {
   ANIMAL_META,
   RANCH_ANIMALS,
   RanchAnimal,
+  Crop,
+  SEED_COST,
   TRADE_VALUE,
   MERCHANT_MARGIN,
   MERCHANT_VISIT_EVERY,
-  FOOD_KINDS,
+  DIET_VARIETY_TARGET,
   CHILD_FOOD_FACTOR,
   BIRTH_CHANCE,
   ADULT_AGE,
@@ -571,7 +573,8 @@ function workOutput(
     case 'tailor':
       return consumeStore(b, [['leather', TAILOR_IN]]) ? { kind: 'clothing', amount: TAILOR_OUT * tf } : null;
     case 'farm': {
-      const food = CROP_META[b.crop ?? 'wheat'].food;
+      if (!b.crop) return null; // an unseeded field grows nothing
+      const food = CROP_META[b.crop].food;
       const have = b.store[food] ?? 0;
       if (have <= 0) return null;
       const take = Math.min(CARRY_CAP, have);
@@ -935,10 +938,11 @@ function endSeason(s: GameState, log: LogFn): void {
 
   // Farms grow through spring/summer; deposit the chosen crop's harvest into their store at autumn.
   for (const b of s.buildings) {
-    if (b.built && b.type === 'farm') {
+    // A field only grows a crop the village has the seed for; otherwise it lies fallow.
+    if (b.built && b.type === 'farm' && b.crop && s.seeds.includes(b.crop)) {
       if (season === 'Spring' || season === 'Summer') b.growth = Math.min(1, b.growth + 0.5);
       if (season === 'Autumn' && b.workers.length > 0) {
-        const crop = CROP_META[b.crop ?? 'wheat'];
+        const crop = CROP_META[b.crop];
         const yield_ = b.workers.length * FARM_FOOD_PER_WORKER * b.growth * crop.yieldMult;
         if (yield_ > 1) {
           b.store[crop.food] = (b.store[crop.food] ?? 0) + yield_;
@@ -1144,6 +1148,25 @@ export function tradeCost(give: ResourceKind, get: ResourceKind, qty: number): n
   return Math.ceil((TRADE_VALUE[get] * qty) / MERCHANT_MARGIN / TRADE_VALUE[give]);
 }
 
+/** What a seed costs in units of `payWith` (its flat trade value converted to that good). */
+export function seedCost(payWith: ResourceKind): number {
+  return Math.ceil(SEED_COST / TRADE_VALUE[payWith]);
+}
+
+/** Buy a crop's seed from the docked merchant — a permanent unlock, paid for in `payWith`. */
+export function buySeed(s: GameState, crop: Crop, payWith: ResourceKind): TradeResult {
+  const m = s.merchant;
+  if (!m.present) return { ok: false, reason: 'No merchant here' };
+  if (s.seeds.includes(crop)) return { ok: false, reason: 'Already own this seed' };
+  const cost = seedCost(payWith);
+  if (totalStored(s, payWith) < cost) return { ok: false, reason: `Need ${cost} ${payWith}` };
+  const post = s.buildings.find((b) => b.built && b.type === 'trading');
+  const pos = post ? buildingCenter(post) : centreOfVillage(s);
+  takeNearest(s, pos, payWith, cost);
+  s.seeds.push(crop);
+  return { ok: true, gave: cost };
+}
+
 // ---- population helpers ----
 function killCitizens(s: GameState, n: number): void {
   for (let i = 0; i < n && s.citizens.length > 0; i++) {
@@ -1201,8 +1224,13 @@ export function avgHappiness(s: GameState): number {
 function updateWellbeing(s: GameState, foodShort: boolean, deaths: number, tavernActive: boolean): void {
   const pop = s.citizens.length;
   if (pop === 0) return;
-  const variety = foodVarietyStored(s); // distinct food types in stock (0..FOOD_KINDS.length)
-  const healthTarget = clamp(40 + 60 * (variety / FOOD_KINDS.length) - (foodShort ? 30 : 0), 0, 100);
+  const variety = foodVarietyStored(s); // distinct food types in stock
+  // The variety bonus saturates at DIET_VARIETY_TARGET distinct foods (there are many crops now).
+  const healthTarget = clamp(
+    40 + 60 * (Math.min(variety, DIET_VARIETY_TARGET) / DIET_VARIETY_TARGET) - (foodShort ? 30 : 0),
+    0,
+    100,
+  );
   const headroom = housingCapacity(s) - pop > 0;
   const clothed = totalStored(s, 'clothing') >= pop;
   const comfortable = totalFood(s) > pop * FOOD_PER_CITIZEN_PER_SEASON;

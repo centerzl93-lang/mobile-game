@@ -17,7 +17,6 @@ import {
   houseCapacityOf,
   Crop,
   RanchAnimal,
-  CROPS,
   CROP_META,
   RANCH_ANIMALS,
   ANIMAL_META,
@@ -40,6 +39,7 @@ import {
   update,
   LogKind,
   tradeWithMerchant,
+  buySeed,
   TradeResult,
   igniteBuilding,
   acceptNomads,
@@ -112,6 +112,7 @@ class Game {
       onSetCrop: (id, crop) => this.setCrop(id, crop),
       onSetAnimal: (id, animal) => this.setAnimal(id, animal),
       onTrade: (give, get, qty) => this.trade(give, get, qty),
+      onBuySeed: (crop, payWith) => this.buySeed(crop, payWith),
       onAcceptNomads: () => this.acceptNomads(),
       onRejectNomads: () => this.rejectNomads(),
       onSelectHarvest: (a) => this.onSelectHarvest(a),
@@ -283,6 +284,15 @@ class Game {
     const r = tradeWithMerchant(this.state, give, get, qty);
     if (r.ok) {
       this.log(`Traded ${r.gave} ${give} for ${qty} ${get}`, 'good');
+      this.persist();
+    }
+    return r;
+  }
+
+  private buySeed(crop: Crop, payWith: ResourceKind): TradeResult {
+    const r = buySeed(this.state, crop, payWith);
+    if (r.ok) {
+      this.log(`Bought ${CROP_META[crop].label} seed for ${r.gave} ${payWith}`, 'good');
       this.persist();
     }
     return r;
@@ -577,7 +587,9 @@ class Game {
         }
         if (b.type === 'mine') rows.push({ label: 'Digging', value: b.output });
         if (b.type === 'blacksmith') rows.push({ label: 'Forging', value: `${b.recipe} tools` });
-        if (b.type === 'farm') { const c = CROP_META[b.crop ?? 'wheat']; rows.push({ label: 'Crop', value: `${c.emoji} ${c.label}` }); }
+        if (b.type === 'farm') {
+          rows.push({ label: 'Crop', value: b.crop ? `${CROP_META[b.crop].emoji} ${CROP_META[b.crop].label}` : '🌱 No seed — buy from a trader' });
+        }
         if (b.type === 'ranch') { const a = ANIMAL_META[b.animal ?? 'cattle']; rows.push({ label: 'Raising', value: `${a.emoji} ${a.label}` }); }
         if (b.type === 'barn') {
           let load = 0;
@@ -610,8 +622,11 @@ class Game {
             { v: 'off', label: 'Fell only', on: !on },
           ] };
         } else if (b.type === 'farm') {
-          const cur = b.crop ?? 'wheat';
-          controls.toggle = { group: 'crop', options: CROPS.map((c) => ({ v: c, label: `${CROP_META[c].emoji} ${CROP_META[c].label}`, on: cur === c })) };
+          // Only crops the village owns the seed for can be planted.
+          const owned = this.state.seeds;
+          if (owned.length > 0) {
+            controls.toggle = { group: 'crop', options: owned.map((c) => ({ v: c, label: `${CROP_META[c].emoji} ${CROP_META[c].label}`, on: b.crop === c })) };
+          }
         } else if (b.type === 'ranch') {
           const cur = b.animal ?? 'cattle';
           controls.toggle = { group: 'animal', options: RANCH_ANIMALS.map((a) => ({ v: a, label: `${ANIMAL_META[a].emoji} ${ANIMAL_META[a].label}`, on: cur === a })) };

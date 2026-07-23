@@ -89,7 +89,7 @@ export interface UICallbacks {
   onSetForesterReplant: (buildingId: number, on: boolean) => void;
   onSetCrop: (buildingId: number, crop: Crop) => void;
   onSetAnimal: (buildingId: number, animal: RanchAnimal) => void;
-  onRanchSize: (dim: 'w' | 'h', delta: number) => void;
+  onSizeChange: (dim: 'w' | 'h', delta: number) => void;
   onSetRanchMax: (buildingId: number, delta: number) => void;
   onCullRanch: (buildingId: number) => void;
   onSplitRanch: (fromId: number, toId: number) => void;
@@ -608,30 +608,32 @@ export class UI {
     this.el.trade.onclick = null;
   }
 
-  // ---- Ranch placement size widget ----
-  private ranchSizeEl: HTMLElement | null = null;
-  showRanchSize(w: number, h: number): void {
-    if (!this.ranchSizeEl) {
+  // ---- Placement size widget (shared by sizable buildings: ranch, field) ----
+  private sizeEl: HTMLElement | null = null;
+  showSizeWidget(label: string, w: number, h: number, min: number, max: number): void {
+    if (!this.sizeEl) {
       const el = document.createElement('div');
       el.className = 'ranch-size';
       document.body.appendChild(el);
-      this.ranchSizeEl = el;
+      this.sizeEl = el;
     }
-    const el = this.ranchSizeEl;
+    const el = this.sizeEl;
     el.classList.remove('hidden');
-    el.innerHTML = `<div class="rs-title">🐄 Pen size</div>
-      <div class="rs-row"><span>W</span><div class="stepper"><button data-rs="w-1">−</button><span class="count">${w}</span><button data-rs="w1">+</button></div></div>
-      <div class="rs-row"><span>H</span><div class="stepper"><button data-rs="h-1">−</button><span class="count">${h}</span><button data-rs="h1">+</button></div></div>
+    const row = (dim: 'w' | 'h', v: number) =>
+      `<div class="rs-row"><span>${dim.toUpperCase()}</span><div class="stepper">
+        <button data-rs="${dim}-1"${v <= min ? ' disabled' : ''}>−</button><span class="count">${v}</span>
+        <button data-rs="${dim}1"${v >= max ? ' disabled' : ''}>+</button></div></div>`;
+    el.innerHTML = `<div class="rs-title">${label} size</div>${row('w', w)}${row('h', h)}
       <div class="rs-hint">Tap the map to place</div>`;
     el.querySelectorAll('[data-rs]').forEach((btn) =>
       btn.addEventListener('click', () => {
         const v = (btn as HTMLElement).dataset.rs!;
-        this.cb.onRanchSize(v[0] as 'w' | 'h', Number(v.slice(1)));
+        this.cb.onSizeChange(v[0] as 'w' | 'h', Number(v.slice(1)));
       }),
     );
   }
-  hideRanchSize(): void {
-    this.ranchSizeEl?.classList.add('hidden');
+  hideSizeWidget(): void {
+    this.sizeEl?.classList.add('hidden');
   }
 
   // ---- Ranch split/transfer destination picker (reuses the modal container) ----

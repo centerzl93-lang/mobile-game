@@ -16,8 +16,7 @@ import {
   footprintW,
   footprintH,
   ranchCapacity,
-  RANCH_MIN,
-  RANCH_MAX,
+  SIZABLE,
   RANCH_SPLIT_MIN,
   isHouse,
   houseCapacityOf,
@@ -83,9 +82,9 @@ class Game {
   currentSlot = 0;
   speedIndex = 0;
   selectedBuild: BuildingType | null = null;
-  /** Player-chosen ranch footprint (tiles) while a ranch is selected for placement. */
-  ranchW = RANCH_MIN;
-  ranchH = RANCH_MIN;
+  /** Player-chosen footprint (tiles) while a sizable building (ranch/field) is selected. */
+  sizeW = 4;
+  sizeH = 4;
   selectedPath: PathTier | null = null;
   demolish = false;
   harvestMode = false;
@@ -125,7 +124,7 @@ class Game {
       onSetForesterReplant: (id, on) => this.setForesterReplant(id, on),
       onSetCrop: (id, crop) => this.setCrop(id, crop),
       onSetAnimal: (id, animal) => this.setAnimal(id, animal),
-      onRanchSize: (dim, delta) => this.onRanchSize(dim, delta),
+      onSizeChange: (dim, delta) => this.onSizeChange(dim, delta),
       onSetRanchMax: (id, delta) => this.setRanchMax(id, delta),
       onCullRanch: (id) => this.cullRanch(id),
       onSplitRanch: (from, to) => this.splitRanch(from, to),
@@ -194,22 +193,26 @@ class Game {
     this.demolish = false;
     this.clearInspect();
     this.input.setMode('normal');
-    // A fresh ranch starts at the minimum size; show the resize widget while it's selected.
-    if (t === 'ranch') {
-      this.ranchW = RANCH_MIN;
-      this.ranchH = RANCH_MIN;
-      this.ui.showRanchSize(this.ranchW, this.ranchH);
+    // A fresh sizable building (ranch/field) starts at its minimum; show the resize widget.
+    const sz = t ? SIZABLE[t] : undefined;
+    if (t && sz) {
+      this.sizeW = sz.min;
+      this.sizeH = sz.min;
+      this.ui.showSizeWidget(BUILDING_DEFS[t].name, this.sizeW, this.sizeH, sz.min, sz.max);
     } else {
-      this.ui.hideRanchSize();
+      this.ui.hideSizeWidget();
     }
   }
 
-  /** Resize the pending ranch footprint (clamped RANCH_MIN..RANCH_MAX). */
-  private onRanchSize(dim: 'w' | 'h', delta: number): void {
-    const clamp = (v: number) => Math.max(RANCH_MIN, Math.min(RANCH_MAX, v));
-    if (dim === 'w') this.ranchW = clamp(this.ranchW + delta);
-    else this.ranchH = clamp(this.ranchH + delta);
-    this.ui.showRanchSize(this.ranchW, this.ranchH);
+  /** Resize the pending footprint of the selected sizable building (clamped to its bounds). */
+  private onSizeChange(dim: 'w' | 'h', delta: number): void {
+    const type = this.selectedBuild;
+    const sz = type ? SIZABLE[type] : undefined;
+    if (!type || !sz) return;
+    const clamp = (v: number) => Math.max(sz.min, Math.min(sz.max, v));
+    if (dim === 'w') this.sizeW = clamp(this.sizeW + delta);
+    else this.sizeH = clamp(this.sizeH + delta);
+    this.ui.showSizeWidget(BUILDING_DEFS[type].name, this.sizeW, this.sizeH, sz.min, sz.max);
   }
 
   private onSelectPath(tier: PathTier | null): void {
@@ -217,7 +220,7 @@ class Game {
     this.selectedBuild = null;
     this.demolish = false;
     this.clearInspect();
-    this.ui.hideRanchSize();
+    this.ui.hideSizeWidget();
     this.input.setMode(tier ? 'path' : 'normal');
   }
 
@@ -228,7 +231,7 @@ class Game {
       this.selectedPath = null;
       this.harvestMode = false;
       this.clearInspect();
-      this.ui.hideRanchSize();
+      this.ui.hideSizeWidget();
       this.input.setMode('normal');
     }
   }
@@ -241,7 +244,7 @@ class Game {
       this.selectedPath = null;
       this.demolish = false;
       this.clearInspect();
-      this.ui.hideRanchSize();
+      this.ui.hideSizeWidget();
     }
     this.input.setMode(active ? 'marquee' : 'normal');
   }
@@ -578,7 +581,7 @@ class Game {
     if (!canAfford(this.state, this.selectedBuild)) {
       this.selectedBuild = null;
       this.ui.clearSelection();
-      this.ui.hideRanchSize();
+      this.ui.hideSizeWidget();
       this.ui.flashHint('Not enough materials in storage for another');
     }
   }
@@ -677,6 +680,8 @@ class Game {
         if (b.type === 'blacksmith') rows.push({ label: 'Forging', value: `${b.recipe} tools` });
         if (b.type === 'farm') {
           rows.push({ label: 'Crop', value: b.crop ? `${CROP_META[b.crop].emoji} ${CROP_META[b.crop].label}` : '🌱 No seed — buy from a trader' });
+          rows.push({ label: 'Field', value: `${footprintW(b)}×${footprintH(b)}` });
+          rows.push({ label: 'Growth', value: `${Math.round((b.growth ?? 0) * 100)}%` });
         }
         if (b.type === 'ranch') {
           const a = ANIMAL_META[b.animal ?? 'cattle'];
@@ -811,9 +816,9 @@ class Game {
     return findPath(this.state, fx, fy, tx, ty);
   }
 
-  /** Footprint the ghost/placement uses for `type` (the player-sized dims for a ranch). */
+  /** Footprint the ghost/placement uses for `type` (the player-sized dims for ranch/field). */
   private placeSize(type: BuildingType): { w: number; h: number } {
-    if (type === 'ranch') return { w: this.ranchW, h: this.ranchH };
+    if (SIZABLE[type]) return { w: this.sizeW, h: this.sizeH };
     const def = BUILDING_DEFS[type];
     return { w: def.w, h: def.h };
   }

@@ -10,6 +10,7 @@ import {
   footprintW,
   footprintH,
   ranchCapacity,
+  SIZABLE,
 } from '../types';
 import { getTile, inBounds } from './world';
 import { totalStored, addNearest } from './storage';
@@ -114,10 +115,13 @@ export function placeBuilding(
     animal: 'cattle',
     store: {},
   };
-  // A ranch carries a custom footprint and its own herd bookkeeping.
+  // Player-sizable buildings (ranch, field) carry their chosen footprint.
+  if (SIZABLE[type]) {
+    b.w = w ?? BUILDING_DEFS[type].w;
+    b.h = h ?? BUILDING_DEFS[type].h;
+  }
+  // A ranch also tracks its own herd.
   if (type === 'ranch') {
-    b.w = w ?? BUILDING_DEFS.ranch.w;
-    b.h = h ?? BUILDING_DEFS.ranch.h;
     b.animals = 0;
     b.maxAnimals = ranchCapacity(b);
     b.breedProgress = 0;

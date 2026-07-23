@@ -10,6 +10,7 @@ import {
   footprintH,
   ranchCapacity,
   ANIMAL_META,
+  CROP_META,
   ResourceKind,
   ADULT_AGE,
   MAP_W,
@@ -210,6 +211,8 @@ export class Renderer {
         ctx.fillRect(sx + 4, sy + bh - 6, (bw - 8) * frac, 3);
       } else if (b.type === 'ranch') {
         this.drawRanch(ctx, b, sx, sy, bw, bh, p);
+      } else if (b.type === 'farm') {
+        this.drawFarm(ctx, b, sx, sy, bw, bh, p);
       } else {
         ctx.fillStyle = BUILDING_COLORS[b.type];
         roundRect(ctx, sx + 2, sy + 2, bw - 4, bh - 4, 5);
@@ -223,13 +226,6 @@ export class Renderer {
           roundRect(ctx, sx + 2, sy + 2, bw - 4, bh - 4, 5);
           ctx.fill();
           this.glyph('🔥', sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.6);
-        }
-        // Farm growth bar.
-        if (b.type === 'farm' && b.growth > 0.02) {
-          ctx.fillStyle = '#00000055';
-          ctx.fillRect(sx + 4, sy + bh - 6, bw - 8, 3);
-          ctx.fillStyle = '#8ed66b';
-          ctx.fillRect(sx + 4, sy + bh - 6, (bw - 8) * b.growth, 3);
         }
         // Worker badge (staffing) on job buildings: green = full, amber = short.
         if (def.jobs > 0 && p > 12) {
@@ -497,6 +493,40 @@ export class Renderer {
       ctx.fill();
       ctx.fillStyle = '#eef3e8';
       ctx.fillText(label, bx + 3, by + 1);
+    }
+  }
+
+  /** A field: tilled soil + furrows inside a fence, with a growth bar and the crop marker. */
+  private drawFarm(ctx: CanvasRenderingContext2D, b: Building, sx: number, sy: number, bw: number, bh: number, p: number): void {
+    // Tilled soil. NOTE: generic for every crop for now — per-crop designs plug in here later via
+    // cropDesign(b.crop) / CROP_DESIGN once real crop art exists.
+    ctx.fillStyle = '#7a5a34';
+    roundRect(ctx, sx + 1, sy + 1, bw - 2, bh - 2, 4);
+    ctx.fill();
+    // Furrow lines.
+    ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+    ctx.lineWidth = 1;
+    const rows = Math.max(2, Math.round(bh / p));
+    for (let i = 1; i < rows; i++) {
+      const yy = sy + (i / rows) * bh;
+      ctx.beginPath();
+      ctx.moveTo(sx + 3, yy);
+      ctx.lineTo(sx + bw - 3, yy);
+      ctx.stroke();
+    }
+    // Fence rail around the plot.
+    ctx.strokeStyle = '#a4813f';
+    ctx.lineWidth = Math.max(1.5, p * 0.09);
+    roundRect(ctx, sx + 2, sy + 2, bw - 4, bh - 4, 4);
+    ctx.stroke();
+    // Crop marker.
+    if (p > 10 && b.crop) this.glyph(CROP_META[b.crop].emoji, sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.42);
+    // Growth bar along the bottom.
+    if ((b.growth ?? 0) > 0.02) {
+      ctx.fillStyle = '#00000055';
+      ctx.fillRect(sx + 4, sy + bh - 6, bw - 8, 3);
+      ctx.fillStyle = '#8ed66b';
+      ctx.fillRect(sx + 4, sy + bh - 6, (bw - 8) * (b.growth ?? 0), 3);
     }
   }
 }

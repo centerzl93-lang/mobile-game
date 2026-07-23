@@ -1,7 +1,7 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-07-22 (ranch overhaul)
+> Last updated: 2026-07-22 (farm overhaul)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -12,9 +12,31 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest feature: the **ranch overhaul** (this session) — see below. Prior milestones (the
-trading-post & merchant overhaul; manual staffing + 16 seed-gated crops) remain in place.
-Reference commits by message, not SHA (this doc sits one commit behind its own history).
+Latest feature: the **farm overhaul** (this session) — see below. Prior milestones (the ranch
+overhaul; the trading-post & merchant overhaul; manual staffing + 16 seed-gated crops; the
+"Little Village" rename that dropped all Banished references) remain in place. Reference commits by
+message, not SHA (this doc sits one commit behind its own history).
+
+### Farm overhaul
+Fields now mirror ranches and lay the groundwork for crop visuals.
+- **Sizable fields.** Placement sizing was generalized from ranch-only to a shared `SIZABLE`
+  map (`types.ts`, `{ranch,farm}: {min:4,max:8}`). `main.ts`/`ui.ts` renamed the ranch size
+  widget to a generic one (`sizeW/sizeH`, `onSizeChange`, `showSizeWidget/hideSizeWidget`);
+  `placeBuilding`/`makeBuilding` init `w/h` for any `SIZABLE` type. Farm def is now 4×4.
+- **Area-scaled harvest.** Autumn yield ×`(footprint area / FARM_BASE_AREA=16)`, so an 8×8 field
+  reaps ~4× a 4×4 (`simulation.ts` harvest block). Growth/timing unchanged.
+- **Seasonal behavior (confirmed, unchanged):** `+0.5` growth on the transition into Spring and
+  into Summer (→ 1.0 by autumn), harvest + reset on the transition into Autumn. A field started
+  mid-year only catches the growing-season transitions that occur while it exists ⇒ partial yield.
+- **Fenced-field rendering.** 2D `drawFarm` (tilled soil + furrows + fence + growth bar + crop
+  emoji); 3D generalized `makeRanchPen → makeFencedPlot(fw,fh,{shed,ground})` — farm = fenced plot,
+  no shed. Farm inspect shows Field size + Growth%.
+- **Per-crop design scaffold (no visual yet).** `CropDesign`/`CROP_DESIGN` (one color + reserved
+  `model` slot per crop) + `cropDesign(crop)` accessor. Renderers mark the hook but draw a generic
+  field for now — real crop art plugs in there later.
+- **Save migration** (still v12): legacy 3×3 farms default `w/h`=4.
+
+### Ranch overhaul
 
 ### Ranch overhaul
 Ranches went from a fixed 3×3 building over a *global* herd resource to real, sizable pens with

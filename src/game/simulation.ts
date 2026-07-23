@@ -45,6 +45,7 @@ import {
   RANCH_BREED_BONUS_CHANCE,
   RANCH_SPLIT_MIN,
   SLAUGHTER_YIELD,
+  FARM_BASE_AREA,
   footprintW,
   footprintH,
   Crop,
@@ -1066,7 +1067,9 @@ function endSeason(s: GameState, log: LogFn): void {
       if (season === 'Spring' || season === 'Summer') b.growth = Math.min(1, b.growth + 0.5);
       if (season === 'Autumn' && b.workers.length > 0) {
         const crop = CROP_META[b.crop];
-        const yield_ = b.workers.length * FARM_FOOD_PER_WORKER * b.growth * crop.yieldMult;
+        // A bigger field yields proportionally more (area relative to the 4×4 baseline).
+        const areaFactor = (footprintW(b) * footprintH(b)) / FARM_BASE_AREA;
+        const yield_ = b.workers.length * FARM_FOOD_PER_WORKER * b.growth * crop.yieldMult * areaFactor;
         if (yield_ > 1) {
           b.store[crop.food] = (b.store[crop.food] ?? 0) + yield_;
           log(`A field yielded ${Math.round(yield_)} ${crop.label.toLowerCase()} to harvest`, 'good');

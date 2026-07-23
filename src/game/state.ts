@@ -8,6 +8,7 @@ import {
   footprintW,
   footprintH,
   ranchCapacity,
+  SIZABLE,
   isHouse,
   houseCapacityOf,
   BARN_CAPACITY,
@@ -75,9 +76,11 @@ function makeBuilding(s: { nextId: number }, type: BuildingType, x: number, y: n
     animal: 'cattle',
     store: {},
   };
-  if (type === 'ranch') {
+  if (SIZABLE[type]) {
     b.w = def.w;
     b.h = def.h;
+  }
+  if (type === 'ranch') {
     b.animals = 0;
     b.maxAnimals = ranchCapacity(b);
     b.breedProgress = 0;

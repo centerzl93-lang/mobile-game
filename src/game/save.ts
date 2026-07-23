@@ -99,6 +99,12 @@ export function loadGame(slot = 0): GameState | null {
       if (typeof b.breedProgress !== 'number') b.breedProgress = 0;
       if (typeof b.maxAnimals !== 'number') b.maxAnimals = ranchCapacity(b);
     }
+    // Fields became sizable too; default legacy 3×3 farms to the minimum footprint.
+    for (const b of s.buildings) {
+      if (b.type !== 'farm') continue;
+      if (typeof b.w !== 'number') b.w = RANCH_MIN;
+      if (typeof b.h !== 'number') b.h = RANCH_MIN;
+    }
     return s;
   } catch {
     return null;

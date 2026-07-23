@@ -275,7 +275,7 @@ test.describe('trading post & merchant', () => {
       s.buildings.push({ id: s.nextId++, type: 'trading', x: barn.x, y: barn.y, built: true, progress: 99,
         workers: [s.citizens[0].id], desiredWorkers: 1, growth: 0, output: 'coal', recipe: 'iron', store: {}, orders: {} });
       Object.assign(s.merchant, { phase: 'away', present: false, cooldown: true, category: null, stock: {}, seedStock: [], boat: null });
-      g.debugAdvance(600); // one full season
+      g.debugAdvance(630); // just past one full season (nudge clear of the exact float boundary)
       return { phase: s.merchant.phase, cooldown: s.merchant.cooldown };
     });
     expect(out.phase).toBe('away'); // cooldown blocked the arrival this season
@@ -344,7 +344,7 @@ test.describe('ranch', () => {
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       // Place a 6×6 cattle ranch via the sized placement path.
-      g.ranchW = 6; g.ranchH = 6;
+      g.sizeW = 6; g.sizeH = 6;
       let id: number | null = null;
       for (let r = 3; r < 14 && id == null; r++)
         for (let dy = -r; dy <= r && id == null; dy++)
@@ -370,13 +370,13 @@ test.describe('ranch', () => {
       const id = eval(mk)('cattle', 2, 10, 6, 6);
       const s = g.state;
       const b = s.buildings.find((x: any) => x.id === id);
-      g.debugAdvance(600 * 2); // two seasons → the guaranteed-breeding floor
+      g.debugAdvance(600 * 2 + 30); // two seasons (nudged past the float boundary) → the breeding floor
       const afterTwo = b.animals;
       // Now push to the cap and confirm excess births convert to product, not more animals.
       // Measure leather (a by-product villagers never eat, unlike meat) so the delta is stable.
       b.animals = 10; b.maxAnimals = 10; b.breedProgress = 0;
       const leatherBefore = totalLeather(s);
-      g.debugAdvance(600 * 2);
+      g.debugAdvance(600 * 2 + 30);
       return { afterTwo, cappedAt: b.animals, leatherGained: totalLeather(s) - leatherBefore };
       function totalLeather(st: any) {
         let n = 0;
@@ -460,6 +460,92 @@ test.describe('ranch', () => {
     expect(out.worker).toBe(1);
     expect(out.animals).toBeGreaterThan(0); // some head penned
     expect(out.barnCattle).toBeLessThan(8); // pulled from the barn
+  });
+});
+
+test.describe('farm', () => {
+  // Synthetic built field at the barn's spot, staffed so it harvests, with a preset growth.
+  const mkFarm = `(crop, growth, w, h, workerIdx) => {
+    const g = window.__village;
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    const f = { id: s.nextId++, type: 'farm', x: barn.x, y: barn.y, built: true, progress: 99,
+      workers: [s.citizens[workerIdx].id], desiredWorkers: 1, growth, output: 'coal', recipe: 'iron',
+      store: {}, crop, w, h };
+    s.citizens[workerIdx].jobId = f.id;
+    s.buildings.push(f);
+    return f.id;
+  }`;
+
+  test('a field is sized like a ranch (steppers clamp 4–8) and keeps its footprint', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true);
+      const s = g.state;
+      g.onSelectBuild('farm'); // starts at the 4×4 minimum
+      g.onSizeChange('w', 100); // clamps to 8
+      g.onSizeChange('h', -100); // clamps to the 4 minimum
+      const clamped = { w: g.sizeW, h: g.sizeH };
+      // Place a 6×5 field via the sized placement path.
+      g.sizeW = 6; g.sizeH = 5;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      let id: number | null = null;
+      for (let r = 3; r < 14 && id == null; r++)
+        for (let dy = -r; dy <= r && id == null; dy++)
+          for (let dx = -r; dx <= r && id == null; dx++)
+            if (g.debugCanPlace('farm', barn.x + dx, barn.y + dy).ok) id = g.debugPlace('farm', barn.x + dx, barn.y + dy);
+      const b = s.buildings.find((x: any) => x.id === id);
+      return { clamped, w: b.w, h: b.h };
+    });
+    expect(out.clamped).toEqual({ w: 8, h: 4 });
+    expect(out.w).toBe(6);
+    expect(out.h).toBe(5);
+  });
+
+  test('a bigger field yields a bigger autumn harvest (yield scales with area)', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true);
+      const s = g.state;
+      s.seeds = ['wheat', 'corn'];
+      const small = eval(mk)('wheat', 1, 4, 4, 0); // grain, 16 tiles
+      const big = eval(mk)('corn', 1, 8, 8, 1); // corn, 64 tiles (4× area), same growth & staffing
+      // Sit just before the turn into Autumn, then tip over it so both fields harvest.
+      s.season = 1; // Summer → next transition is Autumn
+      s.seasonTimer = 599.95;
+      g.debugAdvance(0.2);
+      const sf = s.buildings.find((b: any) => b.id === small);
+      const bf = s.buildings.find((b: any) => b.id === big);
+      return { small: sf.store.grain ?? 0, big: bf.store.corn ?? 0 };
+    }, mkFarm);
+    expect(out.small).toBeGreaterThan(0);
+    expect(out.big / out.small).toBeGreaterThan(3.5); // ~4× the area ⇒ ~4× the harvest
+    expect(out.big / out.small).toBeLessThan(4.5);
+  });
+
+  test('a field only partly grown by autumn yields a partial harvest', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true);
+      const s = g.state;
+      s.seeds = ['wheat', 'corn'];
+      // Growth accrues +0.5 per spring/summer season, so a field started mid-year reaches autumn
+      // only partly grown. A full (1.0) vs half-grown (0.5) field, same size/staffing, shows the effect.
+      const full = eval(mk)('wheat', 1.0, 4, 4, 0);
+      const half = eval(mk)('corn', 0.5, 4, 4, 1);
+      s.season = 1;
+      s.seasonTimer = 599.95;
+      g.debugAdvance(0.2);
+      const ff = s.buildings.find((b: any) => b.id === full);
+      const hf = s.buildings.find((b: any) => b.id === half);
+      return { full: ff.store.grain ?? 0, half: hf.store.corn ?? 0 };
+    }, mkFarm);
+    expect(out.full).toBeGreaterThan(0);
+    expect(out.half / out.full).toBeGreaterThan(0.4); // half-grown ⇒ ~half the harvest
+    expect(out.half / out.full).toBeLessThan(0.6);
   });
 });
 

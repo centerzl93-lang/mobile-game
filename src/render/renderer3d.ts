@@ -659,7 +659,8 @@ export class Renderer3D {
     }
     for (const b of s.buildings) {
       // A ranch is a variable-size pen (model-less); everything else uses its model or a box.
-      const wantModel = b.type !== 'ranch' && !!this.models.buildingClone(b.type);
+      // Ranch and field are always drawn as fenced plots, never a model.
+      const wantModel = b.type !== 'ranch' && b.type !== 'farm' && !!this.models.buildingClone(b.type);
       let obj = this.buildingMeshes.get(b.id);
       // Recreate if missing or if the desired kind (model vs box) changed since last build.
       if (!obj || !!obj.userData.model !== wantModel) {
@@ -698,7 +699,8 @@ export class Renderer3D {
   private makeBuildingBox(b: Building): THREE.Object3D {
     const fw = footprintW(b);
     const fh = footprintH(b);
-    if (b.type === 'ranch') return this.makeRanchPen(fw, fh);
+    if (b.type === 'ranch') return this.makeFencedPlot(fw, fh, { shed: true, ground: 0x6f7a3f });
+    if (b.type === 'farm') return this.makeFencedPlot(fw, fh, { shed: false, ground: 0x7a5a34 });
     const h = buildingHeight(b.type);
     const geo = new THREE.BoxGeometry(fw * 0.9, h, fh * 0.9);
     geo.translate(0, h / 2, 0);
@@ -707,17 +709,28 @@ export class Renderer3D {
     return mesh;
   }
 
-  /** A fenced pen: a low corner shed plus thin fence rails around the plot border. */
-  private makeRanchPen(fw: number, fh: number): THREE.Object3D {
+  /**
+   * A fenced plot: a low ground slab (pen grass or tilled soil) with thin fence rails around the
+   * border, optionally a corner shed. Used for both the ranch (with shed) and the field (without).
+   */
+  private makeFencedPlot(fw: number, fh: number, opts: { shed: boolean; ground: number }): THREE.Object3D {
     const group = new THREE.Group();
-    const mat = () => new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0 });
+    // Ground slab covering the plot (the tilled soil / pen floor).
+    const slabH = 0.12;
+    const slab = new THREE.Mesh(
+      new THREE.BoxGeometry(fw - 0.1, slabH, fh - 0.1),
+      new THREE.MeshStandardMaterial({ color: opts.ground, roughness: 1 }),
+    );
+    slab.position.y = slabH / 2;
+    group.add(slab);
     // Corner shed (top-left 1×1 tile), centred within the group whose origin is the plot centre.
-    const shedH = 1.2;
-    const shedMat = mat();
-    shedMat.color.set(BUILDING_COLORS.ranch);
-    const shed = new THREE.Mesh(new THREE.BoxGeometry(0.85, shedH, 0.85), shedMat);
-    shed.position.set(-fw / 2 + 0.5, shedH / 2, -fh / 2 + 0.5);
-    group.add(shed);
+    if (opts.shed) {
+      const shedH = 1.2;
+      const shedMat = new THREE.MeshStandardMaterial({ color: BUILDING_COLORS.ranch, roughness: 1 });
+      const shed = new THREE.Mesh(new THREE.BoxGeometry(0.85, shedH, 0.85), shedMat);
+      shed.position.set(-fw / 2 + 0.5, shedH / 2, -fh / 2 + 0.5);
+      group.add(shed);
+    }
     // Fence rails: a thin low bar along each of the four sides.
     const railH = 0.4;
     const railMat = new THREE.MeshStandardMaterial({ color: 0xa4813f, roughness: 1 });
@@ -729,7 +742,7 @@ export class Renderer3D {
     const east = new THREE.Mesh(vbar(), railMat); east.position.set(fw / 2 - 0.06, railH / 2, 0);
     group.add(north, south, west, east);
     group.userData.model = false;
-    group.userData.ranch = true; // so styleBuilding only tints the shed, not the rails
+    group.userData.ranch = true; // reuse the ranch flag so styleBuilding leaves the plot's own colours
     return group;
   }
 

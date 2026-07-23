@@ -301,6 +301,53 @@ export function ranchCapacity(b: Building): number {
   return Math.floor((footprintW(b) * footprintH(b)) / ANIMAL_TILES[animal]);
 }
 
+// ---- Player-sizable buildings (drag/step the footprint before building) ----
+/** Building types whose footprint the player sets at placement, and the tile bounds allowed. */
+export const SIZABLE: Partial<Record<BuildingType, { min: number; max: number }>> = {
+  ranch: { min: RANCH_MIN, max: RANCH_MAX },
+  farm: { min: RANCH_MIN, max: RANCH_MAX },
+};
+
+// ---- Farming ----
+/** Baseline field area (a 4×4 field) that `FARM_FOOD_PER_WORKER` is tuned against; harvest scales
+ * with `footprint / FARM_BASE_AREA`, so a bigger field yields proportionally more. */
+export const FARM_BASE_AREA = RANCH_MIN * RANCH_MIN;
+
+/**
+ * Per-crop visual design. Groundwork for differentiating what's growing in a field: each crop has a
+ * distinct `color` and a reserved `model` slot for future art. Renderers read this via the design
+ * hook; today they draw a generic field, so this is scaffolding for when real crop designs land.
+ */
+export interface CropDesign {
+  /** Distinct tint for this crop (hex). Used by future per-crop field rendering. */
+  color: number;
+  /** Reserved: key of a future crop model/sprite set. Undefined ⇒ generic field. */
+  model?: string;
+}
+export const CROP_DESIGN: Record<Crop, CropDesign> = {
+  wheat: { color: 0xd8c15a },
+  corn: { color: 0xf2cf4a },
+  potato: { color: 0xc99a5e },
+  rice: { color: 0xefe9d6 },
+  barley: { color: 0xd8c98a },
+  carrot: { color: 0xe0913a },
+  tomato: { color: 0xd6483c },
+  onion: { color: 0xc9a9d0 },
+  pepper: { color: 0xd43f34 },
+  cabbage: { color: 0x7fb05a },
+  beans: { color: 0xa5794a },
+  pumpkin: { color: 0xe08a34 },
+  apple: { color: 0x8fc04a },
+  grapes: { color: 0x8a5ac0 },
+  strawberry: { color: 0xe0455a },
+  melon: { color: 0x8fce6a },
+};
+
+/** The design for a crop (or a neutral fallback when a field has no crop). */
+export function cropDesign(crop: Crop | undefined): CropDesign {
+  return crop ? CROP_DESIGN[crop] : { color: 0x8a6a3c };
+}
+
 export type BuildCategory = 'housing' | 'food' | 'resources' | 'civic' | 'trade';
 
 export interface BuildingDef {
@@ -805,9 +852,9 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     desc: 'Collects food from forest in its work circle — more trees, more food.',
   },
   farm: {
-    type: 'farm', name: 'Field', emoji: '🌱', category: 'food', w: 3, h: 3,
+    type: 'farm', name: 'Field', emoji: '🌱', category: 'food', w: 4, h: 4,
     cost: { wood: 6 }, jobs: 2, buildTime: 5,
-    desc: 'Grows a chosen crop (wheat, vegetables, or fruit) through the year; harvested each autumn.',
+    desc: 'A fenced field for a chosen crop. Drag its size (4×4 up to 8×8) before building — a bigger field yields a bigger harvest. Grows through spring/summer and is reaped each autumn.',
   },
   fishing: {
     type: 'fishing', name: 'Fishing Hut', emoji: '🎣', category: 'food', w: 2, h: 2,

@@ -1,9 +1,8 @@
 # Little Village 🏡🌲
 
-A small **survival village-builder** for your iPhone — an original game inspired
-by the *gameplay* of Banished (resource-chain, keep-your-people-alive city
-building). It uses none of Banished's code, art, or audio; everything here is
-original and built for personal use.
+A small, original **survival village-builder** for your iPhone — a resource-chain,
+keep-your-people-alive city builder. Everything here is original artwork, code,
+and audio, built for personal use.
 
 It runs as an **installable web app (PWA)** hosted free on GitHub Pages — no App
 Store, no Mac, no Xcode, no Apple Developer account. You add it to your Home

@@ -1,15 +1,15 @@
-# Session Handoff — Banished-inspired Village Builder PWA
+# Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
 > Last updated: 2026-07-22 (ranch overhaul)
 
 ## Project
-Original Banished-inspired 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
+**Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
 Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 
 - **Repo:** `centerzl93-lang/mobile-game`
 - **Working branch:** `claude/banished-ios-app-b4zott` (only push here; don't open PRs unless asked)
-- **Asset rule:** CC0/permissive only — never Banished's copyrighted assets.
+- **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
 Latest feature: the **ranch overhaul** (this session) — see below. Prior milestones (the

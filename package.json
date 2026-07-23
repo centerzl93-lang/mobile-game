@@ -1,9 +1,9 @@
 {
-  "name": "mobile-game",
+  "name": "little-village",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "An original Banished-inspired survival city-builder, installable on iPhone as a PWA.",
+  "description": "Little Village — an original survival village-builder, installable on iPhone as a PWA.",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

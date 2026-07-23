@@ -4,8 +4,7 @@
 bundled yet — this file is a template to fill in as you add assets.
 
 Use only assets whose license permits use in this project (CC0 needs no attribution; CC-BY
-requires it). **Do not add assets from commercial games** (e.g. Banished) — this project is an
-original, inspired-by work.
+requires it). **Do not add assets from commercial games** — this project is entirely original.
 
 | File | Model | Author | Source | License |
 |------|-------|--------|--------|---------|

@@ -5,6 +5,9 @@ import {
   BuildingType,
   Sex,
   BUILDING_DEFS,
+  footprintW,
+  footprintH,
+  ranchCapacity,
   isHouse,
   houseCapacityOf,
   BARN_CAPACITY,
@@ -56,7 +59,7 @@ export function makeCitizen(s: { nextId: number }, sex: Sex, age: number, x: num
 
 function makeBuilding(s: { nextId: number }, type: BuildingType, x: number, y: number, built: boolean): Building {
   const def = BUILDING_DEFS[type];
-  return {
+  const b: Building = {
     id: s.nextId++,
     type,
     x,
@@ -72,6 +75,14 @@ function makeBuilding(s: { nextId: number }, type: BuildingType, x: number, y: n
     animal: 'cattle',
     store: {},
   };
+  if (type === 'ranch') {
+    b.w = def.w;
+    b.h = def.h;
+    b.animals = 0;
+    b.maxAnimals = ranchCapacity(b);
+    b.breedProgress = 0;
+  }
+  return b;
 }
 
 export function newGame(
@@ -166,8 +177,7 @@ function placeStartHouses(s: GameState, start: { x: number; y: number }, count: 
       }
     }
     for (const b of s.buildings) {
-      const bd = BUILDING_DEFS[b.type];
-      if (x < b.x + bd.w && x + 2 > b.x && y < b.y + bd.h && y + 2 > b.y) return false;
+      if (x < b.x + footprintW(b) && x + 2 > b.x && y < b.y + footprintH(b) && y + 2 > b.y) return false;
     }
     return true;
   };
@@ -215,8 +225,7 @@ export function jobSlots(s: GameState): { filled: number; total: number } {
 }
 
 export function buildingCenter(b: Building): { x: number; y: number } {
-  const def = BUILDING_DEFS[b.type];
-  return { x: b.x + def.w / 2, y: b.y + def.h / 2 };
+  return { x: b.x + footprintW(b) / 2, y: b.y + footprintH(b) / 2 };
 }
 
 export { makeBuilding };

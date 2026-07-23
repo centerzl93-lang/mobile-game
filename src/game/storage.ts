@@ -2,7 +2,8 @@ import {
   GameState,
   Building,
   ResourceKind,
-  BUILDING_DEFS,
+  footprintW,
+  footprintH,
   BARN_CAPACITY,
   MARKET_CAPACITY,
   FOOD_KINDS,
@@ -14,8 +15,7 @@ export interface Pos {
 }
 
 function center(b: Building): Pos {
-  const def = BUILDING_DEFS[b.type];
-  return { x: b.x + def.w / 2, y: b.y + def.h / 2 };
+  return { x: b.x + footprintW(b) / 2, y: b.y + footprintH(b) / 2 };
 }
 
 function dist2(a: Pos, b: Pos): number {

@@ -13,6 +13,12 @@ import {
   BUILDING_DEFS,
   buildTimeOf,
   workRadiusOf,
+  footprintW,
+  footprintH,
+  ranchCapacity,
+  RANCH_MIN,
+  RANCH_MAX,
+  RANCH_SPLIT_MIN,
   isHouse,
   houseCapacityOf,
   Crop,
@@ -42,6 +48,10 @@ import {
   dismissMerchant,
   TradeBasket,
   TradeResult,
+  cullRanch,
+  splitRanch,
+  transferRanch,
+  eligibleRanchTargets,
   igniteBuilding,
   acceptNomads,
   rejectNomads,
@@ -73,6 +83,9 @@ class Game {
   currentSlot = 0;
   speedIndex = 0;
   selectedBuild: BuildingType | null = null;
+  /** Player-chosen ranch footprint (tiles) while a ranch is selected for placement. */
+  ranchW = RANCH_MIN;
+  ranchH = RANCH_MIN;
   selectedPath: PathTier | null = null;
   demolish = false;
   harvestMode = false;
@@ -112,6 +125,11 @@ class Game {
       onSetForesterReplant: (id, on) => this.setForesterReplant(id, on),
       onSetCrop: (id, crop) => this.setCrop(id, crop),
       onSetAnimal: (id, animal) => this.setAnimal(id, animal),
+      onRanchSize: (dim, delta) => this.onRanchSize(dim, delta),
+      onSetRanchMax: (id, delta) => this.setRanchMax(id, delta),
+      onCullRanch: (id) => this.cullRanch(id),
+      onSplitRanch: (from, to) => this.splitRanch(from, to),
+      onTransferRanch: (from, to) => this.transferRanch(from, to),
       onSetTradeOrder: (id, kind, delta) => this.setTradeOrder(id, kind, delta),
       onBasketTrade: (basket) => this.trade(basket),
       onDismissMerchant: () => this.dismissMerchant(),
@@ -176,6 +194,22 @@ class Game {
     this.demolish = false;
     this.clearInspect();
     this.input.setMode('normal');
+    // A fresh ranch starts at the minimum size; show the resize widget while it's selected.
+    if (t === 'ranch') {
+      this.ranchW = RANCH_MIN;
+      this.ranchH = RANCH_MIN;
+      this.ui.showRanchSize(this.ranchW, this.ranchH);
+    } else {
+      this.ui.hideRanchSize();
+    }
+  }
+
+  /** Resize the pending ranch footprint (clamped RANCH_MIN..RANCH_MAX). */
+  private onRanchSize(dim: 'w' | 'h', delta: number): void {
+    const clamp = (v: number) => Math.max(RANCH_MIN, Math.min(RANCH_MAX, v));
+    if (dim === 'w') this.ranchW = clamp(this.ranchW + delta);
+    else this.ranchH = clamp(this.ranchH + delta);
+    this.ui.showRanchSize(this.ranchW, this.ranchH);
   }
 
   private onSelectPath(tier: PathTier | null): void {
@@ -183,6 +217,7 @@ class Game {
     this.selectedBuild = null;
     this.demolish = false;
     this.clearInspect();
+    this.ui.hideRanchSize();
     this.input.setMode(tier ? 'path' : 'normal');
   }
 
@@ -193,6 +228,7 @@ class Game {
       this.selectedPath = null;
       this.harvestMode = false;
       this.clearInspect();
+      this.ui.hideRanchSize();
       this.input.setMode('normal');
     }
   }
@@ -205,6 +241,7 @@ class Game {
       this.selectedPath = null;
       this.demolish = false;
       this.clearInspect();
+      this.ui.hideRanchSize();
     }
     this.input.setMode(active ? 'marquee' : 'normal');
   }
@@ -276,10 +313,51 @@ class Game {
 
   private setAnimal(id: number, animal: RanchAnimal): void {
     const b = this.state.buildings.find((x) => x.id === id);
-    if (b) {
+    // Only an empty pen can switch species; a stocked one keeps its herd.
+    if (b && (b.animals ?? 0) === 0) {
       b.animal = animal;
+      b.maxAnimals = ranchCapacity(b); // capacity depends on the animal's size
       this.persist();
+      if (this.inspectSel) this.refreshInspect();
     }
+  }
+
+  /** Set a ranch's desired herd cap (clamped 0..capacity). */
+  private setRanchMax(id: number, delta: number): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (!b || b.type !== 'ranch') return;
+    b.maxAnimals = Math.max(0, Math.min(ranchCapacity(b), (b.maxAnimals ?? ranchCapacity(b)) + delta));
+    this.persist();
+    if (this.inspectSel) this.refreshInspect();
+  }
+
+  private cullRanch(id: number): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (!b || b.type !== 'ranch') return;
+    cullRanch(this.state, b);
+    this.ui.flashHint('Herd sent to slaughter');
+    this.persist();
+    if (this.inspectSel) this.refreshInspect();
+  }
+
+  private splitRanch(fromId: number, toId: number): void {
+    const from = this.state.buildings.find((x) => x.id === fromId);
+    const to = this.state.buildings.find((x) => x.id === toId);
+    if (!from || !to) return;
+    const r = splitRanch(this.state, from, to);
+    this.ui.flashHint(r.ok ? `Moved ${r.moved} head to the other ranch` : r.reason ?? 'Cannot split');
+    if (r.ok) this.persist();
+    if (this.inspectSel) this.refreshInspect();
+  }
+
+  private transferRanch(fromId: number, toId: number): void {
+    const from = this.state.buildings.find((x) => x.id === fromId);
+    const to = this.state.buildings.find((x) => x.id === toId);
+    if (!from || !to) return;
+    const r = transferRanch(this.state, from, to);
+    this.ui.flashHint(r.ok ? `Transferred ${r.moved} head` : r.reason ?? 'Cannot transfer');
+    if (r.ok) this.persist();
+    if (this.inspectSel) this.refreshInspect();
   }
 
   private trade(basket: TradeBasket): TradeResult {
@@ -488,17 +566,19 @@ class Game {
   private placeAtReticle(): void {
     if (!this.selectedBuild) return;
     const { tx, ty } = this.reticleTile(this.selectedBuild);
-    const check = canPlace(this.state, this.selectedBuild, tx, ty);
+    const { w, h } = this.placeSize(this.selectedBuild);
+    const check = canPlace(this.state, this.selectedBuild, tx, ty, w, h);
     if (!check.ok) {
       this.ui.flashHint(check.reason ?? 'Cannot build here');
       return;
     }
-    placeBuilding(this.state, this.selectedBuild, tx, ty);
+    placeBuilding(this.state, this.selectedBuild, tx, ty, w, h);
     this.ui.log(`${BUILDING_DEFS[this.selectedBuild].name} site marked — builders will haul materials`, 'info');
     this.persist();
     if (!canAfford(this.state, this.selectedBuild)) {
       this.selectedBuild = null;
       this.ui.clearSelection();
+      this.ui.hideRanchSize();
       this.ui.flashHint('Not enough materials in storage for another');
     }
   }
@@ -507,8 +587,7 @@ class Game {
     const tx = Math.floor(wx);
     const ty = Math.floor(wy);
     for (const b of this.state.buildings) {
-      const d = BUILDING_DEFS[b.type];
-      if (tx >= b.x && tx < b.x + d.w && ty >= b.y && ty < b.y + d.h) return b;
+      if (tx >= b.x && tx < b.x + footprintW(b) && ty >= b.y && ty < b.y + footprintH(b)) return b;
     }
     return null;
   }
@@ -599,7 +678,12 @@ class Game {
         if (b.type === 'farm') {
           rows.push({ label: 'Crop', value: b.crop ? `${CROP_META[b.crop].emoji} ${CROP_META[b.crop].label}` : '🌱 No seed — buy from a trader' });
         }
-        if (b.type === 'ranch') { const a = ANIMAL_META[b.animal ?? 'cattle']; rows.push({ label: 'Raising', value: `${a.emoji} ${a.label}` }); }
+        if (b.type === 'ranch') {
+          const a = ANIMAL_META[b.animal ?? 'cattle'];
+          rows.push({ label: 'Raising', value: `${a.emoji} ${a.label}` });
+          rows.push({ label: 'Herd', value: `${Math.floor(b.animals ?? 0)} / ${ranchCapacity(b)} (${footprintW(b)}×${footprintH(b)})` });
+          rows.push({ label: 'Breed up to', value: `${b.maxAnimals ?? ranchCapacity(b)}` });
+        }
         if (b.type === 'barn') {
           let load = 0;
           for (const k of RESOURCE_KINDS) load += b.store[k] ?? 0;
@@ -638,7 +722,23 @@ class Game {
           }
         } else if (b.type === 'ranch') {
           const cur = b.animal ?? 'cattle';
-          controls.toggle = { group: 'animal', options: RANCH_ANIMALS.map((a) => ({ v: a, label: `${ANIMAL_META[a].emoji} ${ANIMAL_META[a].label}`, on: cur === a })) };
+          const empty = (b.animals ?? 0) === 0;
+          // Species can only change on an empty pen (a stocked herd stays put).
+          if (empty) {
+            controls.toggle = { group: 'animal', options: RANCH_ANIMALS.map((a) => ({ v: a, label: `${ANIMAL_META[a].emoji} ${ANIMAL_META[a].label}`, on: cur === a })) };
+          }
+          const targets = eligibleRanchTargets(this.state, b).map((t) => ({
+            id: t.id,
+            label: `Ranch #${t.id} · ${Math.floor(t.animals ?? 0)}/${ranchCapacity(t)}`,
+          }));
+          controls.ranch = {
+            animals: Math.floor(b.animals ?? 0),
+            capacity: ranchCapacity(b),
+            max: b.maxAnimals ?? ranchCapacity(b),
+            canSplit: (b.animals ?? 0) >= RANCH_SPLIT_MIN && targets.length > 0,
+            canTransfer: (b.animals ?? 0) > 0 && targets.length > 0,
+            targets,
+          };
         } else if (b.type === 'trading') {
           controls.tradingPost = { merchantDocked: this.state.merchant.present };
         }
@@ -681,15 +781,23 @@ class Game {
     }
   }
 
-  /** Debug/testing helper: check a placement at a tile. */
+  /** Debug/testing helper: check a placement at a tile (uses the current ranch size). */
   debugCanPlace(type: BuildingType, x: number, y: number): { ok: boolean; reason?: string } {
-    return canPlace(this.state, type, x, y);
+    const { w, h } = this.placeSize(type);
+    return canPlace(this.state, type, x, y, w, h);
   }
 
   /** Debug/testing helper: place a building (as a construction site) at a tile. */
   debugPlace(type: BuildingType, x: number, y: number): number | null {
-    const b = placeBuilding(this.state, type, x, y);
+    const { w, h } = this.placeSize(type);
+    const b = placeBuilding(this.state, type, x, y, w, h);
     return b ? b.id : null;
+  }
+
+  /** Debug/testing helper: a ranch's current head capacity (from its size + animal). */
+  debugRanchCapacity(id: number): number | undefined {
+    const b = this.state.buildings.find((x) => x.id === id);
+    return b ? ranchCapacity(b) : undefined;
   }
 
   /** Debug/testing helper: the current work-circle radius of a building (undefined if none). */
@@ -703,12 +811,19 @@ class Game {
     return findPath(this.state, fx, fy, tx, ty);
   }
 
-  private reticleTile(type: BuildingType): { tx: number; ty: number } {
+  /** Footprint the ghost/placement uses for `type` (the player-sized dims for a ranch). */
+  private placeSize(type: BuildingType): { w: number; h: number } {
+    if (type === 'ranch') return { w: this.ranchW, h: this.ranchH };
     const def = BUILDING_DEFS[type];
+    return { w: def.w, h: def.h };
+  }
+
+  private reticleTile(type: BuildingType): { tx: number; ty: number } {
+    const { w, h } = this.placeSize(type);
     const [cx, cy] = this.camera.centerTile();
     return {
-      tx: Math.round(cx - def.w / 2),
-      ty: Math.round(cy - def.h / 2),
+      tx: Math.round(cx - w / 2),
+      ty: Math.round(cy - h / 2),
     };
   }
 
@@ -751,10 +866,13 @@ class Game {
     };
     if (this.selectedBuild && this.running && !this.state.gameOver) {
       const { tx, ty } = this.reticleTile(this.selectedBuild);
+      const { w, h } = this.placeSize(this.selectedBuild);
       placement.type = this.selectedBuild;
       placement.tx = tx;
       placement.ty = ty;
-      placement.valid = canPlace(this.state, this.selectedBuild, tx, ty).ok;
+      placement.pw = w;
+      placement.ph = h;
+      placement.valid = canPlace(this.state, this.selectedBuild, tx, ty, w, h).ok;
     }
 
     if (this.use2d) {

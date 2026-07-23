@@ -7,6 +7,9 @@ import {
   TileType,
   REFUND_FRACTION,
   workRadiusOf,
+  footprintW,
+  footprintH,
+  ranchCapacity,
 } from '../types';
 import { getTile, inBounds } from './world';
 import { totalStored, addNearest } from './storage';
@@ -16,14 +19,19 @@ export interface PlaceResult {
   reason?: string;
 }
 
-/** Can a building of `type` be placed with its top-left corner at (x,y)? */
-export function canPlace(s: GameState, type: BuildingType, x: number, y: number): PlaceResult {
+/**
+ * Can a building of `type` be placed with its top-left corner at (x,y)? `w`/`h` override the
+ * def footprint (used for the player-sized ranch); they default to the def size.
+ */
+export function canPlace(s: GameState, type: BuildingType, x: number, y: number, w?: number, h?: number): PlaceResult {
   const def = BUILDING_DEFS[type];
+  const fw = w ?? def.w;
+  const fh = h ?? def.h;
   const allowsWater = def.requiresWaterFraction !== undefined; // a dock may sit partly on water
   let waterTiles = 0;
   let landTiles = 0;
-  for (let dy = 0; dy < def.h; dy++) {
-    for (let dx = 0; dx < def.w; dx++) {
+  for (let dy = 0; dy < fh; dy++) {
+    for (let dx = 0; dx < fw; dx++) {
       const tx = x + dx;
       const ty = y + dy;
       if (!inBounds(tx, ty)) return { ok: false, reason: 'Off the map' };
@@ -39,19 +47,18 @@ export function canPlace(s: GameState, type: BuildingType, x: number, y: number)
   }
   // Docks: enough of the footprint over water, and the rest anchored on land.
   if (allowsWater) {
-    const need = Math.ceil(def.w * def.h * def.requiresWaterFraction!);
+    const need = Math.ceil(fw * fh * def.requiresWaterFraction!);
     if (waterTiles < need) return { ok: false, reason: 'Part of it must reach over the water' };
     if (landTiles === 0) return { ok: false, reason: 'It must also touch the shore' };
   }
   // No overlap with existing buildings.
   for (const b of s.buildings) {
-    const bd = BUILDING_DEFS[b.type];
-    if (rectsOverlap(x, y, def.w, def.h, b.x, b.y, bd.w, bd.h)) {
+    if (rectsOverlap(x, y, fw, fh, b.x, b.y, footprintW(b), footprintH(b))) {
       return { ok: false, reason: 'Overlaps a building' };
     }
   }
   // Terrain gating: at least one border tile of a required type.
-  if (def.requiresAdjacent && !borderHasType(s, def, x, y, def.requiresAdjacent)) {
+  if (def.requiresAdjacent && !borderHasType(s, { w: fw, h: fh }, x, y, def.requiresAdjacent)) {
     const label = def.requiresAdjacent.includes('water') ? 'water' : 'rock';
     return { ok: false, reason: `Must be built next to ${label}` };
   }
@@ -59,8 +66,8 @@ export function canPlace(s: GameState, type: BuildingType, x: number, y: number)
   // (mines must touch a foothill, i.e. sit right at a mountain's base).
   if (def.requiresTileAny) {
     let has = false;
-    for (let dy = 0; dy < def.h && !has; dy++) {
-      for (let dx = 0; dx < def.w; dx++) {
+    for (let dy = 0; dy < fh && !has; dy++) {
+      for (let dx = 0; dx < fw; dx++) {
         const t = getTile(s.tiles, x + dx, y + dy)!;
         if (def.requiresTileAny.includes(t.type)) { has = true; break; }
       }
@@ -84,10 +91,11 @@ export function placeBuilding(
   type: BuildingType,
   x: number,
   y: number,
+  w?: number,
+  h?: number,
 ): Building | null {
-  const check = canPlace(s, type, x, y);
+  const check = canPlace(s, type, x, y, w, h);
   if (!check.ok) return null;
-  const def = BUILDING_DEFS[type];
   // No deduction — builders haul the materials to the site during construction.
   const b: Building = {
     id: s.nextId++,
@@ -106,6 +114,14 @@ export function placeBuilding(
     animal: 'cattle',
     store: {},
   };
+  // A ranch carries a custom footprint and its own herd bookkeeping.
+  if (type === 'ranch') {
+    b.w = w ?? BUILDING_DEFS.ranch.w;
+    b.h = h ?? BUILDING_DEFS.ranch.h;
+    b.animals = 0;
+    b.maxAnimals = ranchCapacity(b);
+    b.breedProgress = 0;
+  }
   s.buildings.push(b);
   return b;
 }
@@ -125,7 +141,7 @@ export function canAfford(s: GameState, type: BuildingType): boolean {
  */
 export function demolishBuilding(s: GameState, b: Building): void {
   const def = BUILDING_DEFS[b.type];
-  const at = { x: b.x + def.w / 2, y: b.y + def.h / 2 };
+  const at = { x: b.x + footprintW(b) / 2, y: b.y + footprintH(b) / 2 };
   const idx = s.buildings.indexOf(b);
   if (idx >= 0) s.buildings.splice(idx, 1); // remove first so its own space isn't a target
   for (const k in b.store) {
@@ -170,8 +186,7 @@ function borderHasType(
 }
 
 export function buildingCenterTile(b: Building): { cx: number; cy: number } {
-  const def = BUILDING_DEFS[b.type];
-  return { cx: b.x + def.w / 2, cy: b.y + def.h / 2 };
+  return { cx: b.x + footprintW(b) / 2, cy: b.y + footprintH(b) / 2 };
 }
 
 /** Sum of forest tree-resource within a building's circular work radius. */

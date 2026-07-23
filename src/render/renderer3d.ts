@@ -1,10 +1,13 @@
 import * as THREE from 'three';
 import {
   GameState,
+  Building,
   Tile,
   BUILDING_DEFS,
   BuildingType,
   workRadiusOf,
+  footprintW,
+  footprintH,
   MAP_W,
   MAP_H,
   ADULT_AGE,
@@ -655,8 +658,8 @@ export class Renderer3D {
       }
     }
     for (const b of s.buildings) {
-      const def = BUILDING_DEFS[b.type];
-      const wantModel = !!this.models.buildingClone(b.type); // model available for this type?
+      // A ranch is a variable-size pen (model-less); everything else uses its model or a box.
+      const wantModel = b.type !== 'ranch' && !!this.models.buildingClone(b.type);
       let obj = this.buildingMeshes.get(b.id);
       // Recreate if missing or if the desired kind (model vs box) changed since last build.
       if (!obj || !!obj.userData.model !== wantModel) {
@@ -664,8 +667,8 @@ export class Renderer3D {
           this.disposeBuilding(obj);
           this.buildingMeshes.delete(b.id);
         }
-        obj = wantModel ? this.makeBuildingModel(b.type) : this.makeBuildingBox(b.type);
-        obj.position.set(b.x + def.w / 2, TOP, b.y + def.h / 2);
+        obj = wantModel ? this.makeBuildingModel(b.type) : this.makeBuildingBox(b);
+        obj.position.set(b.x + footprintW(b) / 2, TOP, b.y + footprintH(b) / 2);
         this.enableShadows(obj);
         this.buildingMeshes.set(b.id, obj);
         this.scene.add(obj);
@@ -677,8 +680,7 @@ export class Renderer3D {
     this.emitters = [];
     for (const b of s.buildings) {
       if (!b.built || b.fireTimer || !SMOKE_BUILDINGS.has(b.type)) continue;
-      const def = BUILDING_DEFS[b.type];
-      this.emitters.push([b.x + def.w / 2, TOP + buildingHeight(b.type) + 0.25, b.y + def.h / 2]);
+      this.emitters.push([b.x + footprintW(b) / 2, TOP + buildingHeight(b.type) + 0.25, b.y + footprintH(b) / 2]);
     }
   }
 
@@ -693,14 +695,42 @@ export class Renderer3D {
     });
   }
 
-  private makeBuildingBox(type: BuildingType): THREE.Object3D {
-    const def = BUILDING_DEFS[type];
-    const h = buildingHeight(type);
-    const geo = new THREE.BoxGeometry(def.w * 0.9, h, def.h * 0.9);
+  private makeBuildingBox(b: Building): THREE.Object3D {
+    const fw = footprintW(b);
+    const fh = footprintH(b);
+    if (b.type === 'ranch') return this.makeRanchPen(fw, fh);
+    const h = buildingHeight(b.type);
+    const geo = new THREE.BoxGeometry(fw * 0.9, h, fh * 0.9);
     geo.translate(0, h / 2, 0);
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0 }));
     mesh.userData.model = false;
     return mesh;
+  }
+
+  /** A fenced pen: a low corner shed plus thin fence rails around the plot border. */
+  private makeRanchPen(fw: number, fh: number): THREE.Object3D {
+    const group = new THREE.Group();
+    const mat = () => new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0 });
+    // Corner shed (top-left 1×1 tile), centred within the group whose origin is the plot centre.
+    const shedH = 1.2;
+    const shedMat = mat();
+    shedMat.color.set(BUILDING_COLORS.ranch);
+    const shed = new THREE.Mesh(new THREE.BoxGeometry(0.85, shedH, 0.85), shedMat);
+    shed.position.set(-fw / 2 + 0.5, shedH / 2, -fh / 2 + 0.5);
+    group.add(shed);
+    // Fence rails: a thin low bar along each of the four sides.
+    const railH = 0.4;
+    const railMat = new THREE.MeshStandardMaterial({ color: 0xa4813f, roughness: 1 });
+    const hbar = () => new THREE.BoxGeometry(fw - 0.1, railH, 0.12);
+    const vbar = () => new THREE.BoxGeometry(0.12, railH, fh - 0.1);
+    const north = new THREE.Mesh(hbar(), railMat); north.position.set(0, railH / 2, -fh / 2 + 0.06);
+    const south = new THREE.Mesh(hbar(), railMat); south.position.set(0, railH / 2, fh / 2 - 0.06);
+    const west = new THREE.Mesh(vbar(), railMat); west.position.set(-fw / 2 + 0.06, railH / 2, 0);
+    const east = new THREE.Mesh(vbar(), railMat); east.position.set(fw / 2 - 0.06, railH / 2, 0);
+    group.add(north, south, west, east);
+    group.userData.model = false;
+    group.userData.ranch = true; // so styleBuilding only tints the shed, not the rails
+    return group;
   }
 
   private makeBuildingModel(type: BuildingType): THREE.Object3D {
@@ -715,13 +745,14 @@ export class Renderer3D {
   /** Apply built / construction / fire appearance to whichever object represents a building. */
   private styleBuilding(obj: THREE.Object3D, type: BuildingType, built: boolean, fire: boolean): void {
     const isModel = !!obj.userData.model;
+    const isRanch = !!obj.userData.ranch; // the pen keeps its own shed/rail colours
     obj.traverse((o) => {
       const m = o as THREE.Mesh;
       if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
       const mat = m.material as THREE.MeshStandardMaterial;
       if (!mat || Array.isArray(mat)) return;
       // Box meshes get the flat building color; model meshes keep their own textures/colors.
-      if (!isModel && mat.color) mat.color.set(BUILDING_COLORS[type]);
+      if (!isModel && !isRanch && mat.color) mat.color.set(BUILDING_COLORS[type]);
       if (fire) {
         mat.emissive?.set(0x812c10);
         mat.transparent = false;
@@ -789,10 +820,12 @@ export class Renderer3D {
   private syncOverlays(s: GameState, pv: PlacementView): void {
     if (pv.type) {
       const def = BUILDING_DEFS[pv.type];
+      const pw = pv.pw ?? def.w;
+      const ph = pv.ph ?? def.h;
       const h = buildingHeight(pv.type);
       this.ghost.visible = true;
-      this.ghost.scale.set(def.w * 0.9, h, def.h * 0.9);
-      this.ghost.position.set(pv.tx + def.w / 2, TOP + h / 2, pv.ty + def.h / 2);
+      this.ghost.scale.set(pw * 0.9, h, ph * 0.9);
+      this.ghost.position.set(pv.tx + pw / 2, TOP + h / 2, pv.ty + ph / 2);
       (this.ghost.material as THREE.MeshStandardMaterial).color.set(pv.valid ? 0x5ad06a : 0xe0574a);
     } else {
       this.ghost.visible = false;

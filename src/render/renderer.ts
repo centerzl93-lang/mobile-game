@@ -1,10 +1,15 @@
 import { Camera } from '../engine/camera';
 import {
   GameState,
+  Building,
   Tile,
   BUILDING_DEFS,
   BuildingType,
   workRadiusOf,
+  footprintW,
+  footprintH,
+  ranchCapacity,
+  ANIMAL_META,
   ResourceKind,
   ADULT_AGE,
   MAP_W,
@@ -24,6 +29,9 @@ export interface PlacementView {
   type: BuildingType | null;
   tx: number;
   ty: number;
+  /** Footprint of the ghost being placed (for the sized ranch); defaults to the def size. */
+  pw?: number;
+  ph?: number;
   valid: boolean;
   /** True while in path-drawing mode (shows a hint reticle at screen centre). */
   pathTier?: 'dirt' | 'stone' | 'bridge' | null;
@@ -169,8 +177,8 @@ export class Renderer {
     for (const b of s.buildings) {
       const def = BUILDING_DEFS[b.type];
       const [sx, sy] = this.camera.worldToScreen(b.x, b.y, w, h);
-      const bw = def.w * p;
-      const bh = def.h * p;
+      const bw = footprintW(b) * p;
+      const bh = footprintH(b) * p;
       ctx.save();
       if (!b.built) {
         // Construction: dashed outline + partial fill.
@@ -200,6 +208,8 @@ export class Renderer {
         ctx.fillRect(sx + 4, sy + bh - 6, bw - 8, 3);
         ctx.fillStyle = '#e2c15a';
         ctx.fillRect(sx + 4, sy + bh - 6, (bw - 8) * frac, 3);
+      } else if (b.type === 'ranch') {
+        this.drawRanch(ctx, b, sx, sy, bw, bh, p);
       } else {
         ctx.fillStyle = BUILDING_COLORS[b.type];
         roundRect(ctx, sx + 2, sy + 2, bw - 4, bh - 4, 5);
@@ -312,16 +322,15 @@ export class Renderer {
     if (placement.selBuildingId != null) {
       const b = s.buildings.find((x) => x.id === placement.selBuildingId);
       if (b) {
-        const def = BUILDING_DEFS[b.type];
         const [sx, sy] = this.camera.worldToScreen(b.x, b.y, w, h);
         ctx.strokeStyle = '#ffd76b';
         ctx.lineWidth = 2.5;
-        roundRect(ctx, sx, sy, def.w * p, def.h * p, 5);
+        roundRect(ctx, sx, sy, footprintW(b) * p, footprintH(b) * p, 5);
         ctx.stroke();
         // Work-area circle for forest-worked buildings.
         const wr = workRadiusOf(b);
         if (wr && b.built) {
-          const [ccx, ccy] = this.camera.worldToScreen(b.x + def.w / 2, b.y + def.h / 2, w, h);
+          const [ccx, ccy] = this.camera.worldToScreen(b.x + footprintW(b) / 2, b.y + footprintH(b) / 2, w, h);
           ctx.beginPath();
           ctx.arc(ccx, ccy, wr * p, 0, Math.PI * 2);
           ctx.strokeStyle = 'rgba(122,224,106,0.85)';
@@ -345,13 +354,15 @@ export class Renderer {
     // Placement preview.
     if (placement.type) {
       const def = BUILDING_DEFS[placement.type];
+      const pw = placement.pw ?? def.w;
+      const ph = placement.ph ?? def.h;
       const [sx, sy] = this.camera.worldToScreen(placement.tx, placement.ty, w, h);
       ctx.save();
       // Bright work-radius ring while positioning a forest-worked building.
       if (def.workRadius) {
         const [cxp, cyp] = this.camera.worldToScreen(
-          placement.tx + def.w / 2,
-          placement.ty + def.h / 2,
+          placement.tx + pw / 2,
+          placement.ty + ph / 2,
           w,
           h,
         );
@@ -363,7 +374,7 @@ export class Renderer {
       }
       ctx.globalAlpha = 0.5;
       ctx.fillStyle = placement.valid ? '#5ad06a' : '#e0574a';
-      roundRect(ctx, sx, sy, def.w * p, def.h * p, 4);
+      roundRect(ctx, sx, sy, pw * p, ph * p, 4);
       ctx.fill();
       ctx.restore();
     }
@@ -441,6 +452,52 @@ export class Renderer {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(ch, cx, cy);
+  }
+
+  /** A ranch: a fenced pen (grassy fill + rail border) with a corner shed and its herd inside. */
+  private drawRanch(ctx: CanvasRenderingContext2D, b: Building, sx: number, sy: number, bw: number, bh: number, p: number): void {
+    const animal = b.animal ?? 'cattle';
+    const count = Math.floor(b.animals ?? 0);
+    // Pen ground.
+    ctx.fillStyle = '#6f7a3f';
+    roundRect(ctx, sx + 1, sy + 1, bw - 2, bh - 2, 4);
+    ctx.fill();
+    // Fence rail around the plot.
+    ctx.strokeStyle = '#a4813f';
+    ctx.lineWidth = Math.max(1.5, p * 0.09);
+    roundRect(ctx, sx + 2, sy + 2, bw - 4, bh - 4, 4);
+    ctx.stroke();
+    // Corner shed (top-left 1×1 tile).
+    ctx.fillStyle = BUILDING_COLORS.ranch;
+    roundRect(ctx, sx + 2, sy + 2, p - 3, p - 3, 3);
+    ctx.fill();
+    if (p > 10) this.glyph('🏚️', sx + (p - 1) / 2, sy + (p - 1) / 2, p * 0.5);
+    // Herd: scatter a few animal glyphs across the pen (never on the shed tile).
+    if (p > 8 && count > 0) {
+      const emoji = ANIMAL_META[animal].emoji;
+      const shown = Math.min(count, 8);
+      for (let i = 0; i < shown; i++) {
+        const gx = sx + p + ((i * 2 + 1) % Math.max(1, Math.floor(bw / p) - 1) + 0.5) * p * 0.9;
+        const gy = sy + p * 0.6 + (Math.floor(i / 3) + 0.5) * p * 0.9;
+        if (gx < sx + bw - p * 0.3 && gy < sy + bh - p * 0.3) this.glyph(emoji, gx, gy, p * 0.55);
+      }
+    }
+    // Head-count badge.
+    if (p > 12) {
+      const label = `${count}/${ranchCapacity(b)}`;
+      const fs = Math.max(8, Math.floor(p * 0.32));
+      ctx.font = `${fs}px -apple-system, "Segoe UI", sans-serif`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      const tw = ctx.measureText(label).width;
+      const bx = sx + bw - tw - 8;
+      const by = sy + bh - fs - 6;
+      ctx.fillStyle = 'rgba(30,50,20,0.85)';
+      roundRect(ctx, bx, by, tw + 6, fs + 3, 3);
+      ctx.fill();
+      ctx.fillStyle = '#eef3e8';
+      ctx.fillText(label, bx + 3, by + 1);
+    }
   }
 }
 

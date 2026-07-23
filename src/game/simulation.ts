@@ -39,8 +39,14 @@ import {
   FARM_FOOD_PER_WORKER,
   CROP_META,
   ANIMAL_META,
-  RANCH_ANIMALS,
   RanchAnimal,
+  ranchCapacity,
+  RANCH_BREED_PER_SEASON,
+  RANCH_BREED_BONUS_CHANCE,
+  RANCH_SPLIT_MIN,
+  SLAUGHTER_YIELD,
+  footprintW,
+  footprintH,
   Crop,
   CROPS,
   SEED_COST,
@@ -303,7 +309,8 @@ function goTo(c: Citizen, p: { x: number; y: number }): void {
 function buildingApproach(s: GameState, b: Building): { x: number; y: number } {
   const c = buildingCenter(b);
   if (isWalkable(s, Math.floor(c.x), Math.floor(c.y))) return c;
-  const def = BUILDING_DEFS[b.type];
+  const fw = footprintW(b);
+  const fh = footprintH(b);
   let best: { x: number; y: number } | null = null;
   let bestD = Infinity;
   const consider = (tx: number, ty: number) => {
@@ -311,10 +318,10 @@ function buildingApproach(s: GameState, b: Building): { x: number; y: number } {
     const d = (tx + 0.5 - c.x) ** 2 + (ty + 0.5 - c.y) ** 2;
     if (d < bestD) { bestD = d; best = { x: tx + 0.5, y: ty + 0.5 }; }
   };
-  for (let dy = 0; dy < def.h; dy++) for (let dx = 0; dx < def.w; dx++) consider(b.x + dx, b.y + dy);
+  for (let dy = 0; dy < fh; dy++) for (let dx = 0; dx < fw; dx++) consider(b.x + dx, b.y + dy);
   if (best) return best;
-  for (let dx = -1; dx <= def.w; dx++) { consider(b.x + dx, b.y - 1); consider(b.x + dx, b.y + def.h); }
-  for (let dy = 0; dy < def.h; dy++) { consider(b.x - 1, b.y + dy); consider(b.x + def.w, b.y + dy); }
+  for (let dx = -1; dx <= fw; dx++) { consider(b.x + dx, b.y - 1); consider(b.x + dx, b.y + fh); }
+  for (let dy = 0; dy < fh; dy++) { consider(b.x - 1, b.y + dy); consider(b.x + fw, b.y + dy); }
   return best ?? c;
 }
 
@@ -405,6 +412,7 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
     runTrader(s, c, b, dt);
     return;
   }
+  if (b.type === 'ranch' && penFromStorage(s, c, b, dt)) return;
   // 1. Carrying output? Haul it to the nearest barn with room.
   if (c.carry) {
     const barn = nearestBarnWithRoom(s, { x: c.x, y: c.y });
@@ -504,6 +512,33 @@ function runVendor(s: GameState, c: Citizen, b: Building, dt: number): void {
       c.carry = { kind: want.kind, amount: take };
     }
   }
+}
+
+const PEN_PER_TRIP = 4; // head of livestock a rancher walks in from the barn per trip
+
+/**
+ * A rancher restocking the pen: if the ranch is below its cap and the matching livestock sits
+ * in a barn, fetch some and pen them (resource → headcount). Returns true when it handled this
+ * tick (so the worker tends the herd instead of producing). Skipped while carrying output.
+ */
+function penFromStorage(s: GameState, c: Citizen, b: Building, dt: number): boolean {
+  if (c.carry) return false;
+  const animal = b.animal ?? 'cattle';
+  const cap = Math.min(b.maxAnimals ?? ranchCapacity(b), ranchCapacity(b));
+  const room = cap - (b.animals ?? 0);
+  if (room <= 0) return false;
+  const barn = nearestBarnOnlyWith(s, buildingCenter(b), animal);
+  if (!barn) return false;
+  goTo(c, buildingCenter(barn));
+  if (stepTo(s, c, dt)) {
+    const take = Math.min(PEN_PER_TRIP, room, Math.floor(barn.store[animal] ?? 0));
+    if (take > 0) {
+      barn.store[animal] = (barn.store[animal] ?? 0) - take;
+      if ((barn.store[animal] ?? 0) <= 0) delete barn.store[animal];
+      b.animals = (b.animals ?? 0) + take;
+    }
+  }
+  return true;
 }
 
 /**
@@ -615,8 +650,9 @@ function workOutput(
     case 'ranch': {
       const animal = b.animal ?? 'cattle';
       const meta = ANIMAL_META[animal];
-      const herd = Math.min(1, totalStored(s, animal) / meta.ideal);
-      if (herd <= 0) return null;
+      // Products scale with this pen's own herd (fraction of its capacity).
+      const herd = Math.min(1, (b.animals ?? 0) / Math.max(1, ranchCapacity(b)));
+      if ((b.animals ?? 0) <= 0) return null;
       const f = herd * tf;
       // Pick a product from this animal's weighted mix.
       let roll = Math.random();
@@ -1040,12 +1076,22 @@ function endSeason(s: GameState, log: LogFn): void {
     }
   }
 
-  // Each animal breeds its own herd if a ranch raising it is kept.
-  for (const animal of RANCH_ANIMALS) {
-    const herd = totalStored(s, animal);
-    if (herd <= 0) continue;
-    if (!s.buildings.some((b) => b.built && b.type === 'ranch' && (b.animal ?? 'cattle') === animal)) continue;
-    addNearest(s, centreOfVillage(s), animal, herd * ANIMAL_META[animal].growth);
+  // Each ranch breeds its own penned herd toward the player's cap; births beyond it are
+  // slaughtered for resources. A breeding pair (2+) yields at least one calf every two seasons.
+  for (const b of s.buildings) {
+    if (!b.built || b.type !== 'ranch') continue;
+    if ((b.animals ?? 0) < 2) continue;
+    let progress = (b.breedProgress ?? 0) + RANCH_BREED_PER_SEASON;
+    if (Math.random() < RANCH_BREED_BONUS_CHANCE) progress += 1;
+    let births = Math.floor(progress);
+    b.breedProgress = progress - births;
+    if (births <= 0) continue;
+    const cap = Math.min(b.maxAnimals ?? ranchCapacity(b), ranchCapacity(b));
+    const room = Math.max(0, cap - (b.animals ?? 0));
+    const kept = Math.min(births, room);
+    b.animals = (b.animals ?? 0) + kept;
+    const excess = births - kept;
+    if (excess > 0) butcherProducts(s, b, excess); // births over the cap → straight to the butcher
   }
 
   let pop = s.citizens.length;
@@ -1391,6 +1437,69 @@ export function basketTrade(s: GameState, basket: TradeBasket): TradeResult {
   return { ok: true, gave: Math.round(have) };
 }
 
+// ---- ranch management ----
+
+/**
+ * Deposit the meat/leather/eggs from slaughtering `n` head into storage. This does NOT touch the
+ * pen's headcount — callers decide whether those `n` were existing animals (a cull) or over-cap
+ * births that never joined the herd.
+ */
+function butcherProducts(s: GameState, b: Building, n: number): void {
+  if (n <= 0) return;
+  const animal = b.animal ?? 'cattle';
+  const at = buildingCenter(b);
+  for (const p of ANIMAL_META[animal].products) {
+    const amount = n * SLAUGHTER_YIELD * p.chance * p.mult;
+    if (amount > 0) addNearest(s, at, p.kind, amount);
+  }
+}
+
+/** Cull the whole ranch — slaughter every animal for resources. */
+export function cullRanch(s: GameState, b: Building): void {
+  butcherProducts(s, b, b.animals ?? 0);
+  b.animals = 0;
+  b.breedProgress = 0;
+}
+
+/** Built ranches (other than `from`) raising the same animal that still have room for more. */
+export function eligibleRanchTargets(s: GameState, from: Building): Building[] {
+  const animal = from.animal ?? 'cattle';
+  return s.buildings.filter(
+    (b) =>
+      b !== from &&
+      b.built &&
+      b.type === 'ranch' &&
+      (b.animal ?? 'cattle') === animal &&
+      (b.animals ?? 0) < Math.min(b.maxAnimals ?? ranchCapacity(b), ranchCapacity(b)),
+  );
+}
+
+/** Move up to `n` head from `from` to `to`, bounded by the destination's remaining room. */
+function moveAnimals(from: Building, to: Building, n: number): number {
+  const room = Math.min(to.maxAnimals ?? ranchCapacity(to), ranchCapacity(to)) - (to.animals ?? 0);
+  const moved = Math.max(0, Math.min(n, from.animals ?? 0, room));
+  from.animals = (from.animals ?? 0) - moved;
+  to.animals = (to.animals ?? 0) + moved;
+  return moved;
+}
+
+/** Split ~half of a large herd (≥ RANCH_SPLIT_MIN) into another eligible ranch. */
+export function splitRanch(s: GameState, from: Building, to: Building): { ok: boolean; reason?: string; moved?: number } {
+  if ((from.animals ?? 0) < RANCH_SPLIT_MIN) return { ok: false, reason: `Need ${RANCH_SPLIT_MIN}+ to split` };
+  if (!eligibleRanchTargets(s, from).includes(to)) return { ok: false, reason: 'That ranch cannot take them' };
+  const moved = moveAnimals(from, to, Math.floor((from.animals ?? 0) / 2));
+  return moved > 0 ? { ok: true, moved } : { ok: false, reason: 'No room in that ranch' };
+}
+
+/** Transfer the whole herd into another ranch that can hold it. */
+export function transferRanch(s: GameState, from: Building, to: Building): { ok: boolean; reason?: string; moved?: number } {
+  if (!eligibleRanchTargets(s, from).includes(to)) return { ok: false, reason: 'That ranch cannot take them' };
+  const room = Math.min(to.maxAnimals ?? ranchCapacity(to), ranchCapacity(to)) - (to.animals ?? 0);
+  if (room < (from.animals ?? 0)) return { ok: false, reason: 'Not enough room there' };
+  const moved = moveAnimals(from, to, from.animals ?? 0);
+  return { ok: true, moved };
+}
+
 // ---- population helpers ----
 function killCitizens(s: GameState, n: number): void {
   for (let i = 0; i < n && s.citizens.length > 0; i++) {
@@ -1611,12 +1720,12 @@ function processFires(s: GameState, dt: number, log: LogFn): void {
 }
 
 function adjacentBuildings(s: GameState, b: Building): Building[] {
-  const bd = BUILDING_DEFS[b.type];
+  const bw = footprintW(b);
+  const bh = footprintH(b);
   const out: Building[] = [];
   for (const o of s.buildings) {
     if (o === b || !o.built || o.type === 'well' || o.fireTimer) continue;
-    const od = BUILDING_DEFS[o.type];
-    if (b.x - 1 < o.x + od.w && b.x + bd.w + 1 > o.x && b.y - 1 < o.y + od.h && b.y + bd.h + 1 > o.y) out.push(o);
+    if (b.x - 1 < o.x + footprintW(o) && b.x + bw + 1 > o.x && b.y - 1 < o.y + footprintH(o) && b.y + bh + 1 > o.y) out.push(o);
   }
   return out;
 }
@@ -1641,10 +1750,9 @@ function regrowForest(s: GameState, dt: number): void {
 }
 
 function circleTiles(s: GameState, b: Building, fn: (t: { trees: number }) => void): void {
-  const def = BUILDING_DEFS[b.type];
   const r = workRadiusOf(b) ?? 4;
-  const cx = b.x + def.w / 2;
-  const cy = b.y + def.h / 2;
+  const cx = b.x + footprintW(b) / 2;
+  const cy = b.y + footprintH(b) / 2;
   const r2 = r * r;
   for (let ty = Math.floor(cy - r); ty <= Math.ceil(cy + r); ty++) {
     for (let tx = Math.floor(cx - r); tx <= Math.ceil(cx + r); tx++) {
@@ -1666,18 +1774,16 @@ function tendCircle(s: GameState, b: Building, dt: number): void {
 /** True if any building's footprint covers tile (tx,ty). */
 function tileUnderBuilding(s: GameState, tx: number, ty: number): boolean {
   for (const b of s.buildings) {
-    const d = BUILDING_DEFS[b.type];
-    if (tx >= b.x && tx < b.x + d.w && ty >= b.y && ty < b.y + d.h) return true;
+    if (tx >= b.x && tx < b.x + footprintW(b) && ty >= b.y && ty < b.y + footprintH(b)) return true;
   }
   return false;
 }
 
 /** Sow a few saplings on plain grass in the work circle, growing new forest to harvest later. */
 function plantCircle(s: GameState, b: Building): void {
-  const def = BUILDING_DEFS[b.type];
   const r = workRadiusOf(b) ?? 4;
-  const cx = b.x + def.w / 2;
-  const cy = b.y + def.h / 2;
+  const cx = b.x + footprintW(b) / 2;
+  const cy = b.y + footprintH(b) / 2;
   const r2 = r * r;
   let planted = 0;
   for (let ty = Math.floor(cy - r); ty <= Math.ceil(cy + r) && planted < 2; ty++) {

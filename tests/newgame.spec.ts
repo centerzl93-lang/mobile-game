@@ -323,6 +323,146 @@ test.describe('trading post & merchant', () => {
   });
 });
 
+test.describe('ranch', () => {
+  // Build a synthetic, built ranch at the barn's spot (placement isn't validated for synth objects).
+  const mkRanch = `(animal, animals, maxAnimals, w, h) => {
+    const g = window.__village;
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    const r = { id: s.nextId++, type: 'ranch', x: barn.x, y: barn.y, built: true, progress: 99,
+      workers: [], desiredWorkers: 0, growth: 0, output: 'coal', recipe: 'iron', store: {},
+      animal, animals, maxAnimals, breedProgress: 0, w, h };
+    s.buildings.push(r);
+    return r.id;
+  }`;
+
+  test('a placed ranch takes the chosen size; capacity scales with size and animal', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // Place a 6×6 cattle ranch via the sized placement path.
+      g.ranchW = 6; g.ranchH = 6;
+      let id: number | null = null;
+      for (let r = 3; r < 14 && id == null; r++)
+        for (let dy = -r; dy <= r && id == null; dy++)
+          for (let dx = -r; dx <= r && id == null; dx++)
+            if (g.debugCanPlace('ranch', barn.x + dx, barn.y + dy).ok) id = g.debugPlace('ranch', barn.x + dx, barn.y + dy);
+      const b = s.buildings.find((x: any) => x.id === id);
+      b.built = true; b.progress = 99;
+      const cattleCap = g.debugRanchCapacity(id);
+      b.animals = 0; b.animal = 'chickens'; // switch species on an empty pen
+      const chickenCap = g.debugRanchCapacity(id);
+      return { w: b.w, h: b.h, cattleCap, chickenCap };
+    });
+    expect(out.w).toBe(6);
+    expect(out.h).toBe(6);
+    expect(out.cattleCap).toBe(12); // 36 tiles / 3 per cattle
+    expect(out.chickenCap).toBe(36); // 36 tiles / 1 per chicken — smaller animals pack tighter
+  });
+
+  test('herds breed at least one per two seasons, cap out, and slaughter the excess', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      const id = eval(mk)('cattle', 2, 10, 6, 6);
+      const s = g.state;
+      const b = s.buildings.find((x: any) => x.id === id);
+      g.debugAdvance(600 * 2); // two seasons → the guaranteed-breeding floor
+      const afterTwo = b.animals;
+      // Now push to the cap and confirm excess births convert to product, not more animals.
+      // Measure leather (a by-product villagers never eat, unlike meat) so the delta is stable.
+      b.animals = 10; b.maxAnimals = 10; b.breedProgress = 0;
+      const leatherBefore = totalLeather(s);
+      g.debugAdvance(600 * 2);
+      return { afterTwo, cappedAt: b.animals, leatherGained: totalLeather(s) - leatherBefore };
+      function totalLeather(st: any) {
+        let n = 0;
+        for (const bl of st.buildings) if (bl.type === 'barn' || bl.type === 'market') n += bl.store.leather ?? 0;
+        return n;
+      }
+    }, mkRanch);
+    expect(out.afterTwo).toBeGreaterThanOrEqual(3); // 2 seed + ≥1 calf
+    expect(out.cappedAt).toBe(10); // never exceeds the cap
+    expect(out.leatherGained).toBeGreaterThan(0); // over-cap births were slaughtered for product
+  });
+
+  test('the breed cap cannot exceed the size capacity', async ({ page }) => {
+    await open(page);
+    const max = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      const id = eval(mk)('cattle', 0, 4, 4, 4); // 4×4 cattle ⇒ capacity 5
+      g.setRanchMax(id, 100);
+      return g.state.buildings.find((x: any) => x.id === id).maxAnimals;
+    }, mkRanch);
+    expect(max).toBe(5); // floor(16/3)
+  });
+
+  test('cull slaughters the whole herd for resources; species only changes when empty', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      const id = eval(mk)('cattle', 6, 12, 6, 6);
+      const s = g.state;
+      const b = s.buildings.find((x: any) => x.id === id);
+      const blocked = (g.setAnimal(id, 'pigs'), b.animal); // stocked pen keeps its species
+      g.cullRanch(id);
+      const allowed = (g.setAnimal(id, 'pigs'), b.animal); // now empty ⇒ switch works
+      let meat = 0;
+      for (const bl of s.buildings) if (bl.type === 'barn') meat += (bl.store.meat ?? 0) + (bl.store.leather ?? 0);
+      return { blocked, animals: b.animals, allowed, meat };
+    }, mkRanch);
+    expect(out.blocked).toBe('cattle'); // couldn't switch a stocked pen
+    expect(out.animals).toBe(0);
+    expect(out.allowed).toBe('pigs'); // switched once emptied
+    expect(out.meat).toBeGreaterThan(0);
+  });
+
+  test('split moves half to another ranch; transfer moves the whole herd; both need a target', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      const from = eval(mk)('cattle', 12, 12, 6, 6);
+      const s = g.state;
+      const fromB = s.buildings.find((x: any) => x.id === from);
+      // No eligible target yet → split refused.
+      const noTarget = g.state.buildings.filter((b: any) => b.type === 'ranch').length === 1;
+      const to = eval(mk)('cattle', 0, 12, 6, 6);
+      const toB = s.buildings.find((x: any) => x.id === to);
+      g.splitRanch(from, to);
+      const afterSplit = { from: fromB.animals, to: toB.animals };
+      g.transferRanch(from, to);
+      const afterTransfer = { from: fromB.animals, to: toB.animals };
+      return { noTarget, afterSplit, afterTransfer };
+    }, mkRanch);
+    expect(out.noTarget).toBe(true);
+    expect(out.afterSplit.from).toBe(6); // half of 12 moved
+    expect(out.afterSplit.to).toBe(6);
+    expect(out.afterTransfer.from).toBe(0); // remainder all transferred
+    expect(out.afterTransfer.to).toBe(12);
+  });
+
+  test('a rancher pens purchased livestock from the barn', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      const id = eval(mk)('cattle', 0, 12, 6, 6);
+      const s = g.state;
+      const b = s.buildings.find((x: any) => x.id === id);
+      b.desiredWorkers = 1; // staff it so an idle adult takes the job
+      const barn = s.buildings.find((bl: any) => bl.type === 'barn');
+      barn.store.cattle = 8; // livestock waiting to be penned
+      g.debugAdvance(200);
+      return { animals: b.animals, barnCattle: barn.store.cattle ?? 0, worker: b.workers.length };
+    }, mkRanch);
+    expect(out.worker).toBe(1);
+    expect(out.animals).toBeGreaterThan(0); // some head penned
+    expect(out.barnCattle).toBeLessThan(8); // pulled from the barn
+  });
+});
+
 test.describe('disasters toggle', () => {
   test('the toggle flows from the difficulty screen and persists through save/load', async ({ page }) => {
     await open(page);

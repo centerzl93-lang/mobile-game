@@ -280,6 +280,27 @@ export const ANIMAL_META: Record<
   ] },
 };
 
+// ---- Ranch sizing & husbandry (all customizable) ----
+/** A pen is a square (or rectangle) between these tile dimensions, chosen at placement. */
+export const RANCH_MIN = 4;
+export const RANCH_MAX = 8;
+/** Tiles each head of livestock needs — bigger animals need more room, so fewer fit a pen. */
+export const ANIMAL_TILES: Record<RanchAnimal, number> = { cattle: 3, pigs: 2, chickens: 1 };
+/** Baseline births per season for a breeding herd. 0.55 × 2 ≥ 1 ⇒ the "≥1 per 2 seasons" floor. */
+export const RANCH_BREED_PER_SEASON = 0.55;
+/** Chance, each season, of one extra birth on top of the baseline. */
+export const RANCH_BREED_BONUS_CHANCE = 0.2;
+/** A herd must reach this size before Split is offered (moving half to another ranch). */
+export const RANCH_SPLIT_MIN = 10;
+/** Resource units produced per head sent to slaughter (culls + births over the cap). */
+export const SLAUGHTER_YIELD = 3;
+
+/** Max head a ranch can hold, from its footprint and the animal's size. */
+export function ranchCapacity(b: Building): number {
+  const animal = b.animal ?? 'cattle';
+  return Math.floor((footprintW(b) * footprintH(b)) / ANIMAL_TILES[animal]);
+}
+
 export type BuildCategory = 'housing' | 'food' | 'resources' | 'civic' | 'trade';
 
 export interface BuildingDef {
@@ -338,6 +359,18 @@ export interface Building {
   crop?: Crop;
   /** Ranch: which animal it raises (defaults to cattle). */
   animal?: RanchAnimal;
+  /**
+   * Custom footprint (ranch only): the player-chosen pen size, 4..8. Undefined for every
+   * other building, which keeps its fixed `BUILDING_DEFS` size. Read via `footprintW/H`.
+   */
+  w?: number;
+  h?: number;
+  /** Ranch: head of livestock currently penned here. */
+  animals?: number;
+  /** Ranch: player-set cap on the herd (0..ranchCapacity). */
+  maxAnimals?: number;
+  /** Ranch: fractional accumulator toward the next birth (see breeding). */
+  breedProgress?: number;
   /**
    * Trading post: player-set stock targets (resource -> desired units). The assigned
    * trader hauls goods from the barns up to these levels and returns any surplus.
@@ -430,6 +463,15 @@ export function workRadiusOf(b: Building): number | undefined {
   if (def.workRadius === undefined) return undefined;
   const workers = Math.max(1, Math.min(def.jobs, b.desiredWorkers));
   return def.workRadius + (workers - 1) * WORK_RADIUS_PER_WORKER;
+}
+
+/** A building's footprint width. Ranches carry a custom `w`; everything else uses its def size. */
+export function footprintW(b: Building): number {
+  return b.w ?? BUILDING_DEFS[b.type].w;
+}
+/** A building's footprint height (see `footprintW`). */
+export function footprintH(b: Building): number {
+  return b.h ?? BUILDING_DEFS[b.type].h;
 }
 
 // Path layer values (per tile).
@@ -778,9 +820,9 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     desc: 'Hunts game in its work circle for food and leather — needs forest.',
   },
   ranch: {
-    type: 'ranch', name: 'Ranch', emoji: '🐄', category: 'food', w: 3, h: 3,
+    type: 'ranch', name: 'Ranch', emoji: '🐄', category: 'food', w: 4, h: 4,
     cost: { wood: 16 }, jobs: 2, buildTime: 7,
-    desc: 'Raises a chosen animal — cattle, pigs, or chickens — for food and leather. Buy the herd from traders.',
+    desc: 'A fenced pen for cattle, pigs, or chickens. Drag its size (4×4 up to 8×8) before building — a bigger pen holds a bigger herd. Buy livestock from traders; they breed here.',
   },
   lumberyard: {
     type: 'lumberyard', name: 'Forester', emoji: '🌲', category: 'resources', w: 2, h: 2,

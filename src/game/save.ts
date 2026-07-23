@@ -1,4 +1,4 @@
-import { GameState, MAP_W, MAP_H, MapSize, setMapSize, CROPS } from '../types';
+import { GameState, MAP_W, MAP_H, MapSize, setMapSize, CROPS, RANCH_MIN, ranchCapacity } from '../types';
 import { randomName } from './names';
 
 // Legacy single-slot key (pre-slots). Migrated into slot 0 on first run, then left in place.
@@ -89,6 +89,16 @@ export function loadGame(slot = 0): GameState | null {
     if (!Array.isArray(s.merchant.seedStock)) s.merchant.seedStock = [];
     // Trading posts gained a player-set stock-order table.
     for (const b of s.buildings) if (b.type === 'trading' && !b.orders) b.orders = {};
+    // Ranches became sizable pens with per-ranch herds. Old ranches had no footprint or headcount:
+    // default them to the minimum size, an empty pen, and a cap at that size's capacity.
+    for (const b of s.buildings) {
+      if (b.type !== 'ranch') continue;
+      if (typeof b.w !== 'number') b.w = RANCH_MIN;
+      if (typeof b.h !== 'number') b.h = RANCH_MIN;
+      if (typeof b.animals !== 'number') b.animals = 0;
+      if (typeof b.breedProgress !== 'number') b.breedProgress = 0;
+      if (typeof b.maxAnimals !== 'number') b.maxAnimals = ranchCapacity(b);
+    }
     return s;
   } catch {
     return null;

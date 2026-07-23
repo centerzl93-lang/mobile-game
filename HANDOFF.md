@@ -1,7 +1,7 @@
 # Session Handoff — Banished-inspired Village Builder PWA
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-07-22 (trading-post & merchant overhaul)
+> Last updated: 2026-07-22 (ranch overhaul)
 
 ## Project
 Original Banished-inspired 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -12,10 +12,39 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never Banished's copyrighted assets.
 
 ## Current State
-Latest feature: the **trading-post & merchant overhaul** (this session) — see below. The prior
-milestone (manual staffing + 16 seed-gated crops, feature commit `a4d43a8`) is still in place. The
-SHA here is intentionally omitted; reference commits by message since this doc sits one commit
-behind its own history.
+Latest feature: the **ranch overhaul** (this session) — see below. Prior milestones (the
+trading-post & merchant overhaul; manual staffing + 16 seed-gated crops) remain in place.
+Reference commits by message, not SHA (this doc sits one commit behind its own history).
+
+### Ranch overhaul
+Ranches went from a fixed 3×3 building over a *global* herd resource to real, sizable pens with
+per-ranch herds.
+- **Variable footprint.** Buildings gained optional `w`/`h` (only the ranch sets them). Read
+  everywhere via `footprintW/H(b)` (`types.ts`) — swapped in for `def.w/h` across placement,
+  storage `center`, `buildingCenter`, simulation adjacency, and both renderers. `canPlace`/
+  `placeBuilding` take optional `w,h`. Ranch size is `RANCH_MIN`(4)…`RANCH_MAX`(8).
+- **Sizing UX.** While a ranch is selected, a `.ranch-size` widget (W/H steppers) sets
+  `main.ts` `ranchW/ranchH`; the reticle ghost + placement use them (`PlacementView.pw/ph`).
+- **Per-ranch herd.** `Building.animals` (headcount), `maxAnimals` (player cap), `breedProgress`.
+  Capacity `ranchCapacity(b) = floor(w*h / ANIMAL_TILES[animal])` — bigger animals need more tiles
+  (cattle 3, pigs 2, chickens 1), so pen size *and* species drive the cap.
+- **Stocking.** Livestock is still a tradeable storage resource; a rancher **pens it from the
+  barns** (`penFromStorage` in `simulation.ts`, routed from `runWorker`), resource → headcount.
+- **Breeding & slaughter** (per season, `updateMerchant`-style loop): a pair (≥2) breeds at
+  `RANCH_BREED_PER_SEASON`(0.55, ⇒ ≥1 per 2 seasons) + `RANCH_BREED_BONUS_CHANCE`(0.2). Births
+  beyond the cap are butchered (`butcherProducts` → meat/leather/eggs, `SLAUGHTER_YIELD`); products
+  scale with headcount in `workOutput`.
+- **Management** (exported from `simulation.ts`, wired via `main.ts`/`ui.ts` inspect controls):
+  `cullRanch` (slaughter all), `splitRanch` (herd ≥ `RANCH_SPLIT_MIN`=10 → ~half to an eligible
+  pen), `transferRanch` (whole herd), `eligibleRanchTargets` (same-animal built pens with room).
+  Split/Transfer use a **destination picker** overlay (tap to highlight, then Confirm). Species
+  toggle only shows on an empty pen.
+- **Rendering.** Ranch draws as a fenced pen + corner shed with animal glyphs and a count badge
+  (2D `drawRanch`), and a low fence-rail group + shed in 3D (`makeRanchPen`).
+- **Save migration** (still v12): ranches default `w/h`=4, `animals`=0, `breedProgress`=0,
+  `maxAnimals`=capacity. Legacy 3×3 ranches load as 4×4.
+
+### Trading post & merchant overhaul
 
 ### Trading post & merchant overhaul
 Merchants are now a real trading loop rather than a global barter button.

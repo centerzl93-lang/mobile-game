@@ -64,6 +64,15 @@ export interface InspectControls {
   toggle?: { group: 'mine' | 'smith' | 'forester' | 'crop' | 'animal'; options: { v: string; label: string; on: boolean }[] };
   /** Trading post: show a button that opens the inventory/trade panel; flags a docked merchant. */
   tradingPost?: { merchantDocked: boolean };
+  /** Ranch: herd management — cap stepper, cull, and split/transfer to another pen. */
+  ranch?: {
+    animals: number;
+    capacity: number;
+    max: number;
+    canSplit: boolean;
+    canTransfer: boolean;
+    targets: { id: number; label: string }[];
+  };
 }
 
 export interface UICallbacks {
@@ -80,6 +89,11 @@ export interface UICallbacks {
   onSetForesterReplant: (buildingId: number, on: boolean) => void;
   onSetCrop: (buildingId: number, crop: Crop) => void;
   onSetAnimal: (buildingId: number, animal: RanchAnimal) => void;
+  onRanchSize: (dim: 'w' | 'h', delta: number) => void;
+  onSetRanchMax: (buildingId: number, delta: number) => void;
+  onCullRanch: (buildingId: number) => void;
+  onSplitRanch: (fromId: number, toId: number) => void;
+  onTransferRanch: (fromId: number, toId: number) => void;
   onSetTradeOrder: (buildingId: number, kind: ResourceKind, delta: number) => void;
   onBasketTrade: (basket: TradeBasket) => TradeResult;
   onDismissMerchant: () => void;
@@ -405,6 +419,16 @@ export class UI {
       const docked = controls.tradingPost.merchantDocked;
       ctrlHtml += `<div class="inv-ctrl"><button class="tp-open${docked ? ' docked' : ''}" id="insp-tp">${docked ? '🤝 Trade with merchant' : '📦 Manage trading post'}</button></div>`;
     }
+    if (controls?.ranch) {
+      const r = controls.ranch;
+      ctrlHtml += `<div class="inv-ctrl"><span>Breed up to <small>(cap ${r.capacity})</small></span>
+        <div class="stepper"><button data-rmax="-1">−</button><span class="count">${r.max}</span><button data-rmax="1">+</button></div></div>
+        <div class="inv-ctrl ranch-actions">
+          <button class="ranch-btn danger" id="insp-cull"${r.animals > 0 ? '' : ' disabled'}>🔪 Cull all</button>
+          <button class="ranch-btn" id="insp-split"${r.canSplit ? '' : ' disabled'}>Split herd</button>
+          <button class="ranch-btn" id="insp-transfer"${r.canTransfer ? '' : ' disabled'}>Transfer all</button>
+        </div>`;
+    }
     this.el.inspect.innerHTML =
       `<div class="inv-head">${title}<button class="close" id="insp-close">×</button></div>` +
       (body || '<div class="inv-row"><span>Empty</span></div>') + ctrlHtml;
@@ -415,6 +439,14 @@ export class UI {
       this.el.inspect.querySelector('[data-step="-1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, -1));
       this.el.inspect.querySelector('[data-step="1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, 1));
       this.el.inspect.querySelector('#insp-tp')?.addEventListener('click', () => this.openTradingPost(id));
+      if (controls.ranch) {
+        const rc = controls.ranch;
+        this.el.inspect.querySelector('[data-rmax="-1"]')?.addEventListener('click', () => this.cb.onSetRanchMax(id, -1));
+        this.el.inspect.querySelector('[data-rmax="1"]')?.addEventListener('click', () => this.cb.onSetRanchMax(id, 1));
+        this.el.inspect.querySelector('#insp-cull')?.addEventListener('click', () => this.cb.onCullRanch(id));
+        this.el.inspect.querySelector('#insp-split')?.addEventListener('click', () => this.openRanchPicker(id, 'split', rc.targets));
+        this.el.inspect.querySelector('#insp-transfer')?.addEventListener('click', () => this.openRanchPicker(id, 'transfer', rc.targets));
+      }
       const tog = controls.toggle;
       if (tog) {
         this.el.inspect.querySelectorAll('.jr-toggle button').forEach((btn) =>
@@ -575,6 +607,69 @@ export class UI {
     this.el.trade.innerHTML = '';
     this.el.trade.onclick = null;
   }
+
+  // ---- Ranch placement size widget ----
+  private ranchSizeEl: HTMLElement | null = null;
+  showRanchSize(w: number, h: number): void {
+    if (!this.ranchSizeEl) {
+      const el = document.createElement('div');
+      el.className = 'ranch-size';
+      document.body.appendChild(el);
+      this.ranchSizeEl = el;
+    }
+    const el = this.ranchSizeEl;
+    el.classList.remove('hidden');
+    el.innerHTML = `<div class="rs-title">🐄 Pen size</div>
+      <div class="rs-row"><span>W</span><div class="stepper"><button data-rs="w-1">−</button><span class="count">${w}</span><button data-rs="w1">+</button></div></div>
+      <div class="rs-row"><span>H</span><div class="stepper"><button data-rs="h-1">−</button><span class="count">${h}</span><button data-rs="h1">+</button></div></div>
+      <div class="rs-hint">Tap the map to place</div>`;
+    el.querySelectorAll('[data-rs]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        const v = (btn as HTMLElement).dataset.rs!;
+        this.cb.onRanchSize(v[0] as 'w' | 'h', Number(v.slice(1)));
+      }),
+    );
+  }
+  hideRanchSize(): void {
+    this.ranchSizeEl?.classList.add('hidden');
+  }
+
+  // ---- Ranch split/transfer destination picker (reuses the modal container) ----
+  private openRanchPicker(fromId: number, mode: 'split' | 'transfer', targets: { id: number; label: string }[]): void {
+    if (targets.length === 0) return;
+    let sel: number | null = null;
+    this.el.trade.classList.remove('hidden');
+    const title = mode === 'split' ? 'Split herd — pick a ranch' : 'Transfer herd — pick a ranch';
+    this.el.trade.innerHTML = `<div class="tp-card picker">
+        <h2>${title}<button class="close" id="rp-close">×</button></h2>
+        <div class="summary">Tap a ranch to select it, then confirm.</div>
+        <div class="ranch-targets">${targets.map((t) => `<button class="ranch-target" data-id="${t.id}">${t.label}</button>`).join('')}</div>
+        <button class="do-trade" id="rp-confirm" disabled>Confirm</button>
+      </div>`;
+    byId('rp-close').addEventListener('click', () => this.closeRanchPicker());
+    this.el.trade.onclick = (e) => {
+      if (e.target === this.el.trade) this.closeRanchPicker();
+    };
+    this.el.trade.querySelectorAll('.ranch-target').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        sel = Number((btn as HTMLElement).dataset.id);
+        this.el.trade.querySelectorAll('.ranch-target').forEach((b) => b.classList.toggle('on', b === btn));
+        (byId('rp-confirm') as HTMLButtonElement).disabled = false;
+      }),
+    );
+    byId('rp-confirm').addEventListener('click', () => {
+      if (sel == null) return;
+      if (mode === 'split') this.cb.onSplitRanch(fromId, sel);
+      else this.cb.onTransferRanch(fromId, sel);
+      this.closeRanchPicker();
+    });
+  }
+  private closeRanchPicker(): void {
+    this.el.trade.classList.add('hidden');
+    this.el.trade.innerHTML = '';
+    this.el.trade.onclick = null;
+  }
+
   private resetBasket(): void {
     this.basketGive = {};
     this.basketGet = {};

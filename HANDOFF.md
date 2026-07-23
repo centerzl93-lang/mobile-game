@@ -1,7 +1,7 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-07-22 (farm overhaul)
+> Last updated: 2026-07-23 (handoff refresh: de-duped sections, current Key files/Next steps)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -37,8 +37,6 @@ Fields now mirror ranches and lay the groundwork for crop visuals.
 - **Save migration** (still v12): legacy 3×3 farms default `w/h`=4.
 
 ### Ranch overhaul
-
-### Ranch overhaul
 Ranches went from a fixed 3×3 building over a *global* herd resource to real, sizable pens with
 per-ranch herds.
 - **Variable footprint.** Buildings gained optional `w`/`h` (only the ranch sets them). Read
@@ -65,8 +63,6 @@ per-ranch herds.
   (2D `drawRanch`), and a low fence-rail group + shed in 3D (`makeRanchPen`).
 - **Save migration** (still v12): ranches default `w/h`=4, `animals`=0, `breedProgress`=0,
   `maxAnimals`=capacity. Legacy 3×3 ranches load as 4×4.
-
-### Trading post & merchant overhaul
 
 ### Trading post & merchant overhaul
 Merchants are now a real trading loop rather than a global barter button.
@@ -97,12 +93,12 @@ Merchants are now a real trading loop rather than a global barter button.
 
 ### Prior milestone: manual staffing + 16 seed-gated crops
 
-### Manual workplace staffing
+**Manual workplace staffing.**
 Placed work buildings start at `desiredWorkers: 0` (no auto-fill); player assigns workers via the
 inspect / Job-Board stepper. Set in both placement paths: `placeBuilding` (`src/game/buildings.ts`)
 and starter `makeBuilding` (`src/game/state.ts`).
 
-### 16 seed-gated crop varieties
+**16 seed-gated crop varieties.**
 wheat, corn, potato, rice, barley, carrot, tomato, onion, pepper, cabbage, beans, pumpkin, apple,
 grapes, strawberry, melon — each its own food `ResourceKind`.
 - **Seeds are one-time unlocks** (`GameState.seeds: Crop[]`). Buy a crop's seed once → plantable on
@@ -117,22 +113,35 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   crop selections cleared on load.
 
 ## Key files
-- `src/types.ts` — `Merchant`/`MerchantCategory`, `Building.orders`, `MERCHANT_*` constants +
-  category tables; crops/foods, `CROP_META`, `SEED_COST`, `TRADE_VALUE`, resource tables.
-- `src/game/simulation.ts` — `updateMerchant`/`updateMerchantBoat`/`spawnMerchant`/`moveBoatTo`,
-  `runTrader` (post stocking), `basketTrade` + value helpers (`offerValue`/`requiredValue`),
-  `dismissMerchant`, `tradingPost`.
+- `src/types.ts` — `footprintW/H`, `SIZABLE`, `ranchCapacity`, ranch husbandry constants
+  (`ANIMAL_TILES`, `RANCH_BREED_*`, `RANCH_SPLIT_MIN`, `SLAUGHTER_YIELD`), `FARM_BASE_AREA`,
+  `CropDesign`/`CROP_DESIGN`/`cropDesign`; `Merchant`/`MerchantCategory` + `MERCHANT_*`/`TRADE_VALUE`;
+  `Building` fields (`w/h`, `animals`/`maxAnimals`/`breedProgress`, `orders`); crops/foods, `CROP_META`,
+  `SEED_COST`, resource tables.
+- `src/game/simulation.ts` — merchant lifecycle (`updateMerchant`/`updateMerchantBoat`/`spawnMerchant`/
+  `moveBoatTo`), `runTrader` + `basketTrade`/value helpers; ranch `penFromStorage`, per-season breeding
+  + `butcherProducts`, `cullRanch`/`splitRanch`/`transferRanch`/`eligibleRanchTargets`; farm
+  area-scaled autumn harvest.
+- `src/game/buildings.ts` — sized `canPlace`/`placeBuilding` (`SIZABLE`-driven `w/h` init).
 - `src/game/world.ts` — `riverColumnX` (boat's river path).
-- `src/game/state.ts` — merchant init (new shape); `seeds` seeding; `desiredWorkers 0` defaults.
-- `src/game/save.ts` — merchant-shape + `orders` migration; `seeds` default + stale-crop reset.
-- `src/ui/ui.ts` / `src/main.ts` — Trading Post overlay (inventory/orders + basket), inspect
-  `tradingPost` control, `onSetTradeOrder`/`onBasketTrade`/`onDismissMerchant`.
-- `src/render/renderer.ts` / `src/render/renderer3d.ts` — merchant boat (2D shape / 3D group).
-- `index.html` — removed `#btn-merchant`. `src/style.css` — `.tp-*` overlay styles.
-- `tests/newgame.spec.ts` — merchant/trading-post suite (boat dock, basket value-match, seed
-  unlock, dismiss, cooldown, order hauling) + prior seed-gate/staffing tests.
+- `src/game/state.ts` — `makeBuilding` sizable + ranch init; merchant init; `seeds` seeding;
+  `desiredWorkers 0` defaults.
+- `src/game/save.ts` — merchant-shape + `orders` migration; ranch/farm `w/h` + herd defaults; `seeds`
+  default + stale-crop reset (all load-time, still v12).
+- `src/main.ts` / `src/ui/ui.ts` — generic placement size widget (`sizeW/H`, `onSizeChange`,
+  `showSizeWidget`); inspect controls — ranch (max/cull/split/transfer + destination picker), farm
+  (size + growth rows), trading-post overlay (`onSetTradeOrder`/`onBasketTrade`/`onDismissMerchant`).
+- `src/render/renderer.ts` / `renderer3d.ts` — `drawRanch`/`drawFarm`/`makeFencedPlot`, merchant boat,
+  sized ghost (`PlacementView.pw/ph`).
+- `index.html` — removed `#btn-merchant`. `src/style.css` — `.ranch-size`, `.tp-*`, ranch-picker styles.
+- `tests/newgame.spec.ts` — merchant, ranch, and farm suites, plus prior seed-gate/staffing tests.
 
 ## Architecture notes
+- **Sizable buildings.** `SIZABLE` (`types.ts`) lists the types the player sizes at placement
+  (`ranch`, `farm`; min/max 4/8). Those carry a per-instance `Building.w/h`; **every** footprint read
+  goes through `footprintW/H(b)` (`= b.w ?? def.w`), so all other buildings stay fixed-size. The
+  placement size widget, ghost (`PlacementView.pw/ph`), `canPlace`/`placeBuilding`, storage `center`,
+  `buildingCenter`, and both renderers all use these helpers.
 - Resource system is table-driven: everything iterates `RESOURCE_KINDS`/`FOOD_KINDS`, so
   HUD/trade/storage/consumption auto-pick-up new kinds. Foods aggregate behind one 🍽️ HUD chip
   (`HUD_RESOURCES` = kinds minus foods).
@@ -149,20 +158,36 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   `/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell` with SwiftShader flags,
   against `npm run preview` on port 4173 (preview is flaky — run it in the background).
 - App exposes a `window.__village` debug hook (`startNewGame`, `debugAdvance`, `debugPlace`,
-  `debugCanPlace`, `inspectSel`/`refreshInspect`, `persist`, etc.).
+  `debugCanPlace`, `debugRanchCapacity`, `debugWorkRadius`, `inspectSel`/`refreshInspect`, `persist`,
+  plus the sizing fields `sizeW/sizeH` and the private action methods — TS `private` is runtime-callable).
+- **Test caveat:** when advancing whole seasons with `debugAdvance`, step *just past* the boundary
+  (e.g. `600*2 + 30`), never exactly `N*600` — float drift on the 0.1s steps can miss the boundary and
+  run one fewer season, which made season-timed tests flaky. Fields synthesized in tests set
+  `store`/`w`/`h`/`animals` directly (see `mkRanch`/`mkFarm` helpers).
 
 ## Conventions
 Commit messages end with:
 ```
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01JZUkqYfASDALSC37iDWrtr
+Claude-Session: <this session's claude.ai/code URL>
 ```
+The `Claude-Session:` URL is **per-session** — use the current session's, not any literal shown here.
 Never put the model ID in commits/PRs/code/comments — chat replies only.
 
 ## Next steps
-- Possible polish on the trading-post feature (not required, ideas only):
-  - Boat only follows the *central* river; a post built on an edge lake still parks the boat in the
-    river at that row. Fine in practice, but could path to the nearest water tile to the dock.
-  - Tune `MERCHANT_ARRIVAL_CHANCE` / category stock quantities for balance.
-  - Consider a HUD cue when a boat is arriving/docked (the top-bar button was removed).
+- **Repo rename (pending, manual — user will do it):** rename `centerzl93-lang/mobile-game` →
+  `little-village` in GitHub **Settings → General**. There is no MCP tool for this. *After* it's
+  renamed, update the repo name in lockstep or GitHub Pages breaks: `vite.config.ts` `BASE`,
+  `playwright.config.ts` `BASE`, the two `.../mobile-game/` URLs in `README.md`, and the **Repo** line
+  above. (Package name is already `little-village`.)
+- **Branch name:** `claude/banished-ios-app-b4zott` is the *only* remaining "banished" string — git
+  infra, in the two `.github/workflows/*.yml` triggers and the Working-branch line above. Renaming it
+  needs the user's go-ahead and updating both workflow triggers (and the working-branch instruction).
+- **Per-crop designs:** `CROP_DESIGN` (color + reserved `model` slot) and the render hook in
+  `drawFarm`/`makeFencedPlot` exist, but fields draw generically. Next step is real per-crop art at the
+  hook, or a cheap first pass tinting the field by `cropDesign(crop).color` (~a couple of lines).
+- **Trading-post polish (optional):** boat parks on the *central* river even for an edge-lake post;
+  tune `MERCHANT_ARRIVAL_CHANCE`/category stock; optional HUD cue for an arriving boat (top-bar button
+  was removed).
+- **Minor:** the 3D ranch pen shows no live animal glyphs/count (the 2D renderer does).
 - Otherwise awaiting new direction.

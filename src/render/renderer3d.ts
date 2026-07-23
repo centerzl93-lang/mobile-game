@@ -234,6 +234,10 @@ export class Renderer3D {
     const flat = new THREE.BoxGeometry(0.96, 0.06, 0.96);
     this.paths = new THREE.InstancedMesh(flat, matte(0xffffff), MAP_W * MAP_H);
     this.paths.count = 0;
+    // Instanced layers whose instances change (paths drawn, tiles marked, villagers moving) must skip
+    // frustum culling: Three culls the whole InstancedMesh by a bounding volume that doesn't track
+    // live instance matrices, so a stale volume makes the entire layer pop in/out as the camera moves.
+    this.paths.frustumCulled = false;
     this.scene.add(this.paths);
     const flat2 = new THREE.BoxGeometry(1, 0.04, 1);
     const markMat = matte(0xffffff);
@@ -241,6 +245,7 @@ export class Renderer3D {
     markMat.opacity = 0.5;
     this.marks = new THREE.InstancedMesh(flat2, markMat, MAP_W * MAP_H);
     this.marks.count = 0;
+    this.marks.frustumCulled = false;
     this.scene.add(this.marks);
 
     // Citizens: capsule bodies (all tiers) + small heads (high tier), refreshed every frame.
@@ -249,12 +254,14 @@ export class Renderer3D {
     this.citizens = new THREE.InstancedMesh(capGeo, matte(0xffffff), CITIZEN_CAP);
     this.citizens.count = 0;
     this.citizens.castShadow = this.tier === 'high';
+    this.citizens.frustumCulled = false;
     this.scene.add(this.citizens);
     if (this.tier === 'high') {
       const headGeo = new THREE.SphereGeometry(0.13, 8, 6);
       this.heads = new THREE.InstancedMesh(headGeo, matte(0xffffff), CITIZEN_CAP);
       this.heads.count = 0;
       this.heads.castShadow = true;
+      this.heads.frustumCulled = false;
       this.scene.add(this.heads);
     } else {
       this.heads = null;

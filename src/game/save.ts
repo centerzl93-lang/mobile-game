@@ -45,6 +45,9 @@ export function loadGame(slot = 0): GameState | null {
     s.h = h;
     // Default fields added after this save format shipped, so older saves keep working.
     if (typeof s.disasters !== 'boolean') s.disasters = true;
+    // Builders became an explicit assignable job. Older saves had every idle adult construct;
+    // default to none so the player opts in (matches new games).
+    if (typeof s.desiredBuilders !== 'number') s.desiredBuilders = 0;
     if (s.difficulty !== 'easy' && s.difficulty !== 'normal' && s.difficulty !== 'hard') s.difficulty = 'normal';
     // Sanity check the shape so a corrupt save can't crash the game.
     if (!Array.isArray(s.tiles) || s.tiles.length !== MAP_W * MAP_H) return null;

@@ -549,6 +549,112 @@ test.describe('farm', () => {
   });
 });
 
+test.describe('jobs & builders', () => {
+  // Place a work building near the barn as a construction site; returns its id (or null).
+  const placeGatherer = `() => {
+    const g = window.__village;
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    let id = null;
+    for (let r = 2; r < 16 && id == null; r++)
+      for (let dy = -r; dy <= r && id == null; dy++)
+        for (let dx = -r; dx <= r && id == null; dx++)
+          if (g.debugCanPlace('gatherer', barn.x + dx, barn.y + dy).ok) id = g.debugPlace('gatherer', barn.x + dx, barn.y + dy);
+    return id;
+  }`;
+
+  test('an unbuilt work building shows on the job board and can be pre-staffed', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((place) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true);
+      const id = eval(place)();
+      const b = g.state.buildings.find((x: any) => x.id === id);
+      const wasUnbuilt = !b.built;
+      g.setWorkers(id, 1); // pre-assign a worker before the site is finished
+      return { wasUnbuilt, desired: b.desiredWorkers };
+    }, placeGatherer);
+    expect(out.wasUnbuilt).toBe(true);
+    expect(out.desired).toBe(1);
+
+    // The board lists the unbuilt site, plus the Builders job and a Laborers field.
+    await page.click('#btn-jobs');
+    const text = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.ui.refreshPanels(g.state); // populate the just-opened board deterministically
+      return document.getElementById('jobboard')!.textContent ?? '';
+    });
+    expect(text).toContain('Gatherer');
+    expect(text).toContain('under construction');
+    expect(text).toContain('Builders');
+    expect(text).toContain('Laborers');
+  });
+
+  test('with zero builders a site never builds; assigning builders constructs it', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((place) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true); // full stockpile of wood in the barn
+      const id = eval(place)();
+      // Default 0 builders → no construction progress even after time passes.
+      g.debugAdvance(200);
+      const none = g.state.buildings.find((x: any) => x.id === id);
+      const stalled = { built: none.built, progress: none.progress };
+      // Assign builders → the site is hauled to and finished.
+      g.debugSetBuilders(3);
+      g.debugAdvance(500);
+      const done = g.state.buildings.find((x: any) => x.id === id);
+      return { stalled, built: done.built };
+    }, placeGatherer);
+    expect(out.stalled.built).toBe(false);
+    expect(out.stalled.progress).toBe(0);
+    expect(out.built).toBe(true);
+  });
+
+  test('paths are laid by any adult even with zero builders', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true);
+      const s = g.state;
+      const PATH_DIRT_PLAN = 1, PATH_DIRT = 2;
+      // Plan a free dirt path on a walkable grass tile near a villager.
+      const c = s.citizens[0];
+      const cx = Math.floor(c.x), cy = Math.floor(c.y);
+      let idx = -1;
+      for (let r = 1; r < 8 && idx < 0; r++)
+        for (let dy = -r; dy <= r && idx < 0; dy++)
+          for (let dx = -r; dx <= r && idx < 0; dx++) {
+            const x = cx + dx, y = cy + dy;
+            if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue;
+            const occupied = s.buildings.some((b: any) => x >= b.x && x < b.x + (b.w ?? 2) && y >= b.y && y < b.y + (b.h ?? 2));
+            if (s.tiles[y * s.w + x].type === 'grass' && !occupied && s.paths[y * s.w + x] === 0) idx = y * s.w + x;
+          }
+      s.paths[idx] = PATH_DIRT_PLAN;
+      g.debugSetBuilders(0); // no builders at all — a laborer must lay it
+      g.debugAdvance(120);
+      return { built: s.paths[idx] === PATH_DIRT };
+    });
+    expect(out.built).toBe(true);
+  });
+
+  test('desiredBuilders round-trips through save/load', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true);
+      g.debugSetBuilders(4);
+      g.persist();
+    });
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
+    await page.click('#mm-continue');
+    await page.waitForTimeout(150);
+    const n = await page.evaluate(() => (window as any).__village.state.desiredBuilders);
+    expect(n).toBe(4);
+  });
+});
+
 test.describe('disasters toggle', () => {
   test('the toggle flows from the difficulty screen and persists through save/load', async ({ page }) => {
     await open(page);

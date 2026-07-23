@@ -84,6 +84,7 @@ export interface UICallbacks {
   onNewGame: () => void;
   onOpenMenu: () => void;
   onSetWorkers: (buildingId: number, delta: number) => void;
+  onSetBuilders: (delta: number) => void;
   onSetMineOutput: (buildingId: number, output: MineOutput) => void;
   onSetSmithRecipe: (buildingId: number, recipe: SmithRecipe) => void;
   onSetForesterReplant: (buildingId: number, on: boolean) => void;
@@ -183,7 +184,8 @@ export class UI {
       else if (c.age >= OLD_AGE_START) elderCount++;
     }
     const adultCount = pop - childCount - elderCount;
-    const builders = s.citizens.reduce((n, c) => n + (c.jobId === null ? 1 : 0), 0);
+    // Free laborers = unemployed adults not assigned as builders — the pool the player can assign.
+    const laborers = s.citizens.reduce((n, c) => n + (c.jobId === null && !c.builder ? 1 : 0), 0);
     this.el.pop.querySelector('.val')!.textContent = `${pop}/${housingCapacity(s)}`;
     this.el.ages.querySelector('.val')!.textContent = `🧒${childCount} 🧑${adultCount} 👴${elderCount}`;
     this.el.health.querySelector('.val')!.textContent = `${Math.round(avgHealth(s))}`;
@@ -194,7 +196,7 @@ export class UI {
     this.el.sick.classList.toggle('hidden', sick === 0);
     this.el.sick.classList.add('low');
     this.el.sick.querySelector('.val')!.textContent = `${sick}`;
-    this.el.builders.querySelector('.val')!.textContent = `${builders}`;
+    this.el.builders.querySelector('.val')!.textContent = `${laborers}`;
     const food = totalFood(s);
     this.foodChip.querySelector('.val')!.textContent = `${Math.floor(food)}`;
     this.foodChip.classList.toggle('low', food < pop * FOOD_PER_CITIZEN_PER_SEASON);
@@ -514,14 +516,16 @@ export class UI {
   }
 
   private refreshJobBoard(s: GameState): void {
-    const jobs = s.buildings.filter((b) => b.built && BUILDING_DEFS[b.type].jobs > 0);
+    // Every workplace, built or not — an unbuilt site still shows so workers can be pre-assigned.
+    const jobs = s.buildings.filter((b) => BUILDING_DEFS[b.type].jobs > 0);
     const children = s.citizens.reduce((n, c) => n + (isAdult(c) ? 0 : 1), 0);
     const adults = s.citizens.length - children;
     const employed = s.citizens.reduce((n, c) => n + (c.jobId !== null ? 1 : 0), 0);
-    const builders = adults - employed;
+    const buildersWorking = s.citizens.reduce((n, c) => n + (c.builder ? 1 : 0), 0);
+    const laborers = s.citizens.reduce((n, c) => n + (c.jobId === null && !c.builder ? 1 : 0), 0);
     const sig =
-      jobs.map((b) => `${b.id}:${b.workers.length}:${b.desiredWorkers}:${b.output}:${b.recipe}:${b.crop}:${b.animal}`).join('|') +
-      `#${adults},${children},${employed}#${s.seeds.join(',')}`;
+      jobs.map((b) => `${b.id}:${b.built ? 1 : 0}:${b.workers.length}:${b.desiredWorkers}:${b.output}:${b.recipe}:${b.crop}:${b.animal}`).join('|') +
+      `#${adults},${children},${employed},${buildersWorking},${laborers},${s.desiredBuilders}#${s.seeds.join(',')}`;
     if (sig === this.jobSig) return;
     this.jobSig = sig;
 
@@ -533,12 +537,32 @@ export class UI {
     head.querySelector('#jb-close')!.addEventListener('click', () => this.toggleJobBoard());
     const sum = document.createElement('div');
     sum.className = 'summary';
-    sum.textContent = `${adults} adults (🔨 ${builders} free) · 🧒 ${children} children · ❤️ ${Math.round(avgHealth(s))} · 😊 ${Math.round(avgHappiness(s))}`;
+    sum.textContent = `${adults} adults · 🧒 ${children} children · ❤️ ${Math.round(avgHealth(s))} · 😊 ${Math.round(avgHappiness(s))}`;
     p.appendChild(sum);
+
+    // Builders — a global job (only these villagers construct work buildings). Always shown so the
+    // player can staff construction even before any workplace exists.
+    const brow = document.createElement('div');
+    brow.className = 'job-row';
+    brow.innerHTML = `
+      <span class="jr-emoji">🔨</span>
+      <div class="jr-main"><div class="jr-name">Builders</div>
+        <div class="jr-sub">${buildersWorking} working / ${s.desiredBuilders} wanted · build sites & paths</div></div>
+      <div class="stepper"><button data-step="-1">−</button><span class="count">${s.desiredBuilders}</span><button data-step="1">+</button></div>`;
+    brow.querySelector('[data-step="-1"]')!.addEventListener('click', () => this.cb.onSetBuilders(-1));
+    brow.querySelector('[data-step="1"]')!.addEventListener('click', () => this.cb.onSetBuilders(1));
+    p.appendChild(brow);
+
+    // Dedicated laborers field — free adults available to assign to any job.
+    const lab = document.createElement('div');
+    lab.className = 'summary';
+    lab.textContent = `👷 Laborers (free adults): ${laborers}`;
+    p.appendChild(lab);
+
     if (jobs.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'summary';
-      empty.textContent = 'No workplaces built yet.';
+      empty.textContent = 'No workplaces yet — place one to add jobs.';
       p.appendChild(empty);
       return;
     }
@@ -560,10 +584,14 @@ export class UI {
         const cur = b.animal ?? 'cattle';
         extra = `<div class="jr-toggle" data-toggle="animal">${RANCH_ANIMALS.map((a) => `<button data-v="${a}" class="${cur === a ? 'on' : ''}">${ANIMAL_META[a].emoji}</button>`).join('')}</div>`;
       }
+      // Unbuilt sites still list here so workers can be queued; hiring only starts once built.
+      const status = b.built
+        ? `${b.workers.length} working / ${b.desiredWorkers} wanted (max ${def.jobs})`
+        : `🏗 under construction · ${b.desiredWorkers} wanted (max ${def.jobs})`;
       row.innerHTML = `
         <span class="jr-emoji">${def.emoji}</span>
         <div class="jr-main"><div class="jr-name">${def.name}</div>
-          <div class="jr-sub">${b.workers.length} working / ${b.desiredWorkers} wanted (max ${def.jobs})</div>${extra}</div>
+          <div class="jr-sub">${status}</div>${extra}</div>
         <div class="stepper"><button data-step="-1">−</button><span class="count">${b.desiredWorkers}</span><button data-step="1">+</button></div>`;
       row.querySelector('[data-step="-1"]')!.addEventListener('click', () => this.cb.onSetWorkers(b.id, -1));
       row.querySelector('[data-step="1"]')!.addEventListener('click', () => this.cb.onSetWorkers(b.id, 1));

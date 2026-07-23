@@ -237,6 +237,16 @@ function assignHomesAndJobs(s: GameState): void {
   const stillEmployed = new Set<number>();
   for (const b of s.buildings) for (const id of b.workers) stillEmployed.add(id);
   for (const c of s.citizens) if (!stillEmployed.has(c.id)) c.jobId = null;
+
+  // Builders are a global job (no building): tag the first N free adults as builders so only they
+  // construct work buildings. Buildings fill first (above), builders take the leftover idle pool;
+  // everyone else — employed, children, and surplus laborers — is not a builder.
+  const wantBuilders = Math.max(0, s.desiredBuilders ?? 0);
+  let builderN = 0;
+  for (const c of s.citizens) {
+    c.builder = isAdult(c) && c.jobId === null && builderN < wantBuilders;
+    if (c.builder) builderN++;
+  }
 }
 
 // ---- movement ----
@@ -245,6 +255,10 @@ function assignHomesAndJobs(s: GameState): void {
 let routeBudget = 0;
 const ROUTE_BUDGET_MAX = 80;
 const WAYPOINT_ARRIVE = 0.18;
+/** How close (in tiles) a planned path must be before an *employed* worker will detour to lay it.
+ * Free adults (laborers / idle builders) lay paths anywhere; this only bounds busy workers so a
+ * distant path network doesn't strip farms and mines of their staff. */
+const NEAR_PATH_RADIUS = 6;
 
 /**
  * Move a citizen toward (c.tx, c.ty) along a water-avoiding route, returning true once the
@@ -344,8 +358,12 @@ function runCitizen(s: GameState, c: Citizen, dt: number, toolFactor: number): v
     return;
   }
   const job = c.jobId !== null ? s.buildings.find((b) => b.id === c.jobId) : null;
-  if (job && job.built) runWorker(s, c, job, dt, toolFactor);
-  else runBuilder(s, c, dt);
+  if (job && job.built) {
+    // Paths can be laid by any adult: an employed worker not mid-haul detours to a *nearby*
+    // planned path before returning to their workplace.
+    if (!c.carry && buildPath(s, c, dt, NEAR_PATH_RADIUS * NEAR_PATH_RADIUS)) return;
+    runWorker(s, c, job, dt, toolFactor);
+  } else runBuilder(s, c, dt);
 }
 
 /** Spend a leisure break: amble to a tavern/chapel/home and idle there until the break ends. */
@@ -762,7 +780,8 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
   // Deliver carried material to a site that needs it, else return it to a barn.
   if (c.carry) {
     const kind = c.carry.kind;
-    const site = nearestUnbuiltNeeding(s, c, kind);
+    // Only builders supply construction sites; a laborer just stashes whatever it's carrying.
+    const site = c.builder ? nearestUnbuiltNeeding(s, c, kind) : null;
     if (site) {
       goTo(c, buildingApproach(s, site));
       if (stepTo(s, c, dt)) {
@@ -788,8 +807,8 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
     return;
   }
 
-  // Find a construction site to work.
-  const pick = pickSite(s, c);
+  // Only Builders construct work buildings — find a construction site to work.
+  const pick = c.builder ? pickSite(s, c) : null;
   if (pick) {
     if (pick.action === 'fetch') {
       const kind = pick.kind!;
@@ -820,7 +839,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
     return;
   }
 
-  // No construction: gather a marked harvest tile if any are reachable.
+  // Any free adult (a laborer, or a builder with no site): gather a marked harvest tile if reachable.
   const hIdx = pickHarvest(s, c);
   if (hIdx >= 0) {
     runHarvest(s, c, hIdx, dt);
@@ -962,7 +981,10 @@ function adjacentStand(s: GameState, c: Citizen, tx: number, ty: number): { x: n
   return best;
 }
 
-function buildPath(s: GameState, c: Citizen, dt: number): boolean {
+/** Lay the nearest reachable planned path/bridge. `maxD2` caps how far (squared tiles) the citizen
+ * will travel to reach one — used to keep busy workers from crossing the map for a distant path;
+ * the labor pool passes no cap. Returns false when there's nothing (in range) to build. */
+function buildPath(s: GameState, c: Citizen, dt: number, maxD2 = Infinity): boolean {
   let bestIdx = -1;
   let bestD = Infinity;
   let bestStand: { x: number; y: number } | null = null;
@@ -987,7 +1009,7 @@ function buildPath(s: GameState, c: Citizen, dt: number): boolean {
       bestStand = stand;
     }
   }
-  if (bestIdx < 0 || !bestStand) return false;
+  if (bestIdx < 0 || !bestStand || bestD > maxD2) return false;
   const tx = bestIdx % MAP_W;
   const ty = (bestIdx / MAP_W) | 0;
   c.tx = bestStand.x;

@@ -470,6 +470,10 @@ export interface Citizen {
   sick: boolean; // ill from a disease outbreak; can't work until recovered
   /** Seconds of leisure remaining; while > 0 the villager is on a break, not working. */
   rest?: number;
+  /** Assigned to the Builders job this tick (recomputed every tick, not persisted). A builder has
+   * jobId === null but constructs work buildings; a plain laborer (jobId null, builder false) does
+   * not. */
+  builder?: boolean;
   // ---- transient navigation state (not persisted; recomputed after load) ----
   route?: { x: number; y: number }[]; // cached A* waypoints toward the current destination
   routeI?: number; // index of the next waypoint to reach
@@ -597,6 +601,9 @@ export interface GameState {
   harvest: number[];
   /** Fractional accumulator for how many planned path tiles are built. */
   pathProgress: number;
+  /** How many free adults the player wants assigned as Builders. Only Builders construct work
+   * buildings; paths can be laid by any adult. Idle builders pitch in as laborers. */
+  desiredBuilders: number;
   /**
    * Bumped whenever walkability changes (a bridge laid or a path/bridge cleared). The
    * simulation caches its per-tick reachability flood-fill and only recomputes when this

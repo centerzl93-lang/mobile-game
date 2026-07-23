@@ -1,7 +1,7 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-07-23 (handoff refresh: de-duped sections, current Key files/Next steps)
+> Last updated: 2026-07-23 (jobs board: unbuilt jobs, Laborers field, Builders job)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -12,10 +12,32 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest feature: the **farm overhaul** (this session) — see below. Prior milestones (the ranch
-overhaul; the trading-post & merchant overhaul; manual staffing + 16 seed-gated crops; the
-"Little Village" rename that dropped all Banished references) remain in place. Reference commits by
-message, not SHA (this doc sits one commit behind its own history).
+Latest feature: the **jobs board overhaul** (this session) — see below. Prior milestones (the farm
+overhaul; the ranch overhaul; the trading-post & merchant overhaul; manual staffing + 16 seed-gated
+crops; the "Little Village" rename that dropped all Banished references) remain in place. Reference
+commits by message, not SHA (this doc sits one commit behind its own history).
+
+### Jobs board overhaul
+- **Unbuilt jobs are listed.** `refreshJobBoard` no longer filters on `b.built`, so a placed-but-
+  unbuilt site appears immediately (shown as `🏗 under construction`) and its `desiredWorkers` can be
+  pre-assigned. Actual hiring still waits for `b.built` (unchanged `target` gate in
+  `assignHomesAndJobs`), and `jobSig` now keys on `b.built` too.
+- **Dedicated Laborers field.** Free adults = `jobId === null && !c.builder`. Shown on the board
+  (`👷 Laborers (free adults): N`) and in the header chip (`#stat-builders`, repurposed to 👷 "Free
+  laborers"; `updateHud` counts laborers, not the whole null-job pool).
+- **Builders job.** New global job (no building): `GameState.desiredBuilders` (player-set, persisted).
+  `assignHomesAndJobs` tags the first N free adults `c.builder = true` (transient, recomputed each
+  tick — no citizen save migration). **Only builders construct work buildings**: `runBuilder`'s
+  material-hauling + `pickSite` are gated behind `c.builder`; a non-builder laborer only returns a
+  carried load to a barn, then harvests/paths. Idle builders fall through to harvest/paths like
+  laborers. New games and old saves default to **0 builders** (load-time default in `save.ts`, still
+  v12) — nothing constructs until the player assigns some; the placement log hints this when
+  `desiredBuilders === 0`.
+- **Paths: any adult.** `buildPath` gained an optional squared-distance cap `maxD2`. Free adults
+  (laborers + idle builders) lay any reachable path (no cap); *employed* workers detour in `runCitizen`
+  to a path within `NEAR_PATH_RADIUS` (6 tiles) before working, so a distant path network doesn't
+  strip farms/mines of staff.
+- Debug hook `debugSetBuilders(n)` (bypasses the adult clamp) for tests.
 
 ### Farm overhaul
 Fields now mirror ranches and lay the groundwork for crop visuals.
@@ -133,8 +155,15 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   (size + growth rows), trading-post overlay (`onSetTradeOrder`/`onBasketTrade`/`onDismissMerchant`).
 - `src/render/renderer.ts` / `renderer3d.ts` — `drawRanch`/`drawFarm`/`makeFencedPlot`, merchant boat,
   sized ghost (`PlacementView.pw/ph`).
+- **Jobs board** — `src/game/simulation.ts` (`assignHomesAndJobs` builder tagging; `runCitizen`
+  nearby-path detour; `runBuilder` `c.builder` gate; `buildPath(…, maxD2)`; `NEAR_PATH_RADIUS`);
+  `src/ui/ui.ts` (`refreshJobBoard` unbuilt rows + Builders row + Laborers field; `onSetBuilders`;
+  `updateHud` laborers chip); `src/main.ts` (`setBuilders`, placement hint, `debugSetBuilders`);
+  `src/game/state.ts`/`save.ts` (`desiredBuilders` init + v12 default); `index.html` (`#stat-builders`
+  → 👷).
 - `index.html` — removed `#btn-merchant`. `src/style.css` — `.ranch-size`, `.tp-*`, ranch-picker styles.
-- `tests/newgame.spec.ts` — merchant, ranch, and farm suites, plus prior seed-gate/staffing tests.
+- `tests/newgame.spec.ts` — merchant, ranch, farm, and **jobs & builders** suites, plus prior
+  seed-gate/staffing tests.
 
 ## Architecture notes
 - **Sizable buildings.** `SIZABLE` (`types.ts`) lists the types the player sizes at placement
@@ -145,8 +174,11 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
 - Resource system is table-driven: everything iterates `RESOURCE_KINDS`/`FOOD_KINDS`, so
   HUD/trade/storage/consumption auto-pick-up new kinds. Foods aggregate behind one 🍽️ HUD chip
   (`HUD_RESOURCES` = kinds minus foods).
-- Worker auto-assignment (`assignJobs` in `simulation.ts`) fills up to
-  `min(def.jobs, b.desiredWorkers)`.
+- Worker assignment (`assignHomesAndJobs` in `simulation.ts`) fills each **built** workplace up to
+  `min(def.jobs, b.desiredWorkers)` from free adults, then tags the first `desiredBuilders` remaining
+  free adults `c.builder = true`. A villager's role is: employed (`jobId !== null`), builder
+  (`jobId === null && builder`), or laborer (`jobId === null && !builder`). Only builders advance
+  construction; any free adult harvests/paths; employed workers only detour to *nearby* paths.
 - Save is single-slot-per-key `little-village-save-v12-slot<N>`, VERSION 12; new optional fields get
   load-time defaults (no version bump).
 
@@ -158,7 +190,7 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   `/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell` with SwiftShader flags,
   against `npm run preview` on port 4173 (preview is flaky — run it in the background).
 - App exposes a `window.__village` debug hook (`startNewGame`, `debugAdvance`, `debugPlace`,
-  `debugCanPlace`, `debugRanchCapacity`, `debugWorkRadius`, `inspectSel`/`refreshInspect`, `persist`,
+  `debugCanPlace`, `debugRanchCapacity`, `debugWorkRadius`, `debugSetBuilders`, `inspectSel`/`refreshInspect`, `persist`,
   plus the sizing fields `sizeW/sizeH` and the private action methods — TS `private` is runtime-callable).
 - **Test caveat:** when advancing whole seasons with `debugAdvance`, step *just past* the boundary
   (e.g. `600*2 + 30`), never exactly `N*600` — float drift on the 0.1s steps can miss the boundary and

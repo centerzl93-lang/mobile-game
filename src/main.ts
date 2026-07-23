@@ -119,6 +119,7 @@ class Game {
       onNewGame: () => this.openSizeSelect(),
       onOpenMenu: () => this.openPauseMenu(),
       onSetWorkers: (id, d) => this.setWorkers(id, d),
+      onSetBuilders: (d) => this.setBuilders(d),
       onSetMineOutput: (id, o) => this.setMineOutput(id, o),
       onSetSmithRecipe: (id, r) => this.setSmithRecipe(id, r),
       onSetForesterReplant: (id, on) => this.setForesterReplant(id, on),
@@ -279,6 +280,13 @@ class Game {
     if (!b) return;
     const max = BUILDING_DEFS[b.type].jobs;
     b.desiredWorkers = Math.max(0, Math.min(max, b.desiredWorkers + delta));
+    this.persist();
+  }
+
+  /** Adjust the global Builders target (clamped to the number of adults). */
+  private setBuilders(delta: number): void {
+    const adults = this.state.citizens.reduce((n, c) => n + (c.age >= ADULT_AGE ? 1 : 0), 0);
+    this.state.desiredBuilders = Math.max(0, Math.min(adults, this.state.desiredBuilders + delta));
     this.persist();
   }
 
@@ -576,7 +584,13 @@ class Game {
       return;
     }
     placeBuilding(this.state, this.selectedBuild, tx, ty, w, h);
-    this.ui.log(`${BUILDING_DEFS[this.selectedBuild].name} site marked — builders will haul materials`, 'info');
+    const name = BUILDING_DEFS[this.selectedBuild].name;
+    this.ui.log(
+      this.state.desiredBuilders > 0
+        ? `${name} site marked — builders will haul materials`
+        : `${name} site marked — assign Builders on the Job Board to construct it`,
+      'info',
+    );
     this.persist();
     if (!canAfford(this.state, this.selectedBuild)) {
       this.selectedBuild = null;
@@ -797,6 +811,11 @@ class Game {
     const { w, h } = this.placeSize(type);
     const b = placeBuilding(this.state, type, x, y, w, h);
     return b ? b.id : null;
+  }
+
+  /** Debug/testing helper: set the global Builders target directly (bypasses the adult clamp). */
+  debugSetBuilders(n: number): void {
+    this.state.desiredBuilders = Math.max(0, n);
   }
 
   /** Debug/testing helper: a ranch's current head capacity (from its size + animal). */

@@ -1,7 +1,7 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-07-23 (jobs board: unbuilt jobs, Laborers field, Builders job)
+> Last updated: 2026-07-24 (jobs board: unbuilt jobs, Laborers field, Builders job)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +

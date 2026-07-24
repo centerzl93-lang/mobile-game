@@ -36,6 +36,7 @@ import {
   isAdult,
 } from '../types';
 import { housingCapacity } from '../game/state';
+import { footprintClear } from '../game/buildings';
 import { totalStoredAll, totalFood } from '../game/storage';
 import {
   LogKind,
@@ -101,6 +102,8 @@ export interface UICallbacks {
   onAcceptNomads: () => void;
   onRejectNomads: () => void;
   onSelectHarvest: (active: boolean) => void;
+  /** Rotate the camera view: -1 = left (counter-clockwise), +1 = right (clockwise). */
+  onRotate: (dir: -1 | 1) => void;
 }
 
 const LOW_NEED: Partial<Record<ResourceKind, number>> = {
@@ -122,6 +125,8 @@ export class UI {
     speed: byId('btn-speed'),
     jobs: byId('btn-jobs'),
     menuBtn: byId('btn-menu'),
+    rotLeft: byId('btn-rot-left'),
+    rotRight: byId('btn-rot-right'),
     log: byId('log'),
     hint: byId('hint'),
     toolbar: byId('toolbar'),
@@ -153,6 +158,14 @@ export class UI {
     this.el.speed.addEventListener('click', () => this.cb.onSpeedCycle());
     this.el.jobs.addEventListener('click', () => this.toggleJobBoard());
     this.el.menuBtn.addEventListener('click', () => this.cb.onOpenMenu());
+    this.el.rotLeft.addEventListener('click', () => this.cb.onRotate(-1));
+    this.el.rotRight.addEventListener('click', () => this.cb.onRotate(1));
+  }
+
+  /** Hide the camera rotate buttons (e.g. in the flat 2D view where rotation is a no-op). */
+  hideRotateButtons(): void {
+    this.el.rotLeft.classList.add('hidden');
+    this.el.rotRight.classList.add('hidden');
   }
 
   // ---- HUD ----
@@ -184,8 +197,9 @@ export class UI {
       else if (c.age >= OLD_AGE_START) elderCount++;
     }
     const adultCount = pop - childCount - elderCount;
-    // Free laborers = unemployed adults not assigned as builders — the pool the player can assign.
-    const laborers = s.citizens.reduce((n, c) => n + (c.jobId === null && !c.builder ? 1 : 0), 0);
+    // Free laborers = unemployed *adults* not assigned as builders — the pool the player can
+    // assign. Children have no job (jobId === null) but can't work, so they must be excluded.
+    const laborers = s.citizens.reduce((n, c) => n + (isAdult(c) && c.jobId === null && !c.builder ? 1 : 0), 0);
     this.el.pop.querySelector('.val')!.textContent = `${pop}/${housingCapacity(s)}`;
     this.el.ages.querySelector('.val')!.textContent = `🧒${childCount} 🧑${adultCount} 👴${elderCount}`;
     this.el.health.querySelector('.val')!.textContent = `${Math.round(avgHealth(s))}`;
@@ -522,9 +536,10 @@ export class UI {
     const adults = s.citizens.length - children;
     const employed = s.citizens.reduce((n, c) => n + (c.jobId !== null ? 1 : 0), 0);
     const buildersWorking = s.citizens.reduce((n, c) => n + (c.builder ? 1 : 0), 0);
-    const laborers = s.citizens.reduce((n, c) => n + (c.jobId === null && !c.builder ? 1 : 0), 0);
+    // Free laborers are unemployed *adults* only — children have no job but can't be assigned.
+    const laborers = s.citizens.reduce((n, c) => n + (isAdult(c) && c.jobId === null && !c.builder ? 1 : 0), 0);
     const sig =
-      jobs.map((b) => `${b.id}:${b.built ? 1 : 0}:${b.workers.length}:${b.desiredWorkers}:${b.output}:${b.recipe}:${b.crop}:${b.animal}`).join('|') +
+      jobs.map((b) => `${b.id}:${b.built ? 1 : 0}:${b.built ? 1 : footprintClear(s, b) ? 1 : 0}:${b.workers.length}:${b.desiredWorkers}:${b.output}:${b.recipe}:${b.crop}:${b.animal}`).join('|') +
       `#${adults},${children},${employed},${buildersWorking},${laborers},${s.desiredBuilders}#${s.seeds.join(',')}`;
     if (sig === this.jobSig) return;
     this.jobSig = sig;
@@ -587,7 +602,9 @@ export class UI {
       // Unbuilt sites still list here so workers can be queued; hiring only starts once built.
       const status = b.built
         ? `${b.workers.length} working / ${b.desiredWorkers} wanted (max ${def.jobs})`
-        : `🏗 under construction · ${b.desiredWorkers} wanted (max ${def.jobs})`;
+        : footprintClear(s, b)
+          ? `🏗 under construction · ${b.desiredWorkers} wanted (max ${def.jobs})`
+          : `🌲 clearing land · ${b.desiredWorkers} wanted (max ${def.jobs})`;
       row.innerHTML = `
         <span class="jr-emoji">${def.emoji}</span>
         <div class="jr-main"><div class="jr-name">${def.name}</div>

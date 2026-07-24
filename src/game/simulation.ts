@@ -93,9 +93,10 @@ import {
   RESOURCE_KINDS,
   BuildingType,
   isAdult,
+  isFireproof,
 } from '../types';
 import { housingCapacity, buildingCenter, makeCitizen } from './state';
-import { forestInCircle, nearbyStone, nearbyWater } from './buildings';
+import { forestInCircle, nearbyStone, nearbyWater, footprintClear } from './buildings';
 import { getTile, tileIndex, inBounds, riverColumnX } from './world';
 import { pathSpeedMult } from './paths';
 import { findPath, isWalkable, labelComponents } from './pathfind';
@@ -759,8 +760,12 @@ function pickSite(s: GameState, c: Citizen): SiteAction | null {
         if (totalStored(s, kind) > 0 && fetchKind === null) fetchKind = kind;
       }
     }
+    // Materials are all delivered, but don't raise the building until any trees / loose stone
+    // under its footprint have been harvested away (the free-adult workforce clears them).
     const action: SiteAction | null = fully
-      ? { site: b, action: 'build' }
+      ? footprintClear(s, b)
+        ? { site: b, action: 'build' }
+        : null
       : fetchKind
         ? { site: b, action: 'fetch', kind: fetchKind }
         : null;
@@ -1706,7 +1711,7 @@ function diseaseSeason(s: GameState, log: LogFn): void {
 
 function fireSeason(s: GameState, log: LogFn): void {
   if (!s.disasters) return; // disasters toggled off — no fires ignite
-  const flammable = s.buildings.filter((b) => b.built && b.type !== 'well' && !b.fireTimer);
+  const flammable = s.buildings.filter((b) => b.built && !isFireproof(b.type) && !b.fireTimer);
   if (flammable.length === 0) return;
   if (Math.random() < FIRE_CHANCE) tryIgnite(s, flammable[(Math.random() * flammable.length) | 0], log, true);
 }
@@ -1717,7 +1722,7 @@ export function igniteBuilding(s: GameState, b: Building, log: LogFn): void {
 }
 
 function tryIgnite(s: GameState, b: Building, log: LogFn, announce: boolean): void {
-  if (b.fireTimer || b.type === 'well') return;
+  if (b.fireTimer || isFireproof(b.type)) return;
   const c = buildingCenter(b);
   const wellNear = s.buildings.some(
     (w) => w.built && w.type === 'well' && dist2c(buildingCenter(w), c) <= WELL_RADIUS * WELL_RADIUS,
@@ -1749,7 +1754,7 @@ function adjacentBuildings(s: GameState, b: Building): Building[] {
   const bh = footprintH(b);
   const out: Building[] = [];
   for (const o of s.buildings) {
-    if (o === b || !o.built || o.type === 'well' || o.fireTimer) continue;
+    if (o === b || !o.built || isFireproof(o.type) || o.fireTimer) continue;
     if (b.x - 1 < o.x + footprintW(o) && b.x + bw + 1 > o.x && b.y - 1 < o.y + footprintH(o) && b.y + bh + 1 > o.y) out.push(o);
   }
   return out;

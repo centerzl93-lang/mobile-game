@@ -53,7 +53,8 @@ body {
 #hud-top {
   position: absolute;
   top: calc(var(--safe-top) + 6px);
-  left: calc(var(--safe-left) + 6px);
+  /* Insets leave room for the rotate buttons pinned in the top corners. */
+  left: calc(var(--safe-left) + 52px);
   right: calc(var(--safe-right) + 54px);
   display: flex;
   flex-direction: column;
@@ -134,6 +135,40 @@ body {
 }
 .ctrl:active {
   transform: scale(0.94);
+}
+
+/* ---------- Camera rotate buttons (top corners) ---------- */
+.rotate-btn {
+  position: absolute;
+  top: calc(var(--safe-top) + 6px);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 600;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 6;
+}
+.rotate-btn:active {
+  transform: scale(0.92);
+}
+#btn-rot-left {
+  left: calc(var(--safe-left) + 6px);
+}
+#btn-rot-right {
+  right: calc(var(--safe-right) + 8px);
+}
+.rotate-btn.hidden {
+  display: none;
 }
 
 /* ---------- Event log ---------- */

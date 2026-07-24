@@ -1,7 +1,7 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-07-24 (jobs board: unbuilt jobs, Laborers field, Builders job)
+> Last updated: 2026-07-24 (HUD/UX pass: adult-only laborers, rotate buttons, fireproof barns, clear-before-build)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -12,7 +12,35 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest feature: the **jobs board overhaul** (this session) — see below. Prior milestones (the farm
+Latest work: a **HUD / UX pass** (this session) — see just below. Before it, the **jobs board
+overhaul** — see further down.
+
+### HUD / UX pass (this session)
+- **Available-workers counter counts adults only.** The 👷 "Free laborers" HUD chip and the Job
+  Board's "Laborers (free adults)" field previously counted `jobId === null && !c.builder`, which
+  swept in children (who have no job but can't work). Both now add `isAdult(c)` (`ui.ts` `updateHud`
+  + `refreshJobBoard`, and the board's `jobSig`).
+- **On-screen rotate buttons replace the twist gesture.** Two round buttons pinned to the top
+  corners (`#btn-rot-left` ↺ / `#btn-rot-right` ↻, `index.html` + `.rotate-btn` in `style.css`)
+  rotate the 3D camera a fixed `ROTATE_STEP` (45°) per tap via `UICallbacks.onRotate` →
+  `Game.rotateView` → `camera.rotateBy`. The two-finger twist-to-rotate was removed from
+  `input.ts` (pinch-zoom + two-finger pan stay). The flat 2D camera gained a no-op `rotateBy`, and
+  the buttons hide in `?2d` (`ui.hideRotateButtons`). `#hud-top` left inset widened to clear the
+  left button.
+- **Barns (and wells) are fireproof.** `BuildingDef.fireproof` + `isFireproof(type)` (`types.ts`),
+  set on `well` and `barn`. The hard-coded `type === 'well'` fire checks in `simulation.ts`
+  (`fireSeason` flammable filter, `tryIgnite` guard, `adjacentBuildings` spread target) now use
+  `isFireproof`; the well-*dousing* check stays keyed on `'well'`.
+- **Clear resources under a footprint before building.** Placing a building over trees or loose
+  stone now marks those footprint tiles for harvest (`markFootprintHarvest` in `placeBuilding`), and
+  construction is gated on `footprintClear(s, b)` (exported from `buildings.ts`, checked in
+  `pickSite` before the `build` action). The free-adult workforce clears the marks via the existing
+  `pickHarvest`/`runHarvest` path; material hauling may proceed in parallel. Trees and loose stone
+  are mutually exclusive per tile in map gen, matching the single-valued harvest layer. The Job
+  Board shows "🌲 clearing land" for such a site, and placement logs a "clear the trees and stone"
+  hint (`main.ts`).
+
+### Jobs board overhaul Prior milestones (the farm
 overhaul; the ranch overhaul; the trading-post & merchant overhaul; manual staffing + 16 seed-gated
 crops; the "Little Village" rename that dropped all Banished references) remain in place. Reference
 commits by message, not SHA (this doc sits one commit behind its own history).
@@ -163,7 +191,8 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   → 👷).
 - `index.html` — removed `#btn-merchant`. `src/style.css` — `.ranch-size`, `.tp-*`, ranch-picker styles.
 - `tests/newgame.spec.ts` — merchant, ranch, farm, and **jobs & builders** suites, plus prior
-  seed-gate/staffing tests.
+  seed-gate/staffing tests, and this session's **available workers count**, **fireproof buildings**,
+  **clearing land before building**, and **camera rotate buttons** suites.
 
 ## Architecture notes
 - **Sizable buildings.** `SIZABLE` (`types.ts`) lists the types the player sizes at placement
@@ -222,4 +251,8 @@ Never put the model ID in commits/PRs/code/comments — chat replies only.
   tune `MERCHANT_ARRIVAL_CHANCE`/category stock; optional HUD cue for an arriving boat (top-bar button
   was removed).
 - **Minor:** the 3D ranch pen shows no live animal glyphs/count (the 2D renderer does).
+- **Flaky test (pre-existing):** `jobs & builders › with zero builders a site never builds` can
+  fail intermittently in a full run — its `placeGatherer` helper returns `null` on an unlucky random
+  map (no gatherer spot within radius of the barn), then dereferences it. Passes in isolation.
+  Hardening the helper (wider search / fixed seed) would remove the flake.
 - Otherwise awaiting new direction.

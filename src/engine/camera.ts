@@ -38,6 +38,9 @@ export class Camera {
     this.clamp();
   }
 
+  /** The flat top-down 2D view cannot rotate — accepted for a common camera surface. */
+  rotateBy(_delta: number): void {}
+
   panByPixels(dx: number, dy: number): void {
     const p = this.pxPerTile;
     this.x -= dx / p;

@@ -374,7 +374,14 @@ export interface BuildingDef {
   requiresWaterFraction?: number;
   /** Radius (tiles) of the circular work area, for forest-worked buildings. */
   workRadius?: number;
+  /** Immune to fire — never ignites and fire never spreads to it (wells, stone-built barns). */
+  fireproof?: boolean;
   desc: string;
+}
+
+/** Whether a building type can catch fire — fireproof types (wells, barns) never burn. */
+export function isFireproof(type: BuildingType): boolean {
+  return BUILDING_DEFS[type].fireproof === true;
 }
 
 export interface Building {
@@ -945,7 +952,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   well: {
     type: 'well', name: 'Well', emoji: '⛲', category: 'civic', w: 1, h: 1,
-    cost: { wood: 6, stone: 8 }, jobs: 0, buildTime: 4,
+    cost: { wood: 6, stone: 8 }, jobs: 0, buildTime: 4, fireproof: true,
     desc: 'Provides water to fight fires. Buildings nearby rarely burn down.',
   },
   market: {
@@ -955,8 +962,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   barn: {
     type: 'barn', name: 'Barn', emoji: '🛖', category: 'resources', w: 2, h: 2,
-    cost: { wood: 16 }, jobs: 0, buildTime: 6,
-    desc: 'Stores up to 5000 goods. Tap it to see what is inside.',
+    cost: { wood: 16 }, jobs: 0, buildTime: 6, fireproof: true,
+    desc: 'Stores up to 5000 goods, safe from fire. Tap it to see what is inside.',
   },
 };
 

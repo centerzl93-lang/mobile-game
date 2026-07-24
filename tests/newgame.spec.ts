@@ -655,6 +655,152 @@ test.describe('jobs & builders', () => {
   });
 });
 
+test.describe('available workers count', () => {
+  test('the free-laborers HUD chip counts adults only, never children', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const ADULT_AGE = 4;
+      g.startNewGame('small', 'easy', true);
+      const s = g.state;
+      // Fresh game: nothing is staffed, so every adult is a free laborer.
+      g.ui.updateHud(s, 1, false);
+      const chip = Number(document.querySelector('#stat-builders .val')!.textContent);
+      const adults = s.citizens.filter((c: any) => c.age >= ADULT_AGE).length;
+      const children = s.citizens.filter((c: any) => c.age < ADULT_AGE).length;
+      // The unfiltered pool (the old, buggy count) would include the jobless children.
+      const joblessPool = s.citizens.filter((c: any) => c.jobId === null && !c.builder).length;
+      return { chip, adults, children, joblessPool };
+    });
+    expect(out.children).toBeGreaterThan(0);
+    expect(out.chip).toBe(out.adults);
+    expect(out.joblessPool).toBe(out.adults + out.children);
+    expect(out.chip).toBeLessThan(out.joblessPool);
+  });
+});
+
+test.describe('fireproof buildings', () => {
+  test('barns (and wells) never catch fire, unlike houses', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true); // 3 houses + a barn, no wells nearby to douse
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      const house = s.buildings.find((b: any) => b.type === 'house');
+      g.debugIgnite(barn.id);
+      const barnBurning = !!barn.fireTimer;
+      g.debugIgnite(house.id);
+      const houseBurning = !!house.fireTimer;
+      return { barnBurning, houseBurning };
+    });
+    expect(out.barnBurning).toBe(false);
+    expect(out.houseBurning).toBe(true);
+  });
+});
+
+test.describe('clearing land before building', () => {
+  // Find a spot near the barn where a fresh barn can be placed; returns [x,y] or [-1,-1].
+  const findSpot = `(g) => {
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    for (let r = 2; r < 18; r++)
+      for (let dy = -r; dy <= r; dy++)
+        for (let dx = -r; dx <= r; dx++) {
+          const x = barn.x + dx, y = barn.y + dy;
+          if (g.debugCanPlace('barn', x, y).ok) return [x, y];
+        }
+    return [-1, -1];
+  }`;
+
+  test('trees under a footprint are marked, gate construction, then get cleared', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((findSpotSrc) => {
+      const g = (window as any).__village;
+      const HARVEST_WOOD = 1;
+      g.startNewGame('small', 'easy', true); // full wood stockpile in the barn
+      const s = g.state;
+      const [px, py] = eval(findSpotSrc)(g);
+      // Plant trees across the whole 2×2 footprint before placing. Trees and loose stone are
+      // mutually exclusive per tile in the real map, so clear any seeded stone as we do it.
+      for (let dy = 0; dy < 2; dy++)
+        for (let dx = 0; dx < 2; dx++) {
+          const t = s.tiles[(py + dy) * s.w + (px + dx)];
+          t.type = 'forest';
+          t.trees = 0.3;
+          t.stone = 0;
+        }
+      const id = g.debugPlace('barn', px, py);
+      const b = s.buildings.find((x: any) => x.id === id);
+      // Placement marks every treed footprint tile for harvesting.
+      let marked = 0;
+      for (let dy = 0; dy < 2; dy++)
+        for (let dx = 0; dx < 2; dx++)
+          if (s.harvest[(py + dy) * s.w + (px + dx)] === HARVEST_WOOD) marked++;
+      const treesLeft = () => {
+        for (let dy = 0; dy < 2; dy++)
+          for (let dx = 0; dx < 2; dx++) {
+            const t = s.tiles[(py + dy) * s.w + (px + dx)];
+            if (t.type === 'forest' && t.trees > 0.05) return true;
+          }
+        return false;
+      };
+      // Drive the workforce; construction must not progress while any trees remain.
+      g.debugSetBuilders(6);
+      let violated = false;
+      for (let step = 0; step < 160 && !b.built; step++) {
+        g.debugAdvance(5);
+        if (treesLeft() && b.progress > 0) violated = true;
+      }
+      return { placed: id != null, marked, violated, cleared: !treesLeft(), built: b.built };
+    }, findSpot);
+    expect(out.placed).toBe(true);
+    expect(out.marked).toBe(4);
+    expect(out.violated).toBe(false);
+    expect(out.cleared).toBe(true);
+    expect(out.built).toBe(true);
+  });
+
+  test('loose stone under a footprint is marked for harvest', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((findSpotSrc) => {
+      const g = (window as any).__village;
+      const HARVEST_STONE = 2;
+      g.startNewGame('small', 'easy', true);
+      const s = g.state;
+      const [px, py] = eval(findSpotSrc)(g);
+      // Scatter loose stone on the footprint (the tiles stay grass — stone is a surface deposit).
+      for (let dy = 0; dy < 2; dy++)
+        for (let dx = 0; dx < 2; dx++) s.tiles[(py + dy) * s.w + (px + dx)].stone = 10;
+      const id = g.debugPlace('barn', px, py);
+      let marked = 0;
+      for (let dy = 0; dy < 2; dy++)
+        for (let dx = 0; dx < 2; dx++)
+          if (s.harvest[(py + dy) * s.w + (px + dx)] === HARVEST_STONE) marked++;
+      return { placed: id != null, marked };
+    }, findSpot);
+    expect(out.placed).toBe(true);
+    expect(out.marked).toBe(4);
+  });
+});
+
+test.describe('camera rotate buttons', () => {
+  test('the top-corner buttons rotate the 3D view left and right', async ({ page }) => {
+    await open(page); // default 3D camera (no ?2d)
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
+    const STEP = Math.PI / 4;
+    const yaw = () => page.evaluate(() => (window as any).__village.camera.yaw);
+    const before = await yaw();
+    await page.click('#btn-rot-right');
+    const afterRight = await yaw();
+    await page.click('#btn-rot-left');
+    await page.click('#btn-rot-left');
+    const afterLeft = await yaw();
+    expect(afterRight - before).toBeCloseTo(STEP, 5);
+    expect(afterLeft - afterRight).toBeCloseTo(-2 * STEP, 5);
+  });
+});
+
 test.describe('disasters toggle', () => {
   test('the toggle flows from the difficulty screen and persists through save/load', async ({ page }) => {
     await open(page);

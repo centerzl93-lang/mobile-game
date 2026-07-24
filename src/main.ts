@@ -56,7 +56,7 @@ import {
   rejectNomads,
   markHarvestRect,
 } from './game/simulation';
-import { canPlace, placeBuilding, canAfford, demolishBuilding } from './game/buildings';
+import { canPlace, placeBuilding, canAfford, demolishBuilding, footprintClear } from './game/buildings';
 import { findPath } from './game/pathfind';
 import { addNearest } from './game/storage';
 import { planPath } from './game/paths';
@@ -64,6 +64,8 @@ import { saveGame, loadGame, hasSave, clearSave, slotInfo, lastSlot, SLOTS } fro
 import { InspectRow, InspectControls } from './ui/ui';
 
 const SPEEDS = [1, 2, 3];
+/** Yaw step (radians) applied each tap of a corner rotate button — 45°, so 8 taps = full turn. */
+const ROTATE_STEP = Math.PI / 4;
 
 class Game {
   canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -136,7 +138,10 @@ class Game {
       onAcceptNomads: () => this.acceptNomads(),
       onRejectNomads: () => this.rejectNomads(),
       onSelectHarvest: (a) => this.onSelectHarvest(a),
+      onRotate: (dir) => this.rotateView(dir),
     });
+    // Rotation only applies to the 3D view; hide the buttons in the flat 2D fallback.
+    if (this.use2d) this.ui.hideRotateButtons();
     this.input = new InputManager(this.canvas, this.camera);
     this.input.onTap = (sx, sy) => this.onTap(sx, sy);
     this.input.onPaint = (sx, sy) => this.onPaint(sx, sy);
@@ -186,6 +191,11 @@ class Game {
       y /= cs.length;
     }
     this.camera.focus(x, y);
+  }
+
+  /** Rotate the 3D camera yaw a fixed step per button tap (a no-op for the flat 2D camera). */
+  private rotateView(dir: -1 | 1): void {
+    this.camera.rotateBy?.(dir * ROTATE_STEP);
   }
 
   private onSelectBuild(t: BuildingType | null): void {
@@ -583,12 +593,15 @@ class Game {
       this.ui.flashHint(check.reason ?? 'Cannot build here');
       return;
     }
-    placeBuilding(this.state, this.selectedBuild, tx, ty, w, h);
+    const placed = placeBuilding(this.state, this.selectedBuild, tx, ty, w, h);
     const name = BUILDING_DEFS[this.selectedBuild].name;
+    const needsClearing = placed !== null && !footprintClear(this.state, placed);
     this.ui.log(
-      this.state.desiredBuilders > 0
-        ? `${name} site marked — builders will haul materials`
-        : `${name} site marked — assign Builders on the Job Board to construct it`,
+      needsClearing
+        ? `${name} site marked — clear the trees and stone under it first`
+        : this.state.desiredBuilders > 0
+          ? `${name} site marked — builders will haul materials`
+          : `${name} site marked — assign Builders on the Job Board to construct it`,
       'info',
     );
     this.persist();

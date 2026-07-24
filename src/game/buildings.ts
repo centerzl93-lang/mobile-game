@@ -11,8 +11,10 @@ import {
   footprintH,
   ranchCapacity,
   SIZABLE,
+  HARVEST_WOOD,
+  HARVEST_STONE,
 } from '../types';
-import { getTile, inBounds } from './world';
+import { getTile, inBounds, tileIndex } from './world';
 import { totalStored, addNearest } from './storage';
 
 export interface PlaceResult {
@@ -127,7 +129,44 @@ export function placeBuilding(
     b.breedProgress = 0;
   }
   s.buildings.push(b);
+  // Trees or loose stone sitting under the footprint must be cleared before builders can raise
+  // the building — mark them so the workforce (laborers / builders) hand-harvests them first.
+  markFootprintHarvest(s, b);
   return b;
+}
+
+/** Mark any trees / loose stone under a building's footprint for harvesting. */
+function markFootprintHarvest(s: GameState, b: Building): void {
+  const fw = footprintW(b);
+  const fh = footprintH(b);
+  for (let dy = 0; dy < fh; dy++) {
+    for (let dx = 0; dx < fw; dx++) {
+      const tx = b.x + dx;
+      const ty = b.y + dy;
+      const t = getTile(s.tiles, tx, ty);
+      if (!t) continue;
+      if (t.type === 'forest' && t.trees > 0.05) s.harvest[tileIndex(tx, ty)] = HARVEST_WOOD;
+      else if ((t.stone ?? 0) > 0) s.harvest[tileIndex(tx, ty)] = HARVEST_STONE;
+    }
+  }
+}
+
+/**
+ * True once a building's footprint is free of trees and loose stone. Construction is gated on
+ * this — resources under the site are hand-harvested first (see `markFootprintHarvest`).
+ */
+export function footprintClear(s: GameState, b: Building): boolean {
+  const fw = footprintW(b);
+  const fh = footprintH(b);
+  for (let dy = 0; dy < fh; dy++) {
+    for (let dx = 0; dx < fw; dx++) {
+      const t = getTile(s.tiles, b.x + dx, b.y + dy);
+      if (!t) continue;
+      if (t.type === 'forest' && t.trees > 0.05) return false;
+      if ((t.stone ?? 0) > 0) return false;
+    }
+  }
+  return true;
 }
 
 /** True if storage holds the materials to start this building. */

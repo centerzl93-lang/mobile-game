@@ -102,8 +102,17 @@ export interface UICallbacks {
   onAcceptNomads: () => void;
   onRejectNomads: () => void;
   onSelectHarvest: (active: boolean) => void;
-  /** Rotate the camera view: -1 = left (counter-clockwise), +1 = right (clockwise). */
-  onRotate: (dir: -1 | 1) => void;
+  /**
+   * The inspect sheet was dismissed from its own × button. The game must drop its selection:
+   * hiding the sheet alone is not enough, because the frame loop re-renders the sheet every
+   * frame for as long as something is still selected.
+   */
+  onCloseInspect: () => void;
+  /**
+   * Start or stop a continuous camera rotation. The buttons are *held*: -1 = left
+   * (counter-clockwise), +1 = right (clockwise), 0 = released, stop rotating.
+   */
+  onRotate: (dir: -1 | 0 | 1) => void;
 }
 
 const LOW_NEED: Partial<Record<ResourceKind, number>> = {
@@ -158,8 +167,30 @@ export class UI {
     this.el.speed.addEventListener('click', () => this.cb.onSpeedCycle());
     this.el.jobs.addEventListener('click', () => this.toggleJobBoard());
     this.el.menuBtn.addEventListener('click', () => this.cb.onOpenMenu());
-    this.el.rotLeft.addEventListener('click', () => this.cb.onRotate(-1));
-    this.el.rotRight.addEventListener('click', () => this.cb.onRotate(1));
+    this.holdToRotate(this.el.rotLeft, -1);
+    this.holdToRotate(this.el.rotRight, 1);
+  }
+
+  /**
+   * Wire a rotate button to turn the view for as long as it is held, rather than jumping a fixed
+   * step per tap. Release, cancel, and pointer-leave all stop it, and `setPointerCapture` keeps the
+   * events coming to this button even if the finger drifts off it mid-hold — without that, sliding
+   * off the small button would strand the camera spinning forever.
+   */
+  private holdToRotate(btn: HTMLElement, dir: -1 | 1): void {
+    const stop = (e: PointerEvent) => {
+      if (btn.hasPointerCapture(e.pointerId)) btn.releasePointerCapture(e.pointerId);
+      this.cb.onRotate(0);
+    };
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); // don't let the press turn into a page scroll / text selection
+      btn.setPointerCapture(e.pointerId);
+      this.cb.onRotate(dir);
+    });
+    btn.addEventListener('pointerup', stop);
+    btn.addEventListener('pointercancel', stop);
+    // A pointer released outside the window never fires pointerup on the button.
+    window.addEventListener('blur', () => this.cb.onRotate(0));
   }
 
   /** Hide the camera rotate buttons (e.g. in the flat 2D view where rotation is a no-op). */
@@ -282,11 +313,22 @@ export class UI {
     this.refreshToolbar();
   }
 
+  /**
+   * Lift the hint bar and event log clear of the build pop-out. The pop-out fills the strip just
+   * above the toolbar — exactly where those two sit — so while it is open they move up above it
+   * instead of being covered by it.
+   */
+  private raiseHints(raised: boolean): void {
+    this.el.hint.classList.toggle('raised', raised);
+    this.el.log.classList.toggle('raised', raised);
+  }
+
   private renderPopout(): void {
     const po = this.el.popout;
     if (!this.openCategory) {
       po.classList.add('hidden');
       po.innerHTML = '';
+      this.raiseHints(false);
       return;
     }
     po.innerHTML = '';
@@ -311,6 +353,7 @@ export class UI {
       }
     }
     po.classList.remove('hidden');
+    this.raiseHints(true);
   }
 
   private buildBtn(emoji: string, name: string, cost: string, selected: boolean, fn: () => void): HTMLElement {
@@ -344,7 +387,7 @@ export class UI {
     this.cb.onSelectPath(null);
     this.cb.onSelectHarvest(false);
     this.cb.onSetDemolish(true);
-    this.hideInspect();
+    this.cb.onCloseInspect();
     this.renderPopout();
     this.refreshToolbar();
     this.showHint('Tap a building or path to demolish it (25% of materials refunded). Tap a marked tile to un-mark it.');
@@ -360,7 +403,7 @@ export class UI {
     this.cb.onSelectPath(null);
     this.cb.onSetDemolish(false);
     this.cb.onSelectHarvest(activating);
-    this.hideInspect();
+    this.cb.onCloseInspect();
     this.renderPopout();
     this.refreshToolbar();
     if (activating) this.showHint('Drag a square over trees or loose stone to mark them for harvest; pan with two fingers.');
@@ -376,7 +419,7 @@ export class UI {
     this.cb.onSelectPath(null);
     this.cb.onSelectBuild(this.selectedBuild);
     if (!this.selectedBuild) this.mode = 'inspect';
-    this.hideInspect();
+    this.cb.onCloseInspect();
     this.renderPopout();
     this.refreshToolbar();
     if (this.selectedBuild) this.showHint(`Line up the outline and tap to place the ${BUILDING_DEFS[type].name}. ${BUILDING_DEFS[type].desc}`);
@@ -392,7 +435,7 @@ export class UI {
     this.cb.onSelectBuild(null);
     this.cb.onSelectPath(this.selectedPath);
     if (!this.selectedPath) this.mode = 'inspect';
-    this.hideInspect();
+    this.cb.onCloseInspect();
     this.renderPopout();
     this.refreshToolbar();
     if (this.selectedPath) {
@@ -448,7 +491,8 @@ export class UI {
     this.el.inspect.innerHTML =
       `<div class="inv-head">${title}<button class="close" id="insp-close">×</button></div>` +
       (body || '<div class="inv-row"><span>Empty</span></div>') + ctrlHtml;
-    byId('insp-close').addEventListener('click', () => this.hideInspect());
+    // Closing must clear the *game's* selection, not just this sheet — see `onCloseInspect`.
+    byId('insp-close').addEventListener('click', () => this.cb.onCloseInspect());
 
     if (controls) {
       const id = controls.buildingId;

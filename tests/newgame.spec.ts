@@ -785,19 +785,135 @@ test.describe('clearing land before building', () => {
 });
 
 test.describe('camera rotate buttons', () => {
-  test('the top-corner buttons rotate the 3D view left and right', async ({ page }) => {
+  // These assert the *mechanism* (a held button turns the view a bit more on every animation
+  // frame) rather than a wall-clock turn rate: headless Chromium schedules rAF slowly and
+  // irregularly, so "hold 600ms ⇒ turned 0.47rad" is inherently flaky here.
+
+  /** Resolve once `n` more animation frames have run on the page. */
+  function frames(page: Page, n: number): Promise<void> {
+    return page.evaluate(
+      (count) =>
+        new Promise<void>((res) => {
+          let i = 0;
+          const tick = () => (++i >= count ? res() : requestAnimationFrame(tick));
+          requestAnimationFrame(tick);
+        }),
+      n,
+    );
+  }
+
+  /** Press and hold the centre of a rotate button (caller releases with `page.mouse.up`). */
+  async function press(page: Page, selector: string): Promise<void> {
+    const box = (await page.locator(selector).boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+  }
+
+  test('holding a top-corner button turns the 3D view continuously, and releasing stops it', async ({ page }) => {
     await open(page); // default 3D camera (no ?2d)
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
-    const STEP = Math.PI / 4;
     const yaw = () => page.evaluate(() => (window as any).__village.camera.yaw);
-    const before = await yaw();
-    await page.click('#btn-rot-right');
-    const afterRight = await yaw();
-    await page.click('#btn-rot-left');
-    await page.click('#btn-rot-left');
-    const afterLeft = await yaw();
-    expect(afterRight - before).toBeCloseTo(STEP, 5);
-    expect(afterLeft - afterRight).toBeCloseTo(-2 * STEP, 5);
+    const dir = () => page.evaluate(() => (window as any).__village.rotateDir);
+
+    // Pressing latches the direction; the old behaviour jumped a fixed step and latched nothing.
+    await press(page, '#btn-rot-right');
+    expect(await dir()).toBe(1);
+
+    // The view keeps turning the same way frame after frame while the button stays down.
+    const a = await yaw();
+    await frames(page, 3);
+    const b = await yaw();
+    await frames(page, 3);
+    const c = await yaw();
+    expect(b).toBeGreaterThan(a);
+    expect(c).toBeGreaterThan(b);
+
+    // Releasing unlatches and the view comes to rest instead of spinning on.
+    await page.mouse.up();
+    expect(await dir()).toBe(0);
+    const rest = await yaw();
+    await frames(page, 4);
+    expect(await yaw()).toBeCloseTo(rest, 6);
+  });
+
+  test('the two buttons turn the view opposite ways', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
+    const yaw = () => page.evaluate(() => (window as any).__village.camera.yaw);
+
+    // ↻ (right) increases yaw; ↺ (left) decreases it. Yaw runs +Z→+X and the camera orbits
+    // opposite to the apparent scene motion, so a falling yaw reads as the village turning
+    // counter-clockwise — matching the ↺ glyph.
+    await press(page, '#btn-rot-right');
+    const r0 = await yaw();
+    await frames(page, 3);
+    const r1 = await yaw();
+    await page.mouse.up();
+    expect(r1).toBeGreaterThan(r0);
+
+    await press(page, '#btn-rot-left');
+    const l0 = await yaw();
+    await frames(page, 3);
+    const l1 = await yaw();
+    await page.mouse.up();
+    expect(l1).toBeLessThan(l0);
+  });
+});
+
+test.describe('inspect sheet close button', () => {
+  test('the × drops the selection instead of the sheet reopening on the next frame', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      const barn = g.state.buildings.find((b: any) => b.type === 'barn');
+      g.inspectSel = { kind: 'building', id: barn.id };
+      g.refreshInspect();
+    });
+    await expect(page.locator('#inspect')).toBeVisible();
+
+    await page.click('#insp-close');
+    // The frame loop re-renders the sheet every frame while a selection is live, which is what
+    // made the × look dead; wait several frames to prove it now stays shut.
+    await page.waitForTimeout(300);
+    await expect(page.locator('#inspect')).toBeHidden();
+    expect(await page.evaluate(() => (window as any).__village.inspectSel)).toBeNull();
+  });
+
+  test('switching to another tool also drops the selection', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      const barn = g.state.buildings.find((b: any) => b.type === 'barn');
+      g.inspectSel = { kind: 'building', id: barn.id };
+      g.refreshInspect();
+    });
+    await expect(page.locator('#inspect')).toBeVisible();
+    await page.click('.tool-btn[data-tool="demolish"]');
+    await page.waitForTimeout(300);
+    await expect(page.locator('#inspect')).toBeHidden();
+    expect(await page.evaluate(() => (window as any).__village.inspectSel)).toBeNull();
+  });
+});
+
+test.describe('hint bar layering', () => {
+  test('the hint stays visible and clear of the build pop-out', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
+    await page.click('.tool-btn[data-tool="housing"]');
+    await page.locator('.build-btn').first().click();
+    await expect(page.locator('#hint')).toBeVisible();
+
+    const geo = await page.evaluate(() => {
+      const h = document.getElementById('hint')!.getBoundingClientRect();
+      const p = document.getElementById('popout')!.getBoundingClientRect();
+      const mid = document.elementFromPoint(h.left + h.width / 2, h.top + h.height / 2);
+      return { hintBottom: h.bottom, popoutTop: p.top, topmostAtHintCentre: (mid as HTMLElement | null)?.id ?? '' };
+    });
+    // Sits above the pop-out rather than overlapping it, and nothing is painted over it.
+    expect(geo.hintBottom).toBeLessThanOrEqual(geo.popoutTop);
+    expect(geo.topmostAtHintCentre).toBe('hint');
   });
 });
 

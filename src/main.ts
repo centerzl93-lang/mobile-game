@@ -64,8 +64,12 @@ import { saveGame, loadGame, hasSave, clearSave, slotInfo, lastSlot, SLOTS } fro
 import { InspectRow, InspectControls } from './ui/ui';
 
 const SPEEDS = [1, 2, 3];
-/** Yaw step (radians) applied each tap of a corner rotate button — 45°, so 8 taps = full turn. */
-const ROTATE_STEP = Math.PI / 4;
+/**
+ * Yaw speed (radians/sec) while a corner rotate button is held — 45°/s, so a full turn takes
+ * eight seconds of holding. Rotation is continuous (not a per-tap jump) so the direction of
+ * travel is legible: a discrete jump teleports the scene and reads as an arbitrary flip.
+ */
+const ROTATE_SPEED = Math.PI / 4;
 
 class Game {
   canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -93,6 +97,8 @@ class Game {
   /** Live harvest-marquee rectangle in world coords while dragging, else null. */
   marquee: { x0: number; y0: number; x1: number; y1: number } | null = null;
   inspectSel: { kind: 'building' | 'citizen'; id: number } | null = null;
+  /** Held rotate button: -1 = counter-clockwise, +1 = clockwise, 0 = released. */
+  rotateDir: -1 | 0 | 1 = 0;
 
   dpr = 1;
   cw = 0;
@@ -138,6 +144,7 @@ class Game {
       onAcceptNomads: () => this.acceptNomads(),
       onRejectNomads: () => this.rejectNomads(),
       onSelectHarvest: (a) => this.onSelectHarvest(a),
+      onCloseInspect: () => this.clearInspect(),
       onRotate: (dir) => this.rotateView(dir),
     });
     // Rotation only applies to the 3D view; hide the buttons in the flat 2D fallback.
@@ -193,9 +200,17 @@ class Game {
     this.camera.focus(x, y);
   }
 
-  /** Rotate the 3D camera yaw a fixed step per button tap (a no-op for the flat 2D camera). */
-  private rotateView(dir: -1 | 1): void {
-    this.camera.rotateBy?.(dir * ROTATE_STEP);
+  /**
+   * Begin/end a continuous camera rotation (a no-op for the flat 2D camera). The button is held:
+   * `dir` is latched here and applied every frame in `frame` until released.
+   *
+   * Direction convention — the **scene** turns the way the button's arrow points. The 3D camera
+   * orbits opposite to the scene, so ↺ (dir -1) *decreases* yaw: at yaw 0 the camera sits south of
+   * its target, and lowering yaw swings it clockwise around the target, which reads on screen as
+   * the village turning counter-clockwise.
+   */
+  private rotateView(dir: -1 | 0 | 1): void {
+    this.rotateDir = dir;
   }
 
   private onSelectBuild(t: BuildingType | null): void {
@@ -874,6 +889,10 @@ class Game {
     const dtMs = this.lastTime ? t - this.lastTime : 16;
     this.lastTime = t;
     let dt = Math.min(dtMs / 1000, 0.1); // clamp to avoid huge catch-up steps
+
+    // Camera rotation runs off real time, not the sim clock, so holding a rotate button turns the
+    // view at the same rate whether the game is paused or running at 3×.
+    if (this.rotateDir !== 0) this.camera.rotateBy?.(this.rotateDir * ROTATE_SPEED * dt);
 
     if (this.running && !this.paused && !this.state.gameOver) {
       const scaled = dt * SPEEDS[this.speedIndex];

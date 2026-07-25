@@ -157,6 +157,12 @@ body {
   justify-content: center;
   cursor: pointer;
   z-index: 6;
+  /* The button is press-and-held to rotate; suppress the browser's own touch gestures so a
+     held finger doesn't scroll the page or get stolen by a double-tap-to-zoom. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 .rotate-btn:active {
   transform: scale(0.92);
@@ -181,6 +187,9 @@ body {
   gap: 4px;
   pointer-events: none;
   max-width: 70%;
+  /* Above the toolbar and build pop-out (both z-index 6) — without this the log and the hint
+     bar below render *behind* the build menu, which covers the same strip of screen. */
+  z-index: 8;
 }
 .log-line {
   align-self: flex-start;
@@ -222,6 +231,14 @@ body {
   max-width: 84%;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  z-index: 8; /* see #log — must clear the toolbar and build pop-out */
+}
+
+/* While the build pop-out is open it fills the strip these two normally occupy, so they move up
+   above it (`raiseHints` in ui.ts) rather than sitting on top of the buildings. */
+#hint.raised,
+#log.raised {
+  bottom: calc(var(--safe-bottom) + 158px);
 }
 
 /* ---------- Build menu ---------- */

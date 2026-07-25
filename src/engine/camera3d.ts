@@ -66,7 +66,12 @@ export class Camera3D {
     this.apply();
   }
 
-  /** Rotate the view around its ground target by `delta` radians (from a two-finger twist). */
+  /**
+   * Rotate the view around its ground target by `delta` radians (driven by holding an on-screen
+   * rotate button). Yaw is measured from +Z toward +X; since the camera orbits opposite to the
+   * apparent scene motion, a *negative* delta reads on screen as the village turning
+   * counter-clockwise.
+   */
   rotateBy(delta: number): void {
     this.yaw += delta;
     this.apply();

@@ -136,8 +136,24 @@ export const RESOURCE_KINDS: ResourceKind[] = [
   'medicine',
 ];
 
-/** Resources shown as their own HUD chip — the food types are aggregated separately. */
-export const HUD_RESOURCES: ResourceKind[] = RESOURCE_KINDS.filter((k) => !FOOD_KINDS.includes(k));
+/**
+ * Resources shown as their own HUD chip, in display order. The food types are aggregated into a
+ * single 🍽️ chip that the HUD renders ahead of these.
+ *
+ * This is a deliberate short list, not "every non-food resource": a chip per kind overflowed the
+ * top line on a phone. Intermediate goods (leather) and the livestock herds (cattle/pigs/chickens)
+ * are left off — they are still readable in any barn's inspect sheet and in the trading post.
+ */
+export const HUD_RESOURCES: ResourceKind[] = [
+  'wood',
+  'stone',
+  'iron',
+  'coal',
+  'tools',
+  'clothing',
+  'medicine',
+  'firewood',
+];
 
 /** Icon for the combined food total shown in the HUD. */
 export const FOOD_ICON = '🍽️';
@@ -182,6 +198,27 @@ export const SURVIVAL_RESOURCES: ResourceKind[] = ['firewood', 'clothing'];
 
 export type Season = 'Spring' | 'Summer' | 'Autumn' | 'Winter';
 export const SEASONS: Season[] = ['Spring', 'Summer', 'Autumn', 'Winter'];
+
+/**
+ * Where the current season has got to, in thirds. Seasons run ten real minutes, long enough that
+ * "Autumn" alone doesn't tell the player whether they have time to stock up before winter — so the
+ * HUD reads Early Autumn → Autumn → Late Autumn.
+ */
+export type SeasonPhase = 'early' | 'mid' | 'late';
+
+export function seasonPhaseOf(seasonTimer: number): SeasonPhase {
+  const t = seasonTimer / SEASON_LENGTH;
+  return t < 1 / 3 ? 'early' : t < 2 / 3 ? 'mid' : 'late';
+}
+
+/** Display name for the current moment in the year, e.g. `Late Autumn` (mid-season is unqualified). */
+export function seasonLabel(s: { season: number; seasonTimer: number }): string {
+  const name = SEASONS[s.season];
+  const phase = seasonPhaseOf(s.seasonTimer);
+  if (phase === 'early') return `Early ${name}`;
+  if (phase === 'late') return `Late ${name}`;
+  return name;
+}
 
 export type BuildingType =
   | 'house'
@@ -442,6 +479,7 @@ export type TaskKind =
   | 'toDrop' // carrying output to a barn
   | 'build' // laboring at a construction site
   | 'toPath' // walking to a planned path tile
+  | 'toLarder' // carrying household supplies home to stock the larder
   | 'wander';
 
 export interface CitizenTask {
@@ -477,6 +515,12 @@ export interface Citizen {
   sick: boolean; // ill from a disease outbreak; can't work until recovered
   /** Seconds of leisure remaining; while > 0 the villager is on a break, not working. */
   rest?: number;
+  /**
+   * Got a clothing ration at the last season turnover. Transient — recomputed each season in
+   * `endSeason`, never saved. A clothed villager burns less firewood; an unclothed one risks
+   * falling ill in winter.
+   */
+  clothed?: boolean;
   /** Assigned to the Builders job this tick (recomputed every tick, not persisted). A builder has
    * jobId === null but constructs work buildings; a plain laborer (jobId null, builder false) does
    * not. */
@@ -664,6 +708,45 @@ export const CLOTHING_PER_CITIZEN_WINTER = 5; // clothing worn out over winter
 export const TOOL_WEAR_PER_WORKER = 4; // tools consumed per employed worker per season
 export const NO_TOOLS_PENALTY = 0.6; // output multiplier when the tool stockpile is empty
 export const SICKNESS_CHANCE = 0.5; // chance an unclothed villager sickens in winter
+
+/**
+ * Seasonal draw on firewood and clothing. Both are used *year-round*, not only over winter:
+ * villagers still cook and still wear through clothes in summer. Winter is the anchor at 1.0 (so
+ * winter costs exactly what it always did), spring and autumn are moderate, and summer is light.
+ *
+ * Note this raises the *annual* firewood and clothing bill — previously only winter drew on them.
+ */
+export const SEASON_BURN: Record<Season, number> = {
+  Winter: 1,
+  Spring: 0.45,
+  Autumn: 0.45,
+  Summer: 0.15,
+};
+
+/**
+ * Firewood multiplier for a villager who got a clothing ration this season. Being warmly dressed
+ * means less fuel burned, so clothing production pays for itself twice over.
+ */
+export const CLOTHED_HEAT_FACTOR = 0.75;
+
+// ---- Household larders (villagers keep their own supplies at home) ----
+/**
+ * Villagers stock food, firewood and medicine in the house they live in and draw on that before
+ * the village barns. Anything sitting in a larder is committed to those residents, so it is
+ * deliberately excluded from the barn totals the top-line HUD reports — the HUD number is what is
+ * *free*, not what exists.
+ *
+ * A larder holds this many seasons' worth of supply per resident. Below 1 the barns remain the main
+ * store and a household tops up between seasons; at 1 a house is self-sufficient for a full season
+ * but its resident hauler spends most of that season fetching, which is a large economy shift.
+ */
+export const HOUSE_LARDER_SEASONS = 0.5;
+export const HOUSE_FOOD_PER_RESIDENT = FOOD_PER_CITIZEN_PER_SEASON * HOUSE_LARDER_SEASONS;
+export const HOUSE_FIREWOOD_PER_RESIDENT = HEAT_PER_CITIZEN_WINTER * HOUSE_LARDER_SEASONS;
+/** Doses kept at home per resident — enough to treat a household through an outbreak. */
+export const HOUSE_MEDICINE_PER_RESIDENT = 2;
+/** Resources a household keeps at home, in the order a resident restocks them. */
+export const LARDER_KINDS: ResourceKind[] = ['firewood', 'medicine'];
 
 // ---- Demographics ----
 export const ADULT_AGE = 4; // children become working adults at this age (years)

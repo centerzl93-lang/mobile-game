@@ -1,12 +1,21 @@
 import {
   GameState,
   Building,
+  Citizen,
   ResourceKind,
   footprintW,
   footprintH,
   BARN_CAPACITY,
   MARKET_CAPACITY,
   FOOD_KINDS,
+  LARDER_KINDS,
+  HOUSE_FOOD_PER_RESIDENT,
+  HOUSE_FIREWOOD_PER_RESIDENT,
+  HOUSE_MEDICINE_PER_RESIDENT,
+  CHILD_FOOD_FACTOR,
+  STONE_HOUSE_HEAT_FACTOR,
+  isAdult,
+  isHouse,
 } from '../types';
 
 export interface Pos {
@@ -184,6 +193,134 @@ export function consumeFood(s: GameState, amount: number): number {
     need = consume(s, k, need);
   }
   return need;
+}
+
+// ---- Household larders ----------------------------------------------------------------------
+// A house keeps its residents' own food, firewood and medicine. Larders are deliberately *not*
+// `storageNodes`, so every village-wide total above (and therefore the top-line HUD, build costs,
+// and trade) sees only what is free in the barns and markets — not what a household has already
+// claimed. Consumption draws on a villager's own larder first and falls back to the barns.
+
+/** Built houses, the only buildings that keep a larder. */
+export function houseNodes(s: GameState): Building[] {
+  return s.buildings.filter((b) => b.built && isHouse(b.type));
+}
+
+/** Who lives in this house. */
+export function residentsOf(s: GameState, house: Building): Citizen[] {
+  return s.citizens.filter((c) => c.homeId === house.id);
+}
+
+/** Total food (all kinds combined) a household wants on hand — children keep a smaller ration. */
+export function larderFoodTarget(s: GameState, house: Building): number {
+  let n = 0;
+  for (const c of residentsOf(s, house)) {
+    n += HOUSE_FOOD_PER_RESIDENT * (isAdult(c) ? 1 : CHILD_FOOD_FACTOR);
+  }
+  return n;
+}
+
+/** How much of a (non-food) larder resource a household wants on hand. */
+export function larderTarget(s: GameState, house: Building, kind: ResourceKind): number {
+  const residents = residentsOf(s, house).length;
+  if (residents === 0) return 0;
+  if (kind === 'firewood') {
+    // Stone houses hold their heat, so their residents keep less fuel by the same factor they burn.
+    const factor = house.type === 'stonehouse' ? STONE_HOUSE_HEAT_FACTOR : 1;
+    return residents * HOUSE_FIREWOOD_PER_RESIDENT * factor;
+  }
+  if (kind === 'medicine') return residents * HOUSE_MEDICINE_PER_RESIDENT;
+  return 0;
+}
+
+/** Food of every kind currently in this larder. */
+export function larderFood(house: Building): number {
+  let n = 0;
+  for (const k of FOOD_KINDS) n += house.store[k] ?? 0;
+  return n;
+}
+
+/** Sum of `kind` held across every household larder (excluded from the barn totals on purpose). */
+export function totalInLarders(s: GameState, kind: ResourceKind): number {
+  let n = 0;
+  for (const h of houseNodes(s)) n += h.store[kind] ?? 0;
+  return n;
+}
+
+/**
+ * Everything the village can actually draw on: free barn/market stock plus what households have
+ * already taken home. Survival warnings use this so a village with full larders and lean barns is
+ * not told it is starving.
+ */
+export function totalAvailable(s: GameState, kind: ResourceKind): number {
+  return totalStored(s, kind) + totalInLarders(s, kind);
+}
+
+/** Food across the barns *and* every larder — see `totalAvailable`. */
+export function totalFoodAvailable(s: GameState): number {
+  let n = totalFood(s);
+  for (const h of houseNodes(s)) n += larderFood(h);
+  return n;
+}
+
+/**
+ * Distinct food types the village can actually eat, larders included. Diet variety drives health,
+ * and villagers eat what is in their larder, so a barn-only count would under-report it.
+ */
+export function foodVarietyAvailable(s: GameState): number {
+  let n = 0;
+  for (const k of FOOD_KINDS) if (totalAvailable(s, k) > 0.5) n++;
+  return n;
+}
+
+/** Take up to `amount` of `kind` out of one larder. Returns the shortfall. */
+export function takeFromLarder(house: Building, kind: ResourceKind, amount: number): number {
+  const have = house.store[kind] ?? 0;
+  const take = Math.min(have, amount);
+  if (take > 0) {
+    house.store[kind] = have - take;
+    if ((house.store[kind] ?? 0) <= 0.0001) delete house.store[kind];
+  }
+  return amount - take;
+}
+
+/** Eat `amount` from a larder, drawn across whatever food kinds it holds. Returns the shortfall. */
+export function takeFoodFromLarder(house: Building, amount: number): number {
+  let need = amount;
+  for (const k of FOOD_KINDS) {
+    if (need <= 0) break;
+    need = takeFromLarder(house, k, need);
+  }
+  return need;
+}
+
+/**
+ * The single most pressing gap in a household's larder, or null when it is stocked. Food comes
+ * first (eaten every season), then fuel, then medicine.
+ */
+export function larderShortfall(
+  s: GameState,
+  house: Building,
+): { kind: ResourceKind; amount: number } | null {
+  const foodGap = larderFoodTarget(s, house) - larderFood(house);
+  if (foodGap > 0.5) {
+    // Pull whichever food the barns hold most of, so households end up with a varied larder.
+    let best: ResourceKind | null = null;
+    let bestHave = 0;
+    for (const k of FOOD_KINDS) {
+      const have = totalStored(s, k);
+      if (have > bestHave) {
+        bestHave = have;
+        best = k;
+      }
+    }
+    if (best) return { kind: best, amount: foodGap };
+  }
+  for (const kind of LARDER_KINDS) {
+    const gap = larderTarget(s, house, kind) - (house.store[kind] ?? 0);
+    if (gap > 0.5 && totalStored(s, kind) > 0) return { kind, amount: gap };
+  }
+  return null;
 }
 
 /** Does storage hold at least the given cost across all nodes? */

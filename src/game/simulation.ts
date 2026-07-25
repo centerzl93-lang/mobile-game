@@ -92,6 +92,8 @@ import {
   MARKET_STOCK_TARGET,
   RESOURCE_KINDS,
   BuildingType,
+  SEASON_BURN,
+  CLOTHED_HEAT_FACTOR,
   isAdult,
   isFireproof,
 } from '../types';
@@ -111,7 +113,12 @@ import {
   barnFree,
   totalFood,
   consumeFood,
-  foodVarietyStored,
+  foodVarietyAvailable,
+  larderShortfall,
+  takeFromLarder,
+  takeFoodFromLarder,
+  totalAvailable,
+  totalFoodAvailable,
 } from './storage';
 
 export type LogKind = 'info' | 'good' | 'bad';
@@ -358,6 +365,10 @@ function runCitizen(s: GameState, c: Citizen, dt: number, toolFactor: number): v
     leisure(s, c, dt);
     return;
   }
+  // Household supplies come before paid work: a villager whose larder has run down fetches food,
+  // fuel and medicine home first. This must run *ahead* of the job dispatch — `runWorker` treats
+  // any `c.carry` as production to be hauled to a barn and would carry the groceries straight back.
+  if (stockLarder(s, c, dt)) return;
   const job = c.jobId !== null ? s.buildings.find((b) => b.id === c.jobId) : null;
   if (job && job.built) {
     // Paths can be laid by any adult: an employed worker not mid-haul detours to a *nearby*
@@ -365,6 +376,71 @@ function runCitizen(s: GameState, c: Citizen, dt: number, toolFactor: number): v
     if (!c.carry && buildPath(s, c, dt, NEAR_PATH_RADIUS * NEAR_PATH_RADIUS)) return;
     runWorker(s, c, job, dt, toolFactor);
   } else runBuilder(s, c, dt);
+}
+
+/**
+ * The household's designated shopper. A resident tops their own house's larder up from the barns:
+ * walk to a barn holding what is short, take a load, carry it home, stock it.
+ *
+ * Only one resident per house runs errands at a time (`larderHauler`), so a household never pulls
+ * its whole workforce off the job, and the errand only starts once something is actually short.
+ * Because consumption happens in one lump at season turnover, the shopper does a burst of trips
+ * after each season and then goes back to work.
+ *
+ * Returns true while it is handling this tick, so the caller skips the villager's normal work.
+ */
+function stockLarder(s: GameState, c: Citizen, dt: number): boolean {
+  const home = c.homeId !== null ? s.buildings.find((b) => b.id === c.homeId) : null;
+
+  // Second leg: carrying supplies home. `task.kind` marks the load as groceries rather than
+  // production so nothing else claims it.
+  if (c.task.kind === 'toLarder') {
+    if (!home || !home.built || !c.carry) {
+      // Home burned down or was demolished mid-errand — release the load to the normal loop,
+      // which hauls it back to a barn rather than losing it.
+      c.task = { kind: 'idle' };
+      return false;
+    }
+    goTo(c, buildingCenter(home));
+    if (stepTo(s, c, dt)) {
+      home.store[c.carry.kind] = (home.store[c.carry.kind] ?? 0) + c.carry.amount;
+      c.carry = null;
+      c.task = { kind: 'idle' };
+    }
+    return true;
+  }
+
+  if (c.carry) return false; // already carrying production — not our errand
+  if (!home || !home.built) return false;
+  if (!larderHauler(s, home, c)) return false;
+  const want = larderShortfall(s, home);
+  if (!want) return false;
+  const barn = nearestBarnOnlyWith(s, buildingCenter(home), want.kind);
+  if (!barn) return false;
+
+  // First leg: fetch a load from the barn.
+  goTo(c, buildingCenter(barn));
+  if (stepTo(s, c, dt)) {
+    const take = Math.min(CARRY_CAP, want.amount, barn.store[want.kind] ?? 0);
+    if (take > 0) {
+      barn.store[want.kind] = (barn.store[want.kind] ?? 0) - take;
+      if ((barn.store[want.kind] ?? 0) <= 0) delete barn.store[want.kind];
+      c.carry = { kind: want.kind, amount: take };
+      c.task = { kind: 'toLarder' };
+    }
+  }
+  return true;
+}
+
+/** Whether `c` is the resident currently running their household's errands (the lowest-id able adult). */
+function larderHauler(s: GameState, home: Building, c: Citizen): boolean {
+  if (!isAdult(c) || c.sick) return false;
+  let best: Citizen | null = null;
+  for (const r of s.citizens) {
+    if (r.homeId !== home.id || !isAdult(r) || r.sick) continue;
+    if (!best || r.id < best.id) best = r;
+  }
+  return best !== null && best.id === c.id;
 }
 
 /** Spend a leisure break: amble to a tavern/chapel/home and idle there until the break ends. */
@@ -1132,49 +1208,86 @@ function endSeason(s: GameState, log: LogFn): void {
   for (const b of s.buildings) if (b.built) employed += b.workers.length;
   consume(s, 'tools', employed * TOOL_WEAR_PER_WORKER);
 
-  // Food — adults eat a full ration, children half.
-  const adults = s.citizens.filter(isAdult).length;
-  const children = s.citizens.length - adults;
-  const foodNeed = (adults + children * CHILD_FOOD_FACTOR) * FOOD_PER_CITIZEN_PER_SEASON;
-  const shortFood = consumeFood(s, foodNeed);
+  // A villager's own home, for larder-first consumption below.
+  const homeById = new Map<number, Building>();
+  for (const b of s.buildings) if (b.built && isHouse(b.type)) homeById.set(b.id, b);
+  const homeOf = (c: Citizen): Building | undefined =>
+    c.homeId !== null ? homeById.get(c.homeId) : undefined;
+
+  // Food — adults eat a full ration, children half. Each villager eats out of their own household
+  // larder first and only falls back to the village barns once it runs dry, so a stocked house
+  // rides out a bad season that would otherwise have starved its residents.
+  let shortFood = 0;
+  const hungry: Citizen[] = [];
+  for (const c of s.citizens) {
+    let need = FOOD_PER_CITIZEN_PER_SEASON * (isAdult(c) ? 1 : CHILD_FOOD_FACTOR);
+    const home = homeOf(c);
+    if (home) need = takeFoodFromLarder(home, need);
+    if (need > 0) need = consumeFood(s, need);
+    if (need > 0.001) hungry.push(c); // went without — the pool starvation draws from
+    shortFood += need;
+  }
   if (shortFood > 0) {
-    const starved = Math.min(pop, Math.ceil(shortFood / FOOD_PER_CITIZEN_PER_SEASON));
-    killCitizens(s, starved);
-    log(`${starved} villager${starved > 1 ? 's' : ''} starved`, 'bad');
+    const starved = Math.min(hungry.length, Math.ceil(shortFood / FOOD_PER_CITIZEN_PER_SEASON));
+    killFrom(s, hungry, starved);
+    if (starved > 0) log(`${starved} villager${starved > 1 ? 's' : ''} starved`, 'bad');
   }
 
-  // Winter: heat (firewood then coal), then cold-sickness for the unclothed.
-  if (season === 'Winter' && s.citizens.length > 0) {
-    // Each villager needs heat; those living in a stone house need much less.
-    const stoneHomes = new Set(
-      s.buildings.filter((b) => b.built && b.type === 'stonehouse').map((b) => b.id),
-    );
-    let heatNeed = 0;
+  // Clothing and firewood are used every season, at a seasonal rate (winter heaviest, summer
+  // lightest). Clothing is issued first because being warmly dressed cuts the fuel a villager
+  // needs — `c.clothed` is transient, recomputed here each season and never saved.
+  const burn = SEASON_BURN[season];
+  if (s.citizens.length > 0) {
+    const clothEach = CLOTHING_PER_CITIZEN_WINTER * burn;
+    const unclothed: Citizen[] = [];
     for (const c of s.citizens) {
-      const factor = c.homeId !== null && stoneHomes.has(c.homeId) ? STONE_HOUSE_HEAT_FACTOR : 1;
-      heatNeed += HEAT_PER_CITIZEN_WINTER * factor;
-    }
-    // firewood is 1 heat each; consume() returns the shortfall (heat still needed).
-    let remaining = consume(s, 'firewood', heatNeed) * FIREWOOD_HEAT;
-    if (remaining > 0) {
-      const coalNeeded = Math.ceil(remaining / COAL_HEAT);
-      remaining = consume(s, 'coal', coalNeeded) * COAL_HEAT;
-    }
-    if (remaining > 0.001) {
-      const froze = Math.min(s.citizens.length, Math.ceil(remaining / HEAT_PER_CITIZEN_WINTER));
-      killCitizens(s, froze);
-      log(`${froze} villager${froze > 1 ? 's' : ''} froze in the cold`, 'bad');
+      // Clothing stays a village-wide store: it is issued from the barns, not kept in larders.
+      c.clothed = clothEach <= 0 || consume(s, 'clothing', clothEach) <= 0.001;
+      if (!c.clothed) unclothed.push(c);
     }
 
-    const survivors = s.citizens.length;
-    const clothShort = consume(s, 'clothing', survivors * CLOTHING_PER_CITIZEN_WINTER);
-    const unclothed = Math.floor(clothShort / CLOTHING_PER_CITIZEN_WINTER);
-    const sickChance = Math.min(1, SICKNESS_CHANCE * (1 + (1 - avgHealth(s) / 100)));
-    let sick = 0;
-    for (let k = 0; k < unclothed; k++) if (Math.random() < sickChance) sick++;
-    if (sick > 0) {
-      killCitizens(s, sick);
-      log(`${sick} villager${sick > 1 ? 's' : ''} fell ill without warm clothing`, 'bad');
+    // Heat: firewood from the villager's own larder first, then firewood and coal from the barns.
+    let heatShort = 0;
+    const cold: Citizen[] = [];
+    for (const c of s.citizens) {
+      const home = homeOf(c);
+      const stoneFactor = home?.type === 'stonehouse' ? STONE_HOUSE_HEAT_FACTOR : 1;
+      const clothFactor = c.clothed ? CLOTHED_HEAT_FACTOR : 1;
+      const want = HEAT_PER_CITIZEN_WINTER * burn * stoneFactor * clothFactor; // heat units
+      let need = want;
+      if (home) {
+        const fromLarder = Math.min(need / FIREWOOD_HEAT, home.store['firewood'] ?? 0);
+        if (fromLarder > 0) {
+          takeFromLarder(home, 'firewood', fromLarder);
+          need -= fromLarder * FIREWOOD_HEAT;
+        }
+      }
+      if (need > 0) {
+        // Fall back to the village fuel pile for this villager's remaining need, so whether they
+        // end up cold depends on their own larder plus what is left in the barns — not on a
+        // village-wide average.
+        need = consume(s, 'firewood', need / FIREWOOD_HEAT) * FIREWOOD_HEAT;
+        if (need > 0) need = consume(s, 'coal', need / COAL_HEAT) * COAL_HEAT;
+      }
+      if (need > 0.001) cold.push(c);
+      heatShort += need;
+    }
+
+    // Only a winter shortfall is lethal — going short of fuel in summer is uncomfortable, not fatal.
+    if (season === 'Winter') {
+      if (heatShort > 0.001) {
+        const froze = Math.min(cold.length, Math.ceil(heatShort / HEAT_PER_CITIZEN_WINTER));
+        killFrom(s, cold, froze);
+        if (froze > 0) log(`${froze} villager${froze > 1 ? 's' : ''} froze in the cold`, 'bad');
+      }
+      // Only the villagers who actually went without warm clothing are at risk.
+      const sickChance = Math.min(1, SICKNESS_CHANCE * (1 + (1 - avgHealth(s) / 100)));
+      const fallen: Citizen[] = [];
+      for (const c of unclothed) if (Math.random() < sickChance) fallen.push(c);
+      if (fallen.length > 0) {
+        killFrom(s, fallen, fallen.length);
+        log(`${fallen.length} villager${fallen.length > 1 ? 's' : ''} fell ill without warm clothing`, 'bad');
+      }
     }
   }
 
@@ -1240,19 +1353,23 @@ function warnOfShortfalls(s: GameState, season: Season, log: LogFn): void {
   const pop = s.citizens.length;
   if (pop === 0) return;
 
+  // These count what the village can actually reach — barn stock *plus* what households have
+  // already carried home — so a village with full larders and lean barns isn't told it is starving.
+
   // Entering Autumn: the player has one season to stock fuel and clothing for Winter.
   if (season === 'Autumn') {
-    const heatHave = totalStored(s, 'firewood') * FIREWOOD_HEAT + totalStored(s, 'coal') * COAL_HEAT;
+    const heatHave =
+      totalAvailable(s, 'firewood') * FIREWOOD_HEAT + totalAvailable(s, 'coal') * COAL_HEAT;
     if (heatHave < pop * HEAT_PER_CITIZEN_WINTER) {
       log('❄️ Winter is coming and fuel is low — stock firewood or coal', 'bad');
     }
-    if (totalStored(s, 'clothing') < pop * CLOTHING_PER_CITIZEN_WINTER) {
+    if (totalAvailable(s, 'clothing') < pop * CLOTHING_PER_CITIZEN_WINTER) {
       log('🧥 Winter is coming and warm clothing is short', 'bad');
     }
   }
 
-  // Any season: less than a full season of food left in the barns.
-  if (totalFood(s) < pop * FOOD_PER_CITIZEN_PER_SEASON) {
+  // Any season: less than a full season of food left across the barns and larders.
+  if (totalFoodAvailable(s) < pop * FOOD_PER_CITIZEN_PER_SEASON) {
     log('🍽️ Food stores are running low', 'bad');
   }
 }
@@ -1532,11 +1649,21 @@ export function transferRanch(s: GameState, from: Building, to: Building): { ok:
 
 // ---- population helpers ----
 function killCitizens(s: GameState, n: number): void {
-  for (let i = 0; i < n && s.citizens.length > 0; i++) {
-    let idx = 0;
-    for (let k = 1; k < s.citizens.length; k++) if (s.citizens[k].age > s.citizens[idx].age) idx = k;
-    removeCitizen(s, s.citizens[idx]);
-  }
+  killFrom(s, s.citizens, n);
+}
+
+/**
+ * Take `n` villagers from `candidates`, eldest first — the frail go before the young.
+ *
+ * Shortages pick their victims from the villagers who actually went without: a household that
+ * stocked its larder keeps its residents alive through a season that empties the barns, which is
+ * the whole point of keeping supplies at home. Passing the full population back gives the old
+ * village-wide behaviour (used for things nobody can stockpile against, like winter illness).
+ */
+function killFrom(s: GameState, candidates: Citizen[], n: number): void {
+  const pool = candidates.filter((c) => s.citizens.includes(c));
+  pool.sort((a, b) => b.age - a.age);
+  for (let i = 0; i < n && i < pool.length; i++) removeCitizen(s, pool[i]);
 }
 
 function removeCitizen(s: GameState, c: Citizen): void {
@@ -1587,7 +1714,7 @@ export function avgHappiness(s: GameState): number {
 function updateWellbeing(s: GameState, foodShort: boolean, deaths: number, tavernActive: boolean): void {
   const pop = s.citizens.length;
   if (pop === 0) return;
-  const variety = foodVarietyStored(s); // distinct food types in stock
+  const variety = foodVarietyAvailable(s); // distinct food types in the barns and larders
   // The variety bonus saturates at DIET_VARIETY_TARGET distinct foods (there are many crops now).
   const healthTarget = clamp(
     40 + 60 * (Math.min(variety, DIET_VARIETY_TARGET) / DIET_VARIETY_TARGET) - (foodShort ? 30 : 0),
@@ -1595,8 +1722,8 @@ function updateWellbeing(s: GameState, foodShort: boolean, deaths: number, taver
     100,
   );
   const headroom = housingCapacity(s) - pop > 0;
-  const clothed = totalStored(s, 'clothing') >= pop;
-  const comfortable = totalFood(s) > pop * FOOD_PER_CITIZEN_PER_SEASON;
+  const clothed = totalAvailable(s, 'clothing') >= pop;
+  const comfortable = totalFoodAvailable(s) > pop * FOOD_PER_CITIZEN_PER_SEASON;
   const chapel = s.buildings.some((b) => b.built && b.type === 'chapel');
   const cemetery = s.buildings.some((b) => b.built && b.type === 'cemetery');
   // Basics can reach 75; amenities carry the village the rest of the way.
@@ -1690,7 +1817,12 @@ function diseaseSeason(s: GameState, log: LogFn): void {
   for (const c of [...s.citizens]) {
     if (!c.sick) continue;
     let chance = SICK_RECOVER_BASE + (c.health / 100) * 0.2;
-    if (totalStored(s, 'medicine') >= 1) {
+    // Reach for the medicine kept at home first, then the village stock.
+    const home = c.homeId !== null ? s.buildings.find((b) => b.id === c.homeId) : null;
+    if (home && (home.store['medicine'] ?? 0) >= 1) {
+      takeFromLarder(home, 'medicine', 1);
+      chance += SICK_RECOVER_MEDICINE;
+    } else if (totalStored(s, 'medicine') >= 1) {
       consume(s, 'medicine', 1);
       chance += SICK_RECOVER_MEDICINE;
     }
@@ -1763,6 +1895,17 @@ function adjacentBuildings(s: GameState, b: Building): Building[] {
 function removeBuilding(s: GameState, b: Building): void {
   const idx = s.buildings.indexOf(b);
   if (idx >= 0) s.buildings.splice(idx, 1);
+  // A demolished house's larder isn't destroyed — the household's supplies go back to the barns
+  // (which the residents will then re-fetch to whichever house they move into).
+  if (isHouse(b.type)) {
+    const at = buildingCenter(b);
+    for (const k in b.store) {
+      const kind = k as ResourceKind;
+      const amount = b.store[kind] ?? 0;
+      if (amount > 0) addNearest(s, at, kind, amount);
+    }
+    b.store = {};
+  }
   for (const c of s.citizens) {
     if (c.jobId === b.id) c.jobId = null;
     if (c.homeId === b.id) c.homeId = null;

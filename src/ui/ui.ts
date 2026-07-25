@@ -14,7 +14,7 @@ import {
   FOOD_ICON,
   ResourceKind,
   SURVIVAL_RESOURCES,
-  SEASONS,
+  seasonLabel,
   MineOutput,
   SmithRecipe,
   Crop,
@@ -253,7 +253,7 @@ export class UI {
         chip.classList.toggle('low', v < pop * (LOW_NEED[kind] ?? 0));
       }
     }
-    this.el.season.querySelector('.val')!.textContent = `${SEASONS[s.season]} · Yr ${s.year}`;
+    this.el.season.querySelector('.val')!.textContent = `${seasonLabel(s)} · Yr ${s.year}`;
     this.el.pause.textContent = paused ? '▶' : '⏸';
     this.el.speed.textContent = `${speed}×`;
   }

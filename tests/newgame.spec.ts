@@ -917,6 +917,228 @@ test.describe('hint bar layering', () => {
   });
 });
 
+test.describe('top-line HUD', () => {
+  test('carries one chip per headline resource and nothing else', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
+    const icons = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('#stat-resources .stat .ico')).map((e) => e.textContent),
+    );
+    // The 🍽️ food aggregate, then the eight headline resources in display order. Leather and the
+    // livestock herds are deliberately absent — they crowded the line and live in the barn sheet.
+    expect(icons).toEqual(['🍽️', '🪵', '🪨', '🔩', '⚫', '🛠️', '🧥', '💊', '🔥']);
+  });
+
+  test('the season chip names which third of the season it is', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
+    // Pin the season to Autumn and sample the HUD at each third (seasons run 600s).
+    const labelAt = (seasonTimer: number) =>
+      page.evaluate((t) => {
+        const g = (window as any).__village;
+        g.state.season = 2; // Autumn
+        g.state.seasonTimer = t;
+        g.ui.updateHud(g.state, 1, false);
+        return document.querySelector('#stat-season .val')!.textContent;
+      }, seasonTimer);
+
+    expect(await labelAt(10)).toBe('Early Autumn · Yr 1');
+    expect(await labelAt(300)).toBe('Autumn · Yr 1');
+    expect(await labelAt(560)).toBe('Late Autumn · Yr 1');
+  });
+});
+
+test.describe('household larders', () => {
+  test('residents stock their own house with food, firewood and medicine', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false); // easy starts with houses and a full stockpile
+      const s = g.state;
+      // Long enough for each household's shopper to run its trips to the barns and back.
+      for (let i = 0; i < 2400; i++) g.debugAdvance(0.1);
+      const FOODS = ['fruit', 'grain', 'corn', 'potato', 'rice', 'barley', 'carrot', 'tomato', 'onion',
+        'pepper', 'cabbage', 'beans', 'pumpkin', 'apple', 'grapes', 'strawberry', 'melon', 'eggs', 'fish', 'meat'];
+      return s.buildings
+        .filter((b: any) => b.type === 'house' && b.built)
+        .map((h: any) => ({
+          adults: s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 4).length,
+          food: FOODS.reduce((n: number, k: string) => n + (h.store[k] ?? 0), 0),
+          firewood: h.store.firewood ?? 0,
+          medicine: h.store.medicine ?? 0,
+        }));
+    });
+    // Every household with an adult to run the errands ends up stocked. Targets are per resident
+    // (HOUSE_LARDER_SEASONS = 0.5 ⇒ 30 food and 20 firewood each, 2 medicine each).
+    const staffed = out.filter((h: any) => h.adults > 0);
+    expect(staffed.length).toBeGreaterThan(0);
+    for (const h of staffed) {
+      expect(h.food).toBeGreaterThan(0);
+      expect(h.firewood).toBeGreaterThan(0);
+      expect(h.medicine).toBeGreaterThan(0);
+    }
+  });
+
+  test('larder stock is excluded from the top-line HUD', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const FOODS = ['fruit', 'grain', 'corn', 'potato', 'rice', 'barley', 'carrot', 'tomato', 'onion',
+        'pepper', 'cabbage', 'beans', 'pumpkin', 'apple', 'grapes', 'strawberry', 'melon', 'eggs', 'fish', 'meat'];
+      const barnFood = () =>
+        s.buildings
+          .filter((b: any) => b.built && (b.type === 'barn' || b.type === 'market'))
+          .reduce((n: number, b: any) => n + FOODS.reduce((m: number, k: string) => m + (b.store[k] ?? 0), 0), 0);
+      const house = s.buildings.find((b: any) => b.type === 'house' && b.built);
+      house.store.grain = (house.store.grain ?? 0) + 500; // park 500 food in a larder
+      g.ui.updateHud(s, 1, false);
+      const chip = document.querySelector('#stat-resources .stat .val')!.textContent;
+      return { chip, barnFood: Math.floor(barnFood()) };
+    });
+    // The chip reports what is *free* in the barns; the 500 committed to a household is not counted.
+    expect(out.chip).toBe(String(out.barnFood));
+  });
+
+  test('villagers eat and heat from their own larder before the barns', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      for (let i = 0; i < 60; i++) g.debugAdvance(0.1); // assign homes
+      const house = s.buildings
+        .filter((b: any) => b.type === 'house' && b.built)
+        .map((b: any) => ({ b, adults: s.citizens.filter((c: any) => c.homeId === b.id && c.age >= 4).length }))
+        .sort((x: any, y: any) => y.adults - x.adults)[0];
+      // Barns hold nothing, so anything consumed must have come out of the larder. Only this
+      // household remains, so no *other* villager's shortfall can take its residents down with it.
+      s.citizens = s.citizens.filter((c: any) => c.homeId === house.b.id);
+      // Clothing is village-wide, not a larder item, so leave it stocked — otherwise winter
+      // illness for the unclothed would confound what we're measuring (food and fuel).
+      for (const b of s.buildings) if (b.type === 'barn' || b.type === 'market') b.store = { clothing: 1e6 };
+      house.b.store = { grain: 1000, firewood: 1000 };
+      s.season = 2; // crossing the boundary from Autumn enters Winter, the heaviest draw
+      s.seasonTimer = 0;
+      const before = { grain: house.b.store.grain, firewood: house.b.store.firewood };
+      const popBefore = s.citizens.length;
+      g.debugAdvance(610);
+      return {
+        popBefore,
+        pop: s.citizens.length,
+        ateFromLarder: before.grain - (house.b.store.grain ?? 0),
+        burnedFromLarder: before.firewood - (house.b.store.firewood ?? 0),
+      };
+    });
+    expect(out.ateFromLarder).toBeGreaterThan(0);
+    expect(out.burnedFromLarder).toBeGreaterThan(0);
+    // A stocked household rides out a season that leaves the barns bare — nobody starves or freezes.
+    expect(out.pop).toBe(out.popBefore);
+  });
+
+  test('a shortage takes the villagers who went without, not a stocked household', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
+      const houses = s.buildings
+        .filter((b: any) => b.type === 'house' && b.built)
+        .map((b: any) => ({ b, residents: s.citizens.filter((c: any) => c.homeId === b.id) }))
+        .filter((h: any) => h.residents.length > 0);
+      // One household keeps a full larder; the barns are emptied so every other house goes hungry.
+      const stocked = houses[0];
+      // Clothing is village-wide, not a larder item, so leave it stocked — otherwise winter
+      // illness for the unclothed would confound what we're measuring (food and fuel).
+      for (const b of s.buildings) if (b.type === 'barn' || b.type === 'market') b.store = { clothing: 1e6 };
+      for (const h of houses) h.b.store = {};
+      stocked.b.store = { grain: 1e6, firewood: 1e6 };
+      const stockedIds = stocked.residents.map((c: any) => c.id);
+      s.season = 2; // enter Winter
+      s.seasonTimer = 0;
+      g.debugAdvance(610);
+      const alive = new Set(s.citizens.map((c: any) => c.id));
+      return {
+        stockedCount: stockedIds.length,
+        stockedAlive: stockedIds.filter((id: number) => alive.has(id)).length,
+        otherCount: s.citizens.length,
+        died: 12 - s.citizens.length,
+      };
+    });
+    expect(out.died).toBeGreaterThan(0); // the unstocked households did suffer
+    expect(out.stockedAlive).toBe(out.stockedCount); // but not the one that kept a larder
+  });
+});
+
+test.describe('seasonal firewood and clothing burn', () => {
+  /**
+   * Firewood drawn by one household over a single season turnover. `endSeason` advances the season
+   * and *then* bills for it, so `fromSeason` is the season before the one being measured.
+   * The household holds all the food and fuel and the barns hold none, so the figure is purely
+   * this household's heating and nothing can refill mid-measurement.
+   */
+  async function burnEntering(page: Page, fromSeason: number, dressed: boolean) {
+    return page.evaluate(
+      ({ fromSeason, dressed }) => {
+        const g = (window as any).__village;
+        g.startNewGame('small', 'easy', false);
+        const s = g.state;
+        for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
+        const picked = s.buildings
+          .filter((b: any) => b.type === 'house' && b.built)
+          .map((b: any) => ({ b, adults: s.citizens.filter((c: any) => c.homeId === b.id && c.age >= 4).length }))
+          .sort((x: any, y: any) => y.adults - x.adults)[0];
+        // Reduce the village to this one household so no other consumption is in the figure.
+        s.citizens = s.citizens.filter((c: any) => c.homeId === picked.b.id);
+        for (const b of s.buildings) {
+          if (b.type === 'barn' || b.type === 'market') b.store = dressed ? { clothing: 1e6 } : {};
+        }
+        picked.b.store = { firewood: 1e6, grain: 1e6 };
+        s.season = fromSeason;
+        s.seasonTimer = 0;
+        const fw0 = picked.b.store.firewood;
+        g.debugAdvance(610);
+        const residents = s.citizens.filter((c: any) => c.homeId === picked.b.id);
+        return {
+          adults: residents.filter((c: any) => c.age >= 4).length,
+          children: residents.filter((c: any) => c.age < 4).length,
+          clothed: residents.filter((c: any) => c.clothed).length,
+          burned: fw0 - (picked.b.store.firewood ?? 0),
+        };
+      },
+      { fromSeason, dressed },
+    );
+  }
+
+  test('firewood burns year-round: winter heaviest, summer lightest', async ({ page }) => {
+    await open(page);
+    // Seasons index Spring0 Summer1 Autumn2 Winter3; pass the season *before* the one measured.
+    const winter = await burnEntering(page, 2, true);
+    const spring = await burnEntering(page, 3, true);
+    const summer = await burnEntering(page, 0, true);
+    const autumn = await burnEntering(page, 1, true);
+
+    // Used in every season, never zero — the old model only charged for winter.
+    for (const r of [winter, spring, summer, autumn]) expect(r.burned).toBeGreaterThan(0);
+    // Winter > spring/autumn > summer, with the shoulder seasons matched.
+    expect(winter.burned).toBeGreaterThan(spring.burned);
+    expect(spring.burned).toBeCloseTo(autumn.burned, 5);
+    expect(autumn.burned).toBeGreaterThan(summer.burned);
+  });
+
+  test('a clothed villager burns less firewood than an unclothed one', async ({ page }) => {
+    await open(page);
+    const dressed = await burnEntering(page, 3, true);
+    const undressed = await burnEntering(page, 3, false);
+    expect(dressed.clothed).toBe(dressed.adults + dressed.children);
+    expect(undressed.clothed).toBe(0);
+    // CLOTHED_HEAT_FACTOR = 0.75.
+    expect(dressed.burned).toBeCloseTo(undressed.burned * 0.75, 5);
+  });
+});
+
 test.describe('disasters toggle', () => {
   test('the toggle flows from the difficulty screen and persists through save/load', async ({ page }) => {
     await open(page);

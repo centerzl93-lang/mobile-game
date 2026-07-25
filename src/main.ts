@@ -33,6 +33,7 @@ import {
   SmithRecipe,
   ResourceKind,
   RESOURCE_ICON,
+  LARDER_KINDS,
   RESOURCE_KINDS,
   ADULT_AGE,
   PATH_STONE,
@@ -58,7 +59,7 @@ import {
 } from './game/simulation';
 import { canPlace, placeBuilding, canAfford, demolishBuilding, footprintClear } from './game/buildings';
 import { findPath } from './game/pathfind';
-import { addNearest } from './game/storage';
+import { addNearest, larderFood, larderFoodTarget, larderTarget } from './game/storage';
 import { planPath } from './game/paths';
 import { saveGame, loadGame, hasSave, clearSave, slotInfo, lastSlot, SLOTS } from './game/save';
 import { InspectRow, InspectControls } from './ui/ui';
@@ -716,6 +717,22 @@ class Game {
               const note = r.age < ADULT_AGE ? 'child' : `${Math.floor(r.age)} yr`;
               rows.push({ label: `${face} ${r.name}`, value: note });
             }
+            // The household larder: supplies these residents have carried home and will draw on
+            // before the village barns. Held stock is excluded from the top-line HUD by design,
+            // so this sheet is where the player accounts for it.
+            const foodTarget = larderFoodTarget(this.state, b);
+            rows.push({
+              label: '🍽️ Larder food',
+              value: `${Math.floor(larderFood(b))} / ${Math.round(foodTarget)}`,
+            });
+            for (const kind of LARDER_KINDS) {
+              const target = larderTarget(this.state, b, kind);
+              if (target <= 0) continue;
+              rows.push({
+                label: `${RESOURCE_ICON[kind]} Larder ${kind}`,
+                value: `${Math.floor(b.store[kind] ?? 0)} / ${Math.round(target)}`,
+              });
+            }
           }
         }
         if (b.type === 'mine') rows.push({ label: 'Digging', value: b.output });
@@ -736,9 +753,13 @@ class Game {
           for (const k of RESOURCE_KINDS) load += b.store[k] ?? 0;
           rows.push({ label: 'Stored', value: `${Math.floor(load)} / 5000` });
         }
-        for (const k of RESOURCE_KINDS) {
-          const v = b.store[k] ?? 0;
-          if (v > 0.5) rows.push({ label: `${RESOURCE_ICON[k]} ${k}`, value: `${Math.floor(v)}` });
+        // Houses already report their larder above, against its targets — skip the raw dump so the
+        // sheet doesn't list the same supplies twice.
+        if (!isHouse(b.type)) {
+          for (const k of RESOURCE_KINDS) {
+            const v = b.store[k] ?? 0;
+            if (v > 0.5) rows.push({ label: `${RESOURCE_ICON[k]} ${k}`, value: `${Math.floor(v)}` });
+          }
         }
       }
       // Interactive controls: set workers and building-specific toggles right from the sheet.

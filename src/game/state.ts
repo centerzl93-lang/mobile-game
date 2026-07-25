@@ -117,6 +117,7 @@ export function newGame(
     merchant: { phase: 'away', present: false, seasonsLeft: 0, cooldown: false, category: null, stock: {}, seedStock: [], boat: null },
     pendingNomads: null,
     harvest: emptyHarvest(),
+    events: [], // the village chronicle starts blank and fills as things happen
     pathProgress: 0,
     desiredBuilders: 0, // no builders until the player assigns them on the Job Board
     // Crops the village can plant. Easy starts with one random seed; Normal/Hard start with none

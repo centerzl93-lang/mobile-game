@@ -26,6 +26,7 @@ import {
   BRIDGE_WOOD_COST,
   HARVEST_NONE,
   PATH_NONE,
+  EVENT_LOG_MAX,
   HARVEST_WOOD,
   HARVEST_STONE,
   HARVEST_WOOD_PER_TREE,
@@ -125,6 +126,16 @@ import {
 
 export type LogKind = 'info' | 'good' | 'bad';
 export type LogFn = (msg: string, kind?: LogKind) => void;
+
+/**
+ * File a message in the village chronicle, newest first, stamped with the current season.
+ * Called for every logged message so the scrollback matches what the toasts announced.
+ */
+export function recordEvent(s: GameState, text: string, kind: LogKind = 'info'): void {
+  const events = (s.events ??= []);
+  events.unshift({ text, kind, year: s.year, season: s.season });
+  if (events.length > EVENT_LOG_MAX) events.length = EVENT_LOG_MAX;
+}
 
 // Local balance for the per-trip economy.
 const FOREST_CIRCLE_IDEAL = 24;

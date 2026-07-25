@@ -15,6 +15,7 @@ import {
   ResourceKind,
   SURVIVAL_RESOURCES,
   seasonLabel,
+  SEASONS,
   MineOutput,
   SmithRecipe,
   Crop,
@@ -143,6 +144,8 @@ export class UI {
     inspect: byId('inspect'),
     overlay: byId('overlay'),
     jobboard: byId('jobboard'),
+    historyBtn: byId('btn-history'),
+    history: byId('history'),
     trade: byId('trade-overlay'),
     nomad: byId('nomad'),
   };
@@ -153,6 +156,8 @@ export class UI {
   private openCategory: BuildCategory | 'paths' | null = null;
   private jobBoardOpen = false;
   private jobSig = '';
+  private historyOpen = false;
+  private historySig = '';
   // Trading post overlay: which post is open, and the in-progress value-matching basket.
   private tradingPostId: number | null = null;
   private basketGive: Partial<Record<ResourceKind, number>> = {};
@@ -166,6 +171,7 @@ export class UI {
     this.el.pause.addEventListener('click', () => this.cb.onPauseToggle());
     this.el.speed.addEventListener('click', () => this.cb.onSpeedCycle());
     this.el.jobs.addEventListener('click', () => this.toggleJobBoard());
+    this.el.historyBtn.addEventListener('click', () => this.toggleHistory());
     this.el.menuBtn.addEventListener('click', () => this.cb.onOpenMenu());
     this.holdToRotate(this.el.rotLeft, -1);
     this.holdToRotate(this.el.rotRight, 1);
@@ -536,10 +542,64 @@ export class UI {
     this.jobBoardOpen = !this.jobBoardOpen;
     this.el.jobboard.classList.toggle('hidden', !this.jobBoardOpen);
     this.jobSig = '';
+    // The two side panels occupy the same space — opening one closes the other.
+    if (this.jobBoardOpen && this.historyOpen) this.toggleHistory();
+  }
+
+  private toggleHistory(): void {
+    this.historyOpen = !this.historyOpen;
+    this.el.history.classList.toggle('hidden', !this.historyOpen);
+    this.historySig = '';
+    if (this.historyOpen && this.jobBoardOpen) this.toggleJobBoard();
+  }
+
+  /**
+   * Render the village chronicle: every logged event, newest first, grouped under the season it
+   * happened in. Toasts vanish after five seconds, so this is where the player goes to find out
+   * what actually happened while they were looking elsewhere.
+   */
+  private refreshHistory(s: GameState): void {
+    if (!this.historyOpen) return;
+    const events = s.events ?? [];
+    // Only rebuild when something changed — this runs every frame.
+    const sig = `${events.length}|${events[0]?.text ?? ''}`;
+    if (sig === this.historySig) return;
+    this.historySig = sig;
+
+    const p = this.el.history;
+    p.innerHTML = '';
+    const head = document.createElement('h3');
+    head.innerHTML = `📜 History <button class="close" id="hist-close">×</button>`;
+    head.querySelector('#hist-close')!.addEventListener('click', () => this.toggleHistory());
+    p.appendChild(head);
+
+    const sum = document.createElement('div');
+    sum.className = 'summary';
+    sum.textContent = events.length
+      ? `${events.length} event${events.length > 1 ? 's' : ''} · newest first`
+      : 'Nothing has happened yet.';
+    p.appendChild(sum);
+
+    let lastStamp = '';
+    for (const e of events) {
+      const stamp = `${SEASONS[e.season]} · Yr ${e.year}`;
+      if (stamp !== lastStamp) {
+        lastStamp = stamp;
+        const sep = document.createElement('div');
+        sep.className = 'hist-season';
+        sep.textContent = stamp;
+        p.appendChild(sep);
+      }
+      const row = document.createElement('div');
+      row.className = `hist-row ${e.kind === 'good' ? 'good' : e.kind === 'bad' ? 'bad' : ''}`;
+      row.textContent = e.text;
+      p.appendChild(row);
+    }
   }
 
   refreshPanels(s: GameState): void {
     if (this.jobBoardOpen) this.refreshJobBoard(s);
+    if (this.historyOpen) this.refreshHistory(s);
     if (this.tradingPostId !== null) this.refreshTradingPost(s);
     this.refreshNomadPrompt(s);
   }

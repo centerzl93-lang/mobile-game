@@ -1022,11 +1022,13 @@ test.describe('household larders', () => {
       s.season = 2; // crossing the boundary from Autumn enters Winter, the heaviest draw
       s.seasonTimer = 0;
       const before = { grain: house.b.store.grain, firewood: house.b.store.firewood };
-      const popBefore = s.citizens.length;
+      const residentIds = s.citizens.map((c: any) => c.id);
       g.debugAdvance(610);
+      const alive = new Set(s.citizens.map((c: any) => c.id));
       return {
-        popBefore,
-        pop: s.citizens.length,
+        residents: residentIds.length,
+        // Survivors by id — the household may also gain a newborn, which is not a death.
+        survivors: residentIds.filter((id: number) => alive.has(id)).length,
         ateFromLarder: before.grain - (house.b.store.grain ?? 0),
         burnedFromLarder: before.firewood - (house.b.store.firewood ?? 0),
       };
@@ -1034,7 +1036,7 @@ test.describe('household larders', () => {
     expect(out.ateFromLarder).toBeGreaterThan(0);
     expect(out.burnedFromLarder).toBeGreaterThan(0);
     // A stocked household rides out a season that leaves the barns bare — nobody starves or freezes.
-    expect(out.pop).toBe(out.popBefore);
+    expect(out.survivors).toBe(out.residents);
   });
 
   test('a shortage takes the villagers who went without, not a stocked household', async ({ page }) => {
@@ -1099,13 +1101,20 @@ test.describe('seasonal firewood and clothing burn', () => {
         s.season = fromSeason;
         s.seasonTimer = 0;
         const fw0 = picked.b.store.firewood;
-        g.debugAdvance(610);
+        // Captured *before* the turnover: consumption bills whoever lives here at that moment, and
+        // `rehouseVillagers` then moves surplus adults out to the houses this setup just emptied.
+        // Counting residents afterwards undercounts the denominator and inflates the per-head figure.
         const residents = s.citizens.filter((c: any) => c.homeId === picked.b.id);
+        g.debugAdvance(610);
+        const burned = fw0 - (picked.b.store.firewood ?? 0);
         return {
           adults: residents.filter((c: any) => c.age >= 4).length,
           children: residents.filter((c: any) => c.age < 4).length,
           clothed: residents.filter((c: any) => c.clothed).length,
-          burned: fw0 - (picked.b.store.firewood ?? 0),
+          burned,
+          // Normalised per head: each measurement run regenerates the map, so the chosen household
+          // can differ in size between runs and the raw totals are not directly comparable.
+          perResident: residents.length > 0 ? burned / residents.length : 0,
         };
       },
       { fromSeason, dressed },
@@ -1122,10 +1131,11 @@ test.describe('seasonal firewood and clothing burn', () => {
 
     // Used in every season, never zero — the old model only charged for winter.
     for (const r of [winter, spring, summer, autumn]) expect(r.burned).toBeGreaterThan(0);
-    // Winter > spring/autumn > summer, with the shoulder seasons matched.
-    expect(winter.burned).toBeGreaterThan(spring.burned);
-    expect(spring.burned).toBeCloseTo(autumn.burned, 5);
-    expect(autumn.burned).toBeGreaterThan(summer.burned);
+    // Winter > spring/autumn > summer, with the shoulder seasons matched. Compared per head, since
+    // each run regenerates the map and the household picked can differ in size.
+    expect(winter.perResident).toBeGreaterThan(spring.perResident);
+    expect(spring.perResident).toBeCloseTo(autumn.perResident, 5);
+    expect(autumn.perResident).toBeGreaterThan(summer.perResident);
   });
 
   test('a clothed villager burns less firewood than an unclothed one', async ({ page }) => {
@@ -1134,8 +1144,8 @@ test.describe('seasonal firewood and clothing burn', () => {
     const undressed = await burnEntering(page, 3, false);
     expect(dressed.clothed).toBe(dressed.adults + dressed.children);
     expect(undressed.clothed).toBe(0);
-    // CLOTHED_HEAT_FACTOR = 0.75.
-    expect(dressed.burned).toBeCloseTo(undressed.burned * 0.75, 5);
+    // CLOTHED_HEAT_FACTOR = 0.75, compared per head for the reason above.
+    expect(dressed.perResident).toBeCloseTo(undressed.perResident * 0.75, 5);
   });
 });
 
@@ -1326,41 +1336,52 @@ test.describe('paths and placement', () => {
       g.startNewGame('small', 'normal', false);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
-      // A forest tile with real trees on it, clear of any building.
-      let tile: { x: number; y: number } | null = null;
-      for (let r = 3; r < 20 && !tile; r++)
-        for (let dy = -r; dy <= r && !tile; dy++)
-          for (let dx = -r; dx <= r && !tile; dx++) {
+      // Several nearby forest tiles with real trees on them, nearest first. Planning a batch rather
+      // than a single tile keeps the test off the mercy of one unlucky pick — a given tile can sit
+      // across a river where no villager can reach it, and would never get paved.
+      const candidates: number[] = [];
+      for (let r = 3; r < 20 && candidates.length < 8; r++)
+        for (let dy = -r; dy <= r && candidates.length < 8; dy++)
+          for (let dx = -r; dx <= r && candidates.length < 8; dx++) {
             const x = barn.x + dx, y = barn.y + dy;
-            const t = s.tiles[y * s.w + x];
-            if (t && t.type === 'forest' && t.trees > 0.5) tile = { x, y };
+            if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue;
+            const i = y * s.w + x;
+            const t = s.tiles[i];
+            if (t && t.type === 'forest' && t.trees > 0.5 && !candidates.includes(i)) candidates.push(i);
           }
-      if (!tile) return { error: 'no forest tile' };
-      const i = tile.y * s.w + tile.x;
-      const woodBefore = s.buildings
-        .filter((b: any) => b.built && (b.type === 'barn' || b.type === 'market'))
-        .reduce((n: number, b: any) => n + (b.store.wood ?? 0), 0);
-      s.paths[i] = 1; // PATH_DIRT_PLAN — let a villager actually lay it
+      if (candidates.length === 0) return { error: 'no forest tiles nearby' };
+
+      const barnWood = () =>
+        s.buildings
+          .filter((b: any) => b.built && (b.type === 'barn' || b.type === 'market'))
+          .reduce((n: number, b: any) => n + (b.store.wood ?? 0), 0);
+      const woodBefore = barnWood();
+      for (const i of candidates) s.paths[i] = 1; // PATH_DIRT_PLAN — let villagers actually lay them
       g.debugSetBuilders(4);
-      for (let n = 0; n < 3000 && s.paths[i] !== 2; n++) g.debugAdvance(0.1);
-      const paved = s.paths[i] === 2;
-      const afterPaving = { type: s.tiles[i].type, trees: s.tiles[i].trees };
-      const woodAfter = s.buildings
-        .filter((b: any) => b.built && (b.type === 'barn' || b.type === 'market'))
-        .reduce((n: number, b: any) => n + (b.store.wood ?? 0), 0);
-      // Now run a long while and confirm nothing grows back on the paved tile.
+      for (let n = 0; n < 4000; n++) g.debugAdvance(0.1);
+
+      const paved = candidates.filter((i) => s.paths[i] === 2); // PATH_DIRT
+      const afterPaving = paved.map((i) => ({ type: s.tiles[i].type, trees: s.tiles[i].trees }));
+      const woodGained = barnWood() - woodBefore;
+      // Run on a long while and confirm nothing grows back on the paved tiles.
       for (let n = 0; n < 3000; n++) g.debugAdvance(0.1);
-      return { paved, afterPaving, regrew: { type: s.tiles[i].type, trees: s.tiles[i].trees },
-               woodGained: woodAfter - woodBefore };
+      const regrew = paved.map((i) => ({ type: s.tiles[i].type, trees: s.tiles[i].trees }));
+      return { candidates: candidates.length, pavedCount: paved.length, afterPaving, regrew, woodGained };
     });
-    expect(out.paved).toBe(true);
-    // Paving cleared the trees, and credited the wood rather than destroying it.
-    expect(out.afterPaving.type).toBe('grass');
-    expect(out.afterPaving.trees).toBe(0);
+    expect(out.error).toBeUndefined();
+    expect(out.pavedCount).toBeGreaterThan(0);
+    // Paving cleared the trees on every tile that got laid...
+    for (const t of out.afterPaving) {
+      expect(t.type).toBe('grass');
+      expect(t.trees).toBe(0);
+    }
+    // ...and credited the wood rather than destroying it.
     expect(out.woodGained).toBeGreaterThan(0);
-    // And it stays clear — neither regrowth nor a forester replants in the road.
-    expect(out.regrew.type).toBe('grass');
-    expect(out.regrew.trees).toBe(0);
+    // They stay clear — neither natural regrowth nor a forester replants in the road.
+    for (const t of out.regrew) {
+      expect(t.type).toBe('grass');
+      expect(t.trees).toBe(0);
+    }
   });
 });
 
@@ -1384,15 +1405,20 @@ test.describe('quarry', () => {
           }
         return false;
       };
-      // Open grass, no rock within 6 tiles — the placement the old mountainside rule refused.
+      // Open grass with no rock within 6 tiles — the placement the old mountainside rule refused.
+      // Searched outward from the barn so the pit lands within walking distance of the workforce;
+      // scanning from the map origin instead can strand it half a map away and nothing gets mined.
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
       let spot: number[] | null = null;
-      for (let y = 1; y < s.h - 7 && !spot; y++)
-        for (let x = 1; x < s.w - 4; x++) {
-          let clear = true;
-          for (let dy = 0; dy < 6 && clear; dy++)
-            for (let dx = 0; dx < 3; dx++) if (!isGrass(x + dx, y + dy)) { clear = false; break; }
-          if (clear && !nearRock(x, y, 6) && g.debugCanPlace('quarry', x, y).ok) { spot = [x, y]; break; }
-        }
+      for (let r = 3; r < 22 && !spot; r++)
+        for (let dy = -r; dy <= r && !spot; dy++)
+          for (let dx = -r; dx <= r; dx++) {
+            const x = barn.x + dx, y = barn.y + dy;
+            let clear = true;
+            for (let cy = 0; cy < 6 && clear; cy++)
+              for (let cx = 0; cx < 3; cx++) if (!isGrass(x + cx, y + cy)) { clear = false; break; }
+            if (clear && !nearRock(x, y, 6) && g.debugCanPlace('quarry', x, y).ok) { spot = [x, y]; break; }
+          }
       if (!spot) return { error: 'nowhere clear to place a quarry' };
 
       const id = g.debugPlace('quarry', spot[0], spot[1]);
@@ -1422,6 +1448,97 @@ test.describe('quarry', () => {
     expect(out.workers).toBeGreaterThan(0);
     // Inland is no longer a 15%-output penalty box — the pit works at its base rate.
     expect(out.stoneMined).toBeGreaterThan(0);
+  });
+});
+
+test.describe('village history', () => {
+  test('events are recorded newest-first with the season they happened in', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true);
+      const s = g.state;
+      for (let i = 0; i < 5; i++) g.debugAdvance(610); // ~5 season turnovers
+      const e = s.events;
+      return {
+        count: e.length,
+        // Newest first: the head entry is at or after the tail entry in game time.
+        headTime: e.length ? e[0].year * 4 + e[0].season : 0,
+        tailTime: e.length ? e[e.length - 1].year * 4 + e[e.length - 1].season : 0,
+        stamped: e.every((x: any) => typeof x.year === 'number' && typeof x.season === 'number'),
+        kinds: [...new Set(e.map((x: any) => x.kind))].sort(),
+      };
+    });
+    expect(out.count).toBeGreaterThan(0);
+    expect(out.headTime).toBeGreaterThanOrEqual(out.tailTime);
+    expect(out.stamped).toBe(true);
+    for (const k of out.kinds) expect(['info', 'good', 'bad']).toContain(k);
+  });
+
+  test('the History panel lists them grouped by season, and × closes it', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true);
+      for (let i = 0; i < 5; i++) g.debugAdvance(610);
+    });
+    await expect(page.locator('#history')).toBeHidden();
+    await page.click('#btn-history');
+    await expect(page.locator('#history')).toBeVisible();
+    // Contents are rendered by `refreshPanels` on the next animation frame, not by the click.
+    await expect(page.locator('#history .hist-row').first()).toBeVisible();
+
+    const dom = await page.evaluate(() => {
+      const h = document.getElementById('history')!;
+      return {
+        seasons: h.querySelectorAll('.hist-season').length,
+        rows: h.querySelectorAll('.hist-row').length,
+        firstSeasonHeading: h.querySelector('.hist-season')?.textContent ?? '',
+      };
+    });
+    expect(dom.rows).toBeGreaterThan(0);
+    expect(dom.seasons).toBeGreaterThan(0);
+    expect(dom.firstSeasonHeading).toMatch(/^(Spring|Summer|Autumn|Winter) · Yr \d+$/);
+
+    await page.click('#hist-close');
+    await expect(page.locator('#history')).toBeHidden();
+  });
+
+  test('the chronicle survives a save and reload', async ({ page }) => {
+    await open(page);
+    const before = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true);
+      for (let i = 0; i < 3; i++) g.debugAdvance(610);
+      g.persist();
+      return { count: g.state.events.length, newest: g.state.events[0]?.text ?? '' };
+    });
+    expect(before.count).toBeGreaterThan(0);
+
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
+    await page.click('#mm-continue');
+    await page.waitForTimeout(200);
+    const after = await page.evaluate(() => {
+      const g = (window as any).__village;
+      return { count: g.state.events.length, newest: g.state.events[0]?.text ?? '' };
+    });
+    expect(after.count).toBe(before.count);
+    expect(after.newest).toBe(before.newest);
+  });
+
+  test('the chronicle is capped so it cannot grow without bound', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      // Push well past the cap through the real logging path.
+      for (let i = 0; i < 400; i++) g.log(`filler ${i}`, 'info');
+      return { count: s.events.length, newestIsLast: s.events[0].text === 'filler 399' };
+    });
+    expect(out.count).toBe(250); // EVENT_LOG_MAX
+    expect(out.newestIsLast).toBe(true);
   });
 });
 

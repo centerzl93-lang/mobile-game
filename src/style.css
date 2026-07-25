@@ -457,6 +457,37 @@ body {
   font-size: 12.5px;
   color: var(--muted);
 }
+
+/* ---------- Village history (chronicle) ---------- */
+/* A season heading above each run of events from that season. */
+.hist-season {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 8px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+.hist-season:first-of-type {
+  margin-top: 2px;
+}
+.hist-row {
+  font-size: 12.5px;
+  line-height: 1.35;
+  padding: 3px 0 3px 8px;
+  border-left: 2px solid var(--border);
+  color: var(--text);
+}
+.hist-row.good {
+  border-left-color: var(--accent);
+  color: var(--accent);
+}
+.hist-row.bad {
+  border-left-color: var(--danger);
+  color: var(--danger);
+}
 .job-row {
   display: flex;
   align-items: center;

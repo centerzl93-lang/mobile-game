@@ -1,4 +1,4 @@
-import { GameState, MAP_W, MAP_H, MapSize, setMapSize, CROPS, RANCH_MIN, ranchCapacity } from '../types';
+import { GameState, MAP_W, MAP_H, MapSize, setMapSize, CROPS, RANCH_MIN, ranchCapacity, EVENT_LOG_MAX } from '../types';
 import { randomName } from './names';
 
 // Legacy single-slot key (pre-slots). Migrated into slot 0 on first run, then left in place.
@@ -48,6 +48,10 @@ export function loadGame(slot = 0): GameState | null {
     // Builders became an explicit assignable job. Older saves had every idle adult construct;
     // default to none so the player opts in (matches new games).
     if (typeof s.desiredBuilders !== 'number') s.desiredBuilders = 0;
+    // The village chronicle was added after this format shipped; older saves simply start empty
+    // and begin recording from the moment they are loaded.
+    if (!Array.isArray(s.events)) s.events = [];
+    else if (s.events.length > EVENT_LOG_MAX) s.events.length = EVENT_LOG_MAX;
     if (s.difficulty !== 'easy' && s.difficulty !== 'normal' && s.difficulty !== 'hard') s.difficulty = 'normal';
     // Sanity check the shape so a corrupt save can't crash the game.
     if (!Array.isArray(s.tiles) || s.tiles.length !== MAP_W * MAP_H) return null;

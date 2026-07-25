@@ -630,6 +630,21 @@ export interface NomadOffer {
   sick: number;
 }
 
+/**
+ * One entry in the village chronicle. Stamped with the season it happened in so the player can
+ * place it in time — the toast that announced it is long gone by the time they look.
+ */
+export interface GameEvent {
+  text: string;
+  /** 'info' | 'good' | 'bad' — mirrors the toast styling. */
+  kind: 'info' | 'good' | 'bad';
+  year: number;
+  season: number;
+}
+
+/** Entries kept in the chronicle. Oldest fall off the end; it rides along in the save. */
+export const EVENT_LOG_MAX = 250;
+
 export interface GameState {
   /** Map dimensions this state was generated at (also restored on load). */
   w: number;
@@ -655,6 +670,11 @@ export interface GameState {
   pendingNomads: NomadOffer | null;
   /** Harvest orders (per tile): HARVEST_* — trees/loose stone marked for gathering. */
   harvest: number[];
+  /**
+   * The village chronicle: newest first, capped at EVENT_LOG_MAX. Every message that flashes as a
+   * toast is also filed here so the player can scroll back through what happened.
+   */
+  events?: GameEvent[];
   /** Fractional accumulator for how many planned path tiles are built. */
   pathProgress: number;
   /** How many free adults the player wants assigned as Builders. Only Builders construct work

@@ -1,21 +1,88 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-07-24 (HUD/UX pass: adult-only laborers, rotate buttons, fireproof barns, clear-before-build)
+> Last updated: 2026-07-25 (opportunities pass: larders, breeding, burn rates, paths, quarry, history)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
 Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 
 - **Repo:** `centerzl93-lang/mobile-game`
-- **Working branch:** `claude/banished-ios-app-b4zott` (only push here; don't open PRs unless asked)
+- **Working branch:** `claude/game-opportunities-impl-8qxrqc` (only push here; don't open PRs unless
+  asked). Earlier sessions used `claude/banished-ios-app-b4zott` /
+  `claude/hud-workers-building-updates-32npee`; all three share the same history.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: a **HUD / UX pass** (this session) — see just below. Before it, the **jobs board
-overhaul** — see further down.
+Latest work: the **opportunities pass** (this session) — see just below. Before it, the **HUD / UX
+pass**, then the **jobs board overhaul** — see further down.
 
-### HUD / UX pass (this session)
+### Opportunities pass (this session)
+Worked from a player-supplied priority list. All eleven items landed; 68 tests green.
+
+- **Household larders (P0).** Houses keep their residents' food, firewood and medicine
+  (`HOUSE_LARDER_SEASONS` = 0.5 per resident — a buffer, not self-sufficiency; 1.0 makes a household
+  independent for a season but ties its shopper up hauling for most of it). One resident per house —
+  the lowest-id able adult (`larderHauler`) — runs errands via a new `toLarder` task and
+  `stockLarder`, which must sit *ahead* of the job dispatch in `runCitizen` or `runWorker` treats
+  the groceries as production and carries them back to a barn. Consumption draws larder-first, then
+  barns. Larders are deliberately **not** `storageNodes`, which is what keeps them out of the HUD;
+  helpers `totalAvailable` / `totalFoodAvailable` / `foodVarietyAvailable` (`storage.ts`) are the
+  larder-inclusive counterparts used by warnings, wellbeing and the birth gate. A demolished or burned
+  house returns its larder to the barns (`removeBuilding`).
+- **Shortages target the villagers who went short.** Food and fuel are consumed per citizen, so
+  `killFrom(s, candidates, n)` draws its victims (eldest first, as before) from the specific
+  villagers left without — otherwise stocking a larder would not save your household. `killCitizens`
+  is now a thin wrapper passing the whole population.
+- **Villager breeding (P0).** Three structural blocks, not tuning: starter houses held four adults
+  (at capacity ⇒ never room for a child), grown children never moved out, and the food gate read
+  barn stock only (larders made a comfortable village read as famine). Fixes: `rehouseVillagers`
+  runs each season and moves every adult past a household's couple out; `placeAdult` places new
+  adults preferring **a house with a single unpartnered adult of the opposite sex**, then an empty
+  house, then anywhere — sending them to the *emptiest* house instead scatters them one per house
+  where they never pair up and growth stalls just as hard. Plus a fertile window
+  (`FERTILE_MIN_AGE` 6 … `FERTILE_MAX_AGE` 34), `BIRTH_CHANCE` 0.35 → 0.55, and a chance scaling
+  with food surplus (`BIRTH_FOOD_SURPLUS_TARGET`) and health/happiness. Measured: flat at 12 → 26
+  over five years under generous conditions.
+- **Hold-to-rotate (P0).** The corner buttons are held (`ROTATE_SPEED` 45°/s, applied in the frame
+  loop off real time so it works while paused) rather than jumping 45° per tap. `setPointerCapture`
+  keeps the hold alive if the finger drifts off; pointercancel/window-blur release it. **The
+  direction was already correct** and matches the glyphs — yaw runs +Z→+X and the camera orbits
+  opposite to the apparent scene motion, so ↺ (yaw down) reads as the village turning
+  counter-clockwise. The discrete jump was what made it read as flipped.
+- **Year-round burn rates (P1).** `SEASON_BURN` — winter 1.0 (the anchor, unchanged), spring/autumn
+  0.45, summer 0.15 — applies to both firewood and clothing, so the *annual* bill is higher than
+  before (only winter used to charge). Clothing is issued first; a villager who got a ration is
+  `clothed` (transient, never saved) and burns `CLOTHED_HEAT_FACTOR` (0.75) of the fuel. Only a
+  winter shortfall is lethal.
+- **Paths own their tiles (P1).** `planPath` refuses a tile under a building; `placeBuilding` tears
+  up any path under its footprint (`clearPathsUnder`, bumping `navVersion` when a bridge goes);
+  `regrowForest` and `plantCircle` skip path tiles; and laying a path over forest clears the trees
+  via `clearGroundForPath`, crediting the wood and loose stone to the barns rather than destroying
+  them.
+- **Quarry (P1).** A fixed **3×6** pit (of the two sizes suggested, 3×6 places reliably on a 48×48
+  small map where 4×8 often will not fit), `requiresAdjacent: ['stone']` dropped so it goes anywhere
+  on buildable ground, cost/buildTime scaled up (wood 12→30, buildTime 7→14, jobs 2→4). Yield had to
+  change with it: `factorStone` would drop an inland quarry to `MIN_FACTOR` (15%), making "anywhere"
+  a lie, so `quarryRichness` pays the base rate anywhere and adds `QUARRY_ROCK_BONUS` (+50%) against
+  a mountainside. The mine is untouched and still needs a foothill seam.
+- **HUD (P1).** `HUD_RESOURCES` is now an explicit eight (wood, stone, iron, coal, tools, clothing,
+  medicine, firewood) plus the aggregate food chip; leather and the livestock herds came off the
+  line and remain in the barn sheet and trading post. Note nine chips still wrap to two rows at
+  430px — one row cannot fit them.
+- **Season phases (P1).** `seasonLabel` / `seasonPhaseOf` give Early / plain / Late by thirds, so
+  ten-minute seasons tell the player how long they have to prepare.
+- **Village history (P2).** `GameState.events` — a capped (`EVENT_LOG_MAX` 250) newest-first
+  chronicle, written by `recordEvent` from `Game.log` (the single logging entry point, so the
+  scrollback always matches the toasts). A 📜 side panel (`#history`, `refreshHistory`) groups it by
+  season; it rides along in the save with a load-time default.
+- **Inspect × / hints (P1).** The × called `ui.hideInspect()`, which hid the node but left
+  `Game.inspectSel` set, so the frame loop re-rendered it next frame. New `onCloseInspect` callback
+  clears the selection; the demolish/harvest/build/path tool switches had the same bug and now route
+  through it. `#hint` and `#log` had no z-index and painted under `#toolbar`/`#popout` (both 6) —
+  now 8, and they lift above the build pop-out while it is open (`raiseHints`).
+
+### HUD / UX pass (previous session)
 - **Available-workers counter counts adults only.** The 👷 "Free laborers" HUD chip and the Job
   Board's "Laborers (free adults)" field previously counted `jobId === null && !c.builder`, which
   swept in children (who have no job but can't work). Both now add `isAdult(c)` (`ui.ts` `updateHud`
@@ -219,8 +286,18 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   `/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell` with SwiftShader flags,
   against `npm run preview` on port 4173 (preview is flaky — run it in the background).
 - App exposes a `window.__village` debug hook (`startNewGame`, `debugAdvance`, `debugPlace`,
-  `debugCanPlace`, `debugRanchCapacity`, `debugWorkRadius`, `debugSetBuilders`, `inspectSel`/`refreshInspect`, `persist`,
-  plus the sizing fields `sizeW/sizeH` and the private action methods — TS `private` is runtime-callable).
+  `debugCanPlace`, `debugRanchCapacity`, `debugWorkRadius`, `debugSetBuilders`, `debugPlanPath`,
+  `inspectSel`/`refreshInspect`, `persist`, plus the sizing fields `sizeW/sizeH`, `rotateDir`, and the
+  private action methods and `log` — TS `private` is runtime-callable).
+- **Test caveats learned this session.** Kill any stray `npm run preview` before running Playwright —
+  the config reuses an existing server on 4173 and will happily test a **stale build**. Don't assert
+  wall-clock rates against animation frames (headless rAF is slow and irregular; drive N frames
+  explicitly instead). Panel contents render on the next `refreshPanels` frame, not on the click, so
+  wait for a row rather than reading the DOM immediately. Pass `disasters = false` to `startNewGame`
+  in any consumption/economy measurement — a fire destroying the house under test silently changes the
+  numbers. When isolating one household's consumption, leave **clothing** in the barns (it is
+  village-wide, not a larder item) or winter illness confounds the result, and capture the resident
+  count *before* the turnover, since `rehouseVillagers` moves adults out afterwards.
 - **Test caveat:** when advancing whole seasons with `debugAdvance`, step *just past* the boundary
   (e.g. `600*2 + 30`), never exactly `N*600` — float drift on the 0.1s steps can miss the boundary and
   run one fewer season, which made season-timed tests flaky. Fields synthesized in tests set
@@ -236,14 +313,30 @@ The `Claude-Session:` URL is **per-session** — use the current session's, not 
 Never put the model ID in commits/PRs/code/comments — chat replies only.
 
 ## Next steps
+- **Balance review of this session's changes (most useful next).** Three knobs moved the economy and
+  want play-testing rather than more code: `HOUSE_LARDER_SEASONS` (0.5 — raise toward 1 for
+  self-sufficient households at the cost of a near-full-time shopper each), the `SEASON_BURN` table
+  (firewood and clothing now cost across the whole year, not just winter, so the annual bill is
+  meaningfully higher), and the birth rates (`BIRTH_CHANCE` 0.55 + the surplus/wellbeing scaling).
+- **Rotate direction.** Verified correct against the glyphs and covered by a test; if the player
+  still wants it inverted after trying the hold behaviour it is a one-line sign flip in
+  `Game.rotateView` (and the two direction assertions in the rotate suite).
+- **Quarry size.** 3×6 was chosen over the 4×8 alternative for placement reliability on small maps;
+  switching is a one-line def change plus the 3×6 scan in the two quarry tests.
+- **Top-line HUD still wraps to two rows** at 430px with the requested nine chips. Fitting one row
+  would need materially smaller chips or a horizontal scroll (which hides items on mobile).
+- **A house of only children gets no larder** — no adult resident to run errands, so those children
+  eat from the barns via the normal fallback. Harmless today; it would go away if home assignment
+  kept children with a parent.
 - **Repo rename (pending, manual — user will do it):** rename `centerzl93-lang/mobile-game` →
   `little-village` in GitHub **Settings → General**. There is no MCP tool for this. *After* it's
   renamed, update the repo name in lockstep or GitHub Pages breaks: `vite.config.ts` `BASE`,
   `playwright.config.ts` `BASE`, the two `.../mobile-game/` URLs in `README.md`, and the **Repo** line
   above. (Package name is already `little-village`.)
-- **Branch name:** `claude/banished-ios-app-b4zott` is the *only* remaining "banished" string — git
-  infra, in the two `.github/workflows/*.yml` triggers and the Working-branch line above. Renaming it
-  needs the user's go-ahead and updating both workflow triggers (and the working-branch instruction).
+- **Branch names:** the two older branches still carry the "banished" string in git infra and in the
+  two `.github/workflows/*.yml` triggers. Renaming needs the user's go-ahead plus a workflow-trigger
+  update; note the current working branch (`claude/game-opportunities-impl-8qxrqc`) is not in those
+  triggers, so CI does not run on it as configured.
 - **Per-crop designs:** `CROP_DESIGN` (color + reserved `model` slot) and the render hook in
   `drawFarm`/`makeFencedPlot` exist, but fields draw generically. Next step is real per-crop art at the
   hook, or a cheap first pass tinting the field by `cropDesign(crop).color` (~a couple of lines).
@@ -251,8 +344,6 @@ Never put the model ID in commits/PRs/code/comments — chat replies only.
   tune `MERCHANT_ARRIVAL_CHANCE`/category stock; optional HUD cue for an arriving boat (top-bar button
   was removed).
 - **Minor:** the 3D ranch pen shows no live animal glyphs/count (the 2D renderer does).
-- **Flaky test (pre-existing):** `jobs & builders › with zero builders a site never builds` can
-  fail intermittently in a full run — its `placeGatherer` helper returns `null` on an unlucky random
-  map (no gatherer spot within radius of the barn), then dereferences it. Passes in isolation.
-  Hardening the helper (wider search / fixed seed) would remove the flake.
-- Otherwise awaiting new direction.
+- The previously-noted flaky `jobs & builders › with zero builders a site never builds` passed in
+  every full run this session, but its `placeGatherer` helper can still return `null` on an unlucky
+  map; hardening it (wider search / fixed seed) would remove the risk for good.

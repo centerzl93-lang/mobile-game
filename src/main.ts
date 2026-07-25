@@ -44,6 +44,7 @@ import { newGame } from './game/state';
 import {
   update,
   LogKind,
+  recordEvent,
   basketTrade,
   dismissMerchant,
   TradeBasket,
@@ -909,7 +910,15 @@ class Game {
     saveGame(this.state, this.currentSlot);
   }
 
-  private log = (msg: string, kind: LogKind = 'info') => this.ui.log(msg, kind);
+  /**
+   * The single logging entry point. Every message both flashes as a toast and is filed in the
+   * village chronicle (`state.events`), which the History panel scrolls back through and which
+   * rides along in the save.
+   */
+  private log = (msg: string, kind: LogKind = 'info') => {
+    recordEvent(this.state, msg, kind);
+    this.ui.log(msg, kind);
+  };
 
   private frame(t: number): void {
     const dtMs = this.lastTime ? t - this.lastTime : 16;

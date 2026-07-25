@@ -16,6 +16,7 @@ import {
 } from '../types';
 import { getTile, inBounds, tileIndex } from './world';
 import { totalStored, addNearest } from './storage';
+import { clearPathsUnder } from './paths';
 
 export interface PlaceResult {
   ok: boolean;
@@ -132,6 +133,9 @@ export function placeBuilding(
   // Trees or loose stone sitting under the footprint must be cleared before builders can raise
   // the building — mark them so the workforce (laborers / builders) hand-harvests them first.
   markFootprintHarvest(s, b);
+  // A path under the footprint is torn up: the tile belongs to the building now. (Planning a path
+  // over an existing building is refused outright — see `planPath`.)
+  clearPathsUnder(s, b.x, b.y, footprintW(b), footprintH(b));
   return b;
 }
 

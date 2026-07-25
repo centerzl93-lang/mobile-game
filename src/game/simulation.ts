@@ -25,6 +25,7 @@ import {
   PATH_BRIDGE_PLAN,
   BRIDGE_WOOD_COST,
   HARVEST_NONE,
+  PATH_NONE,
   HARVEST_WOOD,
   HARVEST_STONE,
   HARVEST_WOOD_PER_TREE,
@@ -102,7 +103,7 @@ import {
 import { housingCapacity, buildingCenter, makeCitizen } from './state';
 import { forestInCircle, nearbyStone, nearbyWater, footprintClear } from './buildings';
 import { getTile, tileIndex, inBounds, riverColumnX } from './world';
-import { pathSpeedMult } from './paths';
+import { pathSpeedMult, hasPath } from './paths';
 import { findPath, isWalkable, labelComponents } from './pathfind';
 import {
   totalStored,
@@ -129,6 +130,8 @@ export type LogFn = (msg: string, kind?: LogKind) => void;
 const FOREST_CIRCLE_IDEAL = 24;
 const WATER_IDEAL = 14; // water tiles in the fishing circle for full yield (circle scales with workers)
 const STONE_IDEAL = 6;
+/** Extra quarry output when its pit is cut into a rocky mountainside (0.5 = up to +50%). */
+const QUARRY_ROCK_BONUS = 0.5;
 const MIN_FACTOR = 0.15;
 const TREE_REGROW = 0.02;
 
@@ -726,6 +729,16 @@ function factorStone(s: GameState, b: Building): number {
   return clamp(nearbyStone(s, BUILDING_DEFS[b.type], b.x, b.y) / STONE_IDEAL, MIN_FACTOR, 1);
 }
 
+/**
+ * Quarry output multiplier: 1.0 anywhere, rising to 1 + QUARRY_ROCK_BONUS when the pit is cut into
+ * a mountainside. Unlike a mine (which must reach a seam in the foothills) a quarry only needs
+ * ground, so being inland costs it nothing — it just doesn't get the bonus.
+ */
+function quarryRichness(s: GameState, b: Building): number {
+  const rock = clamp(nearbyStone(s, BUILDING_DEFS[b.type], b.x, b.y) / STONE_IDEAL, 0, 1);
+  return 1 + QUARRY_ROCK_BONUS * rock;
+}
+
 /** One work cycle's output, consuming converter inputs from the building's store. */
 function workOutput(
   s: GameState,
@@ -774,7 +787,10 @@ function workOutput(
     case 'herbalist':
       return { kind: 'medicine', amount: MED_LOAD * factorCircle(s, b) * tf };
     case 'quarry':
-      return { kind: 'stone', amount: LOAD_MAT * factorStone(s, b) * tf };
+      // Rock nearby is a *bonus*, not a requirement — a quarry sunk in open ground still works at
+      // its base rate. (Using factorStone here would drop an inland quarry to MIN_FACTOR, which
+      // would make "buildable anywhere" a lie.)
+      return { kind: 'stone', amount: LOAD_MAT * quarryRichness(s, b) * tf };
     case 'mine': {
       const f = factorStone(s, b) * tf;
       return b.output === 'iron'
@@ -1099,7 +1115,10 @@ function buildPath(s: GameState, c: Citizen, dt: number, maxD2 = Infinity): bool
   if (stepTo(s, c, dt)) {
     const v = s.paths[bestIdx];
     if (v === PATH_STONE_PLAN) {
-      if (takeNearest(s, { x: tx, y: ty }, 'stone', 1) >= 1) s.paths[bestIdx] = PATH_STONE;
+      if (takeNearest(s, { x: tx, y: ty }, 'stone', 1) >= 1) {
+        s.paths[bestIdx] = PATH_STONE;
+        clearGroundForPath(s, tx, ty);
+      }
     } else if (v === PATH_BRIDGE_PLAN) {
       if (totalStored(s, 'wood') >= BRIDGE_WOOD_COST) {
         takeNearest(s, bestStand, 'wood', BRIDGE_WOOD_COST);
@@ -1108,9 +1127,34 @@ function buildPath(s: GameState, c: Citizen, dt: number, maxD2 = Infinity): bool
       }
     } else {
       s.paths[bestIdx] = PATH_DIRT;
+      clearGroundForPath(s, tx, ty);
     }
   }
   return true;
+}
+
+/**
+ * Clear a newly laid path tile of trees and loose stone. Paving is what removes them — a wood
+ * cannot grow in the road, and `regrowForest`/`plantCircle` won't put one back. The materials
+ * aren't destroyed: whoever laid the path hauls them off to the barns.
+ */
+function clearGroundForPath(s: GameState, tx: number, ty: number): void {
+  const t = getTile(s.tiles, tx, ty);
+  if (!t) return;
+  const at = { x: tx + 0.5, y: ty + 0.5 };
+  if (t.type === 'forest') {
+    const wood = t.trees * HARVEST_WOOD_PER_TREE;
+    t.type = 'grass';
+    t.trees = 0;
+    s.forestVersion = (s.forestVersion ?? 0) + 1; // the tree layer needs rebuilding
+    if (wood > 0.5) addNearest(s, at, 'wood', wood);
+  }
+  if ((t.stone ?? 0) > 0) {
+    addNearest(s, at, 'stone', t.stone!);
+    delete t.stone;
+  }
+  // Any harvest order on the tile is moot now that it is paved.
+  s.harvest[tileIndex(tx, ty)] = HARVEST_NONE;
 }
 
 function wander(s: GameState, c: Citizen, dt: number): void {
@@ -2009,6 +2053,8 @@ function regrowForest(s: GameState, dt: number): void {
   for (let i = 0; i < 40; i++) {
     const idx = (Math.random() * n) | 0;
     const t = s.tiles[idx];
+    // Nothing grows back through a path — it is trodden or paved surface.
+    if (s.paths[idx] !== PATH_NONE) continue;
     if (t.type === 'forest' && t.trees < 1) t.trees = Math.min(1, t.trees + TREE_REGROW * dt * 0.02);
   }
 }
@@ -2058,6 +2104,7 @@ function plantCircle(s: GameState, b: Building): void {
       const t = getTile(s.tiles, tx, ty);
       if (!t || t.type !== 'grass' || (t.stone ?? 0) > 0) continue;
       if (tileUnderBuilding(s, tx, ty)) continue;
+      if (hasPath(s, tx, ty)) continue; // foresters don't plant saplings in the road
       t.type = 'forest';
       t.trees = 0.12; // a young sapling; tendCircle grows it toward maturity
       planted++;

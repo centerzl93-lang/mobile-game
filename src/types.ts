@@ -1001,9 +1001,12 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     desc: 'Splits stockpiled wood into firewood to heat homes in winter.',
   },
   quarry: {
-    type: 'quarry', name: 'Quarry', emoji: '⛏️', category: 'resources', w: 2, h: 2,
-    cost: { wood: 12 }, jobs: 2, buildTime: 7, requiresAdjacent: ['stone'],
-    desc: 'Cuts stone. Must be built against a rocky mountainside.',
+    // A quarry digs its own pit, so it goes anywhere on buildable ground rather than having to
+    // hug a mountainside. It is a big fixed 3×6 works — not player-sizable — and its cost and
+    // build time are scaled up from the old 2×2 version to match the footprint.
+    type: 'quarry', name: 'Quarry', emoji: '⛏️', category: 'resources', w: 3, h: 6,
+    cost: { wood: 30 }, jobs: 4, buildTime: 14,
+    desc: 'Cuts stone. A large pit that can be dug anywhere — but yields more against a rocky mountainside.',
   },
   mine: {
     type: 'mine', name: 'Mine', emoji: '🕳️', category: 'resources', w: 2, h: 2,

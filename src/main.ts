@@ -862,6 +862,11 @@ class Game {
     return b ? b.id : null;
   }
 
+  /** Debug/testing helper: plan a path tile directly, bypassing the drag-paint input path. */
+  debugPlanPath(tier: PathTier, x: number, y: number): boolean {
+    return planPath(this.state, x, y, tier);
+  }
+
   /** Debug/testing helper: set the global Builders target directly (bypasses the adult clamp). */
   debugSetBuilders(n: number): void {
     this.state.desiredBuilders = Math.max(0, n);

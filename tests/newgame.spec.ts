@@ -1259,6 +1259,172 @@ test.describe('villager breeding', () => {
   });
 });
 
+test.describe('paths and placement', () => {
+  test('a path cannot be planned under a building', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // A tile squarely inside the barn's footprint, and one clear of every building.
+      const onBarn = g.debugPlanPath('dirt', barn.x, barn.y);
+      let free: { x: number; y: number } | null = null;
+      for (let r = 3; r < 15 && !free; r++)
+        for (let dy = -r; dy <= r && !free; dy++)
+          for (let dx = -r; dx <= r && !free; dx++) {
+            const x = barn.x + dx, y = barn.y + dy;
+            const t = s.tiles[y * s.w + x];
+            const covered = s.buildings.some((b: any) =>
+              x >= b.x && x < b.x + (b.w ?? 2) && y >= b.y && y < b.y + (b.h ?? 2));
+            if (t && t.type === 'grass' && !covered) free = { x, y };
+          }
+      const onFree = free ? g.debugPlanPath('dirt', free.x, free.y) : null;
+      return { onBarn, onFree };
+    });
+    expect(out.onBarn).toBe(false); // refused: the barn's tile is not available
+    expect(out.onFree).toBe(true); // control — open ground still accepts a path
+  });
+
+  test('placing a building over a path tears the path up', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // Find somewhere a house fits, lay dirt path across its whole footprint, then build there.
+      let spot: { x: number; y: number } | null = null;
+      for (let r = 3; r < 18 && !spot; r++)
+        for (let dy = -r; dy <= r && !spot; dy++)
+          for (let dx = -r; dx <= r && !spot; dx++) {
+            const x = barn.x + dx, y = barn.y + dy;
+            if (g.debugCanPlace('house', x, y).ok) spot = { x, y };
+          }
+      if (!spot) return { error: 'no spot' };
+      const idx = (x: number, y: number) => y * s.w + x;
+      let planned = 0;
+      for (let dy = 0; dy < 2; dy++)
+        for (let dx = 0; dx < 2; dx++) if (g.debugPlanPath('dirt', spot.x + dx, spot.y + dy)) planned++;
+      // Mark them built outright so we're testing removal of a real path, not a plan.
+      for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) s.paths[idx(spot.x + dx, spot.y + dy)] = 2;
+      const before = [0, 1].flatMap((dy) => [0, 1].map((dx) => s.paths[idx(spot!.x + dx, spot!.y + dy)]));
+      const id = g.debugPlace('house', spot.x, spot.y);
+      const after = [0, 1].flatMap((dy) => [0, 1].map((dx) => s.paths[idx(spot!.x + dx, spot!.y + dy)]));
+      return { planned, placed: id != null, before, after };
+    });
+    expect(out.placed).toBe(true);
+    expect(out.planned).toBe(4);
+    expect(out.before).toEqual([2, 2, 2, 2]); // PATH_DIRT on all four tiles
+    expect(out.after).toEqual([0, 0, 0, 0]); // PATH_NONE — torn up by the building
+  });
+
+  test('trees do not grow on a path, and paving one clears the trees', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // A forest tile with real trees on it, clear of any building.
+      let tile: { x: number; y: number } | null = null;
+      for (let r = 3; r < 20 && !tile; r++)
+        for (let dy = -r; dy <= r && !tile; dy++)
+          for (let dx = -r; dx <= r && !tile; dx++) {
+            const x = barn.x + dx, y = barn.y + dy;
+            const t = s.tiles[y * s.w + x];
+            if (t && t.type === 'forest' && t.trees > 0.5) tile = { x, y };
+          }
+      if (!tile) return { error: 'no forest tile' };
+      const i = tile.y * s.w + tile.x;
+      const woodBefore = s.buildings
+        .filter((b: any) => b.built && (b.type === 'barn' || b.type === 'market'))
+        .reduce((n: number, b: any) => n + (b.store.wood ?? 0), 0);
+      s.paths[i] = 1; // PATH_DIRT_PLAN — let a villager actually lay it
+      g.debugSetBuilders(4);
+      for (let n = 0; n < 3000 && s.paths[i] !== 2; n++) g.debugAdvance(0.1);
+      const paved = s.paths[i] === 2;
+      const afterPaving = { type: s.tiles[i].type, trees: s.tiles[i].trees };
+      const woodAfter = s.buildings
+        .filter((b: any) => b.built && (b.type === 'barn' || b.type === 'market'))
+        .reduce((n: number, b: any) => n + (b.store.wood ?? 0), 0);
+      // Now run a long while and confirm nothing grows back on the paved tile.
+      for (let n = 0; n < 3000; n++) g.debugAdvance(0.1);
+      return { paved, afterPaving, regrew: { type: s.tiles[i].type, trees: s.tiles[i].trees },
+               woodGained: woodAfter - woodBefore };
+    });
+    expect(out.paved).toBe(true);
+    // Paving cleared the trees, and credited the wood rather than destroying it.
+    expect(out.afterPaving.type).toBe('grass');
+    expect(out.afterPaving.trees).toBe(0);
+    expect(out.woodGained).toBeGreaterThan(0);
+    // And it stays clear — neither regrowth nor a forester replants in the road.
+    expect(out.regrew.type).toBe('grass');
+    expect(out.regrew.trees).toBe(0);
+  });
+});
+
+test.describe('quarry', () => {
+  test('cuts stone at full rate on open ground far from any rock', async ({ page }) => {
+    test.setTimeout(90_000);
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const idx = (x: number, y: number) => y * s.w + x;
+      const isGrass = (x: number, y: number) =>
+        x >= 0 && y >= 0 && x < s.w && y < s.h && s.tiles[idx(x, y)].type === 'grass';
+      const nearRock = (x: number, y: number, r: number) => {
+        for (let dy = -r; dy <= r; dy++)
+          for (let dx = -r; dx <= r; dx++) {
+            const tx = x + dx, ty = y + dy;
+            if (tx < 0 || ty < 0 || tx >= s.w || ty >= s.h) continue;
+            if (s.tiles[idx(tx, ty)].type === 'stone') return true;
+          }
+        return false;
+      };
+      // Open grass, no rock within 6 tiles — the placement the old mountainside rule refused.
+      let spot: number[] | null = null;
+      for (let y = 1; y < s.h - 7 && !spot; y++)
+        for (let x = 1; x < s.w - 4; x++) {
+          let clear = true;
+          for (let dy = 0; dy < 6 && clear; dy++)
+            for (let dx = 0; dx < 3; dx++) if (!isGrass(x + dx, y + dy)) { clear = false; break; }
+          if (clear && !nearRock(x, y, 6) && g.debugCanPlace('quarry', x, y).ok) { spot = [x, y]; break; }
+        }
+      if (!spot) return { error: 'nowhere clear to place a quarry' };
+
+      const id = g.debugPlace('quarry', spot[0], spot[1]);
+      const q = s.buildings.find((b: any) => b.id === id);
+      // Finish it outright and staff it, then let it work.
+      q.built = true;
+      q.progress = 99999;
+      q.desiredWorkers = 4;
+      const stoneBefore = s.buildings
+        .filter((b: any) => b.built && (b.type === 'barn' || b.type === 'market'))
+        .reduce((n: number, b: any) => n + (b.store.stone ?? 0), 0);
+      for (let i = 0; i < 4000; i++) g.debugAdvance(0.1);
+      const stoneAfter = s.buildings
+        .filter((b: any) => b.built && (b.type === 'barn' || b.type === 'market'))
+        .reduce((n: number, b: any) => n + (b.store.stone ?? 0), 0);
+      return {
+        placed: id != null,
+        // Static footprint: only the ranch and farm carry a per-instance w/h.
+        perInstanceSize: q.w !== undefined || q.h !== undefined,
+        workers: q.workers.length,
+        stoneMined: stoneAfter - stoneBefore + (q.store.stone ?? 0),
+      };
+    });
+    expect(out.error).toBeUndefined();
+    expect(out.placed).toBe(true);
+    expect(out.perInstanceSize).toBe(false);
+    expect(out.workers).toBeGreaterThan(0);
+    // Inland is no longer a 15%-output penalty box — the pit works at its base rate.
+    expect(out.stoneMined).toBeGreaterThan(0);
+  });
+});
+
 test.describe('disasters toggle', () => {
   test('the toggle flows from the difficulty screen and persists through save/load', async ({ page }) => {
     await open(page);

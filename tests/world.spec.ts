@@ -60,7 +60,7 @@ test.describe('world generation, placement & pathfinding', () => {
     expect(peak).toBeGreaterThan(1.5);
   });
 
-  test('mines require foothills; quarries and houses respect the mountainside', async ({ page }) => {
+  test('mines require foothills; quarries go anywhere there is room', async ({ page }) => {
     await startSmall(page);
     const place = await page.evaluate(([W, H]) => {
       const g = (window as any).__village, T = g.state.tiles;
@@ -82,10 +82,22 @@ test.describe('world generation, placement & pathfinding', () => {
       for (let y = 1; y < H - 2 && !grassAway; y++) for (let x = 1; x < W - 2; x++) if (is(x, y, 'grass') && is(x + 1, y, 'grass') && is(x, y + 1, 'grass') && is(x + 1, y + 1, 'grass') && !nearStone(x, y, 4)) { grassAway = [x, y]; break; }
       for (let y = 0; y < H && !mountain; y++) for (let x = 0; x < W; x++) if (is(x, y, 'stone')) { mountain = [x, y]; break; }
       const cp = (t: string, xy: number[] | null) => (xy ? g.debugCanPlace(t, xy[0], xy[1]) : { ok: null });
+      // The quarry is a fixed 3×6 pit that no longer needs a mountainside, so look for open ground
+      // well clear of any rock — the case that used to be refused.
+      let quarryOpen: number[] | null = null;
+      const clearRect = (x: number, y: number, w: number, h: number) => {
+        for (let dy = 0; dy < h; dy++)
+          for (let dx = 0; dx < w; dx++) if (!is(x + dx, y + dy, 'grass')) return false;
+        return true;
+      };
+      for (let y = 1; y < H - 7 && !quarryOpen; y++)
+        for (let x = 1; x < W - 4; x++)
+          if (clearRect(x, y, 3, 6) && !nearStone(x, y, 6)) { quarryOpen = [x, y]; break; }
       return {
-        foot, grassAway, mountain,
+        foot, grassAway, mountain, quarryOpen,
         mineOnFoot: cp('mine', foot), mineOnGrass: cp('mine', grassAway), mineOnMountain: cp('mine', mountain),
-        quarryOnFoot: cp('quarry', foot), houseOnFoot: cp('house', foot),
+        quarryOnOpenGround: cp('quarry', quarryOpen), quarryOnMountain: cp('quarry', mountain),
+        houseOnFoot: cp('house', foot),
       };
     }, [W, H] as const);
 
@@ -93,8 +105,12 @@ test.describe('world generation, placement & pathfinding', () => {
     expect(place.mineOnFoot.ok).toBe(true);
     expect(place.mineOnGrass.ok).toBe(false);
     expect(place.mineOnMountain.ok).toBe(false);
-    expect(place.quarryOnFoot.ok).toBe(true);
     expect(place.houseOnFoot.ok).toBe(true);
+    // A quarry sinks its own pit: open ground far from any rock is fine now.
+    expect(place.quarryOpen).not.toBeNull();
+    expect(place.quarryOnOpenGround.ok).toBe(true);
+    // It still cannot be cut into solid mountain rock.
+    expect(place.quarryOnMountain.ok).toBe(false);
   });
 
   test('a route never crosses a mountain tile', async ({ page }) => {

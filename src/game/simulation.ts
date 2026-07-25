@@ -61,6 +61,8 @@ import {
   DIET_VARIETY_TARGET,
   CHILD_FOOD_FACTOR,
   BIRTH_CHANCE,
+  BIRTH_FOOD_SURPLUS_TARGET,
+  isFertile,
   ADULT_AGE,
   OLD_AGE_START,
   MAX_AGE,
@@ -111,7 +113,6 @@ import {
   nearestBarnWithRoom,
   nearestBarnOnlyWith,
   barnFree,
-  totalFood,
   consumeFood,
   foodVarietyAvailable,
   larderShortfall,
@@ -1146,11 +1147,21 @@ function endSeason(s: GameState, log: LogFn): void {
     log(`A new year begins — Year ${s.year}`, 'info');
     // Everyone ages a year. Children coming of age are educated if a school is staffed.
     const schoolStaffed = s.buildings.some((b) => b.built && b.type === 'school' && b.workers.length > 0);
+    const cameOfAge: Citizen[] = [];
     for (const c of s.citizens) {
       const wasChild = c.age < ADULT_AGE;
       c.age += 1;
-      if (wasChild && c.age >= ADULT_AGE) c.educated = schoolStaffed;
+      if (wasChild && c.age >= ADULT_AGE) {
+        c.educated = schoolStaffed;
+        cameOfAge.push(c);
+      }
     }
+    // New adults leave the family home for a house of their own where one is free. This is what
+    // keeps a village growing: without it grown children occupy their parents' house for life, the
+    // family home never has room for another child, and the population plateaus at whatever the
+    // founding houses held.
+    const houses = s.buildings.filter((b) => b.built && isHouse(b.type));
+    for (const c of cameOfAge) placeAdult(s, c, houses);
     // Old age: from OLD_AGE_START the yearly death chance ramps up, worse if unhealthy.
     const dying: Citizen[] = [];
     for (const c of s.citizens) {
@@ -1314,23 +1325,38 @@ function endSeason(s: GameState, log: LogFn): void {
     }
   }
 
-  // Reproduction: a house with an adult man + woman, spare room, and enough food
-  // stored may bear a child. Happier villages breed faster.
-  if (s.citizens.length > 0 && totalFood(s) > s.citizens.length * FOOD_PER_CITIZEN_PER_SEASON) {
-    const chance = BIRTH_CHANCE * (0.4 + 0.6 * (avgHappiness(s) / 100));
-    let born = 0;
-    for (const h of s.buildings) {
-      if (!h.built || !isHouse(h.type)) continue;
-      const residents = s.citizens.filter((c) => c.homeId === h.id);
-      if (residents.length >= houseCapacityOf(h.type)) continue;
-      const man = residents.some((c) => isAdult(c) && c.sex === 'm');
-      const woman = residents.some((c) => isAdult(c) && c.sex === 'f');
-      if (man && woman && Math.random() < chance) {
-        spawnChild(s, h);
-        born++;
+  // Settle households into couples with room to spare before deciding who bears a child.
+  rehouseVillagers(s);
+
+  // Reproduction. A household bears a child when three things line up:
+  //   1. it holds a *fertile* couple — one man and one woman inside the fertile age window,
+  //   2. it has room under its housing capacity for the child, and
+  //   3. the village has more than one season of food banked.
+  // The chance then scales with how deep that food surplus runs and with average health and
+  // happiness, so a well-fed, content village grows markedly faster than one scraping by.
+  //
+  // Food counts the larders as well as the barns: households take their supplies home, so a
+  // barn-only measure would read as famine in a perfectly comfortable village and stop all births.
+  if (s.citizens.length > 0) {
+    const seasonsBanked = totalFoodAvailable(s) / (s.citizens.length * FOOD_PER_CITIZEN_PER_SEASON);
+    if (seasonsBanked > 1) {
+      const surplus = clamp((seasonsBanked - 1) / (BIRTH_FOOD_SURPLUS_TARGET - 1), 0, 1);
+      const wellbeing = 0.5 * (avgHealth(s) / 100) + 0.5 * (avgHappiness(s) / 100);
+      const chance = BIRTH_CHANCE * (0.35 + 0.65 * surplus) * (0.5 + 0.5 * wellbeing);
+      let born = 0;
+      for (const h of s.buildings) {
+        if (!h.built || !isHouse(h.type)) continue;
+        const residents = s.citizens.filter((c) => c.homeId === h.id);
+        if (residents.length >= houseCapacityOf(h.type)) continue;
+        const man = residents.some((c) => isFertile(c) && c.sex === 'm');
+        const woman = residents.some((c) => isFertile(c) && c.sex === 'f');
+        if (man && woman && Math.random() < chance) {
+          spawnChild(s, h);
+          born++;
+        }
       }
+      if (born > 0) log(born > 1 ? `${born} children were born` : `A child was born`, 'good');
     }
-    if (born > 0) log(born > 1 ? `${born} children were born` : `A child was born`, 'good');
   }
 
   // Well-being drifts toward conditions (food/variety -> health; space/goods/amenities -> happiness).
@@ -1674,6 +1700,70 @@ function removeCitizen(s: GameState, c: Citizen): void {
 }
 
 /** A new child, born into `house`. */
+/**
+ * Move an adult into whichever house best advances the village: first one holding a single
+ * unpartnered adult of the opposite sex (that forms a couple), else an empty house (founding a new
+ * household for a partner to join next season), else anywhere with room.
+ *
+ * The ordering matters. Sending each new adult to the *emptiest* house instead spreads them one to
+ * a house where they never meet a partner, and the village stops growing just as surely as if they
+ * had never left home.
+ *
+ * Does nothing when there is nowhere to go — the villager stays put and the player needs to build.
+ */
+function placeAdult(s: GameState, c: Citizen, houses: Building[]): void {
+  const occupancy = new Map<number, number>();
+  const adults = new Map<number, { m: number; f: number }>();
+  for (const o of s.citizens) {
+    if (o.homeId === null) continue;
+    occupancy.set(o.homeId, (occupancy.get(o.homeId) ?? 0) + 1);
+    if (isAdult(o)) {
+      const tally = adults.get(o.homeId) ?? { m: 0, f: 0 };
+      tally[o.sex] += 1;
+      adults.set(o.homeId, tally);
+    }
+  }
+  const elsewhere = houses.filter((h) => h.id !== c.homeId);
+  const hasRoom = (h: Building) => (occupancy.get(h.id) ?? 0) < houseCapacityOf(h.type);
+  const want = c.sex === 'm' ? 'f' : 'm';
+
+  const target =
+    elsewhere.find((h) => {
+      if (!hasRoom(h)) return false;
+      const tally = adults.get(h.id) ?? { m: 0, f: 0 };
+      return tally[want] === 1 && tally[c.sex] === 0; // a lone adult looking for a partner
+    }) ??
+    elsewhere.find((h) => (occupancy.get(h.id) ?? 0) === 0) ??
+    elsewhere.find(hasRoom);
+  if (target) c.homeId = target.id;
+}
+
+/**
+ * Settle adults into households that can actually raise children, once a season.
+ *
+ * Two things otherwise stall a village dead. The founding setup packs four adults into a
+ * four-person house, so it is at capacity and can never have room for a child. And a household
+ * holding three or more adults is wasting slots that a child needs. Both are fixed by moving every
+ * adult beyond a household's couple out to a house where they pair up instead.
+ *
+ * Relocating leaves a villager's share of the old larder behind; the household they join restocks
+ * from the barns, so nothing is lost, it just gets re-fetched.
+ */
+function rehouseVillagers(s: GameState): void {
+  const houses = s.buildings.filter((b) => b.built && isHouse(b.type));
+  if (houses.length < 2) return;
+  const movers: Citizen[] = [];
+  for (const h of houses) {
+    const adults = s.citizens.filter((c) => c.homeId === h.id && isAdult(c));
+    if (adults.length <= 2) continue;
+    // Keep one man and one woman — the household's couple — and move the rest on.
+    const keepM = adults.find((c) => c.sex === 'm');
+    const keepF = adults.find((c) => c.sex === 'f');
+    for (const a of adults) if (a !== keepM && a !== keepF) movers.push(a);
+  }
+  for (const c of movers) placeAdult(s, c, houses);
+}
+
 function spawnChild(s: GameState, house: Building): void {
   const at = buildingCenter(house);
   const c = makeCitizen(s, Math.random() < 0.5 ? 'm' : 'f', 0, at.x + (Math.random() - 0.5), at.y + (Math.random() - 0.5));
@@ -1748,7 +1838,8 @@ function immigrate(s: GameState, log: LogFn): void {
   if (s.pendingNomads) return; // an offer is already awaiting the player's decision
   const pop = s.citizens.length;
   if (pop === 0) return;
-  if (totalFood(s) <= pop * FOOD_PER_CITIZEN_PER_SEASON * 1.5) return; // need a comfortable surplus
+  // Needs a comfortable surplus. Counts larders too — see the reproduction block.
+  if (totalFoodAvailable(s) <= pop * FOOD_PER_CITIZEN_PER_SEASON * 1.5) return;
   if (Math.random() >= IMMIGRATION_CHANCE) return;
 
   const count = IMMIGRATION_MIN + Math.floor(Math.random() * (IMMIGRATION_MAX - IMMIGRATION_MIN + 1));

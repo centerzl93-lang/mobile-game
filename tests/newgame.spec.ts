@@ -1139,6 +1139,126 @@ test.describe('seasonal firewood and clothing burn', () => {
   });
 });
 
+test.describe('villager breeding', () => {
+  /**
+   * Run `seasons` season turnovers under deliberately generous conditions — spare housing, barns
+   * kept full, disasters off — so what the run measures is the breeding rules and not famine,
+   * fire or plague.
+   */
+  async function growUnderIdealConditions(page: Page, seasons: number, extraHouses = 10) {
+    return page.evaluate(
+      ({ seasons, extraHouses }) => {
+        const g = (window as any).__village;
+        g.startNewGame('small', 'easy', false);
+        const s = g.state;
+        for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        let added = 0;
+        for (let r = 3; r < 20 && added < extraHouses; r++)
+          for (let dy = -r; dy <= r && added < extraHouses; dy++)
+            for (let dx = -r; dx <= r && added < extraHouses; dx++) {
+              const id = g.debugCanPlace('house', barn.x + dx, barn.y + dy).ok
+                ? g.debugPlace('house', barn.x + dx, barn.y + dy)
+                : null;
+              if (id != null) {
+                const h = s.buildings.find((b: any) => b.id === id);
+                h.built = true;
+                h.progress = 9999;
+                added++;
+              }
+            }
+        const startPop = s.citizens.length;
+        for (let n = 0; n < seasons; n++) {
+          for (const b of s.buildings) {
+            if (b.type !== 'barn') continue;
+            for (const k of ['grain', 'fruit', 'meat', 'fish', 'eggs']) b.store[k] = 1e5;
+            for (const k of ['clothing', 'firewood', 'medicine', 'tools']) b.store[k] = 1e5;
+          }
+          g.debugAdvance(610);
+          if (s.gameOver) break;
+        }
+        const houses = s.buildings.filter((b: any) => b.built && b.type === 'house');
+        return {
+          addedHouses: added,
+          startPop,
+          endPop: s.citizens.length,
+          years: s.year,
+          // Adults per household, to check rehousing settled them into couples.
+          adultsPerHouse: houses
+            .map((h: any) => s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 4).length)
+            .filter((n: number) => n > 0),
+        };
+      },
+      { seasons, extraHouses },
+    );
+  }
+
+  test('the village grows when it has housing, food and good spirits', async ({ page }) => {
+    test.setTimeout(120_000); // simulating whole years tick-by-tick is not quick
+    await open(page);
+    const out = await growUnderIdealConditions(page, 12); // 3 years
+    expect(out.addedHouses).toBe(10);
+    expect(out.startPop).toBe(12);
+    // Previously this sat dead flat at the founding 12: every starter house held four adults, so no
+    // household ever had room for a child, and grown children never moved out to form new ones.
+    expect(out.endPop).toBeGreaterThan(out.startPop * 1.5);
+  });
+
+  test('households settle into couples so there is room for children', async ({ page }) => {
+    await open(page);
+    const out = await growUnderIdealConditions(page, 8);
+    // Rehousing moves every adult past a household's couple out to a house where they can pair up.
+    for (const n of out.adultsPerHouse) expect(n).toBeLessThanOrEqual(2);
+  });
+
+  test('no births while the village has under a season of food banked', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
+      const startPop = s.citizens.length;
+      for (let n = 0; n < 8; n++) {
+        // Just enough to eat, never a surplus — plus fuel and clothing so nobody dies either.
+        for (const b of s.buildings) {
+          if (b.type !== 'barn' && b.type !== 'market') continue;
+          b.store = { clothing: 1e5, firewood: 1e5, tools: 1e5 };
+        }
+        for (const h of s.buildings) if (h.type === 'house') h.store = { grain: 400, firewood: 1e4 };
+        g.debugAdvance(610);
+        if (s.gameOver) break;
+      }
+      return { startPop, endPop: s.citizens.length, born: s.citizens.filter((c: any) => c.age < 1).length };
+    });
+    expect(out.born).toBe(0);
+    expect(out.endPop).toBeLessThanOrEqual(out.startPop);
+  });
+
+  test('villagers past the fertile window stop bearing children', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
+      // Age every adult past FERTILE_MAX_AGE (34) but short of OLD_AGE_START deaths mattering.
+      for (const c of s.citizens) c.age = 34.5;
+      const startPop = s.citizens.length;
+      for (let n = 0; n < 4; n++) {
+        for (const b of s.buildings) {
+          if (b.type !== 'barn') continue;
+          for (const k of ['grain', 'fruit', 'meat', 'clothing', 'firewood', 'tools']) b.store[k] = 1e5;
+        }
+        g.debugAdvance(610);
+        if (s.gameOver) break;
+      }
+      return { startPop, newborns: s.citizens.filter((c: any) => c.age < 1).length };
+    });
+    expect(out.newborns).toBe(0);
+  });
+});
+
 test.describe('disasters toggle', () => {
   test('the toggle flows from the difficulty screen and persists through save/load', async ({ page }) => {
     await open(page);

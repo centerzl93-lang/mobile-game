@@ -537,6 +537,11 @@ export function isAdult(c: { age: number }): boolean {
   return c.age >= ADULT_AGE;
 }
 
+/** Whether a villager is inside the fertile age window and can father/bear a child. */
+export function isFertile(c: { age: number }): boolean {
+  return c.age >= FERTILE_MIN_AGE && c.age <= FERTILE_MAX_AGE;
+}
+
 /** House-type buildings that shelter villagers (plain and stone houses). */
 export function isHouse(type: BuildingType): boolean {
   return type === 'house' || type === 'stonehouse';
@@ -761,7 +766,24 @@ export const LEISURE_CHANCE_PER_SEC = 1 / 90; // ~one break per 90s of work
 export const LEISURE_MIN_SECONDS = 12;
 export const LEISURE_MAX_SECONDS = 24;
 export const CHILD_FOOD_FACTOR = 0.5; // children eat this fraction of an adult ration
-export const BIRTH_CHANCE = 0.35; // base chance per qualifying house, per season
+// ---- Reproduction ----
+/**
+ * Base chance a fertile household bears a child in a season, before the food-surplus and wellbeing
+ * modifiers below. A household needs a fertile couple *and* room for the child.
+ */
+export const BIRTH_CHANCE = 0.55;
+/**
+ * The fertile years. Villagers come of age at ADULT_AGE and can work, but only bear children inside
+ * this window — below it they are too young, above it they stop (just before old age sets in).
+ */
+export const FERTILE_MIN_AGE = 6;
+export const FERTILE_MAX_AGE = 34;
+/**
+ * Seasons of food in store that earn the *full* fertility bonus. Below one season's worth no
+ * household will bear a child at all; the bonus ramps from there up to this surplus.
+ */
+export const BIRTH_FOOD_SURPLUS_TARGET = 2;
+
 export const OLD_AGE_START = 35; // old-age deaths begin at this age
 export const MAX_AGE = 48; // by this age old-age death is near-certain each year
 export const EDUCATED_BONUS = 1.3; // production multiplier for educated workers

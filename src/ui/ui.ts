@@ -52,6 +52,9 @@ import {
 
 export type PathTier = 'dirt' | 'stone' | 'bridge';
 
+/** Version / commit / build date, injected at build time — see `__BUILD_STAMP__`. */
+export const BUILD_STAMP = __BUILD_STAMP__;
+
 export interface InspectRow {
   label: string;
   value: string;
@@ -1036,7 +1039,10 @@ export class UI {
         saved +
         `<button class="ghost" id="mm-settings">Settings</button>` +
         `<button class="ghost" id="mm-account" disabled>Sign In / Create Account — coming soon</button>` +
-        `</div>`,
+        `</div>` +
+        // Build stamp: version, commit and build date, so it's obvious whether the device is on
+        // the newest deploy or a cached service-worker copy of an older one.
+        `<p class="build-stamp" id="mm-build">${BUILD_STAMP}</p>`,
       'menu-card',
     );
     byId('mm-new').addEventListener('click', () => opts.onNew());

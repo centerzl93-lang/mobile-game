@@ -34,6 +34,7 @@ import {
   ResourceKind,
   RESOURCE_ICON,
   LARDER_KINDS,
+  carryLimit,
   RESOURCE_KINDS,
   ADULT_AGE,
   PATH_STONE,
@@ -858,7 +859,10 @@ class Game {
       if (adult) rows.push({ label: 'Work', value: job ? `${BUILDING_DEFS[job.type].name} worker` : 'Builder / laborer' });
       rows.push({
         label: 'Carrying',
-        value: c.carry ? `${RESOURCE_ICON[c.carry.kind]} ${Math.floor(c.carry.amount)} ${c.carry.kind}` : 'nothing',
+        // Against the per-kind limit, so it's clear a load is 12 logs but 48 of a crop.
+        value: c.carry
+          ? `${RESOURCE_ICON[c.carry.kind]} ${Math.floor(c.carry.amount)}/${carryLimit(c.carry.kind)} ${c.carry.kind}`
+          : 'nothing',
       });
       const face = !adult ? '🧒' : c.sex === 'm' ? '👨' : '👩';
       this.ui.showInspect(`${face} ${c.name}`, rows);

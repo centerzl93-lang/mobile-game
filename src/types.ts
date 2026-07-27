@@ -713,7 +713,40 @@ export const HOUSING_PER_HOUSE = 8;
 export const BARN_CAPACITY = 5000; // total units a single barn can hold
 export const MARKET_CAPACITY = 2000; // total units a market holds
 export const MARKET_STOCK_TARGET = 60; // per-resource amount a vendor keeps stocked
-export const CARRY_CAP = 12; // units a villager carries per trip
+/**
+ * How much *space* a villager has in their arms for one trip, in wood-equivalents: a log is volume
+ * 1, so this is the old "12 units" for timber and stone, and much more of anything compact.
+ *
+ * Carrying used to be a flat count of units, which made no sense across a table that runs from logs
+ * to grain to medicine, and it throttled farming badly: a full field yields thousands of units of
+ * crop, so at twelve-per-trip a harvest took years to bring in.
+ */
+export const CARRY_VOLUME = 12;
+
+/**
+ * Space one unit of each resource takes up. Deliberately set so nothing carries *worse* than it did
+ * under the old flat count — bulky goods stay at volume 1 (twelve per trip, exactly as before) and
+ * only compact goods gain. Crops at 0.25 mean 48 per trip, which is what makes a harvest haulable.
+ */
+export const RESOURCE_VOLUME: Record<ResourceKind, number> = {
+  // Crops and other foods: compact, and hauled in bulk from field to barn.
+  fruit: 0.25, grain: 0.25, corn: 0.25, potato: 0.25, rice: 0.25, barley: 0.25,
+  carrot: 0.25, tomato: 0.25, onion: 0.25, pepper: 0.25, cabbage: 0.25, beans: 0.25,
+  pumpkin: 0.25, apple: 0.25, grapes: 0.25, strawberry: 0.25, melon: 0.25,
+  eggs: 0.25, fish: 0.25, meat: 0.25,
+  // Bulky raw materials — the volume-1 baseline.
+  wood: 1, firewood: 1, stone: 1, coal: 1, iron: 1,
+  // Worked goods: denser than raw material, so more fit in a load.
+  tools: 0.5, leather: 0.5, clothing: 0.5,
+  medicine: 0.25,
+  // Livestock is driven, not carried, and a cow takes rather more room than a log.
+  cattle: 4, pigs: 3, chickens: 0.5,
+};
+
+/** How many whole units of `kind` fit in `volume` of carrying space (always at least one). */
+export function carryLimit(kind: ResourceKind, volume: number = CARRY_VOLUME): number {
+  return Math.max(1, Math.floor(volume / RESOURCE_VOLUME[kind]));
+}
 export const REFUND_FRACTION = 0.25; // fraction of build cost reclaimed on demolish
 export const WORK_SECONDS = 8; // seconds of work to fill/convert one carry-load (slower pace)
 export const BUILD_SECONDS_PER_UNIT = 0.5; // on-site labor seconds per unit of construction
@@ -788,15 +821,18 @@ export const HOUSE_MEDICINE_PER_RESIDENT = 2;
 export const LARDER_KINDS: ResourceKind[] = ['firewood', 'medicine'];
 
 /**
- * Units a villager carries home per grocery run — a proper basket of provisions, not the
- * single work-load a labourer shifts (`CARRY_CAP`).
+ * Carrying space for a grocery run — a proper basket of provisions, rather than the single
+ * work-load a labourer shifts.
  *
- * This has to be generous or the feature quietly stops working. A household eats its whole larder
- * every season, so its one shopper must haul that much again just to break even; at CARRY_CAP a
- * full eight-person house needs ~20 round trips a season, which does not fit in a season, and the
- * larder sits near empty forever while still costing a villager their working day.
+ * A household eats its whole larder every season, so its one shopper must haul that much again
+ * just to break even; too small a basket and the larder sits near empty forever while still
+ * costing a villager their working day.
+ *
+ * Kept at ×3 rather than trimmed once volume quadrupled food-per-load: firewood is a volume-1
+ * good, so a smaller multiplier would have *reduced* how much fuel a shopper brings home per trip
+ * and broken larder stocking for the one resource that has to be there before winter.
  */
-export const LARDER_CARRY_CAP = CARRY_CAP * 3;
+export const LARDER_CARRY_VOLUME = CARRY_VOLUME * 3;
 
 // ---- Demographics ----
 export const ADULT_AGE = 4; // children become working adults at this age (years)

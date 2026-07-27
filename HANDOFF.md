@@ -1,7 +1,7 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-07-27 (households; then village-wide pairing so housing is visible demand)
+> Last updated: 2026-07-27 (volume-based hauling, build stamp, housing-prompt fix)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -17,7 +17,31 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 Latest work: the **household model** (this session) — see just below. Before it, the **opportunities
 pass**, the **HUD / UX pass**, then the **jobs board overhaul** — see further down.
 
-### Household model (this session)
+### Volume hauling, build stamp, housing-prompt fix (this session)
+
+- **Hauling is volume-based.** `CARRY_VOLUME` (12) is the space in a villager's arms and
+  `RESOURCE_VOLUME` gives each resource a size, read through `carryLimit(kind, volume?)`. A log is
+  volume 1 (twelve per trip, exactly as before) and a crop is 0.25 (forty-eight). **Nothing carries
+  worse than it did** under the old flat count — bulky goods sit at the volume-1 baseline and only
+  compact goods gain — which keeps this a pure improvement rather than a rebalance.
+  This is what fixes farming: an 8×8 field yields ~2560 units, which at twelve per trip took years
+  to bring in and now clears in about a season. `LARDER_CARRY_VOLUME` stays at ×3: trimming it once
+  food got denser would have *reduced* firewood per grocery run (firewood is volume 1) and broken
+  larder stocking for the one thing that must be home before winter. Larders now converge to 100%
+  of target on every kind. **Storage is still counted in units** (`BARN_CAPACITY`) — making barns
+  volume-based too is the obvious follow-up, deliberately not done here.
+- **Build stamp on the main menu.** `__BUILD_STAMP__` is injected by `define` in vite.config.ts as
+  `v<pkg version> · <short sha> · <date>` and rendered under the menu buttons, so it's possible to
+  tell whether a device is on the newest deploy or a cached service-worker copy. Needed
+  `@types/node` (config reads package.json and shells out to git) and `"node"` in tsconfig `types`.
+- **Housing prompt never fired — two causes, both fixed.** `rehouseVillagers` bailed out early when
+  the village had no houses, so on Normal and Hard (which start with *zero*) nobody ever paired and
+  the prompt could not fire in exactly the situation that needs it. And the count was computed in
+  `warnOfShortfalls`, which runs *before* pairing; it is now `reportHousingDemand`, called straight
+  after `rehouseVillagers`. Verified on a zero-house Normal start: 4 couples and the prompt firing
+  after one season.
+
+### Household model (previous session)
 Player feedback after the opportunities pass: breeding was still too slow. The fix was structural,
 not a rate tweak. **A house is now one couple plus their children.**
 

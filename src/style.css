@@ -1058,6 +1058,18 @@ body {
   border-color: var(--accent);
 }
 
+/* Build stamp under the main menu — deliberately quiet, but selectable so it can be read out. */
+.build-stamp {
+  margin: 10px 0 0;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  opacity: 0.75;
+  text-align: center;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .hidden {
   display: none !important;
 }

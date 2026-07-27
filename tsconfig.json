@@ -13,7 +13,7 @@
     "esModuleInterop": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": ["vite-plugin-pwa/client", "vite/client"]
+    "types": ["vite-plugin-pwa/client", "vite/client", "node"]
   },
   "include": ["src", "vite.config.ts"]
 }

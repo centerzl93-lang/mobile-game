@@ -12,8 +12,8 @@ import {
   SEASONS,
   Season,
   BASE_WALK_SPEED,
-  CARRY_CAP,
-  LARDER_CARRY_CAP,
+  carryLimit,
+  LARDER_CARRY_VOLUME,
   WORK_SECONDS,
   LEISURE_CHANCE_PER_SEC,
   LEISURE_MIN_SECONDS,
@@ -446,11 +446,11 @@ function stockLarder(s: GameState, c: Citizen, dt: number): boolean {
   const barn = nearestBarnOnlyWith(s, buildingCenter(home), want.kind);
   if (!barn) return false;
 
-  // First leg: fetch a load from the barn. Groceries come home by the basket (LARDER_CARRY_CAP),
-  // not the single work-load a labourer shifts — see the constant for why that matters.
+  // First leg: fetch a load from the barn. Groceries come home by the basket
+  // (LARDER_CARRY_VOLUME), not the single work-load a labourer shifts.
   goTo(c, buildingCenter(barn));
   if (stepTo(s, c, dt)) {
-    const take = Math.min(LARDER_CARRY_CAP, want.amount, barn.store[want.kind] ?? 0);
+    const take = Math.min(carryLimit(want.kind, LARDER_CARRY_VOLUME), want.amount, barn.store[want.kind] ?? 0);
     if (take > 0) {
       barn.store[want.kind] = (barn.store[want.kind] ?? 0) - take;
       if ((barn.store[want.kind] ?? 0) <= 0) delete barn.store[want.kind];
@@ -578,7 +578,7 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
       if (stepTo(s, c, dt)) {
         const inputs = converterInputs(b);
         const need = inputs.find(([k]) => k === missing)![1];
-        const want = Math.min(CARRY_CAP, need - (b.store[missing] ?? 0), barn.store[missing] ?? 0);
+        const want = Math.min(carryLimit(missing), need - (b.store[missing] ?? 0), barn.store[missing] ?? 0);
         if (want > 0) {
           barn.store[missing] = (barn.store[missing] ?? 0) - want;
           if ((barn.store[missing] ?? 0) <= 0) delete barn.store[missing];
@@ -600,7 +600,7 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
         // Healthier, happier, and educated workers produce more.
         const wellbeing = (0.7 + 0.3 * (c.health / 100)) * (0.85 + 0.15 * (c.happiness / 100));
         const prod = wellbeing * (c.educated ? EDUCATED_BONUS : 1);
-        c.carry = { kind: out.kind, amount: Math.min(CARRY_CAP, out.amount * prod) };
+        c.carry = { kind: out.kind, amount: Math.min(carryLimit(out.kind), out.amount * prod) };
       }
     }
   }
@@ -639,7 +639,7 @@ function runVendor(s: GameState, c: Citizen, b: Building, dt: number): void {
   goTo(c, buildingCenter(want.barn));
   if (stepTo(s, c, dt)) {
     const need = MARKET_STOCK_TARGET - (b.store[want.kind] ?? 0);
-    const take = Math.min(CARRY_CAP, need, want.barn.store[want.kind] ?? 0);
+    const take = Math.min(carryLimit(want.kind), need, want.barn.store[want.kind] ?? 0);
     if (take > 0) {
       want.barn.store[want.kind] = (want.barn.store[want.kind] ?? 0) - take;
       if ((want.barn.store[want.kind] ?? 0) <= 0) delete want.barn.store[want.kind];
@@ -723,7 +723,7 @@ function runTrader(s: GameState, c: Citizen, b: Building, dt: number): void {
     if (!barn) continue;
     goTo(c, buildingCenter(barn));
     if (stepTo(s, c, dt)) {
-      const take = Math.min(CARRY_CAP, need, barn.store[k] ?? 0);
+      const take = Math.min(carryLimit(k), need, barn.store[k] ?? 0);
       if (take > 0) {
         barn.store[k] = (barn.store[k] ?? 0) - take;
         if ((barn.store[k] ?? 0) <= 0) delete barn.store[k];
@@ -739,7 +739,7 @@ function runTrader(s: GameState, c: Citizen, b: Building, dt: number): void {
     if (surplus <= 0.01) continue;
     goTo(c, buildingCenter(b));
     if (stepTo(s, c, dt)) {
-      const take = Math.min(CARRY_CAP, surplus);
+      const take = Math.min(carryLimit(k), surplus);
       b.store[k] = (b.store[k] ?? 0) - take;
       if ((b.store[k] ?? 0) <= 0) delete b.store[k];
       c.carry = { kind: k, amount: take };
@@ -847,7 +847,7 @@ function workOutput(
       const food = CROP_META[b.crop].food;
       const have = b.store[food] ?? 0;
       if (have <= 0) return null;
-      const take = Math.min(CARRY_CAP, have);
+      const take = Math.min(carryLimit(food), have);
       b.store[food] = have - take;
       if ((b.store[food] ?? 0) <= 0) delete b.store[food];
       return { kind: food, amount: take };
@@ -950,7 +950,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
         if (stepTo(s, c, dt)) {
           const cost = BUILDING_DEFS[pick.site.type].cost;
           const need = (cost[kind] ?? 0) - (pick.site.store[kind] ?? 0);
-          const want = Math.min(CARRY_CAP, need, barn.store[kind] ?? 0);
+          const want = Math.min(carryLimit(kind), need, barn.store[kind] ?? 0);
           if (want > 0) {
             barn.store[kind] = (barn.store[kind] ?? 0) - want;
             if ((barn.store[kind] ?? 0) <= 0) delete barn.store[kind];
@@ -1042,7 +1042,7 @@ function runHarvest(s: GameState, c: Citizen, idx: number, dt: number): void {
   const t = s.tiles[idx];
   if (s.harvest[idx] === HARVEST_WOOD) {
     const woodAvail = t.trees * HARVEST_WOOD_PER_TREE;
-    const take = Math.min(CARRY_CAP, woodAvail);
+    const take = Math.min(carryLimit('wood'), woodAvail);
     if (take > 0.01) {
       t.trees = Math.max(0, t.trees - take / HARVEST_WOOD_PER_TREE);
       c.carry = { kind: 'wood', amount: take };
@@ -1055,7 +1055,7 @@ function runHarvest(s: GameState, c: Citizen, idx: number, dt: number): void {
     }
   } else if (s.harvest[idx] === HARVEST_STONE) {
     const avail = t.stone ?? 0;
-    const take = Math.min(CARRY_CAP, avail);
+    const take = Math.min(carryLimit('stone'), avail);
     if (take > 0.01) {
       t.stone = avail - take;
       c.carry = { kind: 'stone', amount: take };
@@ -1403,8 +1403,10 @@ function endSeason(s: GameState, log: LogFn): void {
     }
   }
 
-  // Settle households into couples with room to spare before deciding who bears a child.
+  // Settle households into couples with room to spare before deciding who bears a child, then
+  // report any couple still without a home — the count is only meaningful after pairing has run.
   rehouseVillagers(s);
+  reportHousingDemand(s, log);
 
   // Reproduction. A household bears a child when three things line up:
   //   1. it is home to a *couple* — a partnered pair who both live here and are both inside the
@@ -1477,17 +1479,25 @@ function warnOfShortfalls(s: GameState, season: Season, log: LogFn): void {
     log('🍽️ Food stores are running low', 'bad');
   }
 
-  // Couples pair up whether or not there is a house free, so a housing shortage shows up here as
-  // named demand: these villagers are ready to start families and only need somewhere to live.
+}
+
+/**
+ * Couples pair up whether or not there is a house free, so a housing shortage shows up as named
+ * demand: these villagers are ready to start families and only need somewhere to live.
+ *
+ * Reported separately from `warnOfShortfalls` because it must run *after* `rehouseVillagers` —
+ * that is where this season's pairing happens, and counting beforehand reports a stale number
+ * (zero, on the first season of a game that starts with no houses at all).
+ */
+function reportHousingDemand(s: GameState, log: LogFn): void {
   const waiting = couplesAwaitingAHome(s);
-  if (waiting > 0) {
-    log(
-      waiting > 1
-        ? `🏠 ${waiting} couples are waiting for a home of their own — build houses`
-        : '🏠 A couple is waiting for a home of their own — build a house',
-      'info',
-    );
-  }
+  if (waiting <= 0) return;
+  log(
+    waiting > 1
+      ? `🏠 ${waiting} couples are waiting for a home of their own — build houses`
+      : '🏠 A couple is waiting for a home of their own — build a house',
+    'info',
+  );
 }
 
 // ---- merchant ----
@@ -1899,10 +1909,13 @@ function placeAdult(s: GameState, c: Citizen, houses: Building[], allowCrowding 
 function rehouseVillagers(s: GameState): void {
   releaseLostPartners(s);
   const houses = s.buildings.filter((b) => b.built && isHouse(b.type));
-  if (houses.length === 0) return;
 
   // Pair first, so the moves below are made on behalf of couples that already exist, then get
   // those couples under one roof wherever a house allows it.
+  //
+  // Note this runs even with *no* houses at all — Normal and Hard start that way. Bailing out
+  // early here meant nobody ever paired, so the "couples are waiting for a home" prompt could
+  // never fire in precisely the situation that most needs it.
   formCouples(s, houses);
   houseCouplesTogether(s, houses);
 

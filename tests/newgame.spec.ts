@@ -1471,18 +1471,19 @@ test.describe('paths and placement', () => {
           }
       if (candidates.length === 0) return { error: 'no forest tiles nearby' };
 
-      const barnWood = () =>
-        s.buildings
-          .filter((b: any) => b.built && (b.type === 'barn' || b.type === 'market'))
-          .reduce((n: number, b: any) => n + (b.store.wood ?? 0), 0);
-      const woodBefore = barnWood();
+      // Wood anywhere — barns, buildings, and villagers' arms. Sampling barns alone is racy: a
+      // load cleared off a tile can still be walking to the barn when the measurement is taken.
+      const woodAnywhere = () =>
+        s.buildings.reduce((n: number, b: any) => n + (b.store.wood ?? 0), 0) +
+        s.citizens.reduce((n: number, c: any) => n + (c.carry?.kind === 'wood' ? c.carry.amount : 0), 0);
+      const woodBefore = woodAnywhere();
       for (const i of candidates) s.paths[i] = 1; // PATH_DIRT_PLAN — let villagers actually lay them
       g.debugSetBuilders(4);
       for (let n = 0; n < 4000; n++) g.debugAdvance(0.1);
 
       const paved = candidates.filter((i) => s.paths[i] === 2); // PATH_DIRT
       const afterPaving = paved.map((i) => ({ type: s.tiles[i].type, trees: s.tiles[i].trees }));
-      const woodGained = barnWood() - woodBefore;
+      const woodGained = woodAnywhere() - woodBefore;
       // Run on a long while and confirm nothing grows back on the paved tiles.
       for (let n = 0; n < 3000; n++) g.debugAdvance(0.1);
       const regrew = paved.map((i) => ({ type: s.tiles[i].type, trees: s.tiles[i].trees }));
@@ -1579,6 +1580,63 @@ test.describe('quarry', () => {
     expect(out.workers).toBeGreaterThan(0);
     // Inland is no longer a 15%-output penalty box — the pit works at its base rate.
     expect(out.stoneMined).toBeGreaterThan(0);
+  });
+});
+
+test.describe('volume-based hauling', () => {
+  test('a load is 12 logs but 48 of a crop, and a full field is brought in within a season', async ({ page }) => {
+    test.setTimeout(120_000);
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+
+      // A max-size field, staffed, holding a full autumn harvest ready to haul.
+      g.sizeW = 8;
+      g.sizeH = 8;
+      let id: number | null = null;
+      for (let r = 3; r < 20 && id == null; r++)
+        for (let dy = -r; dy <= r && id == null; dy++)
+          for (let dx = -r; dx <= r && id == null; dx++)
+            if (g.debugCanPlace('farm', barn.x + dx, barn.y + dy).ok) id = g.debugPlace('farm', barn.x + dx, barn.y + dy);
+      if (id == null) return { error: 'no field spot' };
+      const f = s.buildings.find((b: any) => b.id === id);
+      f.built = true;
+      f.progress = 9999;
+      f.desiredWorkers = 2;
+      f.crop = 'wheat';
+      if (!s.seeds.includes('wheat')) s.seeds.push('wheat');
+      const HARVEST = 2560; // roughly what an 8×8 field yields with two workers
+      f.store.grain = HARVEST;
+      for (let i = 0; i < 40; i++) g.debugAdvance(0.1); // staff it
+
+      // Biggest *work* load seen of each kind. Grocery runs are excluded: a household basket is
+      // deliberately a bigger allowance (LARDER_CARRY_VOLUME) and would mask the work limit.
+      const biggest: Record<string, number> = {};
+      for (let i = 0; i < 6000; i++) {
+        g.debugAdvance(0.1);
+        for (const c of s.citizens as any[]) {
+          if (!c.carry || c.task?.kind === 'toLarder') continue;
+          biggest[c.carry.kind] = Math.max(biggest[c.carry.kind] ?? 0, c.carry.amount);
+        }
+      }
+      return {
+        harvest: HARVEST,
+        leftInField: f.store.grain ?? 0,
+        biggestGrainLoad: biggest.grain ?? 0,
+        biggestWoodLoad: biggest.wood ?? 0,
+      };
+    });
+    expect(out.error).toBeUndefined();
+    // Volume 0.25 for a crop against volume 1 for timber: 48 vs 12 in the same pair of arms.
+    expect(out.biggestGrainLoad).toBeGreaterThan(12);
+    expect(out.biggestGrainLoad).toBeLessThanOrEqual(48);
+    if (out.biggestWoodLoad! > 0) expect(out.biggestWoodLoad).toBeLessThanOrEqual(12);
+    // The harvest is cleared out of the field rather than sitting there for years.
+    expect(out.leftInField).toBeLessThan(out.harvest! * 0.5);
   });
 });
 

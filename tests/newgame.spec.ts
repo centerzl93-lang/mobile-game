@@ -47,17 +47,19 @@ test.describe('difficulties', () => {
     expect(d.easy.houses).toBe(3);
     expect(d.easy.store.wood).toBe(660);
     expect(d.easy.store.medicine).toBe(120);
-    // Normal: no houses, halved basics (×3), no non-basics.
+    // Normal: no houses, and no building materials at all — wood and stone must be gathered.
     expect(d.normal.houses).toBe(0);
-    expect(d.normal.store.wood).toBe(330);
-    expect(d.normal.store.stone).toBe(60);
+    expect(d.normal.store.wood ?? 0).toBe(0);
+    expect(d.normal.store.stone ?? 0).toBe(0);
     expect(d.normal.store.medicine ?? 0).toBe(0);
     expect(d.normal.store.coal ?? 0).toBe(0);
-    // Hard: no wood or stone, but keeps food/firewood/tools (×3).
+    expect(d.normal.store.firewood).toBe(300);
+    // Hard: no wood or stone either, and half of everything else Normal gets.
     expect(d.hard.store.wood ?? 0).toBe(0);
     expect(d.hard.store.stone ?? 0).toBe(0);
-    expect(d.hard.store.firewood).toBe(300);
-    expect(d.hard.store.tools).toBe(180);
+    expect(d.hard.store.firewood).toBe(150);
+    expect(d.hard.store.tools).toBe(90);
+    expect(d.hard.store.grain).toBe(d.normal.store.grain / 2);
   });
 
   test('a fresh game founds 8 adults and 4 children', async ({ page }) => {
@@ -182,11 +184,16 @@ test.describe('crops and livestock', () => {
       };
       g.startNewGame('small', 'normal', true); // Normal ⇒ no seeds
       const s = g.state;
+      // Normal starts with no building materials, and this test is about *seeds*, not
+      // affordability — stock the timber a field costs so placement isn't the thing that fails.
+      const barn0 = s.buildings.find((b: any) => b.type === 'barn');
+      barn0.store.wood = (barn0.store.wood ?? 0) + 200;
       const farm = place('farm');
-      const out: any = { seedCount: s.seeds.length, farmCrop: farm && farm.crop };
+      const out: any = { placed: farm != null, seedCount: s.seeds.length, farmCrop: farm && farm.crop };
       if (farm) { farm.built = true; farm.progress = 99; g.inspectSel = { kind: 'building', id: farm.id }; g.refreshInspect(); const el = document.getElementById('inspect')!; out.text = el.innerText; out.toggleBtns = el.querySelectorAll('.jr-toggle button').length; }
       return out;
     });
+    expect(res.placed).toBe(true);
     expect(res.seedCount).toBe(0);
     expect(res.farmCrop).toBeUndefined(); // seeds[0] is undefined when the village owns none
     expect(res.text).toContain('No seed');
@@ -669,26 +676,33 @@ test.describe('jobs & builders', () => {
 });
 
 test.describe('available workers count', () => {
-  test('the free-laborers HUD chip counts adults only, never children', async ({ page }) => {
+  // The HUD chip that used to show this was removed; the count now lives on the job board, which
+  // is where the player assigns workers anyway. The rule under test is unchanged: children have
+  // no job but cannot work, so they must not be counted as available labour.
+  test('the job board counts free laborers as adults only, never children', async ({ page }) => {
     await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
+    await page.click('#btn-jobs');
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
       const ADULT_AGE = 4;
-      g.startNewGame('small', 'easy', true);
       const s = g.state;
-      // Fresh game: nothing is staffed, so every adult is a free laborer.
-      g.ui.updateHud(s, 1, false);
-      const chip = Number(document.querySelector('#stat-builders .val')!.textContent);
-      const adults = s.citizens.filter((c: any) => c.age >= ADULT_AGE).length;
-      const children = s.citizens.filter((c: any) => c.age < ADULT_AGE).length;
-      // The unfiltered pool (the old, buggy count) would include the jobless children.
-      const joblessPool = s.citizens.filter((c: any) => c.jobId === null && !c.builder).length;
-      return { chip, adults, children, joblessPool };
+      g.ui.refreshPanels(s); // populate the just-opened board deterministically
+      const line = [...document.querySelectorAll('#jobboard .summary')]
+        .map((e) => e.textContent ?? '')
+        .find((t) => t.includes('Laborers')) ?? '';
+      return {
+        shown: Number(line.replace(/[^0-9]/g, '')),
+        adults: s.citizens.filter((c: any) => c.age >= ADULT_AGE).length,
+        children: s.citizens.filter((c: any) => c.age < ADULT_AGE).length,
+        // The unfiltered pool (the old, buggy count) would include the jobless children.
+        joblessPool: s.citizens.filter((c: any) => c.jobId === null && !c.builder).length,
+      };
     });
     expect(out.children).toBeGreaterThan(0);
-    expect(out.chip).toBe(out.adults);
+    expect(out.shown).toBe(out.adults);
     expect(out.joblessPool).toBe(out.adults + out.children);
-    expect(out.chip).toBeLessThan(out.joblessPool);
+    expect(out.shown).toBeLessThan(out.joblessPool);
   });
 });
 
@@ -1704,6 +1718,124 @@ test.describe('volume-based hauling', () => {
     if (out.biggestWoodLoad! > 0) expect(out.biggestWoodLoad).toBeLessThanOrEqual(12);
     // The harvest is cleared out of the field rather than sitting there for years.
     expect(out.leftInField).toBeLessThan(out.harvest! * 0.5);
+  });
+});
+
+test.describe('storage by volume', () => {
+  test('a barn holds four times as much grain as wood, and reports space used', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      const sheet = () => {
+        g.inspectSel = { kind: 'building', id: barn.id };
+        g.refreshInspect();
+        return document.getElementById('inspect')!.innerText.replace(/\n/g, ' | ');
+      };
+      barn.store = { wood: 100 };
+      const wood = sheet();
+      barn.store = { grain: 100 };
+      const grain = sheet();
+      // Fill it right up with grain and see how many units that took.
+      barn.store = {};
+      const at = { x: barn.x, y: barn.y };
+      let put = 0;
+      for (let i = 0; i < 400; i++) put += 100 - g.debugAddNearest(at, 'grain', 100);
+      return { wood, grain, grainHeld: barn.store.grain ?? 0, put };
+    });
+    // 100 logs fill 100 of the barn's space; 100 sacks of grain fill only 25.
+    expect(out.wood).toMatch(/100 \/ 5000 \(100 items\)/);
+    expect(out.grain).toMatch(/25 \/ 5000 \(100 items\)/);
+    // So a 5000-space barn takes 20000 units of grain, not 5000.
+    expect(out.grainHeld).toBe(20000);
+  });
+});
+
+test.describe('workplace names', () => {
+  test('workplaces are numbered as they are built, renameable, and blank restores the default', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      const ids: number[] = [];
+      for (let r = 3; r < 20 && ids.length < 3; r++)
+        for (let dy = -r; dy <= r && ids.length < 3; dy++)
+          for (let dx = -r; dx <= r && ids.length < 3; dx++)
+            if (g.debugCanPlace('woodcutter', barn.x + dx, barn.y + dy).ok) {
+              const id = g.debugPlace('woodcutter', barn.x + dx, barn.y + dy);
+              if (id != null) ids.push(id);
+            }
+      if (ids.length < 3) return { error: 'could not place three woodcutters' };
+      const nameOf = (id: number) => s.buildings.find((b: any) => b.id === id)?.name;
+      const auto = ids.map(nameOf);
+      g.renameBuilding(ids[0], 'North Mill');
+      const renamed = nameOf(ids[0]);
+      g.renameBuilding(ids[0], '   '); // blank must not leave it nameless
+      const blanked = nameOf(ids[0]);
+      // The inspect sheet offers an editable field, and titles the sheet with the name.
+      g.renameBuilding(ids[0], 'North Mill');
+      g.inspectSel = { kind: 'building', id: ids[0] };
+      g.refreshInspect();
+      const field = document.getElementById('insp-name') as HTMLInputElement | null;
+      return {
+        auto,
+        renamed,
+        blanked,
+        fieldValue: field?.value ?? null,
+        title: document.querySelector('.inv-head')?.textContent ?? '',
+        barnHasName: (barn.name ?? null) !== null,
+      };
+    });
+    expect(out.error).toBeUndefined();
+    expect(out.auto).toEqual(['Woodcutter 1', 'Woodcutter 2', 'Woodcutter 3']);
+    expect(out.renamed).toBe('North Mill');
+    // Freeing "Woodcutter 1" makes it the lowest unused number again, so blank reclaims it.
+    expect(out.blanked).toBe('Woodcutter 1');
+    expect(out.fieldValue).toBe('North Mill');
+    expect(out.title).toContain('North Mill');
+    // A barn employs nobody, so it gets no name of its own.
+    expect(out.barnHasName).toBe(false);
+  });
+});
+
+test.describe('job board', () => {
+  test('lists every job from the start, including ones not built yet', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+    await page.click('#btn-jobs');
+    await expect(page.locator('#jobboard .job-row').first()).toBeVisible();
+    const board = await page.evaluate(() => {
+      const el = document.getElementById('jobboard')!;
+      return {
+        muted: el.querySelectorAll('.job-row.muted').length,
+        hasSection: !!el.querySelector('.jb-section'),
+        text: el.innerText,
+      };
+    });
+    // Nothing is built on a fresh map, so every workplace shows under "Not built yet".
+    expect(board.hasSection).toBe(true);
+    expect(board.muted).toBeGreaterThan(8);
+    for (const job of ['Gatherer', 'Fishing Hut', 'Blacksmith', 'Market']) {
+      expect(board.text).toContain(job);
+    }
+  });
+});
+
+test.describe('top HUD', () => {
+  test('no population or laborer chip', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+    const ids = await page.evaluate(() =>
+      [...document.querySelectorAll('#hud-people .stat')].map((e) => e.id),
+    );
+    expect(ids).not.toContain('stat-pop');
+    expect(ids).not.toContain('stat-builders');
+    // The rest of the people row is untouched.
+    expect(ids).toEqual(['stat-ages', 'stat-health', 'stat-happy', 'stat-sick', 'stat-season']);
   });
 });
 

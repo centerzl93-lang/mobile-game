@@ -16,6 +16,8 @@ import {
   SURVIVAL_RESOURCES,
   seasonLabel,
   SEASONS,
+  isWorkplace,
+  buildingName,
   MineOutput,
   SmithRecipe,
   Crop,
@@ -36,7 +38,6 @@ import {
   OLD_AGE_START,
   isAdult,
 } from '../types';
-import { housingCapacity } from '../game/state';
 import { footprintClear } from '../game/buildings';
 import { totalStoredAll, totalFood } from '../game/storage';
 import {
@@ -63,6 +64,8 @@ export interface InspectRow {
 /** Interactive controls shown at the foot of the inspect sheet for a built workplace. */
 export interface InspectControls {
   buildingId: number;
+  /** Workplace only: current name, shown in an editable field so the player can rename it. */
+  rename?: string;
   /** Worker allocation stepper (current desired vs the job cap). */
   workers?: { value: number; max: number };
   /** A single option toggle (mine output / smith recipe / forester replant / farm crop / ranch animal). */
@@ -89,6 +92,8 @@ export interface UICallbacks {
   onNewGame: () => void;
   onOpenMenu: () => void;
   onSetWorkers: (buildingId: number, delta: number) => void;
+  /** Rename a workplace. An empty or blank name restores the automatic default. */
+  onRenameBuilding: (buildingId: number, name: string) => void;
   onSetBuilders: (delta: number) => void;
   onSetMineOutput: (buildingId: number, output: MineOutput) => void;
   onSetSmithRecipe: (buildingId: number, recipe: SmithRecipe) => void;
@@ -126,12 +131,10 @@ const LOW_NEED: Partial<Record<ResourceKind, number>> = {
 
 export class UI {
   private el = {
-    pop: byId('stat-pop'),
     ages: byId('stat-ages'),
     health: byId('stat-health'),
     happy: byId('stat-happy'),
     sick: byId('stat-sick'),
-    builders: byId('stat-builders'),
     resources: byId('stat-resources'),
     season: byId('stat-season'),
     pause: byId('btn-pause'),
@@ -237,10 +240,6 @@ export class UI {
       else if (c.age >= OLD_AGE_START) elderCount++;
     }
     const adultCount = pop - childCount - elderCount;
-    // Free laborers = unemployed *adults* not assigned as builders — the pool the player can
-    // assign. Children have no job (jobId === null) but can't work, so they must be excluded.
-    const laborers = s.citizens.reduce((n, c) => n + (isAdult(c) && c.jobId === null && !c.builder ? 1 : 0), 0);
-    this.el.pop.querySelector('.val')!.textContent = `${pop}/${housingCapacity(s)}`;
     this.el.ages.querySelector('.val')!.textContent = `🧒${childCount} 🧑${adultCount} 👴${elderCount}`;
     this.el.health.querySelector('.val')!.textContent = `${Math.round(avgHealth(s))}`;
     this.el.happy.querySelector('.val')!.textContent = `${Math.round(avgHappiness(s))}`;
@@ -250,7 +249,6 @@ export class UI {
     this.el.sick.classList.toggle('hidden', sick === 0);
     this.el.sick.classList.add('low');
     this.el.sick.querySelector('.val')!.textContent = `${sick}`;
-    this.el.builders.querySelector('.val')!.textContent = `${laborers}`;
     const food = totalFood(s);
     this.foodChip.querySelector('.val')!.textContent = `${Math.floor(food)}`;
     this.foodChip.classList.toggle('low', food < pop * FOOD_PER_CITIZEN_PER_SEASON);
@@ -472,6 +470,10 @@ export class UI {
 
     const body = rows.map((r) => `<div class="inv-row"><span>${r.label}</span><span>${r.value}</span></div>`).join('');
     let ctrlHtml = '';
+    if (controls?.rename !== undefined) {
+      ctrlHtml += `<div class="inv-ctrl"><span>Name</span>
+        <input class="inv-name" id="insp-name" type="text" maxlength="24" value="${escapeAttr(controls.rename)}" /></div>`;
+    }
     if (controls?.workers) {
       const wk = controls.workers;
       ctrlHtml += `<div class="inv-ctrl"><span>Workers <small>(max ${wk.max})</small></span>
@@ -505,6 +507,18 @@ export class UI {
 
     if (controls) {
       const id = controls.buildingId;
+      const nameField = this.el.inspect.querySelector('#insp-name') as HTMLInputElement | null;
+      if (nameField) {
+        // Commit on blur and on Enter. The frame loop re-renders this sheet constantly, so the
+        // signature above includes the name — otherwise every keystroke would be wiped by the
+        // next re-render.
+        const commit = () => this.cb.onRenameBuilding(id, nameField.value);
+        nameField.addEventListener('change', commit);
+        nameField.addEventListener('blur', commit);
+        nameField.addEventListener('keydown', (e) => {
+          if ((e as KeyboardEvent).key === 'Enter') nameField.blur();
+        });
+      }
       this.el.inspect.querySelector('[data-step="-1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, -1));
       this.el.inspect.querySelector('[data-step="1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, 1));
       this.el.inspect.querySelector('#insp-tp')?.addEventListener('click', () => this.openTradingPost(id));
@@ -646,7 +660,7 @@ export class UI {
     // Free laborers are unemployed *adults* only — children have no job but can't be assigned.
     const laborers = s.citizens.reduce((n, c) => n + (isAdult(c) && c.jobId === null && !c.builder ? 1 : 0), 0);
     const sig =
-      jobs.map((b) => `${b.id}:${b.built ? 1 : 0}:${b.built ? 1 : footprintClear(s, b) ? 1 : 0}:${b.workers.length}:${b.desiredWorkers}:${b.output}:${b.recipe}:${b.crop}:${b.animal}`).join('|') +
+      jobs.map((b) => `${b.id}:${b.name ?? ''}:${b.built ? 1 : 0}:${b.built ? 1 : footprintClear(s, b) ? 1 : 0}:${b.workers.length}:${b.desiredWorkers}:${b.output}:${b.recipe}:${b.crop}:${b.animal}`).join('|') +
       `#${adults},${children},${employed},${buildersWorking},${laborers},${s.desiredBuilders}#${s.seeds.join(',')}`;
     if (sig === this.jobSig) return;
     this.jobSig = sig;
@@ -681,13 +695,6 @@ export class UI {
     lab.textContent = `👷 Laborers (free adults): ${laborers}`;
     p.appendChild(lab);
 
-    if (jobs.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'summary';
-      empty.textContent = 'No workplaces yet — place one to add jobs.';
-      p.appendChild(empty);
-      return;
-    }
     for (const b of jobs) {
       const def = BUILDING_DEFS[b.type];
       const row = document.createElement('div');
@@ -714,7 +721,7 @@ export class UI {
           : `🌲 clearing land · ${b.desiredWorkers} wanted (max ${def.jobs})`;
       row.innerHTML = `
         <span class="jr-emoji">${def.emoji}</span>
-        <div class="jr-main"><div class="jr-name">${def.name}</div>
+        <div class="jr-main"><div class="jr-name">${escapeAttr(buildingName(b))}</div>
           <div class="jr-sub">${status}</div>${extra}</div>
         <div class="stepper"><button data-step="-1">−</button><span class="count">${b.desiredWorkers}</span><button data-step="1">+</button></div>`;
       row.querySelector('[data-step="-1"]')!.addEventListener('click', () => this.cb.onSetWorkers(b.id, -1));
@@ -731,6 +738,30 @@ export class UI {
           }),
         );
       p.appendChild(row);
+    }
+
+    // Every remaining kind of work the village could do, listed from the first day so the board
+    // shows the full trade a village has available rather than only what has already been placed.
+    const builtTypes = new Set(jobs.map((b) => b.type));
+    const unbuilt = BUILD_ORDER.filter((t) => isWorkplace(t) && !builtTypes.has(t));
+    if (unbuilt.length > 0) {
+      const head2 = document.createElement('div');
+      head2.className = 'jb-section';
+      head2.textContent = 'Not built yet';
+      p.appendChild(head2);
+      for (const t of unbuilt) {
+        const def = BUILDING_DEFS[t];
+        const row = document.createElement('div');
+        row.className = 'job-row muted';
+        const cost = (Object.entries(def.cost) as [ResourceKind, number][])
+          .map(([k, a]) => `${RESOURCE_ICON[k]}${a}`)
+          .join(' ');
+        row.innerHTML = `
+          <span class="jr-emoji">${def.emoji}</span>
+          <div class="jr-main"><div class="jr-name">${def.name}</div>
+            <div class="jr-sub">up to ${def.jobs} worker${def.jobs > 1 ? 's' : ''}${cost ? ` · ${cost}` : ''}</div></div>`;
+        p.appendChild(row);
+      }
     }
   }
 
@@ -1229,4 +1260,9 @@ function byId(id: string): HTMLElement {
 
 function clampInt(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, Math.round(v)));
+}
+
+/** Escape a string for use inside a double-quoted HTML attribute (building names are player text). */
+function escapeAttr(v: string): string {
+  return v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

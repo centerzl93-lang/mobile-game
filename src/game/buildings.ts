@@ -13,6 +13,8 @@ import {
   SIZABLE,
   HARVEST_WOOD,
   HARVEST_STONE,
+  isWorkplace,
+  nextBuildingName,
 } from '../types';
 import { getTile, inBounds, tileIndex } from './world';
 import { totalStored, addNearest } from './storage';
@@ -118,6 +120,8 @@ export function placeBuilding(
     animal: 'cattle',
     store: {},
   };
+  // Workplaces get a numbered name so the job board and inspect sheet can tell them apart.
+  if (isWorkplace(type)) b.name = nextBuildingName(s.buildings, type);
   // Player-sizable buildings (ranch, field) carry their chosen footprint.
   if (SIZABLE[type]) {
     b.w = w ?? BUILDING_DEFS[type].w;

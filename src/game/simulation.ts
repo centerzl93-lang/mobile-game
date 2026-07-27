@@ -116,6 +116,7 @@ import {
   nearestBarnWithRoom,
   nearestBarnOnlyWith,
   barnFree,
+  unitsThatFit,
   consumeFood,
   foodVarietyAvailable,
   larderShortfall,
@@ -602,7 +603,8 @@ function runVendor(s: GameState, c: Citizen, b: Building, dt: number): void {
   if (c.carry) {
     goTo(c, buildingCenter(b));
     if (stepTo(s, c, dt)) {
-      const put = Math.min(c.carry.amount, barnFree(b));
+      // Free room is volume; how many units that is depends on what is being put down.
+      const put = Math.min(c.carry.amount, unitsThatFit(c.carry.kind, barnFree(b)));
       if (put > 0) b.store[c.carry.kind] = (b.store[c.carry.kind] ?? 0) + put;
       c.carry.amount -= put;
       if (c.carry.amount > 0.01) {

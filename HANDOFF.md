@@ -1,7 +1,7 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-07-27 (volume-based hauling, build stamp, housing-prompt fix)
+> Last updated: 2026-07-27 (volume storage, job board, named workplaces, HUD trim, difficulty)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -17,7 +17,27 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 Latest work: the **household model** (this session) — see just below. Before it, the **opportunities
 pass**, the **HUD / UX pass**, then the **jobs board overhaul** — see further down.
 
-### Household assignment fixes (this session)
+### Storage, job board, names, HUD, difficulty (this session)
+- **Storage is volume too.** `barnLoad` measures `units × RESOURCE_VOLUME`, `barnFree` returns
+  volume, and `unitsThatFit(kind, volume)` converts back wherever goods are put down (`addNearest`,
+  the market vendor). `BARN_CAPACITY`/`MARKET_CAPACITY` are unchanged numbers reinterpreted as
+  space, so bulky storage is exactly what it always was and a barn now takes 20000 grain rather
+  than 5000. The barn sheet reads "Space used 25 / 5000 (100 items)".
+- **Job board lists every job from the first day.** Placed workplaces first (with their names and
+  worker steppers), then a muted "Not built yet" section for every remaining workplace type with
+  its worker cap and build cost.
+- **Workplaces are named.** `Building.name`, auto-assigned at placement by `nextBuildingName`
+  ("Woodcutter 1", "Woodcutter 2" — lowest *unused* index, so demolishing and rebuilding reuses the
+  number). Editable from the inspect sheet; blank restores the default. Only types with jobs get a
+  name (`isWorkplace`), so barns and houses are unaffected. Old saves are numbered on load.
+  Note the inspect signature includes the name, so a rename re-renders but typing does not.
+- **HUD:** the 👤 population/housing and 👷 free-laborer chips are gone. The laborer count still
+  lives on the job board, which is where workers are assigned anyway.
+- **Normal and Hard start with no wood or stone.** Hard now differs by halving everything else
+  rather than by materials. Several tests placed buildings they could no longer afford — where a
+  test is about terrain or seeds rather than cost, it now stocks the barn first.
+
+### Household assignment fixes (previous session)
 Player report: children all ended up in one house and the population got stuck.
 
 - **Children must live with an adult.** `placeChild` only ever considers houses that already hold

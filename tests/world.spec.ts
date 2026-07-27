@@ -13,7 +13,15 @@ async function startSmall(page: Page): Promise<void> {
   (page as unknown as { _errors: string[] })._errors = errors;
   await page.goto('/?gfx=low', { waitUntil: 'load' });
   await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
-  await page.evaluate(() => (window as any).__village.startNewGame('small'));
+  await page.evaluate(() => {
+    const g = (window as any).__village;
+    g.startNewGame('small');
+    // These tests are about *terrain* rules for placement. Normal starts with no wood or stone, so
+    // without stocking the barn `canPlace` would refuse on cost and mask what is being tested.
+    const barn = g.state.buildings.find((b: any) => b.type === 'barn');
+    barn.store.wood = (barn.store.wood ?? 0) + 500;
+    barn.store.stone = (barn.store.stone ?? 0) + 500;
+  });
   await page.waitForTimeout(300);
 }
 

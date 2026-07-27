@@ -17,8 +17,8 @@ export type Difficulty = 'easy' | 'normal' | 'hard';
 export const DIFFICULTIES: Difficulty[] = ['easy', 'normal', 'hard'];
 export const DIFFICULTY_META: Record<Difficulty, { label: string; desc: string }> = {
   easy: { label: 'Easy', desc: '3 houses and a full stockpile to start' },
-  normal: { label: 'Normal', desc: 'Half the basics, no houses' },
-  hard: { label: 'Hard', desc: 'Half the basics — and no wood or stone' },
+  normal: { label: 'Normal', desc: 'No houses, and no wood or stone to build with' },
+  hard: { label: 'Hard', desc: 'No wood or stone, and half the food, fuel and tools' },
 };
 /** Built houses granted at the start on Easy. */
 export const EASY_START_HOUSES = 3;
@@ -421,9 +421,39 @@ export function isFireproof(type: BuildingType): boolean {
   return BUILDING_DEFS[type].fireproof === true;
 }
 
+/** Whether this type employs villagers, and so gets a name of its own and a job-board entry. */
+export function isWorkplace(type: BuildingType): boolean {
+  return BUILDING_DEFS[type].jobs > 0;
+}
+
+/** A building's display name: the player's, or its type name if it never got one. */
+export function buildingName(b: Building): string {
+  return b.name ?? BUILDING_DEFS[b.type].name;
+}
+
+/**
+ * The next free name for a new building of `type` — "Fishing Hut 1", "Fishing Hut 2", and so on.
+ * Picks the lowest unused index rather than counting existing buildings, so demolishing #1 and
+ * building again reuses that number instead of climbing forever.
+ */
+export function nextBuildingName(existing: Building[], type: BuildingType): string {
+  const base = BUILDING_DEFS[type].name;
+  const taken = new Set(existing.filter((b) => b.type === type).map((b) => b.name));
+  for (let n = 1; ; n++) {
+    const candidate = `${base} ${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
 export interface Building {
   id: number;
   type: BuildingType;
+  /**
+   * Player-facing name. Workplaces get one automatically at placement — "Fishing Hut 1", then
+   * "Fishing Hut 2" — and the player can rename them, so a job board full of identical entries
+   * becomes a list you can actually tell apart. Absent for buildings with no jobs.
+   */
+  name?: string;
   x: number; // top-left tile
   y: number;
   built: boolean;
@@ -710,8 +740,14 @@ export const SEASON_LENGTH = 10 * 60; // 10 real minutes per season at 1x speed
  * grow, and at 4 a couple was full after two children and never bore another.
  */
 export const HOUSING_PER_HOUSE = 8;
-export const BARN_CAPACITY = 5000; // total units a single barn can hold
-export const MARKET_CAPACITY = 2000; // total units a market holds
+/**
+ * Storage space, measured in the same wood-equivalent volume as carrying (`RESOURCE_VOLUME`):
+ * a barn holds 5000 logs' worth of room, which is 20000 of a crop. Counting units instead would
+ * mean a sack of grain took the same space as a log, which is the inconsistency volume fixed
+ * for hauling. The numbers are unchanged, so bulky storage is exactly what it always was.
+ */
+export const BARN_CAPACITY = 5000;
+export const MARKET_CAPACITY = 2000;
 export const MARKET_STOCK_TARGET = 60; // per-resource amount a vendor keeps stocked
 /**
  * How much *space* a villager has in their arms for one trip, in wood-equivalents: a log is volume
@@ -969,8 +1005,10 @@ export const START_CITIZENS = 4;
 export const STARTING_STOCK_SCALE = 3;
 export const DIFFICULTY_RESOURCES: Record<Difficulty, Partial<Resources>> = {
   easy: { ...START_RESOURCES },
-  normal: { fruit: 60, grain: 60, fish: 45, meat: 45, wood: 110, stone: 20, firewood: 100, clothing: 40, tools: 60 },
-  hard: { fruit: 60, grain: 60, fish: 45, meat: 45, firewood: 100, clothing: 40, tools: 60 },
+  // Neither Normal nor Hard grants building materials: wood and stone must be gathered before
+  // anything can be raised. Hard differs by starting on shorter rations of everything else.
+  normal: { fruit: 60, grain: 60, fish: 45, meat: 45, firewood: 100, clothing: 40, tools: 60 },
+  hard: { fruit: 30, grain: 30, fish: 25, meat: 25, firewood: 50, clothing: 20, tools: 30 },
 };
 
 // ---- Trade (barter by relative value; merchant keeps a margin) ----

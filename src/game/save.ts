@@ -1,4 +1,7 @@
-import { GameState, MAP_W, MAP_H, MapSize, setMapSize, CROPS, RANCH_MIN, ranchCapacity, EVENT_LOG_MAX } from '../types';
+import {
+  GameState, MAP_W, MAP_H, MapSize, setMapSize, CROPS, RANCH_MIN, ranchCapacity, EVENT_LOG_MAX,
+  isWorkplace, nextBuildingName,
+} from '../types';
 import { randomName } from './names';
 
 // Legacy single-slot key (pre-slots). Migrated into slot 0 on first run, then left in place.
@@ -110,6 +113,11 @@ export function loadGame(slot = 0): GameState | null {
     if (!Array.isArray(s.merchant.seedStock)) s.merchant.seedStock = [];
     // Trading posts gained a player-set stock-order table.
     for (const b of s.buildings) if (b.type === 'trading' && !b.orders) b.orders = {};
+    // Workplaces gained names after this format shipped; number the ones that predate it, in the
+    // order they were built, so an old save reads the same as a new game would.
+    for (const b of s.buildings) {
+      if (isWorkplace(b.type) && !b.name) b.name = nextBuildingName(s.buildings, b.type);
+    }
     // Ranches became sizable pens with per-ranch herds. Old ranches had no footprint or headcount:
     // default them to the minimum size, an empty pen, and a cap at that size's capacity.
     for (const b of s.buildings) {

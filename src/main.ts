@@ -19,6 +19,9 @@ import {
   SIZABLE,
   RANCH_SPLIT_MIN,
   isHouse,
+  isWorkplace,
+  buildingName,
+  nextBuildingName,
   houseCapacityOf,
   Crop,
   RanchAnimal,
@@ -62,7 +65,7 @@ import {
 } from './game/simulation';
 import { canPlace, placeBuilding, canAfford, demolishBuilding, footprintClear } from './game/buildings';
 import { findPath } from './game/pathfind';
-import { addNearest, larderFood, larderFoodTarget, larderTarget } from './game/storage';
+import { addNearest, barnLoad, capacityOf, larderFood, larderFoodTarget, larderTarget } from './game/storage';
 import { planPath } from './game/paths';
 import { saveGame, loadGame, hasSave, clearSave, slotInfo, lastSlot, SLOTS } from './game/save';
 import { InspectRow, InspectControls } from './ui/ui';
@@ -131,6 +134,7 @@ class Game {
       onNewGame: () => this.openSizeSelect(),
       onOpenMenu: () => this.openPauseMenu(),
       onSetWorkers: (id, d) => this.setWorkers(id, d),
+      onRenameBuilding: (id, name) => this.renameBuilding(id, name),
       onSetBuilders: (d) => this.setBuilders(d),
       onSetMineOutput: (id, o) => this.setMineOutput(id, o),
       onSetSmithRecipe: (id, r) => this.setSmithRecipe(id, r),
@@ -309,6 +313,18 @@ class Game {
     if (!b) return;
     const max = BUILDING_DEFS[b.type].jobs;
     b.desiredWorkers = Math.max(0, Math.min(max, b.desiredWorkers + delta));
+    this.persist();
+  }
+
+  /**
+   * Rename a workplace. Blank restores the automatic default ("Fishing Hut 2"), so clearing the
+   * field can't leave a building with no name at all.
+   */
+  private renameBuilding(id: number, name: string): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (!b || !isWorkplace(b.type)) return;
+    const trimmed = name.trim().slice(0, 24);
+    b.name = trimmed || nextBuildingName(this.state.buildings.filter((x) => x !== b), b.type);
     this.persist();
   }
 
@@ -751,10 +767,15 @@ class Game {
           rows.push({ label: 'Herd', value: `${Math.floor(b.animals ?? 0)} / ${ranchCapacity(b)} (${footprintW(b)}×${footprintH(b)})` });
           rows.push({ label: 'Breed up to', value: `${b.maxAnimals ?? ranchCapacity(b)}` });
         }
-        if (b.type === 'barn') {
-          let load = 0;
-          for (const k of RESOURCE_KINDS) load += b.store[k] ?? 0;
-          rows.push({ label: 'Stored', value: `${Math.floor(load)} / 5000` });
+        if (b.type === 'barn' || b.type === 'market') {
+          // Space used, not a unit count: a sack of grain takes a quarter of a log's room, so a
+          // barn holds four times as much of it. `units` is what is actually on the shelves.
+          let units = 0;
+          for (const k of RESOURCE_KINDS) units += b.store[k] ?? 0;
+          rows.push({
+            label: 'Space used',
+            value: `${Math.round(barnLoad(b))} / ${capacityOf(b)} (${Math.floor(units)} items)`,
+          });
         }
         // Houses already report their larder above, against its targets — skip the raw dump so the
         // sheet doesn't list the same supplies twice.
@@ -767,8 +788,12 @@ class Game {
       }
       // Interactive controls: set workers and building-specific toggles right from the sheet.
       let controls: InspectControls | undefined;
+      if (isWorkplace(b.type)) {
+        // Renameable from the moment it is placed — the site is on the job board straight away.
+        controls = { buildingId: b.id, rename: buildingName(b) };
+      }
       if (b.built && def.jobs > 0) {
-        controls = { buildingId: b.id, workers: { value: b.desiredWorkers, max: def.jobs } };
+        controls = { ...controls, buildingId: b.id, workers: { value: b.desiredWorkers, max: def.jobs } };
         if (b.type === 'mine') {
           controls.toggle = { group: 'mine', options: [
             { v: 'coal', label: 'Coal', on: b.output === 'coal' },
@@ -814,7 +839,8 @@ class Game {
           controls.tradingPost = { merchantDocked: this.state.merchant.present };
         }
       }
-      this.ui.showInspect(`${def.emoji} ${def.name}`, rows, controls);
+      // Workplaces show their own name (renameable); everything else shows its type.
+      this.ui.showInspect(`${def.emoji} ${buildingName(b)}`, rows, controls);
     } else {
       const c = this.state.citizens.find((x) => x.id === this.inspectSel!.id);
       if (!c) return this.clearInspect();
@@ -894,6 +920,11 @@ class Game {
     const { w, h } = this.placeSize(type);
     const b = placeBuilding(this.state, type, x, y, w, h);
     return b ? b.id : null;
+  }
+
+  /** Debug/testing helper: push goods into the nearest storage; returns what wouldn't fit. */
+  debugAddNearest(at: { x: number; y: number }, kind: ResourceKind, amount: number): number {
+    return addNearest(this.state, at, kind, amount);
   }
 
   /** Debug/testing helper: plan a path tile directly, bypassing the drag-paint input path. */

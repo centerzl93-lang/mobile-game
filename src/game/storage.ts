@@ -8,6 +8,7 @@ import {
   BARN_CAPACITY,
   MARKET_CAPACITY,
   FOOD_KINDS,
+  RESOURCE_VOLUME,
   LARDER_KINDS,
   HOUSE_FOOD_PER_RESIDENT,
   HOUSE_FIREWOOD_PER_RESIDENT,
@@ -42,14 +43,24 @@ export function storageNodes(s: GameState): Building[] {
   return s.buildings.filter((b) => b.built && (b.type === 'barn' || b.type === 'market'));
 }
 
+/** Space taken by what a building holds, in volume (see `RESOURCE_VOLUME`). */
 export function barnLoad(b: Building): number {
   let n = 0;
-  for (const k in b.store) n += b.store[k as ResourceKind] ?? 0;
+  for (const k in b.store) {
+    const kind = k as ResourceKind;
+    n += (b.store[kind] ?? 0) * RESOURCE_VOLUME[kind];
+  }
   return n;
 }
 
+/** Space left in a building, in volume. Use `unitsThatFit` to turn it into a number of units. */
 export function barnFree(b: Building): number {
   return capacityOf(b) - barnLoad(b);
+}
+
+/** How many whole units of `kind` fit in `volume` of space. */
+export function unitsThatFit(kind: ResourceKind, volume: number): number {
+  return Math.max(0, Math.floor(volume / RESOURCE_VOLUME[kind]));
 }
 
 export function storageCapTotal(s: GameState): number {
@@ -149,8 +160,9 @@ export function addNearest(s: GameState, pos: Pos, kind: ResourceKind, amount: n
     .sort((a, b) => dist2(center(a), pos) - dist2(center(b), pos));
   for (const b of list) {
     if (left <= 0) break;
-    const room = barnFree(b);
-    const put = Math.min(room, left);
+    // Room is volume; convert it to however many units of *this* kind will fit.
+    const put = Math.min(unitsThatFit(kind, barnFree(b)), left);
+    if (put <= 0) continue;
     b.store[kind] = (b.store[kind] ?? 0) + put;
     left -= put;
   }

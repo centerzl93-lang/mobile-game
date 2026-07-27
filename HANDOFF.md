@@ -17,7 +17,29 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 Latest work: the **household model** (this session) — see just below. Before it, the **opportunities
 pass**, the **HUD / UX pass**, then the **jobs board overhaul** — see further down.
 
-### Volume hauling, build stamp, housing-prompt fix (this session)
+### Household assignment fixes (this session)
+Player report: children all ended up in one house and the population got stuck.
+
+- **Children must live with an adult.** `placeChild` only ever considers houses that already hold
+  a grown-up, and `placeChildrenWithAdults` runs at the end of `rehouseVillagers` to repair any
+  child left behind by the adult moves above. A house of nothing but children raises nobody, bears
+  nobody, and parks a chunk of the village's housing where it can do no good.
+- **Children spread instead of piling up.** The old homeless-child path was
+  `houses.find(hasRoom)` — literally the first house in the list — so the four founding children
+  (who have no recorded `parents`) all landed together, in a house with no adult, and nothing ever
+  moved them. `placeChild` now prefers a parent's household, then whichever eligible household has
+  the *fewest* children.
+- **`placeAdult` prefers an empty house, and no longer strands couples.** Order is now: the
+  partner's home when they keep it alone → **an empty house** → (only if the mover is still single)
+  a house with one lone unpartnered non-kin adult of the opposite sex → crowding, homeless only.
+  Sending a *partnered* villager to move in with an unrelated single used to put two half-households
+  under one roof while both partners lived elsewhere.
+
+Measured over 16 seasons: zero children in adultless houses and zero homeless children in all of
+easy/no-extra-houses, easy/10-houses and normal/6-houses; households read as families
+(`2a/5k 2a/4k 2a/6k …`); population 12→41 with housing, 12→24 and correctly capped without.
+
+### Volume hauling, build stamp, housing-prompt fix (previous session)
 
 - **Hauling is volume-based.** `CARRY_VOLUME` (12) is the space in a villager's arms and
   `RESOURCE_VOLUME` gives each resource a size, read through `carryLimit(kind, volume?)`. A log is

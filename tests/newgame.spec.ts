@@ -1170,6 +1170,9 @@ test.describe('seasonal firewood and clothing burn', () => {
 });
 
 test.describe('villager breeding', () => {
+  /** HOUSING_PER_HOUSE — a plain house shelters this many (one couple plus their children). */
+  const houseCapacityForTest = 8;
+
   /**
    * Run `seasons` season turnovers under deliberately generous conditions — spare housing, barns
    * kept full, disasters off — so what the run measures is the breeding rules and not famine,
@@ -1244,6 +1247,15 @@ test.describe('villager breeding', () => {
         const childrenWithAParent = children.filter((c: any) =>
           s.citizens.some((p: any) => c.parents.includes(p.id) && p.homeId === c.homeId),
         ).length;
+        // Every child — founding children and orphans included — must live with a grown-up.
+        const allChildren = s.citizens.filter((c: any) => c.age < 4);
+        const childrenWithNoAdultAtHome = allChildren.filter(
+          (c: any) => !s.citizens.some((o: any) => o.homeId === c.homeId && o.age >= 4),
+        ).length;
+        const homelessChildren = allChildren.filter((c: any) => c.homeId === null).length;
+        const childrenPerHouse = houses.map(
+          (h: any) => s.citizens.filter((c: any) => c.homeId === h.id && c.age < 4).length,
+        );
         const singles = s.citizens.filter((c: any) => c.age >= 4 && c.partnerId == null);
         // Houses that hold a resident couple — only these are households that can bear children.
         const households = houses.filter((h: any) => {
@@ -1272,6 +1284,10 @@ test.describe('villager breeding', () => {
           housesWithTwoCouples,
           children: children.length,
           childrenWithAParent,
+          allChildren: allChildren.length,
+          childrenWithNoAdultAtHome,
+          homelessChildren,
+          maxChildrenInOneHouse: Math.max(0, ...childrenPerHouse),
           // Adults per household, to check rehousing settled them into couples.
           adultsPerHouse: houses
             .map((h: any) => s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 4).length)
@@ -1315,6 +1331,31 @@ test.describe('villager breeding', () => {
     // Children live with their parents until they come of age.
     expect(out.children).toBeGreaterThan(0);
     expect(out.childrenWithAParent).toBe(out.children);
+  });
+
+  test('every child lives with an adult, and children are spread across households', async ({ page }) => {
+    test.setTimeout(120_000);
+    await open(page);
+    const out = await growUnderIdealConditions(page, 12);
+
+    // The founding children have no recorded parents. They used to be dropped into whichever house
+    // came first in the list — all four together, in a house with no adult in it, which then never
+    // became a household and never grew. Neither is allowed now.
+    expect(out.allChildren).toBeGreaterThan(0);
+    expect(out.childrenWithNoAdultAtHome).toBe(0);
+    expect(out.homelessChildren).toBe(0);
+
+    // And no single house hoards them while other households sit childless.
+    expect(out.maxChildrenInOneHouse).toBeLessThanOrEqual(houseCapacityForTest - 2);
+  });
+
+  test('children still live with an adult when housing is tight', async ({ page }) => {
+    test.setTimeout(120_000);
+    await open(page);
+    const out = await growUnderIdealConditions(page, 16, 0); // only the starter houses
+    expect(out.allChildren).toBeGreaterThan(0);
+    expect(out.childrenWithNoAdultAtHome).toBe(0);
+    expect(out.homelessChildren).toBe(0);
   });
 
   test('with no spare housing adults still pair up, silently', async ({ page }) => {
@@ -1607,11 +1648,14 @@ test.describe('volume-based hauling', () => {
       for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
       const barn = s.buildings.find((b: any) => b.type === 'barn');
 
-      // A max-size field, staffed, holding a full autumn harvest ready to haul.
-      g.sizeW = 8;
-      g.sizeH = 8;
+      // A field close to the barn, staffed, holding a full 8×8 autumn harvest. The *size* of the
+      // field is irrelevant — the harvest is set directly below — so a small one is used, because
+      // an 8×8 needs a large clear area that is often only found far away or across water, where
+      // the workers can pick a load up and then never reach a barn to put it down.
+      g.sizeW = 4;
+      g.sizeH = 4;
       let id: number | null = null;
-      for (let r = 3; r < 20 && id == null; r++)
+      for (let r = 2; r < 12 && id == null; r++)
         for (let dy = -r; dy <= r && id == null; dy++)
           for (let dx = -r; dx <= r && id == null; dx++)
             if (g.debugCanPlace('farm', barn.x + dx, barn.y + dy).ok) id = g.debugPlace('farm', barn.x + dx, barn.y + dy);
@@ -1625,6 +1669,16 @@ test.describe('volume-based hauling', () => {
       const HARVEST = 2560; // roughly what an 8×8 field yields with two workers
       f.store.grain = HARVEST;
       for (let i = 0; i < 40; i++) g.debugAdvance(0.1); // staff it
+
+      // Stand the workers in the field. This measures how much fits in a pair of arms, not how
+      // long it takes to walk somewhere: on an unlucky map the field lands across a river, nobody
+      // ever arrives, and no load is ever picked up.
+      const cx = f.x + 2;
+      const cy = f.y + 2;
+      for (const wid of f.workers as number[]) {
+        const w = s.citizens.find((c: any) => c.id === wid);
+        if (w) { w.x = cx; w.y = cy; w.tx = cx; w.ty = cy; w.route = undefined; }
+      }
 
       // Biggest *work* load seen of each kind. Grocery runs are excluded: a household basket is
       // deliberately a bigger allowance (LARDER_CARRY_VOLUME) and would mask the work limit.

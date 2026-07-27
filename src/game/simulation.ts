@@ -235,16 +235,7 @@ function assignHomesAndJobs(s: GameState): void {
       placeAdult(s, c, houses, true);
       continue;
     }
-    // A child follows their parents, so a family displaced by fire stays together.
-    const occ = occupancy();
-    const hasRoom = (h: Building) => (occ.get(h.id) ?? 0) < houseCapacityOf(h.type);
-    const parentHome = c.parents
-      ? houses.find(
-          (h) => hasRoom(h) && s.citizens.some((p) => c.parents!.includes(p.id) && p.homeId === h.id),
-        )
-      : undefined;
-    const target = parentHome ?? houses.find(hasRoom);
-    if (target) c.homeId = target.id;
+    placeChild(s, c, houses);
   }
 
   const byId = new Map(s.citizens.map((c) => [c.id, c]));
@@ -1823,57 +1814,121 @@ function householdCouple(s: GameState, house: Building): [Citizen, Citizen] | nu
   return null;
 }
 
+/** Occupancy, adults and children per house, recomputed fresh (moves invalidate it). */
+function censusHouses(s: GameState): {
+  occupancy: Map<number, number>;
+  adultsIn: Map<number, Citizen[]>;
+  childrenIn: Map<number, number>;
+} {
+  const occupancy = new Map<number, number>();
+  const adultsIn = new Map<number, Citizen[]>();
+  const childrenIn = new Map<number, number>();
+  for (const o of s.citizens) {
+    if (o.homeId === null) continue;
+    occupancy.set(o.homeId, (occupancy.get(o.homeId) ?? 0) + 1);
+    if (isAdult(o)) adultsIn.set(o.homeId, [...(adultsIn.get(o.homeId) ?? []), o]);
+    else childrenIn.set(o.homeId, (childrenIn.get(o.homeId) ?? 0) + 1);
+  }
+  return { occupancy, adultsIn, childrenIn };
+}
+
 /**
  * Move an adult into whichever house best advances the village, in strict preference order:
  *
- *   1. a house holding one lone unpartnered adult of the opposite sex — they become a couple, and
- *      the household then has exactly the two adults it wants;
- *   2. an empty house — founding a household for a partner to join next season;
- *   3. (only when `allowCrowding`) any house with room at all.
+ *   1. their partner's home, when the partner keeps it alone and there is room — reuniting a
+ *      couple always beats claiming new ground;
+ *   2. **an empty house** — the household they can actually raise a family in;
+ *   3. for someone still single only, a house holding one lone unpartnered non-kin adult of the
+ *      opposite sex, so the two of them become a couple;
+ *   4. (only when `allowCrowding`) any house with room at all.
  *
- * The ordering carries the whole feature. Sending each adult to the *emptiest* house instead
- * spreads them one per house where they never meet a partner, and growth stalls as surely as if
- * they had never left home.
+ * Empty houses come before joining a lone single deliberately: an adult wants a place of their own
+ * to pair up in, and sending a *partnered* villager to move in with some unrelated single would
+ * strand two half-households under one roof while both partners live elsewhere. Tier 3 is
+ * therefore gated on the mover actually being unpartnered.
  *
- * Tier 3 is off by default and reserved for villagers with nowhere to live at all. Without that
+ * Tier 4 is off by default and reserved for villagers with nowhere to live at all. Without that
  * restriction a surplus adult in a village with no spare house would shuffle into some other
  * household every season, be surplus there too, and move again forever.
  *
  * Returns true if the villager moved.
  */
 function placeAdult(s: GameState, c: Citizen, houses: Building[], allowCrowding = false): boolean {
-  const occupancy = new Map<number, number>();
-  const adultsIn = new Map<number, Citizen[]>();
-  for (const o of s.citizens) {
-    if (o.homeId === null) continue;
-    occupancy.set(o.homeId, (occupancy.get(o.homeId) ?? 0) + 1);
-    if (isAdult(o)) {
-      const list = adultsIn.get(o.homeId) ?? [];
-      list.push(o);
-      adultsIn.set(o.homeId, list);
-    }
-  }
+  const { occupancy, adultsIn } = censusHouses(s);
   const elsewhere = houses.filter((h) => h.id !== c.homeId);
   const hasRoom = (h: Building) => (occupancy.get(h.id) ?? 0) < houseCapacityOf(h.type);
+  const partner = partnerOf(s, c);
 
   const target =
-    elsewhere.find((h) => {
-      if (!hasRoom(h)) return false;
-      const adults = adultsIn.get(h.id) ?? [];
-      // A lone unpartnered adult of the opposite sex — and not a sibling, who they'd never pair
-      // with, leaving two singles sharing a house and no household formed.
-      return (
-        adults.length === 1 &&
-        adults[0].sex !== c.sex &&
-        adults[0].partnerId == null &&
-        !areCloseKin(c, adults[0])
-      );
-    }) ??
+    (partner
+      ? elsewhere.find((h) => {
+          if (h.id !== partner.homeId || !hasRoom(h)) return false;
+          const adults = adultsIn.get(h.id) ?? [];
+          return adults.length === 1 && adults[0] === partner;
+        })
+      : undefined) ??
     elsewhere.find((h) => (occupancy.get(h.id) ?? 0) === 0) ??
+    (partner
+      ? undefined
+      : elsewhere.find((h) => {
+          if (!hasRoom(h)) return false;
+          const adults = adultsIn.get(h.id) ?? [];
+          return (
+            adults.length === 1 &&
+            adults[0].sex !== c.sex &&
+            adults[0].partnerId == null &&
+            !areCloseKin(c, adults[0])
+          );
+        })) ??
     (allowCrowding ? elsewhere.find(hasRoom) : undefined);
   if (!target) return false;
   c.homeId = target.id;
   return true;
+}
+
+/**
+ * Find a home for a child. A child must always live with at least one adult, so houses with no
+ * adult are never candidates — a house full of nothing but children raises nobody, bears nobody,
+ * and simply parks a chunk of the village's housing where it can do no good.
+ *
+ * Preference is a parent's household, then whichever qualifying household has the fewest children,
+ * so orphans and founding children spread across the village instead of all piling into whichever
+ * house happened to come first in the list.
+ *
+ * Returns true if the child now has a home.
+ */
+function placeChild(s: GameState, c: Citizen, houses: Building[]): boolean {
+  const { occupancy, adultsIn, childrenIn } = censusHouses(s);
+  const eligible = houses.filter(
+    (h) =>
+      (occupancy.get(h.id) ?? 0) < houseCapacityOf(h.type) && (adultsIn.get(h.id)?.length ?? 0) > 0,
+  );
+  if (eligible.length === 0) return false;
+  const withAParent = eligible.find((h) =>
+    s.citizens.some((p) => c.parents?.includes(p.id) && p.homeId === h.id),
+  );
+  const target =
+    withAParent ??
+    eligible.reduce((best, h) => ((childrenIn.get(h.id) ?? 0) < (childrenIn.get(best.id) ?? 0) ? h : best));
+  if (target.id === c.homeId) return true;
+  c.homeId = target.id;
+  return true;
+}
+
+/**
+ * Enforce "every child lives with an adult". Children orphaned by fire or old age, and the founding
+ * children who have no recorded parents, can otherwise end up in a house with no grown-up in it —
+ * which then never becomes a household and never grows.
+ */
+function placeChildrenWithAdults(s: GameState, houses: Building[]): void {
+  for (const c of s.citizens) {
+    if (isAdult(c)) continue;
+    if (c.homeId !== null) {
+      const hasAdult = s.citizens.some((o) => o.homeId === c.homeId && isAdult(o));
+      if (hasAdult) continue; // already in a proper household
+    }
+    placeChild(s, c, houses);
+  }
 }
 
 /**
@@ -1921,6 +1976,10 @@ function rehouseVillagers(s: GameState): void {
     // A lodger who moved into a place of their own can now bring their partner over.
     houseCouplesTogether(s, houses);
   }
+
+  // Last, because every move above can leave children behind: no child is left in a house with no
+  // adult in it. Runs even with a single house, hence outside the block.
+  placeChildrenWithAdults(s, houses);
 }
 
 /**

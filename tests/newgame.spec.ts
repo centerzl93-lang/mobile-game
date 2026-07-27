@@ -369,6 +369,9 @@ test.describe('ranch', () => {
       const g = (window as any).__village;
       const id = eval(mk)('cattle', 2, 10, 6, 6);
       const s = g.state;
+      // No fires: this measures breeding over two seasons, and a fire taking the pen leaves the
+      // test holding a detached building whose herd never grows.
+      s.disasters = false;
       const b = s.buildings.find((x: any) => x.id === id);
       g.debugAdvance(600 * 2 + 30); // two seasons (nudged past the float boundary) → the breeding floor
       const afterTwo = b.animals;
@@ -551,16 +554,24 @@ test.describe('farm', () => {
 
 test.describe('jobs & builders', () => {
   // Place a work building near the barn as a construction site; returns its id (or null).
+  // Searches the whole map, not just a radius around the barn: a gatherer needs forest nearby, and
+  // on an unlucky map there is none within 16 tiles. Returning null there made every test using
+  // this helper dereference undefined and fail at random.
   const placeGatherer = `() => {
     const g = window.__village;
     const s = g.state;
     const barn = s.buildings.find((b) => b.type === 'barn');
-    let id = null;
-    for (let r = 2; r < 16 && id == null; r++)
-      for (let dy = -r; dy <= r && id == null; dy++)
-        for (let dx = -r; dx <= r && id == null; dx++)
-          if (g.debugCanPlace('gatherer', barn.x + dx, barn.y + dy).ok) id = g.debugPlace('gatherer', barn.x + dx, barn.y + dy);
-    return id;
+    for (let r = 2; r < Math.max(s.w, s.h); r++)
+      for (let dy = -r; dy <= r; dy++)
+        for (let dx = -r; dx <= r; dx++) {
+          const x = barn.x + dx, y = barn.y + dy;
+          if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue;
+          if (g.debugCanPlace('gatherer', x, y).ok) {
+            const id = g.debugPlace('gatherer', x, y);
+            if (id != null) return id;
+          }
+        }
+    throw new Error('no placeable gatherer site anywhere on this map');
   }`;
 
   test('an unbuilt work building shows on the job board and can be pre-staffed', async ({ page }) => {
@@ -585,7 +596,9 @@ test.describe('jobs & builders', () => {
       return document.getElementById('jobboard')!.textContent ?? '';
     });
     expect(text).toContain('Gatherer');
-    expect(text).toContain('under construction');
+    // An unbuilt site reads as "under construction", or "clearing land" when trees or loose stone
+    // still sit under its footprint. Either proves the unbuilt site is listed.
+    expect(text).toMatch(/under construction|clearing land/);
     expect(text).toContain('Builders');
     expect(text).toContain('Laborers');
   });
@@ -701,16 +714,19 @@ test.describe('fireproof buildings', () => {
 
 test.describe('clearing land before building', () => {
   // Find a spot near the barn where a fresh barn can be placed; returns [x,y] or [-1,-1].
+  // Searches the whole map and fails loudly. Returning a sentinel [-1,-1] when no site was found
+  // within a fixed radius made callers index off the edge of the tile array at random.
   const findSpot = `(g) => {
     const s = g.state;
     const barn = s.buildings.find((b) => b.type === 'barn');
-    for (let r = 2; r < 18; r++)
+    for (let r = 2; r < Math.max(s.w, s.h); r++)
       for (let dy = -r; dy <= r; dy++)
         for (let dx = -r; dx <= r; dx++) {
           const x = barn.x + dx, y = barn.y + dy;
+          if (x < 0 || y < 0 || x >= s.w - 1 || y >= s.h - 1) continue;
           if (g.debugCanPlace('barn', x, y).ok) return [x, y];
         }
-    return [-1, -1];
+    throw new Error('no placeable barn site anywhere on this map');
   }`;
 
   test('trees under a footprint are marked, gate construction, then get cleared', async ({ page }) => {
@@ -1092,8 +1108,12 @@ test.describe('seasonal firewood and clothing burn', () => {
           .filter((b: any) => b.type === 'house' && b.built)
           .map((b: any) => ({ b, adults: s.citizens.filter((c: any) => c.homeId === b.id && c.age >= 4).length }))
           .sort((x: any, y: any) => y.adults - x.adults)[0];
-        // Reduce the village to this one household so no other consumption is in the figure.
+        // Reduce the village to this one household so no other consumption is in the figure, and
+        // put everyone at a settled adult age. Otherwise entering Spring rolls the year over,
+        // children come of age and are rehoused *before* consumption is billed, and the per-head
+        // figure is computed against a household that no longer has those residents.
         s.citizens = s.citizens.filter((c: any) => c.homeId === picked.b.id);
+        for (const c of s.citizens) c.age = 25;
         for (const b of s.buildings) {
           if (b.type === 'barn' || b.type === 'market') b.store = dressed ? { clothing: 1e6 } : {};
         }
@@ -1188,11 +1208,55 @@ test.describe('villager breeding', () => {
           if (s.gameOver) break;
         }
         const houses = s.buildings.filter((b: any) => b.built && b.type === 'house');
+        const byId = new Map(s.citizens.map((c: any) => [c.id, c]));
+        const kin = (a: any, b: any) =>
+          (a.parents && b.parents && a.parents.some((i: number) => b.parents.includes(i))) ||
+          a.parents?.includes(b.id) ||
+          b.parents?.includes(a.id);
+
+        let brokenLinks = 0;
+        let couplesLivingApart = 0;
+        let kinPairs = 0;
+        let partnered = 0;
+        for (const c of s.citizens as any[]) {
+          if (c.partnerId == null) continue;
+          const p: any = byId.get(c.partnerId);
+          if (!p || p.partnerId !== c.id) {
+            brokenLinks++;
+            continue;
+          }
+          partnered++;
+          if (p.homeId !== c.homeId) couplesLivingApart++;
+          if (kin(c, p)) kinPairs++;
+        }
+        // A house should never be home to two separate couples.
+        const housesWithTwoCouples = houses.filter((h: any) => {
+          const adults = s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 4);
+          const pairs = new Set<string>();
+          for (const a of adults as any[]) {
+            if (a.partnerId != null && adults.some((o: any) => o.id === a.partnerId)) {
+              pairs.add([a.id, a.partnerId].sort().join('-'));
+            }
+          }
+          return pairs.size > 1;
+        }).length;
+        const children = s.citizens.filter((c: any) => c.age < 4 && c.parents);
+        const childrenWithAParent = children.filter((c: any) =>
+          s.citizens.some((p: any) => c.parents.includes(p.id) && p.homeId === c.homeId),
+        ).length;
+
         return {
           addedHouses: added,
           startPop,
           endPop: s.citizens.length,
           years: s.year,
+          couples: partnered / 2,
+          brokenLinks,
+          couplesLivingApart,
+          kinPairs,
+          housesWithTwoCouples,
+          children: children.length,
+          childrenWithAParent,
           // Adults per household, to check rehousing settled them into couples.
           adultsPerHouse: houses
             .map((h: any) => s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 4).length)
@@ -1214,11 +1278,28 @@ test.describe('villager breeding', () => {
     expect(out.endPop).toBeGreaterThan(out.startPop * 1.5);
   });
 
-  test('households settle into couples so there is room for children', async ({ page }) => {
+  test('households settle into one couple with room for their children', async ({ page }) => {
+    test.setTimeout(120_000);
     await open(page);
-    const out = await growUnderIdealConditions(page, 8);
-    // Rehousing moves every adult past a household's couple out to a house where they can pair up.
+    const out = await growUnderIdealConditions(page, 12);
+
+    // A household is one couple plus their children. With spare houses to move into, no house
+    // should be left holding a third adult, and none should hold two separate couples.
     for (const n of out.adultsPerHouse) expect(n).toBeLessThanOrEqual(2);
+    expect(out.housesWithTwoCouples).toBe(0);
+
+    // Partnerships are mutual, and a couple always shares a home.
+    expect(out.couples).toBeGreaterThan(0);
+    expect(out.brokenLinks).toBe(0);
+    expect(out.couplesLivingApart).toBe(0);
+
+    // Nobody pairs with a sibling or a parent — which is what would happen if two grown children
+    // still waiting for a house of their own were simply matched by sex.
+    expect(out.kinPairs).toBe(0);
+
+    // Children live with their parents until they come of age.
+    expect(out.children).toBeGreaterThan(0);
+    expect(out.childrenWithAParent).toBe(out.children);
   });
 
   test('no births while the village has under a season of food banked', async ({ page }) => {
@@ -1427,19 +1508,30 @@ test.describe('quarry', () => {
       q.built = true;
       q.progress = 99999;
       q.desiredWorkers = 4;
-      const stoneBefore = s.buildings
-        .filter((b: any) => b.built && (b.type === 'barn' || b.type === 'market'))
-        .reduce((n: number, b: any) => n + (b.store.stone ?? 0), 0);
-      for (let i = 0; i < 4000; i++) g.debugAdvance(0.1);
-      const stoneAfter = s.buildings
-        .filter((b: any) => b.built && (b.type === 'barn' || b.type === 'market'))
-        .reduce((n: number, b: any) => n + (b.store.stone ?? 0), 0);
+      for (let i = 0; i < 20; i++) g.debugAdvance(0.1); // let the workers get assigned
+
+      // Total stone anywhere, so the figure doesn't depend on a hauling round-trip completing.
+      const stoneEverywhere = () =>
+        s.buildings.reduce((n: number, b: any) => n + (b.store.stone ?? 0), 0) +
+        s.citizens.reduce((n: number, c: any) => n + (c.carry?.kind === 'stone' ? c.carry.amount : 0), 0);
+      const before = stoneEverywhere();
+
+      // Stand the workers in the pit. This test is about the *yield rule* inland, not pathfinding:
+      // the nearest qualifying site can sit across a river, and then nobody ever arrives and the
+      // test fails for a reason it isn't testing.
+      const cx = q.x + 1.5;
+      const cy = q.y + 3;
+      for (const wid of q.workers) {
+        const w = s.citizens.find((c: any) => c.id === wid);
+        if (w) { w.x = cx; w.y = cy; w.tx = cx; w.ty = cy; w.route = undefined; }
+      }
+      for (let i = 0; i < 3000; i++) g.debugAdvance(0.1);
       return {
         placed: id != null,
         // Static footprint: only the ranch and farm carry a per-instance w/h.
         perInstanceSize: q.w !== undefined || q.h !== undefined,
         workers: q.workers.length,
-        stoneMined: stoneAfter - stoneBefore + (q.store.stone ?? 0),
+        stoneMined: stoneEverywhere() - before,
       };
     });
     expect(out.error).toBeUndefined();

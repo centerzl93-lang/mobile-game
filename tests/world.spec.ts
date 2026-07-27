@@ -90,9 +90,14 @@ test.describe('world generation, placement & pathfinding', () => {
           for (let dx = 0; dx < w; dx++) if (!is(x + dx, y + dy, 'grass')) return false;
         return true;
       };
+      // `debugCanPlace` is the final authority: all-grass tiles can still be occupied by the
+      // starter buildings, and the quarry now costs 30 wood, so terrain alone doesn't decide it.
       for (let y = 1; y < H - 7 && !quarryOpen; y++)
         for (let x = 1; x < W - 4; x++)
-          if (clearRect(x, y, 3, 6) && !nearStone(x, y, 6)) { quarryOpen = [x, y]; break; }
+          if (clearRect(x, y, 3, 6) && !nearStone(x, y, 6) && cp('quarry', [x, y]).ok) {
+            quarryOpen = [x, y];
+            break;
+          }
       return {
         foot, grassAway, mountain, quarryOpen,
         mineOnFoot: cp('mine', foot), mineOnGrass: cp('mine', grassAway), mineOnMountain: cp('mine', mountain),

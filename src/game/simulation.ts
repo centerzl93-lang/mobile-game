@@ -13,6 +13,7 @@ import {
   Season,
   BASE_WALK_SPEED,
   CARRY_CAP,
+  LARDER_CARRY_CAP,
   WORK_SECONDS,
   LEISURE_CHANCE_PER_SEC,
   LEISURE_MIN_SECONDS,
@@ -208,30 +209,42 @@ function assignHomesAndJobs(s: GameState): void {
   for (const b of s.buildings) {
     if (typeof b.desiredWorkers !== 'number') b.desiredWorkers = BUILDING_DEFS[b.type].jobs;
   }
-  // Homes. Track occupancy and which adult sexes each house already holds so we can
-  // bias homeless adults toward forming couples.
-  const occ = new Map<number, number>();
-  const hasM = new Set<number>();
-  const hasF = new Set<number>();
+  // Homes for anyone without one — newcomers, and anyone whose house burned down or was
+  // demolished. Household *shape* (couples, who lives with whom) is settled once a season by
+  // `rehouseVillagers`; this only finds a roof for the roofless.
   const houses = s.buildings.filter((b) => b.built && isHouse(b.type));
-  for (const c of s.citizens) {
-    if (c.homeId === null) continue;
-    occ.set(c.homeId, (occ.get(c.homeId) ?? 0) + 1);
-    if (isAdult(c)) (c.sex === 'm' ? hasM : hasF).add(c.homeId);
-  }
+  const occupancy = () => {
+    const occ = new Map<number, number>();
+    for (const c of s.citizens) if (c.homeId !== null) occ.set(c.homeId, (occ.get(c.homeId) ?? 0) + 1);
+    return occ;
+  };
   for (const c of s.citizens) {
     if (c.homeId !== null) continue;
-    let target: Building | null = null;
     if (isAdult(c)) {
-      const wantSet = c.sex === 'm' ? hasF : hasM; // a house holding the opposite sex
-      for (const h of houses) if ((occ.get(h.id) ?? 0) < houseCapacityOf(h.type) && wantSet.has(h.id)) { target = h; break; }
+      // A partner already housed? Move in with them — a couple shares a home.
+      const partner = partnerOf(s, c);
+      const occ = occupancy();
+      if (partner?.homeId != null) {
+        const home = houses.find((h) => h.id === partner.homeId);
+        if (home && (occ.get(home.id) ?? 0) < houseCapacityOf(home.type)) {
+          c.homeId = home.id;
+          continue;
+        }
+      }
+      // Otherwise the normal preference order, crowding in as a last resort rather than sleeping out.
+      placeAdult(s, c, houses, true);
+      continue;
     }
-    if (!target) for (const h of houses) if ((occ.get(h.id) ?? 0) < houseCapacityOf(h.type)) { target = h; break; }
-    if (target) {
-      c.homeId = target.id;
-      occ.set(target.id, (occ.get(target.id) ?? 0) + 1);
-      if (isAdult(c)) (c.sex === 'm' ? hasM : hasF).add(target.id);
-    }
+    // A child follows their parents, so a family displaced by fire stays together.
+    const occ = occupancy();
+    const hasRoom = (h: Building) => (occ.get(h.id) ?? 0) < houseCapacityOf(h.type);
+    const parentHome = c.parents
+      ? houses.find(
+          (h) => hasRoom(h) && s.citizens.some((p) => c.parents!.includes(p.id) && p.homeId === h.id),
+        )
+      : undefined;
+    const target = parentHome ?? houses.find(hasRoom);
+    if (target) c.homeId = target.id;
   }
 
   const byId = new Map(s.citizens.map((c) => [c.id, c]));
@@ -433,10 +446,11 @@ function stockLarder(s: GameState, c: Citizen, dt: number): boolean {
   const barn = nearestBarnOnlyWith(s, buildingCenter(home), want.kind);
   if (!barn) return false;
 
-  // First leg: fetch a load from the barn.
+  // First leg: fetch a load from the barn. Groceries come home by the basket (LARDER_CARRY_CAP),
+  // not the single work-load a labourer shifts — see the constant for why that matters.
   goTo(c, buildingCenter(barn));
   if (stepTo(s, c, dt)) {
-    const take = Math.min(CARRY_CAP, want.amount, barn.store[want.kind] ?? 0);
+    const take = Math.min(LARDER_CARRY_CAP, want.amount, barn.store[want.kind] ?? 0);
     if (take > 0) {
       barn.store[want.kind] = (barn.store[want.kind] ?? 0) - take;
       if ((barn.store[want.kind] ?? 0) <= 0) delete barn.store[want.kind];
@@ -447,13 +461,22 @@ function stockLarder(s: GameState, c: Citizen, dt: number): boolean {
   return true;
 }
 
-/** Whether `c` is the resident currently running their household's errands (the lowest-id able adult). */
+/**
+ * Whether `c` is the resident currently running their household's errands.
+ *
+ * Idle hands go first: an unemployed laborer is preferred over a builder, and both over someone
+ * holding down a job. Picking purely by id would hand the shopping to whoever happened to be
+ * lowest-numbered — often a villager staffing a workplace, who then abandons their post for the
+ * errand while an idle housemate stands around.
+ */
 function larderHauler(s: GameState, home: Building, c: Citizen): boolean {
   if (!isAdult(c) || c.sick) return false;
+  // 0 = free laborer, 1 = builder, 2 = employed. Lower is a better candidate.
+  const rank = (r: Citizen): number => (r.jobId !== null ? 2 : r.builder ? 1 : 0);
   let best: Citizen | null = null;
   for (const r of s.citizens) {
     if (r.homeId !== home.id || !isAdult(r) || r.sick) continue;
-    if (!best || r.id < best.id) best = r;
+    if (!best || rank(r) < rank(best) || (rank(r) === rank(best) && r.id < best.id)) best = r;
   }
   return best !== null && best.id === c.id;
 }
@@ -1384,7 +1407,8 @@ function endSeason(s: GameState, log: LogFn): void {
   rehouseVillagers(s);
 
   // Reproduction. A household bears a child when three things line up:
-  //   1. it holds a *fertile* couple — one man and one woman inside the fertile age window,
+  //   1. it is home to a *couple* — a partnered pair who both live here and are both inside the
+  //      fertile age window (a pair of housemates who never paired off does not count),
   //   2. it has room under its housing capacity for the child, and
   //   3. the village has more than one season of food banked.
   // The chance then scales with how deep that food surplus runs and with average health and
@@ -1401,12 +1425,11 @@ function endSeason(s: GameState, log: LogFn): void {
       let born = 0;
       for (const h of s.buildings) {
         if (!h.built || !isHouse(h.type)) continue;
-        const residents = s.citizens.filter((c) => c.homeId === h.id);
-        if (residents.length >= houseCapacityOf(h.type)) continue;
-        const man = residents.some((c) => isFertile(c) && c.sex === 'm');
-        const woman = residents.some((c) => isFertile(c) && c.sex === 'f');
-        if (man && woman && Math.random() < chance) {
-          spawnChild(s, h);
+        if (residentsOf(s, h).length >= houseCapacityOf(h.type)) continue;
+        const couple = householdCouple(s, h);
+        if (!couple || !isFertile(couple[0]) || !isFertile(couple[1])) continue;
+        if (Math.random() < chance) {
+          spawnChild(s, h, couple);
           born++;
         }
       }
@@ -1752,77 +1775,180 @@ function removeCitizen(s: GameState, c: Citizen): void {
   if (idx < 0) return;
   s.citizens.splice(idx, 1);
   for (const b of s.buildings) b.workers = b.workers.filter((id) => id !== c.id);
+  // Widow the partner immediately so they can pair again at the next turnover.
+  for (const o of s.citizens) if (o.partnerId === c.id) o.partnerId = null;
 }
 
-/** A new child, born into `house`. */
+// ---- households ------------------------------------------------------------------------------
+// A household is one couple plus their children. Adults pair off, a couple keeps a house to
+// themselves wherever housing allows, and the children they bear live with them until they come of
+// age and leave to start households of their own. Everything below maintains that shape.
+
+/** Everyone living in `house`. */
+function residentsOf(s: GameState, house: Building): Citizen[] {
+  return s.citizens.filter((c) => c.homeId === house.id);
+}
+
+/** A villager's partner, if they have one who is still alive. */
+function partnerOf(s: GameState, c: Citizen): Citizen | null {
+  if (c.partnerId == null) return null;
+  return s.citizens.find((o) => o.id === c.partnerId) ?? null;
+}
+
+/** Drop partnerships whose other half has died, so the widowed can pair again. */
+function releaseLostPartners(s: GameState): void {
+  const living = new Set(s.citizens.map((c) => c.id));
+  for (const c of s.citizens) {
+    if (c.partnerId == null) continue;
+    const partner = s.citizens.find((o) => o.id === c.partnerId);
+    // Also breaks a one-sided link, which a corrupt or hand-edited save could carry.
+    if (!partner || !living.has(partner.id) || partner.partnerId !== c.id) c.partnerId = null;
+  }
+}
+
 /**
- * Move an adult into whichever house best advances the village: first one holding a single
- * unpartnered adult of the opposite sex (that forms a couple), else an empty house (founding a new
- * household for a partner to join next season), else anywhere with room.
- *
- * The ordering matters. Sending each new adult to the *emptiest* house instead spreads them one to
- * a house where they never meet a partner, and the village stops growing just as surely as if they
- * had never left home.
- *
- * Does nothing when there is nowhere to go — the villager stays put and the player needs to build.
+ * The couple whose household this is: a partnered pair who both live here. Null when the house
+ * holds no established couple yet.
  */
-function placeAdult(s: GameState, c: Citizen, houses: Building[]): void {
+function householdCouple(s: GameState, house: Building): [Citizen, Citizen] | null {
+  const adults = residentsOf(s, house).filter(isAdult);
+  for (const a of adults) {
+    const partner = partnerOf(s, a);
+    if (partner && partner.homeId === house.id) return a.sex === 'm' ? [a, partner] : [partner, a];
+  }
+  return null;
+}
+
+/**
+ * Move an adult into whichever house best advances the village, in strict preference order:
+ *
+ *   1. a house holding one lone unpartnered adult of the opposite sex — they become a couple, and
+ *      the household then has exactly the two adults it wants;
+ *   2. an empty house — founding a household for a partner to join next season;
+ *   3. (only when `allowCrowding`) any house with room at all.
+ *
+ * The ordering carries the whole feature. Sending each adult to the *emptiest* house instead
+ * spreads them one per house where they never meet a partner, and growth stalls as surely as if
+ * they had never left home.
+ *
+ * Tier 3 is off by default and reserved for villagers with nowhere to live at all. Without that
+ * restriction a surplus adult in a village with no spare house would shuffle into some other
+ * household every season, be surplus there too, and move again forever.
+ *
+ * Returns true if the villager moved.
+ */
+function placeAdult(s: GameState, c: Citizen, houses: Building[], allowCrowding = false): boolean {
   const occupancy = new Map<number, number>();
-  const adults = new Map<number, { m: number; f: number }>();
+  const adultsIn = new Map<number, Citizen[]>();
   for (const o of s.citizens) {
     if (o.homeId === null) continue;
     occupancy.set(o.homeId, (occupancy.get(o.homeId) ?? 0) + 1);
     if (isAdult(o)) {
-      const tally = adults.get(o.homeId) ?? { m: 0, f: 0 };
-      tally[o.sex] += 1;
-      adults.set(o.homeId, tally);
+      const list = adultsIn.get(o.homeId) ?? [];
+      list.push(o);
+      adultsIn.set(o.homeId, list);
     }
   }
   const elsewhere = houses.filter((h) => h.id !== c.homeId);
   const hasRoom = (h: Building) => (occupancy.get(h.id) ?? 0) < houseCapacityOf(h.type);
-  const want = c.sex === 'm' ? 'f' : 'm';
 
   const target =
     elsewhere.find((h) => {
       if (!hasRoom(h)) return false;
-      const tally = adults.get(h.id) ?? { m: 0, f: 0 };
-      return tally[want] === 1 && tally[c.sex] === 0; // a lone adult looking for a partner
+      const adults = adultsIn.get(h.id) ?? [];
+      // A lone unpartnered adult of the opposite sex — and not a sibling, who they'd never pair
+      // with, leaving two singles sharing a house and no household formed.
+      return (
+        adults.length === 1 &&
+        adults[0].sex !== c.sex &&
+        adults[0].partnerId == null &&
+        !areCloseKin(c, adults[0])
+      );
     }) ??
     elsewhere.find((h) => (occupancy.get(h.id) ?? 0) === 0) ??
-    elsewhere.find(hasRoom);
-  if (target) c.homeId = target.id;
+    (allowCrowding ? elsewhere.find(hasRoom) : undefined);
+  if (!target) return false;
+  c.homeId = target.id;
+  return true;
 }
 
 /**
- * Settle adults into households that can actually raise children, once a season.
+ * Settle households into couples with room to raise a family. Runs once a season, before births.
  *
- * Two things otherwise stall a village dead. The founding setup packs four adults into a
- * four-person house, so it is at capacity and can never have room for a child. And a household
- * holding three or more adults is wasting slots that a child needs. Both are fixed by moving every
- * adult beyond a household's couple out to a house where they pair up instead.
+ * Any adult who is not half of their household's couple moves out if somewhere better exists —
+ * a grown child still at home, a spare adult from the founding setup, a widow(er) sharing with
+ * another family. Couples are never split: the pair is what defines the household, so a partner is
+ * never the one asked to leave. Children are never moved at all; they stay with their parents until
+ * they come of age.
  *
  * Relocating leaves a villager's share of the old larder behind; the household they join restocks
  * from the barns, so nothing is lost, it just gets re-fetched.
  */
 function rehouseVillagers(s: GameState): void {
+  releaseLostPartners(s);
   const houses = s.buildings.filter((b) => b.built && isHouse(b.type));
-  if (houses.length < 2) return;
-  const movers: Citizen[] = [];
-  for (const h of houses) {
-    const adults = s.citizens.filter((c) => c.homeId === h.id && isAdult(c));
-    if (adults.length <= 2) continue;
-    // Keep one man and one woman — the household's couple — and move the rest on.
-    const keepM = adults.find((c) => c.sex === 'm');
-    const keepF = adults.find((c) => c.sex === 'f');
-    for (const a of adults) if (a !== keepM && a !== keepF) movers.push(a);
+  if (houses.length === 0) return;
+
+  if (houses.length > 1) {
+    const movers: Citizen[] = [];
+    for (const h of houses) {
+      const adults = residentsOf(s, h).filter(isAdult);
+      if (adults.length <= 1) continue;
+      const couple = householdCouple(s, h);
+      if (couple) {
+        // An established couple owns this house; every other adult is a lodger and should leave.
+        for (const a of adults) if (a !== couple[0] && a !== couple[1]) movers.push(a);
+      } else {
+        // No couple yet — keep one man and one woman so they can pair below, move the rest on.
+        const keepM = adults.find((a) => a.sex === 'm');
+        const keepF = adults.find((a) => a.sex === 'f');
+        for (const a of adults) if (a !== keepM && a !== keepF) movers.push(a);
+      }
+    }
+    for (const c of movers) placeAdult(s, c, houses);
   }
-  for (const c of movers) placeAdult(s, c, houses);
+
+  formCouples(s, houses);
 }
 
-function spawnChild(s: GameState, house: Building): void {
+/**
+ * Close family, who never pair with each other: siblings (sharing a parent) and a parent with
+ * their own child. Without this, two grown children still living at home — which happens whenever
+ * the village has no spare house for them to move into — would pair off with each other.
+ */
+function areCloseKin(a: Citizen, b: Citizen): boolean {
+  if (a.parents && b.parents && a.parents.some((id) => b.parents!.includes(id))) return true;
+  return a.parents?.includes(b.id) === true || b.parents?.includes(a.id) === true;
+}
+
+/**
+ * Pair off unpartnered adults who share a house. Fertile villagers are matched first so a
+ * childbearing pair is not passed over in favour of one past the age for it, and close kin are
+ * never matched — grown siblings waiting for a house of their own stay single.
+ */
+function formCouples(s: GameState, houses: Building[]): void {
+  for (const h of houses) {
+    const single = residentsOf(s, h)
+      .filter((c) => isAdult(c) && c.partnerId == null)
+      // Fertile first, then oldest first, for a stable non-random order.
+      .sort((a, b) => Number(isFertile(b)) - Number(isFertile(a)) || b.age - a.age);
+    const women = single.filter((c) => c.sex === 'f');
+    for (const man of single) {
+      if (man.sex !== 'm' || man.partnerId != null) continue;
+      const match = women.find((w) => w.partnerId == null && !areCloseKin(man, w));
+      if (!match) continue;
+      man.partnerId = match.id;
+      match.partnerId = man.id;
+    }
+  }
+}
+
+/** A new child, born to `couple` and raised in their house until they come of age. */
+function spawnChild(s: GameState, house: Building, couple: [Citizen, Citizen]): void {
   const at = buildingCenter(house);
   const c = makeCitizen(s, Math.random() < 0.5 ? 'm' : 'f', 0, at.x + (Math.random() - 0.5), at.y + (Math.random() - 0.5));
   c.homeId = house.id;
+  c.parents = [couple[0].id, couple[1].id];
   s.citizens.push(c);
 }
 

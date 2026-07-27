@@ -1,7 +1,7 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-07-25 (opportunities pass: larders, breeding, burn rates, paths, quarry, history)
+> Last updated: 2026-07-27 (households: one couple per house, capacity 8, kinship, family tracking)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -14,10 +14,50 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: the **opportunities pass** (this session) — see just below. Before it, the **HUD / UX
-pass**, then the **jobs board overhaul** — see further down.
+Latest work: the **household model** (this session) — see just below. Before it, the **opportunities
+pass**, the **HUD / UX pass**, then the **jobs board overhaul** — see further down.
 
-### Opportunities pass (this session)
+### Household model (this session)
+Player feedback after the opportunities pass: breeding was still too slow. The fix was structural,
+not a rate tweak. **A house is now one couple plus their children.**
+
+- **Capacity 8** (`HOUSING_PER_HOUSE` 4 → 8, `STONE_HOUSE_CAPACITY` 5 → 10). A birth needs room
+  under capacity, so at 4 a couple was full after two children and never bore another.
+- **Explicit partnerships.** `Citizen.partnerId` (mutual, both directions) and `Citizen.parents`
+  (the couple whose household they were born into). `formCouples` pairs unpartnered adults sharing
+  a house, fertile first; `releaseLostPartners` + `removeCitizen` widow the survivor so they can
+  pair again.
+- **`areCloseKin` — do not remove.** Grown children pile up at home whenever the village has no
+  spare house. Without a kinship check `formCouples` happily pairs two siblings with each other,
+  who then occupy their parents' house as a second "couple" and bear children there. The same check
+  gates `placeAdult`'s tier 1, so nobody is sent to pair with a sibling who already moved out.
+- **One couple per house.** `rehouseVillagers` finds the household's couple (`householdCouple`) and
+  moves every *other* adult out — a grown child, a spare founder, a widowed lodger. Couples are
+  never split: a partner is never the one asked to leave.
+- **`placeAdult` tiers, and why tier 3 is opt-in.** (1) a house with one lone unpartnered
+  non-kin adult of the opposite sex, (2) an empty house, (3) *only* with `allowCrowding` — anywhere
+  with room, used just for the homeless. Without that restriction a surplus adult in a village with
+  no spare house shuffles into another household every season, is surplus there too, and churns
+  forever. Staying put until the player builds is the correct end state.
+- **Children stay with their parents** until they come of age, then `placeAdult` moves them out.
+  A homeless child (house burned down) follows a parent via `Citizen.parents` in
+  `assignHomesAndJobs`.
+- **Births come from the household couple** — a partnered pair, both resident, both fertile.
+  Housemates who never paired do not breed.
+- **`larderHauler` prefers idle hands** (free laborer > builder > employed). Picking purely by id
+  handed the shopping to whoever was lowest-numbered, often someone staffing a workplace, who then
+  abandoned their post — this is what made the trading-post test flake.
+- **`LARDER_CARRY_CAP` = `CARRY_CAP` × 3.** A household eats its whole larder every season, so its
+  one shopper must haul that much again just to break even. At `CARRY_CAP` an eight-person house
+  needed ~20 round trips a season, which does not fit in a season: larders sat near-empty forever
+  while still costing a villager their working day. Verified converging at ×3.
+- Citizen inspect shows Partner / Children / Parents so the model is legible in-game.
+
+Measured under generous conditions (spare housing, full barns, disasters off): **12 → 49 over five
+years**, 11 couples, zero broken links, zero couples living apart, zero kin pairings, no house with
+two couples, and every child living with a parent.
+
+### Opportunities pass (previous session)
 Worked from a player-supplied priority list. All eleven items landed; 68 tests green.
 
 - **Household larders (P0).** Houses keep their residents' food, firewood and medicine
@@ -313,11 +353,13 @@ The `Claude-Session:` URL is **per-session** — use the current session's, not 
 Never put the model ID in commits/PRs/code/comments — chat replies only.
 
 ## Next steps
-- **Balance review of this session's changes (most useful next).** Three knobs moved the economy and
-  want play-testing rather than more code: `HOUSE_LARDER_SEASONS` (0.5 — raise toward 1 for
-  self-sufficient households at the cost of a near-full-time shopper each), the `SEASON_BURN` table
-  (firewood and clothing now cost across the whole year, not just winter, so the annual bill is
-  meaningfully higher), and the birth rates (`BIRTH_CHANCE` 0.55 + the surplus/wellbeing scaling).
+- **Balance review (most useful next).** Knobs that moved the economy and want play-testing rather
+  than more code: housing capacity (8/10), `HOUSE_LARDER_SEASONS` (0.5) with `LARDER_CARRY_CAP`
+  (×3), the `SEASON_BURN` table (firewood and clothing now cost across the whole year, so the annual
+  bill is meaningfully higher), and the birth rates (`BIRTH_CHANCE` 0.55 + surplus/wellbeing).
+- **Housing is now the growth lever**, by design: a couple needs a free house to move into before
+  they can form. Grown children stay home until the player builds. Watch that this reads as a clear
+  prompt to build rather than as the village being stuck.
 - **Rotate direction.** Verified correct against the glyphs and covered by a test; if the player
   still wants it inverted after trying the hold behaviour it is a one-line sign flip in
   `Game.rotateView` (and the two direction assertions in the rotate suite).
@@ -344,6 +386,11 @@ Never put the model ID in commits/PRs/code/comments — chat replies only.
   tune `MERCHANT_ARRIVAL_CHANCE`/category stock; optional HUD cue for an arriving boat (top-bar button
   was removed).
 - **Minor:** the 3D ranch pen shows no live animal glyphs/count (the 2D renderer does).
-- The previously-noted flaky `jobs & builders › with zero builders a site never builds` passed in
-  every full run this session, but its `placeGatherer` helper can still return `null` on an unlucky
-  map; hardening it (wider search / fixed seed) would remove the risk for good.
+- **Suite flakiness is fixed** — three consecutive clean full runs (68/68). Four latent map-seed
+  flakes were hunted down and are worth not reintroducing: `placeGatherer` and `findSpot` searched
+  only a fixed radius and returned null/`[-1,-1]`, which callers then dereferenced; the ranch
+  breeding test ran with disasters on, so a fire could take the pen mid-measurement; the world
+  spec's quarry scan checked terrain but not `debugCanPlace`, so it could pick a tile under a
+  building or unaffordable at the quarry's new 30-wood cost; and the quarry yield test depended on
+  workers walking to a site that can sit across a river (it now stands them in the pit, since it is
+  testing the yield rule and not pathfinding).

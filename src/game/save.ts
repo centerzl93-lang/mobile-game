@@ -61,6 +61,20 @@ export function loadGame(slot = 0): GameState | null {
     if (!s.merchant || typeof s.pathProgress !== 'number') return null;
     // Backfill names for citizens saved before villagers had names.
     for (const c of s.citizens) if (!c.name) c.name = randomName(c.sex);
+    // Partnerships and parentage came in after this format shipped. Saves without them load as a
+    // village of singles and pair off at the next season turnover. Drop any link that isn't
+    // mutual or points at someone who is gone, so a stale id can't wedge the household logic.
+    const byId = new Map(s.citizens.map((c) => [c.id, c]));
+    for (const c of s.citizens) {
+      if (c.partnerId == null) continue;
+      const partner = byId.get(c.partnerId);
+      if (!partner || partner.partnerId !== c.id || partner.id === c.id) c.partnerId = null;
+    }
+    for (const c of s.citizens) {
+      if (c.parents && (c.parents.length !== 2 || c.parents.some((id) => typeof id !== 'number'))) {
+        c.parents = undefined;
+      }
+    }
     // Seeds (crop unlocks) were added after this format shipped. Saves without them predate the
     // gate, when every field could grow — grant all crops so old farms keep working.
     if (!Array.isArray(s.seeds)) s.seeds = [...CROPS];

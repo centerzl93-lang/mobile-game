@@ -825,6 +825,28 @@ class Game {
       rows.push({ label: 'Age', value: `${Math.floor(c.age)} yr` });
       rows.push({ label: 'Health', value: `❤️ ${Math.round(c.health)}%${c.sick ? ' · 🤒 sick' : ''}` });
       rows.push({ label: 'Happiness', value: `😊 ${Math.round(c.happiness)}%` });
+      // Family: who they paired with and who lives under their roof, so the household model the
+      // simulation runs on is legible rather than implicit.
+      if (adult) {
+        const partner = c.partnerId != null ? this.state.citizens.find((o) => o.id === c.partnerId) : null;
+        rows.push({
+          label: 'Partner',
+          value: partner ? `${partner.sex === 'm' ? '👨' : '👩'} ${partner.name}` : 'Single',
+        });
+        const children = this.state.citizens.filter((o) => o.parents?.includes(c.id));
+        if (children.length > 0) {
+          const athome = children.filter((o) => o.homeId === c.homeId && o.age < ADULT_AGE).length;
+          rows.push({
+            label: 'Children',
+            value: `${children.length}${athome > 0 ? ` (${athome} at home)` : ''}`,
+          });
+        }
+      } else if (c.parents) {
+        const parents = this.state.citizens.filter((o) => c.parents!.includes(o.id));
+        if (parents.length > 0) {
+          rows.push({ label: 'Parents', value: parents.map((p) => p.name).join(' & ') });
+        }
+      }
       if (adult) rows.push({ label: 'Schooling', value: c.educated ? 'Educated (+30% work)' : 'Uneducated' });
       if (adult) rows.push({ label: 'Work', value: job ? `${BUILDING_DEFS[job.type].name} worker` : 'Builder / laborer' });
       rows.push({

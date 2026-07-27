@@ -509,6 +509,15 @@ export interface Citizen {
   timer: number; // seconds remaining in current work action
   sex: Sex;
   age: number; // years
+  /**
+   * The villager this one has paired with, or null/undefined if single. A couple is the core of a
+   * household: they share a house, they are the only adults in it wherever housing allows, and only
+   * a couple bears children. Partnerships are mutual — both citizens point at each other — and are
+   * dissolved when one of them dies (`releaseLostPartners`).
+   */
+  partnerId?: number | null;
+  /** Ids of the two villagers whose household this one was born into. Absent for founders/nomads. */
+  parents?: [number, number];
   health: number; // 0..100
   happiness: number; // 0..100
   educated: boolean; // grew up with a staffed school -> more productive
@@ -695,7 +704,12 @@ export interface GameState {
 export const SEASON_LENGTH = 10 * 60; // 10 real minutes per season at 1x speed
 
 // ---- Housing / storage / logistics ----
-export const HOUSING_PER_HOUSE = 4;
+/**
+ * Villagers a plain house shelters. A household is one couple plus their children, so this is
+ * really "a couple and up to six children" — the room to raise a family is what lets a village
+ * grow, and at 4 a couple was full after two children and never bore another.
+ */
+export const HOUSING_PER_HOUSE = 8;
 export const BARN_CAPACITY = 5000; // total units a single barn can hold
 export const MARKET_CAPACITY = 2000; // total units a market holds
 export const MARKET_STOCK_TARGET = 60; // per-resource amount a vendor keeps stocked
@@ -773,6 +787,17 @@ export const HOUSE_MEDICINE_PER_RESIDENT = 2;
 /** Resources a household keeps at home, in the order a resident restocks them. */
 export const LARDER_KINDS: ResourceKind[] = ['firewood', 'medicine'];
 
+/**
+ * Units a villager carries home per grocery run — a proper basket of provisions, not the
+ * single work-load a labourer shifts (`CARRY_CAP`).
+ *
+ * This has to be generous or the feature quietly stops working. A household eats its whole larder
+ * every season, so its one shopper must haul that much again just to break even; at CARRY_CAP a
+ * full eight-person house needs ~20 round trips a season, which does not fit in a season, and the
+ * larder sits near empty forever while still costing a villager their working day.
+ */
+export const LARDER_CARRY_CAP = CARRY_CAP * 3;
+
 // ---- Demographics ----
 export const ADULT_AGE = 4; // children become working adults at this age (years)
 export const START_ADULTS = 8; // founding adult villagers
@@ -811,7 +836,7 @@ export const START_HEALTH = 80;
 export const START_HAPPINESS = 80;
 
 // ---- Housing & amenities ----
-export const STONE_HOUSE_CAPACITY = 5; // villagers a stone house shelters
+export const STONE_HOUSE_CAPACITY = 10; // villagers a stone house shelters (a larger family still)
 export const STONE_HOUSE_HEAT_FACTOR = 0.6; // stone-house residents need less winter fuel
 export const HAPPY_TAVERN = 12; // happiness from a staffed, stocked tavern
 export const HAPPY_CHAPEL = 10; // happiness from a chapel

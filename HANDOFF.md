@@ -424,8 +424,12 @@ Never put the model ID in commits/PRs/code/comments — chat replies only.
   tune `MERCHANT_ARRIVAL_CHANCE`/category stock; optional HUD cue for an arriving boat (top-bar button
   was removed).
 - **Minor:** the 3D ranch pen shows no live animal glyphs/count (the 2D renderer does).
-- **Suite flakiness is fixed** — three consecutive clean full runs (68/68). Four latent map-seed
-  flakes were hunted down and are worth not reintroducing: `placeGatherer` and `findSpot` searched
+- **Suite flakiness.** Several latent map-seed flakes were hunted down; the recurring pattern is a
+  test that depends on villagers *walking* somewhere within a step budget, which an unlucky map
+  (target across a river, or simply far) breaks. The fix that works is to stand the villagers where
+  the behaviour under test happens — done for the quarry yield test and the path-paving test — since
+  neither is testing pathfinding. The other recurring pattern is sampling a resource total in barns
+  alone while a load is still being carried; count it everywhere instead. Worth not reintroducing: `placeGatherer` and `findSpot` searched
   only a fixed radius and returned null/`[-1,-1]`, which callers then dereferenced; the ranch
   breeding test ran with disasters on, so a fire could take the pen mid-measurement; the world
   spec's quarry scan checked terrain but not `debugCanPlace`, so it could pick a tile under a

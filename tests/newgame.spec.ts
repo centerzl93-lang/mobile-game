@@ -1477,8 +1477,21 @@ test.describe('paths and placement', () => {
         s.buildings.reduce((n: number, b: any) => n + (b.store.wood ?? 0), 0) +
         s.citizens.reduce((n: number, c: any) => n + (c.carry?.kind === 'wood' ? c.carry.amount : 0), 0);
       const woodBefore = woodAnywhere();
-      for (const i of candidates) s.paths[i] = 1; // PATH_DIRT_PLAN — let villagers actually lay them
+      for (const i of candidates) s.paths[i] = 1; // PATH_DIRT_PLAN — villagers lay them for real
       g.debugSetBuilders(4);
+
+      // Stand a villager on each planned tile. This test is about what *paving* does to the
+      // ground, not about pathfinding or walking speed: left to walk there on their own, on an
+      // unlucky map every candidate can sit across a river, nothing gets paved inside the step
+      // budget, and the test fails for a reason it isn't testing.
+      const adults = s.citizens.filter((c: any) => c.age >= 4);
+      candidates.forEach((i: number, n: number) => {
+        const w = adults[n % adults.length];
+        if (!w) return;
+        const x = (i % s.w) + 0.5;
+        const y = Math.floor(i / s.w) + 0.5;
+        w.x = x; w.y = y; w.tx = x; w.ty = y; w.route = undefined; w.carry = null;
+      });
       for (let n = 0; n < 4000; n++) g.debugAdvance(0.1);
 
       const paved = candidates.filter((i) => s.paths[i] === 2); // PATH_DIRT

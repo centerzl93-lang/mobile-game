@@ -1244,6 +1244,12 @@ test.describe('villager breeding', () => {
         const childrenWithAParent = children.filter((c: any) =>
           s.citizens.some((p: any) => c.parents.includes(p.id) && p.homeId === c.homeId),
         ).length;
+        const singles = s.citizens.filter((c: any) => c.age >= 4 && c.partnerId == null);
+        // Houses that hold a resident couple — only these are households that can bear children.
+        const households = houses.filter((h: any) => {
+          const adults = s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 4);
+          return adults.some((a: any) => a.partnerId != null && adults.some((o: any) => o.id === a.partnerId));
+        }).length;
 
         return {
           addedHouses: added,
@@ -1251,6 +1257,15 @@ test.describe('villager breeding', () => {
           endPop: s.citizens.length,
           years: s.year,
           couples: partnered / 2,
+          households,
+          couplesAwaitingAHome: partnered / 2 - households,
+          singleAdults: singles.length,
+          // Singles who *could* have paired: someone of the opposite sex, also single, not kin.
+          // Leftovers with no eligible match (an odd sex balance, or only siblings left) are fine.
+          pairableSinglesLeft: singles.filter((a: any) =>
+            singles.some((b: any) => b.id !== a.id && b.sex !== a.sex && !kin(a, b)),
+          ).length,
+          housingPrompt: (s.events ?? []).find((e: any) => e.text.includes('waiting for a home'))?.text ?? '',
           brokenLinks,
           couplesLivingApart,
           kinPairs,
@@ -1300,6 +1315,30 @@ test.describe('villager breeding', () => {
     // Children live with their parents until they come of age.
     expect(out.children).toBeGreaterThan(0);
     expect(out.childrenWithAParent).toBe(out.children);
+  });
+
+  test('with no spare housing adults still pair up, and the village asks for houses', async ({ page }) => {
+    test.setTimeout(120_000);
+    await open(page);
+    // Same generous conditions, but *no* extra houses: the only limit is somewhere to live.
+    const out = await growUnderIdealConditions(page, 12, 0);
+    expect(out.addedHouses).toBe(0);
+
+    // Villagers pair off anyway rather than waiting for a house to become free — a village of
+    // singles would silently stop growing and give the player nothing to act on. Anyone still
+    // single has no eligible match left (an odd sex balance, or only siblings remaining).
+    expect(out.couples).toBeGreaterThan(0);
+    expect(out.pairableSinglesLeft).toBe(0);
+    expect(out.kinPairs).toBe(0);
+    expect(out.brokenLinks).toBe(0);
+
+    // More couples than houses that hold a household ⇒ some are waiting for a home of their own,
+    // and only a household bears children, so the shortage is what caps growth.
+    expect(out.couples).toBeGreaterThan(out.households);
+    expect(out.couplesAwaitingAHome).toBeGreaterThan(0);
+
+    // And the player is told, in the event log, so the fix is obvious.
+    expect(out.housingPrompt).toMatch(/waiting for a home/);
   });
 
   test('no births while the village has under a season of food banked', async ({ page }) => {

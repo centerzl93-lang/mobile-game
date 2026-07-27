@@ -1476,6 +1476,18 @@ function warnOfShortfalls(s: GameState, season: Season, log: LogFn): void {
   if (totalFoodAvailable(s) < pop * FOOD_PER_CITIZEN_PER_SEASON) {
     log('🍽️ Food stores are running low', 'bad');
   }
+
+  // Couples pair up whether or not there is a house free, so a housing shortage shows up here as
+  // named demand: these villagers are ready to start families and only need somewhere to live.
+  const waiting = couplesAwaitingAHome(s);
+  if (waiting > 0) {
+    log(
+      waiting > 1
+        ? `🏠 ${waiting} couples are waiting for a home of their own — build houses`
+        : '🏠 A couple is waiting for a home of their own — build a house',
+      'info',
+    );
+  }
 }
 
 // ---- merchant ----
@@ -1889,6 +1901,11 @@ function rehouseVillagers(s: GameState): void {
   const houses = s.buildings.filter((b) => b.built && isHouse(b.type));
   if (houses.length === 0) return;
 
+  // Pair first, so the moves below are made on behalf of couples that already exist, then get
+  // those couples under one roof wherever a house allows it.
+  formCouples(s, houses);
+  houseCouplesTogether(s, houses);
+
   if (houses.length > 1) {
     const movers: Citizen[] = [];
     for (const h of houses) {
@@ -1899,16 +1916,16 @@ function rehouseVillagers(s: GameState): void {
         // An established couple owns this house; every other adult is a lodger and should leave.
         for (const a of adults) if (a !== couple[0] && a !== couple[1]) movers.push(a);
       } else {
-        // No couple yet — keep one man and one woman so they can pair below, move the rest on.
+        // No couple living here — keep one man and one woman, move the rest on.
         const keepM = adults.find((a) => a.sex === 'm');
         const keepF = adults.find((a) => a.sex === 'f');
         for (const a of adults) if (a !== keepM && a !== keepF) movers.push(a);
       }
     }
     for (const c of movers) placeAdult(s, c, houses);
+    // A lodger who moved into a place of their own can now bring their partner over.
+    houseCouplesTogether(s, houses);
   }
-
-  formCouples(s, houses);
 }
 
 /**
@@ -1921,26 +1938,120 @@ function areCloseKin(a: Citizen, b: Citizen): boolean {
   return a.parents?.includes(b.id) === true || b.parents?.includes(a.id) === true;
 }
 
+/** Unpartnered adults, fertile first then oldest first — a stable, non-random matching order. */
+function singleAdults(list: Citizen[]): Citizen[] {
+  return list
+    .filter((c) => isAdult(c) && c.partnerId == null)
+    .sort((a, b) => Number(isFertile(b)) - Number(isFertile(a)) || b.age - a.age);
+}
+
 /**
- * Pair off unpartnered adults who share a house. Fertile villagers are matched first so a
- * childbearing pair is not passed over in favour of one past the age for it, and close kin are
- * never matched — grown siblings waiting for a house of their own stay single.
+ * Match up the men and women in `pool`, skipping close kin. `limit` caps how many pairs form —
+ * one, when matching inside a single house, since a house is home to exactly one household.
+ */
+function matchWithin(pool: Citizen[], limit = Infinity): number {
+  const women = pool.filter((c) => c.sex === 'f');
+  let made = 0;
+  for (const man of pool) {
+    if (made >= limit) break;
+    if (man.sex !== 'm' || man.partnerId != null) continue;
+    const match = women.find((w) => w.partnerId == null && !areCloseKin(man, w));
+    if (!match) continue;
+    man.partnerId = match.id;
+    match.partnerId = man.id;
+    made++;
+  }
+  return made;
+}
+
+/**
+ * Pair off unpartnered adults — housemates first, then across the whole village.
+ *
+ * Pairing deliberately does *not* wait for housing. A couple with nowhere to live still forms; they
+ * simply cannot set up a household or bear children until a house is free for them, and the season
+ * warning names how many are waiting. That turns a housing shortage into visible, named demand
+ * — "two couples are waiting for a home" — rather than a village of singles that silently stops
+ * growing and gives the player nothing to act on.
+ *
+ * Close kin are never matched, so grown siblings stuck at home don't pair with each other.
  */
 function formCouples(s: GameState, houses: Building[]): void {
+  // Housemates first: a pair already under one roof becomes a household immediately. At most one
+  // pair per house, and none where a household already lives — otherwise a house holding four
+  // singles would form two couples inside it, and the second would have no home of its own.
   for (const h of houses) {
-    const single = residentsOf(s, h)
-      .filter((c) => isAdult(c) && c.partnerId == null)
-      // Fertile first, then oldest first, for a stable non-random order.
-      .sort((a, b) => Number(isFertile(b)) - Number(isFertile(a)) || b.age - a.age);
-    const women = single.filter((c) => c.sex === 'f');
-    for (const man of single) {
-      if (man.sex !== 'm' || man.partnerId != null) continue;
-      const match = women.find((w) => w.partnerId == null && !areCloseKin(man, w));
-      if (!match) continue;
-      man.partnerId = match.id;
-      match.partnerId = man.id;
-    }
+    if (householdCouple(s, h)) continue;
+    matchWithin(singleAdults(residentsOf(s, h)), 1);
   }
+  // Then everyone still single, wherever they live. These couples have no home together yet.
+  matchWithin(singleAdults(s.citizens));
+}
+
+/**
+ * Move newly formed couples in together where a house allows it: into one partner's home when they
+ * live there alone, otherwise into an empty house. A couple is never moved into a house that
+ * already has a household — one couple per house holds.
+ *
+ * Couples with nowhere to go stay paired but apart. They do not bear children (a birth needs the
+ * couple resident in the same house), which is exactly the pressure to build.
+ */
+function houseCouplesTogether(s: GameState, houses: Building[]): void {
+  for (const c of s.citizens) {
+    if (c.sex !== 'm') continue; // handle each couple once, from the man's side
+    const partner = partnerOf(s, c);
+    if (!partner || partner.homeId === c.homeId) continue;
+
+    const occupancy = new Map<number, number>();
+    const adultsIn = new Map<number, Citizen[]>();
+    for (const o of s.citizens) {
+      if (o.homeId === null) continue;
+      occupancy.set(o.homeId, (occupancy.get(o.homeId) ?? 0) + 1);
+      if (isAdult(o)) adultsIn.set(o.homeId, [...(adultsIn.get(o.homeId) ?? []), o]);
+    }
+    // A home one of them already keeps alone, with room for the other to move in.
+    const soleOccupant = (who: Citizen, other: Citizen) => {
+      if (who.homeId === null) return undefined;
+      const h = houses.find((x) => x.id === who.homeId);
+      if (!h) return undefined;
+      const adults = adultsIn.get(h.id) ?? [];
+      if (adults.length !== 1 || adults[0] !== who) return undefined;
+      const incoming = other.homeId === h.id ? 0 : 1;
+      return (occupancy.get(h.id) ?? 0) + incoming <= houseCapacityOf(h.type) ? h : undefined;
+    };
+    const target =
+      soleOccupant(c, partner) ??
+      soleOccupant(partner, c) ??
+      houses.find((h) => (occupancy.get(h.id) ?? 0) === 0 && houseCapacityOf(h.type) >= 2);
+    if (!target) continue;
+    c.homeId = target.id;
+    partner.homeId = target.id;
+  }
+}
+
+/**
+ * Whether this villager is half of a couple that has not got a household of its own — either they
+ * live apart, or they share a house whose household is somebody else's. Such a couple cannot bear
+ * children (a birth comes from the house's own couple), so this is precisely the set of villagers
+ * a new house would turn into a growing family.
+ */
+export function coupleNeedsAHome(s: GameState, c: Citizen): boolean {
+  const partner = partnerOf(s, c);
+  if (!partner) return false;
+  if (c.homeId === null || partner.homeId !== c.homeId) return true;
+  const home = s.buildings.find((b) => b.id === c.homeId);
+  if (!home) return true;
+  const couple = householdCouple(s, home);
+  return !couple || (couple[0].id !== c.id && couple[1].id !== c.id);
+}
+
+/** Couples paired up but without a household of their own — the village's housing demand. */
+function couplesAwaitingAHome(s: GameState): number {
+  let n = 0;
+  for (const c of s.citizens) {
+    if (c.sex !== 'm') continue; // count each couple once, from the man's side
+    if (coupleNeedsAHome(s, c)) n++;
+  }
+  return n;
 }
 
 /** A new child, born to `couple` and raised in their house until they come of age. */

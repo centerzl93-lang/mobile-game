@@ -1,7 +1,7 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-07-27 (households: one couple per house, capacity 8, kinship, family tracking)
+> Last updated: 2026-07-27 (households; then village-wide pairing so housing is visible demand)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -44,6 +44,17 @@ not a rate tweak. **A house is now one couple plus their children.**
   `assignHomesAndJobs`.
 - **Births come from the household couple** — a partnered pair, both resident, both fertile.
   Housemates who never paired do not breed.
+- **Pairing does not wait for housing.** `formCouples` matches housemates first (at most one pair
+  per house — a house is one household) and then everyone still single *village-wide*. A couple with
+  nowhere to live still forms; they simply cannot set up a household or bear children until a house
+  is free. `houseCouplesTogether` moves a new couple into one partner's home when they live there
+  alone, else an empty house, never into a house that already has a household.
+  `coupleNeedsAHome` marks a couple that is living apart *or* lodging in someone else's house, and
+  `warnOfShortfalls` reports the count each season ("🏠 3 couples are waiting for a home of their
+  own — build houses"); the citizen inspect flags it too. This is the point: a housing shortage now
+  shows up as named demand the player can act on rather than a village of singles that quietly
+  stops growing. Measured with only the 3 starter houses: 6 couples but 3 households, 0 pairable
+  singles left, and the prompt firing every season.
 - **`larderHauler` prefers idle hands** (free laborer > builder > employed). Picking purely by id
   handed the shopping to whoever was lowest-numbered, often someone staffing a workplace, who then
   abandoned their post — this is what made the trading-post test flake.

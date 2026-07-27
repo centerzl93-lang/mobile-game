@@ -57,6 +57,7 @@ import {
   acceptNomads,
   rejectNomads,
   markHarvestRect,
+  coupleNeedsAHome,
 } from './game/simulation';
 import { canPlace, placeBuilding, canAfford, demolishBuilding, footprintClear } from './game/buildings';
 import { findPath } from './game/pathfind';
@@ -829,9 +830,15 @@ class Game {
       // simulation runs on is legible rather than implicit.
       if (adult) {
         const partner = c.partnerId != null ? this.state.citizens.find((o) => o.id === c.partnerId) : null;
+        // Flag a couple without a household of their own — living apart, or lodging in someone
+        // else's house. They can't start a family until a house is free, so this is the player's
+        // cue that building one turns them into a growing household.
+        const apart = coupleNeedsAHome(this.state, c);
         rows.push({
           label: 'Partner',
-          value: partner ? `${partner.sex === 'm' ? '👨' : '👩'} ${partner.name}` : 'Single',
+          value: partner
+            ? `${partner.sex === 'm' ? '👨' : '👩'} ${partner.name}${apart ? ' · 🏠 needs a home' : ''}`
+            : 'Single',
         });
         const children = this.state.citizens.filter((o) => o.parents?.includes(c.id));
         if (children.length > 0) {

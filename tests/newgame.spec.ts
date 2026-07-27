@@ -1707,6 +1707,16 @@ test.describe('volume-based hauling', () => {
   });
 });
 
+test.describe('build stamp', () => {
+  test('the main menu shows an incrementing version, commit and date', async ({ page }) => {
+    await open(page);
+    const stamp = await page.evaluate(() => document.getElementById('mm-build')?.textContent ?? '');
+    // e.g. "v0.1.48 · 7b6dfc7 · 2026-07-27". The patch is the commit count, so it rises with every
+    // push; a '?' there means the build ran against a shallow clone and the number can't be trusted.
+    expect(stamp).toMatch(/^v\d+\.\d+\.\d+ · [0-9a-f]{7,} · \d{4}-\d{2}-\d{2}$/);
+  });
+});
+
 test.describe('village history', () => {
   test('events are recorded newest-first with the season they happened in', async ({ page }) => {
     await open(page);

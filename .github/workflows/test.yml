@@ -12,7 +12,10 @@ jobs:
   playwright:
     runs-on: ubuntu-latest
     steps:
+      # Full history so the build stamp matches what a deploy would produce (see deploy.yml).
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20

@@ -22,7 +22,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # Full history: the build stamp's patch number is the commit count, and a shallow
+      # clone would report 1 for every deploy.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20

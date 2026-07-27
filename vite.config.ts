@@ -9,20 +9,34 @@ const BASE = '/mobile-game/';
 
 /**
  * Build stamp shown on the main menu, so it is possible to tell at a glance whether the device is
- * running the newest deploy or a service-worker copy of an older one. The commit is the useful
- * half; the date is there for when a build is made outside git.
+ * running the newest deploy or a service-worker copy of an older one.
+ *
+ * The patch number is the **commit count**, so it goes up by itself on every push — nobody has to
+ * remember to bump anything, and it can't drift out of step with what is deployed. A version that
+ * simply increases is what makes "am I on the latest?" answerable at a glance; the short commit
+ * after it pins exactly which build, and the date is there for builds made outside git.
+ *
+ * Note CI must check out full history (`fetch-depth: 0`) or the count is 1 for every build — see
+ * the comments in .github/workflows/.
  */
-const pkgVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
-function gitShortSha(): string {
+function git(command: string, fallback: string): string {
   try {
-    return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
-      .toString()
-      .trim();
+    return execSync(command, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || fallback;
   } catch {
-    return 'local'; // building from a tarball or a shallow checkout without git
+    return fallback; // building from a tarball, or no git available
   }
 }
-const BUILD_STAMP = `v${pkgVersion} · ${gitShortSha()} · ${new Date().toISOString().slice(0, 10)}`;
+const pkgVersion: string = JSON.parse(
+  readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
+).version;
+const [major = '0', minor = '0'] = pkgVersion.split('.');
+// A shallow clone counts only the commits it has, which would show a *lower* number than the
+// previous deploy — precisely the "am I on the latest?" confusion this is meant to remove. Show an
+// obvious placeholder instead of a plausible-but-wrong version.
+const shallow = git('git rev-parse --is-shallow-repository', 'false') === 'true';
+const buildNumber = shallow ? '?' : git('git rev-list --count HEAD', '?');
+const shortSha = git('git rev-parse --short HEAD', 'local');
+const BUILD_STAMP = `v${major}.${minor}.${buildNumber} · ${shortSha} · ${new Date().toISOString().slice(0, 10)}`;
 
 export default defineConfig({
   base: BASE,

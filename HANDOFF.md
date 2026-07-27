@@ -53,9 +53,13 @@ easy/no-extra-houses, easy/10-houses and normal/6-houses; households read as fam
   of target on every kind. **Storage is still counted in units** (`BARN_CAPACITY`) — making barns
   volume-based too is the obvious follow-up, deliberately not done here.
 - **Build stamp on the main menu.** `__BUILD_STAMP__` is injected by `define` in vite.config.ts as
-  `v<pkg version> · <short sha> · <date>` and rendered under the menu buttons, so it's possible to
-  tell whether a device is on the newest deploy or a cached service-worker copy. Needed
-  `@types/node` (config reads package.json and shells out to git) and `"node"` in tsconfig `types`.
+  `v<major>.<minor>.<commit count> · <short sha> · <date>`, rendered under the menu buttons. The
+  patch is the **commit count**, so it rises by itself on every push — nothing to remember to bump
+  and no way for it to drift from what is deployed. **CI must check out full history**
+  (`fetch-depth: 0`, set in both workflows): a shallow clone counts only what it has, and would show
+  a *lower* number than the previous deploy, which is exactly the confusion this removes. A shallow
+  build is detected and stamps `?` rather than a plausible-but-wrong number. Needed `@types/node`
+  (the config reads package.json and shells out to git) and `"node"` in tsconfig `types`.
 - **No housing prompt — by design.** A seasonal "N couples are waiting for a home" warning was
   built and then **deliberately removed**: spotting that houses are the bottleneck is the player's
   job, not something the game announces. Do not re-add it. The state stays *discoverable* — a

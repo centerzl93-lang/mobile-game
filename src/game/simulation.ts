@@ -1403,10 +1403,8 @@ function endSeason(s: GameState, log: LogFn): void {
     }
   }
 
-  // Settle households into couples with room to spare before deciding who bears a child, then
-  // report any couple still without a home — the count is only meaningful after pairing has run.
+  // Settle households into couples with room to spare before deciding who bears a child.
   rehouseVillagers(s);
-  reportHousingDemand(s, log);
 
   // Reproduction. A household bears a child when three things line up:
   //   1. it is home to a *couple* — a partnered pair who both live here and are both inside the
@@ -1479,25 +1477,9 @@ function warnOfShortfalls(s: GameState, season: Season, log: LogFn): void {
     log('🍽️ Food stores are running low', 'bad');
   }
 
-}
-
-/**
- * Couples pair up whether or not there is a house free, so a housing shortage shows up as named
- * demand: these villagers are ready to start families and only need somewhere to live.
- *
- * Reported separately from `warnOfShortfalls` because it must run *after* `rehouseVillagers` —
- * that is where this season's pairing happens, and counting beforehand reports a stale number
- * (zero, on the first season of a game that starts with no houses at all).
- */
-function reportHousingDemand(s: GameState, log: LogFn): void {
-  const waiting = couplesAwaitingAHome(s);
-  if (waiting <= 0) return;
-  log(
-    waiting > 1
-      ? `🏠 ${waiting} couples are waiting for a home of their own — build houses`
-      : '🏠 A couple is waiting for a home of their own — build a house',
-    'info',
-  );
+  // Deliberately *not* warned about: couples with no home of their own. A housing shortage is for
+  // the player to notice and diagnose — the signs are all there (population stops growing, a
+  // villager's sheet shows a partner and no shared home) without the game naming the problem.
 }
 
 // ---- merchant ----
@@ -1914,8 +1896,8 @@ function rehouseVillagers(s: GameState): void {
   // those couples under one roof wherever a house allows it.
   //
   // Note this runs even with *no* houses at all — Normal and Hard start that way. Bailing out
-  // early here meant nobody ever paired, so the "couples are waiting for a home" prompt could
-  // never fire in precisely the situation that most needs it.
+  // early here meant nobody paired until the player happened to build, so a village could sit
+  // as a crowd of singles with no couples formed and ready to move in.
   formCouples(s, houses);
   houseCouplesTogether(s, houses);
 
@@ -1981,10 +1963,11 @@ function matchWithin(pool: Citizen[], limit = Infinity): number {
  * Pair off unpartnered adults — housemates first, then across the whole village.
  *
  * Pairing deliberately does *not* wait for housing. A couple with nowhere to live still forms; they
- * simply cannot set up a household or bear children until a house is free for them, and the season
- * warning names how many are waiting. That turns a housing shortage into visible, named demand
- * — "two couples are waiting for a home" — rather than a village of singles that silently stops
- * growing and gives the player nothing to act on.
+ * simply cannot set up a household or bear children until a house is free for them. So the moment
+ * the player builds, a waiting couple moves straight in and the village starts growing again —
+ * whereas if pairing waited for a vacancy there would be a further season's lag every time.
+ *
+ * The game says nothing about this; noticing that houses are the bottleneck is left to the player.
  *
  * Close kin are never matched, so grown siblings stuck at home don't pair with each other.
  */
@@ -2044,8 +2027,11 @@ function houseCouplesTogether(s: GameState, houses: Building[]): void {
 /**
  * Whether this villager is half of a couple that has not got a household of its own — either they
  * live apart, or they share a house whose household is somebody else's. Such a couple cannot bear
- * children (a birth comes from the house's own couple), so this is precisely the set of villagers
- * a new house would turn into a growing family.
+ * children (a birth comes from the house's own couple).
+ *
+ * Used only by the villager's own inspect sheet. The game never announces this: working out that
+ * the village has stopped growing for want of houses is left to the player, so the fact is there
+ * to be found rather than pushed at them.
  */
 export function coupleNeedsAHome(s: GameState, c: Citizen): boolean {
   const partner = partnerOf(s, c);
@@ -2055,16 +2041,6 @@ export function coupleNeedsAHome(s: GameState, c: Citizen): boolean {
   if (!home) return true;
   const couple = householdCouple(s, home);
   return !couple || (couple[0].id !== c.id && couple[1].id !== c.id);
-}
-
-/** Couples paired up but without a household of their own — the village's housing demand. */
-function couplesAwaitingAHome(s: GameState): number {
-  let n = 0;
-  for (const c of s.citizens) {
-    if (c.sex !== 'm') continue; // count each couple once, from the man's side
-    if (coupleNeedsAHome(s, c)) n++;
-  }
-  return n;
 }
 
 /** A new child, born to `couple` and raised in their house until they come of age. */

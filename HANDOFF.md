@@ -34,12 +34,15 @@ pass**, the **HUD / UX pass**, then the **jobs board overhaul** — see further 
   `v<pkg version> · <short sha> · <date>` and rendered under the menu buttons, so it's possible to
   tell whether a device is on the newest deploy or a cached service-worker copy. Needed
   `@types/node` (config reads package.json and shells out to git) and `"node"` in tsconfig `types`.
-- **Housing prompt never fired — two causes, both fixed.** `rehouseVillagers` bailed out early when
-  the village had no houses, so on Normal and Hard (which start with *zero*) nobody ever paired and
-  the prompt could not fire in exactly the situation that needs it. And the count was computed in
-  `warnOfShortfalls`, which runs *before* pairing; it is now `reportHousingDemand`, called straight
-  after `rehouseVillagers`. Verified on a zero-house Normal start: 4 couples and the prompt firing
-  after one season.
+- **No housing prompt — by design.** A seasonal "N couples are waiting for a home" warning was
+  built and then **deliberately removed**: spotting that houses are the bottleneck is the player's
+  job, not something the game announces. Do not re-add it. The state stays *discoverable* — a
+  villager's inspect sheet shows `Partner · 🏠 needs a home` via the still-exported
+  `coupleNeedsAHome` — but nothing is pushed at the player.
+  While that prompt existed it exposed a real bug that **is** still fixed: `rehouseVillagers`
+  bailed out early when the village had no houses, so on Normal and Hard (which start with *zero*)
+  nobody ever paired at all. Pairing now runs regardless of housing, so a waiting couple moves in
+  the moment a house is built instead of losing a further season to pairing lag.
 
 ### Household model (previous session)
 Player feedback after the opportunities pass: breeding was still too slow. The fix was structural,

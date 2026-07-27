@@ -1317,28 +1317,28 @@ test.describe('villager breeding', () => {
     expect(out.childrenWithAParent).toBe(out.children);
   });
 
-  test('with no spare housing adults still pair up, and the village asks for houses', async ({ page }) => {
+  test('with no spare housing adults still pair up, silently', async ({ page }) => {
     test.setTimeout(120_000);
     await open(page);
     // Same generous conditions, but *no* extra houses: the only limit is somewhere to live.
     const out = await growUnderIdealConditions(page, 12, 0);
     expect(out.addedHouses).toBe(0);
 
-    // Villagers pair off anyway rather than waiting for a house to become free — a village of
-    // singles would silently stop growing and give the player nothing to act on. Anyone still
+    // Villagers pair off anyway rather than waiting for a house to become free. Anyone still
     // single has no eligible match left (an odd sex balance, or only siblings remaining).
     expect(out.couples).toBeGreaterThan(0);
     expect(out.pairableSinglesLeft).toBe(0);
     expect(out.kinPairs).toBe(0);
     expect(out.brokenLinks).toBe(0);
 
-    // More couples than houses that hold a household ⇒ some are waiting for a home of their own,
-    // and only a household bears children, so the shortage is what caps growth.
+    // More couples than houses that hold a household ⇒ some have no home of their own, and only a
+    // household bears children, so the shortage is what caps growth.
     expect(out.couples).toBeGreaterThan(out.households);
     expect(out.couplesAwaitingAHome).toBeGreaterThan(0);
 
-    // And the player is told, in the event log, so the fix is obvious.
-    expect(out.housingPrompt).toMatch(/waiting for a home/);
+    // The game does not say so. Working out that houses are the bottleneck is the player's job —
+    // the state is discoverable on a villager's own sheet, but nothing announces it.
+    expect(out.housingPrompt).toBe('');
   });
 
   test('no births while the village has under a season of food banked', async ({ page }) => {

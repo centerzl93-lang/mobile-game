@@ -40,6 +40,7 @@ import {
   carryLimit,
   RESOURCE_KINDS,
   ADULT_AGE,
+  PATH_NONE,
   PATH_STONE,
   PATH_STONE_PLAN,
   PATH_BRIDGE,
@@ -66,7 +67,9 @@ import {
 import { canPlace, placeBuilding, canAfford, demolishBuilding, footprintClear } from './game/buildings';
 import { findPath } from './game/pathfind';
 import { addNearest, barnLoad, capacityOf, larderFood, larderFoodTarget, larderTarget } from './game/storage';
-import { planPath } from './game/paths';
+import {
+  planPath, markPending, pendingPathCount, confirmPendingPaths, cancelPendingPaths,
+} from './game/paths';
 import { saveGame, loadGame, hasSave, clearSave, slotInfo, lastSlot, SLOTS } from './game/save';
 import { InspectRow, InspectControls } from './ui/ui';
 
@@ -106,6 +109,8 @@ class Game {
   inspectSel: { kind: 'building' | 'citizen'; id: number } | null = null;
   /** Held rotate button: -1 = counter-clockwise, +1 = clockwise, 0 = released. */
   rotateDir: -1 | 0 | 1 = 0;
+  /** Demolition picked but not yet confirmed — nothing is destroyed until the player says so. */
+  pendingDemolish: { kind: 'building' | 'path'; id: number; label: string } | null = null;
 
   dpr = 1;
   cw = 0;
@@ -260,6 +265,7 @@ class Game {
 
   private onSetDemolish(active: boolean): void {
     this.demolish = active;
+    if (!active) this.pendingDemolish = null; // leaving the tool drops any un-confirmed target
     if (active) {
       this.selectedBuild = null;
       this.selectedPath = null;
@@ -454,7 +460,49 @@ class Game {
   private onPaint(sx: number, sy: number): void {
     if (!this.selectedPath || !this.running || this.state.gameOver) return;
     const [wx, wy] = this.camera.screenToTile(sx, sy, this.cw, this.ch);
-    planPath(this.state, Math.floor(wx), Math.floor(wy), this.selectedPath);
+    const tx = Math.floor(wx);
+    const ty = Math.floor(wy);
+    // Drawn tiles are held pending until the player confirms, so a stray drag can be undone.
+    if (planPath(this.state, tx, ty, this.selectedPath)) markPending(this.state, tx, ty);
+  }
+
+  /** Accept the drawn path tiles — villagers can now lay them. */
+  private confirmPaths(): void {
+    const n = confirmPendingPaths(this.state);
+    if (n > 0) this.ui.flashHint(`${n} path tile${n > 1 ? 's' : ''} queued for the builders`);
+    this.persist();
+  }
+
+  /** Throw the drawn path tiles away, clearing them back to bare ground. */
+  private cancelPaths(): void {
+    cancelPendingPaths(this.state);
+    this.persist();
+  }
+
+  /** Carry out the selected demolition. */
+  private confirmDemolish(): void {
+    const target = this.pendingDemolish;
+    this.pendingDemolish = null;
+    if (!target) return;
+    if (target.kind === 'building') {
+      const b = this.state.buildings.find((x) => x.id === target.id);
+      if (!b) return;
+      const label = buildingName(b);
+      demolishBuilding(this.state, b);
+      this.ui.log(`${label} demolished`, 'info');
+    } else {
+      const idx = target.id;
+      const v = this.state.paths[idx];
+      const wasStone = v === PATH_STONE || v === PATH_STONE_PLAN;
+      const wasBridge = v === PATH_BRIDGE;
+      this.state.paths[idx] = PATH_NONE;
+      const tx = idx % MAP_W;
+      const ty = Math.floor(idx / MAP_W);
+      if (wasStone) addNearest(this.state, { x: tx, y: ty }, 'stone', 0.25);
+      if (wasBridge) this.state.navVersion = (this.state.navVersion ?? 0) + 1; // walkability changed
+    }
+    this.clearInspect();
+    this.persist();
   }
 
   private togglePause(): void {
@@ -670,27 +718,28 @@ class Game {
     return best;
   }
 
+  /**
+   * Pick a demolition target. Nothing is destroyed here — the choice waits on the confirm bar,
+   * so a mis-tap in demolish mode costs a building only if the player says so twice.
+   *
+   * Un-marking a harvest order is exempt: it destroys nothing and is trivially redone.
+   */
   private demolishAt(wx: number, wy: number): void {
     const b = this.buildingAt(wx, wy);
     if (b) {
-      demolishBuilding(this.state, b);
-      this.ui.log(`${BUILDING_DEFS[b.type].name} demolished`, 'info');
-      this.persist();
+      this.pendingDemolish = { kind: 'building', id: b.id, label: buildingName(b) };
+      this.inspectSel = { kind: 'building', id: b.id }; // ring it so the target is obvious
+      this.refreshInspect();
       return;
     }
     const tx = Math.floor(wx);
     const ty = Math.floor(wy);
     const idx = ty * MAP_W + tx;
     if (idx < 0 || idx >= this.state.paths.length) return;
-    if (this.state.paths[idx] !== 0) {
-      const wasStone = this.state.paths[idx] === PATH_STONE || this.state.paths[idx] === PATH_STONE_PLAN;
-      const wasBridge = this.state.paths[idx] === PATH_BRIDGE;
-      this.state.paths[idx] = 0;
-      if (wasStone) addNearest(this.state, { x: tx, y: ty }, 'stone', 0.25);
-      if (wasBridge) this.state.navVersion = (this.state.navVersion ?? 0) + 1; // walkability changed
-      this.persist();
+    if (this.state.paths[idx] !== PATH_NONE) {
+      this.pendingDemolish = { kind: 'path', id: idx, label: 'this path tile' };
     } else if (this.state.harvest[idx] !== 0) {
-      this.state.harvest[idx] = 0; // un-mark a harvest order
+      this.state.harvest[idx] = 0; // un-mark a harvest order — nothing is lost, so no confirmation
       this.persist();
     }
   }
@@ -970,6 +1019,36 @@ class Game {
     };
   }
 
+  /**
+   * Show whichever decision is outstanding — drawn path tiles, or a picked demolition. Both are
+   * held rather than applied, so this bar is the only way either actually happens.
+   */
+  private refreshConfirmBar(): void {
+    const pending = pendingPathCount(this.state);
+    if (pending > 0) {
+      this.ui.showConfirm(
+        `${pending} path tile${pending > 1 ? 's' : ''} drawn`,
+        'Place',
+        () => this.confirmPaths(),
+        () => this.cancelPaths(),
+      );
+      return;
+    }
+    if (this.pendingDemolish) {
+      this.ui.showConfirm(
+        `Demolish ${this.pendingDemolish.label}?`,
+        'Demolish',
+        () => this.confirmDemolish(),
+        () => {
+          this.pendingDemolish = null;
+          this.clearInspect();
+        },
+      );
+      return;
+    }
+    this.ui.hideConfirm();
+  }
+
   private persist(): void {
     saveGame(this.state, this.currentSlot);
   }
@@ -1038,6 +1117,7 @@ class Game {
     }
     this.ui.updateHud(this.state, SPEEDS[this.speedIndex], this.paused);
     this.ui.refreshPanels(this.state);
+    this.refreshConfirmBar();
     if (this.inspectSel) this.refreshInspect();
 
     requestAnimationFrame((next) => this.frame(next));

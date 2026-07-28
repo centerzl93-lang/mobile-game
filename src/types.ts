@@ -716,6 +716,12 @@ export interface GameState {
   events?: GameEvent[];
   /** Fractional accumulator for how many planned path tiles are built. */
   pathProgress: number;
+  /**
+   * Path tiles drawn but not yet confirmed. They sit in `paths` as ordinary *plan* values so they
+   * render as the dim outline a plan already does, but villagers skip them until the player
+   * confirms — so a stray drag across the map can be cancelled instead of becoming work orders.
+   */
+  pendingPaths?: number[];
   /** How many free adults the player wants assigned as Builders. Only Builders construct work
    * buildings; paths can be laid by any adult. Idle builders pitch in as laborers. */
   desiredBuilders: number;
@@ -728,6 +734,12 @@ export interface GameState {
   /** Bumped when a tile becomes / stops being forest (replanting or clear-cutting), so the
    * renderer knows to rebuild its tree layer to show the new/removed trees. */
   forestVersion?: number;
+  /**
+   * Seconds since households were last settled. Rehousing runs on this short cadence rather than
+   * only at season turnover, so a couple moves into a house the moment it is finished instead of
+   * waiting out the rest of the season.
+   */
+  rehouseTimer?: number;
 }
 
 // ---- Time ----

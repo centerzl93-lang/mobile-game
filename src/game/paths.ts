@@ -52,6 +52,44 @@ export function planPath(s: GameState, tx: number, ty: number, tier: PathTier): 
   return true;
 }
 
+/**
+ * Mark a freshly planned tile as awaiting the player's confirmation. Villagers ignore pending
+ * tiles (`buildPath`), so a drag can be reviewed and cancelled before it becomes work orders.
+ */
+export function markPending(s: GameState, tx: number, ty: number): void {
+  const idx = tileIndex(tx, ty);
+  const pending = (s.pendingPaths ??= []);
+  if (!pending.includes(idx)) pending.push(idx);
+}
+
+/** How many drawn-but-unconfirmed path tiles are waiting. */
+export function pendingPathCount(s: GameState): number {
+  return s.pendingPaths?.length ?? 0;
+}
+
+/** Accept the drawn tiles: they stay planned, and villagers may now lay them. */
+export function confirmPendingPaths(s: GameState): number {
+  const n = pendingPathCount(s);
+  s.pendingPaths = [];
+  return n;
+}
+
+/** Discard the drawn tiles, clearing any that are still only planned back to bare ground. */
+export function cancelPendingPaths(s: GameState): number {
+  const pending = s.pendingPaths ?? [];
+  let cleared = 0;
+  for (const idx of pending) {
+    const v = s.paths[idx];
+    // Only un-plan: a tile a villager already finished while this sat pending stays built.
+    if (v === PATH_DIRT_PLAN || v === PATH_STONE_PLAN || v === PATH_BRIDGE_PLAN) {
+      s.paths[idx] = PATH_NONE;
+      cleared++;
+    }
+  }
+  s.pendingPaths = [];
+  return cleared;
+}
+
 /** Whether any building's footprint covers this tile. */
 function tileHasBuilding(s: GameState, tx: number, ty: number): boolean {
   for (const b of s.buildings) {

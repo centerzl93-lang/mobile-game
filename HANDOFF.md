@@ -14,10 +14,36 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: the **household model** (this session) — see just below. Before it, the **opportunities
-pass**, the **HUD / UX pass**, then the **jobs board overhaul** — see further down.
+Latest work: **confirm-before-apply, live rehousing, implicit inspect** (this session) — see just
+below. Before it, the **storage/job-board/naming pass**, the **household model**, the
+**opportunities pass**, the **HUD / UX pass**, then the **jobs board overhaul** — further down.
 
-### Storage, job board, names, HUD, difficulty (this session)
+### Confirm-before-apply, live rehousing, implicit inspect (this session)
+- **Inspect is the resting state, not a button.** The toolbar is now
+  `housing food resources civic trade paths harvest demolish` — no `inspect`. `toggleCategory`
+  closing a category clears the active tool, which *is* inspect mode, so tapping the open category
+  again returns you to tapping things to look at them. One fewer button and one fewer way to be in
+  a mode you didn't mean to be in.
+- **Paths and demolition confirm before they apply.** Drawing a path drags out `pendingPaths`
+  (tile indices held on the state, saved and reloaded) and raises a confirm bar —
+  "N path tiles drawn | Cancel | Place". `buildPath` skips any tile still pending, so builders
+  cannot start on a route the player hasn't committed to. Demolish likewise only *selects*
+  (`pendingDemolish`) and shows "Demolish House? | Cancel | Demolish". The one exemption is
+  un-marking a harvest tile, which is itself the undo of a free action and doesn't want a prompt.
+  The bar is refreshed from the frame loop (`refreshConfirmBar`) so it tracks a drag in progress.
+- **Villagers relocate whenever an opportunity appears**, not at the season turn.
+  `rehouseVillagers` now runs every `REHOUSE_INTERVAL` (2s of game time) off `s.rehouseTimer`
+  instead of once per season. Measured: a newly finished house is occupied within **2 seconds**
+  where it used to wait up to a full 600s season. This is what makes "build a house" feel like a
+  lever the player is pulling rather than a bet on the next season.
+  **Test caveat:** three larder/heat tests assumed villagers stayed put in the one stocked house
+  and started failing because rehousing spread them into the empty houses the tests create. The fix
+  is to pin the setup — `burnEntering` and the eat-and-heat test strip every other house
+  (`s.buildings.filter(b => b.id === picked.b.id || !isHouse(b.type))`), and the shortage test trims
+  the stocked household to its couple so nobody is surplus. Any future test that cares *which* house
+  a villager is in must do the same.
+
+### Storage, job board, names, HUD, difficulty (previous session)
 - **Storage is volume too.** `barnLoad` measures `units × RESOURCE_VOLUME`, `barnFree` returns
   volume, and `unitsThatFit(kind, volume)` converts back wherever goods are put down (`addNearest`,
   the market vendor). `BARN_CAPACITY`/`MARKET_CAPACITY` are unchanged numbers reinterpreted as

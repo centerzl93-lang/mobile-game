@@ -1045,6 +1045,11 @@ test.describe('household larders', () => {
       // Barns hold nothing, so anything consumed must have come out of the larder. Only this
       // household remains, so no *other* villager's shortfall can take its residents down with it.
       s.citizens = s.citizens.filter((c: any) => c.homeId === house.b.id);
+      // And every other house, so rehousing (which now runs every couple of seconds) can't move a
+      // surplus adult out of the stocked household into an empty one with no larder.
+      s.buildings = s.buildings.filter(
+        (b: any) => b.id === house.b.id || (b.type !== 'house' && b.type !== 'stonehouse'),
+      );
       // Clothing is village-wide, not a larder item, so leave it stocked — otherwise winter
       // illness for the unclothed would confound what we're measuring (food and fuel).
       for (const b of s.buildings) if (b.type === 'barn' || b.type === 'market') b.store = { clothing: 1e6 };
@@ -1082,6 +1087,17 @@ test.describe('household larders', () => {
         .filter((h: any) => h.residents.length > 0);
       // One household keeps a full larder; the barns are emptied so every other house goes hungry.
       const stocked = houses[0];
+      // Trim the stocked house to its couple. Households are settled every couple of seconds now,
+      // so any *surplus* adult there would be moved out mid-season — into a house with no larder,
+      // where they would starve, and the test would read that as the larder having failed.
+      const stockedAdults = stocked.residents.filter((c: any) => c.age >= 4);
+      const keepM = stockedAdults.find((c: any) => c.sex === 'm');
+      const keepF = stockedAdults.find((c: any) => c.sex === 'f');
+      const surplus = new Set(
+        stockedAdults.filter((c: any) => c !== keepM && c !== keepF).map((c: any) => c.id),
+      );
+      s.citizens = s.citizens.filter((c: any) => !surplus.has(c.id));
+      stocked.residents = stocked.residents.filter((c: any) => !surplus.has(c.id));
       // Clothing is village-wide, not a larder item, so leave it stocked — otherwise winter
       // illness for the unclothed would confound what we're measuring (food and fuel).
       for (const b of s.buildings) if (b.type === 'barn' || b.type === 'market') b.store = { clothing: 1e6 };
@@ -1128,6 +1144,12 @@ test.describe('seasonal firewood and clothing burn', () => {
         // figure is computed against a household that no longer has those residents.
         s.citizens = s.citizens.filter((c: any) => c.homeId === picked.b.id);
         for (const c of s.citizens) c.age = 25;
+        // Take away every other house too. Households are now settled every couple of seconds, so
+        // any spare house is somewhere a surplus adult would move to — out of the household being
+        // measured, and into one with no larder.
+        s.buildings = s.buildings.filter(
+          (b: any) => b.id === picked.b.id || (b.type !== 'house' && b.type !== 'stonehouse'),
+        );
         for (const b of s.buildings) {
           if (b.type === 'barn' || b.type === 'market') b.store = dressed ? { clothing: 1e6 } : {};
         }
@@ -1836,6 +1858,160 @@ test.describe('top HUD', () => {
     expect(ids).not.toContain('stat-builders');
     // The rest of the people row is untouched.
     expect(ids).toEqual(['stat-ages', 'stat-health', 'stat-happy', 'stat-sick', 'stat-season']);
+  });
+});
+
+test.describe('toolbar', () => {
+  test('has no Inspect button, and closing a category returns to inspecting', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+    const tools = await page.evaluate(() =>
+      [...document.querySelectorAll('#toolbar .tool-btn')].map((e) => (e as HTMLElement).dataset.tool),
+    );
+    expect(tools).not.toContain('inspect');
+
+    // Opening a category shows its pop-out; closing it leaves no tool active, which *is* inspect.
+    await page.click('.tool-btn[data-tool="housing"]');
+    await expect(page.locator('#popout')).toBeVisible();
+    await page.click('.tool-btn[data-tool="housing"]');
+    await expect(page.locator('#popout')).toBeHidden();
+    const active = await page.evaluate(() =>
+      [...document.querySelectorAll('#toolbar .tool-btn.active')].map((e) => (e as HTMLElement).dataset.tool),
+    );
+    expect(active).toEqual([]);
+  });
+
+  test('demolish toggles off again', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+    await page.click('.tool-btn[data-tool="demolish"]');
+    expect(await page.evaluate(() => (window as any).__village.demolish)).toBe(true);
+    await page.click('.tool-btn[data-tool="demolish"]');
+    expect(await page.evaluate(() => (window as any).__village.demolish)).toBe(false);
+  });
+});
+
+test.describe('confirm before it happens', () => {
+  test('drawn paths wait for confirmation, and villagers ignore them until then', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+    const drawn = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const s = g.state;
+      s.paths.fill(0);
+      s.pendingPaths = [];
+      g.onSelectPath('dirt');
+      for (let i = 0; i < 10; i++) g.onPaint(120 + i * 12, 430); // a drag across the view
+      return { pending: s.pendingPaths.length, planned: s.paths.filter((v: number) => v === 1).length };
+    });
+    expect(drawn.pending).toBeGreaterThan(0);
+    expect(drawn.planned).toBe(drawn.pending); // drawn tiles show as plans, so they are visible
+
+    await expect(page.locator('#confirm')).toBeVisible();
+    await expect(page.locator('#confirm')).toContainText('drawn');
+
+    // Nothing gets laid while the decision is outstanding.
+    const whilePending = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.debugSetBuilders(4);
+      for (let i = 0; i < 2000; i++) g.debugAdvance(0.1);
+      return g.state.paths.filter((v: number) => v === 2).length;
+    });
+    expect(whilePending).toBe(0);
+
+    // Confirming releases them to the builders.
+    await page.click('#cf-ok');
+    const after = await page.evaluate(() => {
+      const g = (window as any).__village;
+      for (let i = 0; i < 3000; i++) g.debugAdvance(0.1);
+      return { built: g.state.paths.filter((v: number) => v === 2).length, pending: g.state.pendingPaths.length };
+    });
+    expect(after.pending).toBe(0);
+    expect(after.built).toBeGreaterThan(0);
+  });
+
+  test('cancelling a drawn path clears it back to bare ground', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.state.paths.fill(0);
+      g.state.pendingPaths = [];
+      g.onSelectPath('dirt');
+      for (let i = 0; i < 10; i++) g.onPaint(120 + i * 12, 430);
+    });
+    await expect(page.locator('#confirm')).toBeVisible();
+    await page.click('#cf-cancel');
+    const after = await page.evaluate(() => ({
+      planned: (window as any).__village.state.paths.filter((v: number) => v !== 0).length,
+      pending: (window as any).__village.state.pendingPaths.length,
+    }));
+    expect(after.planned).toBe(0);
+    expect(after.pending).toBe(0);
+    await expect(page.locator('#confirm')).toBeHidden();
+  });
+
+  test('demolition waits for confirmation; cancelling leaves the building standing', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+    const picked = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const house = g.state.buildings.find((b: any) => b.type === 'house');
+      g.onSetDemolish(true);
+      g.demolishAt(house.x + 0.5, house.y + 0.5);
+      return { id: house.id, stillThere: g.state.buildings.some((b: any) => b.id === house.id) };
+    });
+    // Selecting must not destroy anything — a mis-tap costs nothing.
+    expect(picked.stillThere).toBe(true);
+    await expect(page.locator('#confirm')).toContainText('Demolish');
+
+    await page.click('#cf-cancel');
+    expect(
+      await page.evaluate((id) => (window as any).__village.state.buildings.some((b: any) => b.id === id), picked.id),
+    ).toBe(true);
+
+    // Re-select and confirm: now it goes.
+    await page.evaluate((id) => {
+      const g = (window as any).__village;
+      const b = g.state.buildings.find((x: any) => x.id === id);
+      g.demolishAt(b.x + 0.5, b.y + 0.5);
+    }, picked.id);
+    await page.click('#cf-ok');
+    expect(
+      await page.evaluate((id) => (window as any).__village.state.buildings.some((b: any) => b.id === id), picked.id),
+    ).toBe(false);
+  });
+});
+
+test.describe('prompt rehousing', () => {
+  test('a couple moves into a new house within seconds, not at the next season', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      for (let i = 0; i < 200; i++) g.debugAdvance(0.1); // let households settle
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      let id: number | null = null;
+      for (let r = 3; r < 20 && id == null; r++)
+        for (let dy = -r; dy <= r && id == null; dy++)
+          for (let dx = -r; dx <= r && id == null; dx++)
+            if (g.debugCanPlace('house', barn.x + dx, barn.y + dy).ok) id = g.debugPlace('house', barn.x + dx, barn.y + dy);
+      if (id == null) return { error: 'no house spot' };
+      const h = s.buildings.find((b: any) => b.id === id);
+      h.built = true;
+      h.progress = 9999;
+      // Advance a second at a time and see how long the new house stands empty.
+      for (let t = 1; t <= 60; t++) {
+        g.debugAdvance(1);
+        if (s.citizens.some((c: any) => c.homeId === id)) return { secondsToOccupy: t };
+      }
+      return { secondsToOccupy: null };
+    });
+    expect(out.error).toBeUndefined();
+    // Seasons are 600s; rehousing used to happen only at the turnover, so this could take one.
+    expect(out.secondsToOccupy).not.toBeNull();
+    expect(out.secondsToOccupy!).toBeLessThan(10);
   });
 });
 

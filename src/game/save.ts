@@ -51,6 +51,8 @@ export function loadGame(slot = 0): GameState | null {
     // Builders became an explicit assignable job. Older saves had every idle adult construct;
     // default to none so the player opts in (matches new games).
     if (typeof s.desiredBuilders !== 'number') s.desiredBuilders = 0;
+    // Drawn-but-unconfirmed path tiles; older saves simply have none outstanding.
+    if (!Array.isArray(s.pendingPaths)) s.pendingPaths = [];
     // The village chronicle was added after this format shipped; older saves simply start empty
     // and begin recording from the moment they are loaded.
     if (!Array.isArray(s.events)) s.events = [];

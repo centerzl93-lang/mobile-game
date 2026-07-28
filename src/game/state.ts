@@ -119,6 +119,7 @@ export function newGame(
     harvest: emptyHarvest(),
     events: [], // the village chronicle starts blank and fills as things happen
     pathProgress: 0,
+    pendingPaths: [], // drawn-but-unconfirmed path tiles
     desiredBuilders: 0, // no builders until the player assigns them on the Job Board
     // Crops the village can plant. Easy starts with one random seed; Normal/Hard start with none
     // and must buy seeds from a merchant before any field will grow.

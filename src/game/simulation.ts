@@ -157,6 +157,12 @@ const SMITH_STEEL_IRON = 4, SMITH_STEEL_COAL = 3, SMITH_STEEL_OUT = 8;
 const TAILOR_IN = 5, TAILOR_OUT = 4;
 
 const ARRIVE = 0.25; // tile distance considered "arrived"
+/**
+ * Seconds of game time between household settlements. Short enough that finishing a house is
+ * followed almost immediately by a couple moving in, long enough that the census work
+ * (`rehouseVillagers` walks buildings × citizens a few times) is nowhere near per-tick cost.
+ */
+const REHOUSE_INTERVAL = 2;
 
 // Walkable-connectivity labels; two tiles with the same non-negative label are mutually
 // reachable. Cached across ticks and recomputed only when walkability changes (a new state
@@ -192,6 +198,15 @@ export function update(s: GameState, dt: number, log: LogFn): void {
   processFires(s, dt, log);
   regrowForest(s, dt);
   updateMerchantBoat(s, dt, log);
+
+  // Settle households on a short cadence, not just at season turnover: a couple with nowhere to
+  // live should move into a house as soon as it is finished, and a villager coming of age or
+  // widowed shouldn't wait out the rest of the season for the village to notice.
+  s.rehouseTimer = (s.rehouseTimer ?? 0) + dt;
+  if (s.rehouseTimer >= REHOUSE_INTERVAL) {
+    s.rehouseTimer = 0;
+    rehouseVillagers(s);
+  }
 
   s.seasonTimer += dt;
   if (s.seasonTimer >= SEASON_LENGTH) {
@@ -1113,7 +1128,11 @@ function buildPath(s: GameState, c: Citizen, dt: number, maxD2 = Infinity): bool
   let bestIdx = -1;
   let bestD = Infinity;
   let bestStand: { x: number; y: number } | null = null;
+  // Tiles the player has drawn but not yet confirmed are not work orders yet. Built as a Set
+  // because this scans every tile on the map, for every villager, every tick.
+  const pending = s.pendingPaths?.length ? new Set(s.pendingPaths) : null;
   for (let i = 0; i < s.paths.length; i++) {
+    if (pending?.has(i)) continue;
     const v = s.paths[i];
     const tx = i % MAP_W;
     const ty = (i / MAP_W) | 0;

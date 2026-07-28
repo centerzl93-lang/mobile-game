@@ -1107,3 +1107,53 @@ body {
 .job-row.muted {
   opacity: 0.55;
 }
+
+/* ---------- Confirm bar (drawn paths / selected demolition) ---------- */
+#confirm {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--safe-bottom) + 96px);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 92%;
+  padding: 7px 8px 7px 12px;
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 9; /* above the hint, which shares this strip */
+}
+#confirm.raised {
+  bottom: calc(var(--safe-bottom) + 158px);
+}
+#confirm .cf-text {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#confirm button {
+  flex: 0 0 auto;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+#confirm .cf-cancel {
+  background: transparent;
+  color: var(--muted);
+}
+#confirm .cf-ok {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #10240c;
+}
+#confirm .cf-ok.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #2a0f0b;
+}

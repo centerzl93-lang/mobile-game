@@ -145,6 +145,7 @@ export class UI {
     rotRight: byId('btn-rot-right'),
     log: byId('log'),
     hint: byId('hint'),
+    confirm: byId('confirm'),
     toolbar: byId('toolbar'),
     popout: byId('popout'),
     inspect: byId('inspect'),
@@ -269,8 +270,9 @@ export class UI {
   private buildToolbar(): void {
     const tb = this.el.toolbar;
     tb.innerHTML = '';
+    // No Inspect button: inspecting is simply "no tool selected", and deselecting whatever is
+    // active drops back to it, so a dedicated button would only ever be a second way to do that.
     const tools: [string, string, () => void, string][] = [
-      ['inspect', '👆', () => this.setInspect(), 'Inspect'],
       ...CATEGORY_ORDER.map(
         (cat) =>
           [cat, CATEGORY_META[cat].emoji, () => this.toggleCategory(cat), CATEGORY_META[cat].label] as [
@@ -310,12 +312,21 @@ export class UI {
     }
   }
 
+  /**
+   * Open a build category, or close it and drop straight back to inspecting. Closing the last open
+   * tool always lands in inspect mode — that is what lets the toolbar do without a dedicated
+   * Inspect button, since inspecting is simply "no tool selected".
+   */
   private toggleCategory(cat: BuildCategory | 'paths'): void {
-    if (this.mode === 'harvest') {
-      this.mode = 'inspect';
-      this.cb.onSelectHarvest(false);
+    if (this.mode === 'harvest') this.cb.onSelectHarvest(false);
+    const closing = this.openCategory === cat;
+    this.openCategory = closing ? null : cat;
+    if (closing) {
+      this.setInspect();
+      return;
     }
-    this.openCategory = this.openCategory === cat ? null : cat;
+    this.mode = 'inspect'; // a category is open but nothing inside it is picked yet
+    this.cb.onSetDemolish(false);
     this.renderPopout();
     this.refreshToolbar();
   }
@@ -328,6 +339,7 @@ export class UI {
   private raiseHints(raised: boolean): void {
     this.el.hint.classList.toggle('raised', raised);
     this.el.log.classList.toggle('raised', raised);
+    this.el.confirm.classList.toggle('raised', raised);
   }
 
   private renderPopout(): void {
@@ -385,7 +397,13 @@ export class UI {
     this.hideHint();
   }
 
+  /** Demolish is a toggle, like harvest — tapping it again returns to inspect. */
   private setDemolish(): void {
+    const activating = this.mode !== 'demolish';
+    if (!activating) {
+      this.setInspect();
+      return;
+    }
     this.mode = 'demolish';
     this.selectedBuild = null;
     this.selectedPath = null;
@@ -397,7 +415,7 @@ export class UI {
     this.cb.onCloseInspect();
     this.renderPopout();
     this.refreshToolbar();
-    this.showHint('Tap a building or path to demolish it (25% of materials refunded). Tap a marked tile to un-mark it.');
+    this.showHint('Tap a building or path to select it, then confirm. 25% of materials are refunded.');
   }
 
   private setHarvest(): void {
@@ -1011,6 +1029,32 @@ export class UI {
       this.flashHint(r.ok ? 'Trade complete' : r.reason ?? 'Trade failed');
       this.tradeSig = '';
     });
+  }
+
+  // ---- Confirm bar ----
+  private confirmSig = '';
+  /**
+   * Show a pending action awaiting a decision — drawn path tiles, or a building picked for
+   * demolition. Rebuilt only when the message changes, since the frame loop calls this constantly.
+   */
+  showConfirm(text: string, confirmLabel: string, onConfirm: () => void, onCancel: () => void): void {
+    const sig = `${text}|${confirmLabel}`;
+    this.el.confirm.classList.remove('hidden');
+    if (sig === this.confirmSig) return;
+    this.confirmSig = sig;
+    this.el.confirm.innerHTML =
+      `<span class="cf-text">${text}</span>` +
+      `<button class="cf-cancel" id="cf-cancel">Cancel</button>` +
+      `<button class="cf-ok" id="cf-ok">${confirmLabel}</button>`;
+    byId('cf-ok').addEventListener('click', onConfirm);
+    byId('cf-cancel').addEventListener('click', onCancel);
+  }
+
+  hideConfirm(): void {
+    if (this.confirmSig === '') return;
+    this.confirmSig = '';
+    this.el.confirm.classList.add('hidden');
+    this.el.confirm.innerHTML = '';
   }
 
   // ---- Hints / log ----

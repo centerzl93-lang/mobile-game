@@ -1901,8 +1901,21 @@ test.describe('confirm before it happens', () => {
       s.paths.fill(0);
       s.pendingPaths = [];
       g.onSelectPath('dirt');
-      for (let i = 0; i < 10; i++) g.onPaint(120 + i * 12, 430); // a drag across the view
-      return { pending: s.pendingPaths.length, planned: s.paths.filter((v: number) => v === 1).length };
+      // Paint a run of tiles near the barn. Painting at map coordinates rather than screen
+      // coordinates keeps the test off the camera and the map seed — a fixed pixel row lands
+      // wherever the world happens to put it, which on an unlucky map is open water.
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      const painted: number[] = [];
+      for (let r = 2; r < 12 && painted.length < 6; r++)
+        for (let dy = -r; dy <= r && painted.length < 6; dy++)
+          for (let dx = -r; dx <= r && painted.length < 6; dx++) {
+            const x = barn.x + dx, y = barn.y + dy;
+            if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue;
+            const i = y * s.w + x;
+            if (painted.includes(i)) continue;
+            if (g.debugPaintPath('dirt', x, y)) painted.push(i);
+          }
+      return { painted, pending: s.pendingPaths.length, planned: s.paths.filter((v: number) => v === 1).length };
     });
     expect(drawn.pending).toBeGreaterThan(0);
     expect(drawn.planned).toBe(drawn.pending); // drawn tiles show as plans, so they are visible
@@ -1919,13 +1932,23 @@ test.describe('confirm before it happens', () => {
     });
     expect(whilePending).toBe(0);
 
-    // Confirming releases them to the builders.
+    // Confirming releases them to the builders. Stand a villager on each tile first: this is
+    // testing that confirmation unblocks the work, not how long anyone takes to walk there.
     await page.click('#cf-ok');
-    const after = await page.evaluate(() => {
+    const after = await page.evaluate((painted: number[]) => {
       const g = (window as any).__village;
+      const s = g.state;
+      const adults = s.citizens.filter((c: any) => c.age >= 4);
+      painted.forEach((i: number, n: number) => {
+        const w = adults[n % adults.length];
+        if (!w) return;
+        const x = (i % s.w) + 0.5;
+        const y = Math.floor(i / s.w) + 0.5;
+        w.x = x; w.y = y; w.tx = x; w.ty = y; w.route = undefined; w.carry = null;
+      });
       for (let i = 0; i < 3000; i++) g.debugAdvance(0.1);
-      return { built: g.state.paths.filter((v: number) => v === 2).length, pending: g.state.pendingPaths.length };
-    });
+      return { built: s.paths.filter((v: number) => v === 2).length, pending: s.pendingPaths.length };
+    }, drawn.painted);
     expect(after.pending).toBe(0);
     expect(after.built).toBeGreaterThan(0);
   });
@@ -1933,13 +1956,20 @@ test.describe('confirm before it happens', () => {
   test('cancelling a drawn path clears it back to bare ground', async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
-    await page.evaluate(() => {
+    const drew = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.state.paths.fill(0);
-      g.state.pendingPaths = [];
+      const s = g.state;
+      s.paths.fill(0);
+      s.pendingPaths = [];
       g.onSelectPath('dirt');
-      for (let i = 0; i < 10; i++) g.onPaint(120 + i * 12, 430);
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      for (let r = 2; r < 12 && s.pendingPaths.length < 6; r++)
+        for (let dy = -r; dy <= r && s.pendingPaths.length < 6; dy++)
+          for (let dx = -r; dx <= r && s.pendingPaths.length < 6; dx++)
+            g.debugPaintPath('dirt', barn.x + dx, barn.y + dy);
+      return s.pendingPaths.length;
     });
+    expect(drew).toBeGreaterThan(0);
     await expect(page.locator('#confirm')).toBeVisible();
     await page.click('#cf-cancel');
     const after = await page.evaluate(() => ({

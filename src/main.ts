@@ -981,6 +981,17 @@ class Game {
     return planPath(this.state, x, y, tier);
   }
 
+  /**
+   * Debug/testing helper: paint a path tile at a known map position — the same plan-then-hold-
+   * pending pair `onPaint` performs, minus the screen-to-tile conversion. Tests use this so they
+   * exercise the real pending flow without depending on where the camera happens to be looking.
+   */
+  debugPaintPath(tier: PathTier, x: number, y: number): boolean {
+    if (!planPath(this.state, x, y, tier)) return false;
+    markPending(this.state, x, y);
+    return true;
+  }
+
   /** Debug/testing helper: set the global Builders target directly (bypasses the adult clamp). */
   debugSetBuilders(n: number): void {
     this.state.desiredBuilders = Math.max(0, n);

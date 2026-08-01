@@ -32,7 +32,7 @@ const MOUNTAIN_STEP_H = 1.3; // extra height per tile of depth into the mountain
 const MOUNTAIN_MAX_H = 5.5; // tallest peak
 const SNOWLINE_H = 2.6; // peaks above this get a permanent snow cap
 const TOP = LAND_H; // y of the walkable surface props sit on
-const TREE_MODEL_SIZE = 1.6; // world scale applied to a normalized (footprint=1) tree model
+const TREE_MODEL_SIZE = 0.55; // world scale for a normalized (footprint=1) tree model — see tools/models/pine.py
 const ROCK_MODEL_SIZE = 0.9; // world scale applied to a normalized loose-stone model
 
 const TILE_COLOR: Record<string, number> = {

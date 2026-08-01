@@ -19,7 +19,7 @@ OUT = os.path.join(ROOT, "public", "models")
 sys.path.insert(0, HERE)
 
 # Model name -> the module that builds it. Add new models here.
-MODELS = ["house"]
+MODELS = ["house", "pine", "rock"]
 
 
 def build(name: str) -> str:

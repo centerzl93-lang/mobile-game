@@ -1,61 +1,44 @@
-"""A plain villager's house: timber walls, thatched gable roof, door, shutters, chimney.
+"""A villager's house: stone footing, half-timbered walls, steep shingled roof, stone chimney.
 
-Two tiles square, matching BUILDING_DEFS.house (w:2, h:2). Faces +Y in Blender, which the
-glTF exporter turns into the game's +Z forward.
+Two tiles square (BUILDING_DEFS.house is w:2, h:2). The roof carries most of the height — that
+steep, deeply-lapped roofline is what makes the style read at a distance.
 """
 
-from common import reset_scene, material, box, prism, bevel, finish, export_glb
+from common import reset_scene, box, bevel, finish, export_glb
+from style import palette, shingled_roof, half_timber
 
-W, D = 2.0, 2.0          # footprint in tiles
-WALL_H = 1.05            # eaves height
-ROOF_H = 0.85            # ridge above the eaves
+W, D = 2.0, 2.0
+FOOTING_H = 0.30     # stone base the timber frame sits on
+WALL_H = 1.40        # half-timbered storey
+ROOF_H = 1.25        # ridge above the eaves — taller than the walls, as in the reference
 
 
 def build():
     reset_scene()
-    plaster = material("Plaster", (0.78, 0.72, 0.60))
-    timber = material("Timber", (0.28, 0.19, 0.12))
-    thatch = material("Thatch", (0.46, 0.34, 0.16))
-    door_m = material("Door", (0.33, 0.21, 0.13))
-    stone = material("Stone", (0.42, 0.41, 0.39))
-
+    m = palette()
     parts = []
 
-    # Walls, inset slightly so the roof overhangs them.
-    walls = box("Walls", (W - 0.18, D - 0.18, WALL_H), (0, 0, WALL_H / 2), plaster)
-    bevel(walls)
-    parts.append(walls)
+    footing = box("Footing", (W, D, FOOTING_H), (0, 0, FOOTING_H / 2), m["stone"])
+    bevel(footing, 0.02)
+    parts.append(footing)
 
-    # Corner posts and a mid-rail — the half-timbered look, cheap in polys.
-    for sx in (-1, 1):
-        for sy in (-1, 1):
-            p = box(
-                "Post",
-                (0.13, 0.13, WALL_H),
-                (sx * (W / 2 - 0.13), sy * (D / 2 - 0.13), WALL_H / 2),
-                timber,
-            )
-            parts.append(p)
-    rail = box("Rail", (W - 0.16, D - 0.16, 0.09), (0, 0, WALL_H * 0.62), timber)
-    parts.append(rail)
+    parts += half_timber(W, D, WALL_H, FOOTING_H, m)
+    parts += shingled_roof(W, D, ROOF_H, FOOTING_H + WALL_H, m, rows=8)
 
-    # Thatched gable roof, overhanging the walls on every side.
-    roof = prism("Roof", W + 0.22, D + 0.18, ROOF_H, (0, 0, WALL_H), thatch)
-    parts.append(roof)
-
-    # Door on the +Y face.
-    door = box("Door", (0.42, 0.08, 0.68), (0, D / 2 - 0.10, 0.34), door_m)
+    # Door and windows on the +Y face.
+    door = box("Door", (0.44, 0.10, 0.72), (0, D / 2 - 0.04, FOOTING_H + 0.36), m["timber_dark"])
     parts.append(door)
-
-    # A shuttered window either side of the door.
+    lintel = box("Lintel", (0.60, 0.12, 0.10), (0, D / 2 - 0.04, FOOTING_H + 0.77), m["timber"])
+    parts.append(lintel)
     for sx in (-1, 1):
-        sh = box("Shutter", (0.30, 0.07, 0.30), (sx * 0.62, D / 2 - 0.10, 0.70), timber)
-        parts.append(sh)
+        parts.append(box("Window", (0.30, 0.08, 0.28), (sx * 0.62, D / 2 - 0.04, FOOTING_H + 0.72), m["window"]))
+        parts.append(box("WinFrame", (0.38, 0.06, 0.36), (sx * 0.62, D / 2 - 0.02, FOOTING_H + 0.72), m["timber"]))
 
-    # Stone chimney breaking the ridge line.
-    chimney = box("Chimney", (0.26, 0.26, 0.75), (W / 2 - 0.42, -0.35, WALL_H + ROOF_H * 0.55), stone)
-    bevel(chimney)
-    parts.append(chimney)
+    # Stone chimney breaking the ridge.
+    chim = box("Chimney", (0.30, 0.30, 1.30), (W / 2 - 0.46, -0.42, FOOTING_H + WALL_H + 0.55), m["stone_dark"])
+    bevel(chim, 0.02)
+    parts.append(chim)
+    parts.append(box("ChimneyCap", (0.38, 0.38, 0.10), (W / 2 - 0.46, -0.42, FOOTING_H + WALL_H + 1.22), m["stone"]))
 
     return finish(parts, "House")
 

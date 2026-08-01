@@ -2,6 +2,6 @@
   "buildings": {
     "house": "house.glb"
   },
-  "trees": [],
-  "rocks": []
+  "trees": ["pine.glb"],
+  "rocks": ["rock.glb"]
 }

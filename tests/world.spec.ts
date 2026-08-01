@@ -355,3 +355,68 @@ test.describe('tunnels', () => {
     expect(res.beforeLen === -1 || res.afterLen < res.beforeLen).toBe(true);
   });
 });
+
+test.describe('clearing build sites', () => {
+  test('resources blocking a building or a drawn path are harvested before anything else', async ({ page }) => {
+    await startSmall(page);
+    const res = await page.evaluate(([W, H]) => {
+      const g = (window as any).__village;
+      const s = g.state;
+      const idx = (x: number, y: number) => y * W + x;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+
+      // Two marked trees: one right next to a villager, one far away where a house will go.
+      const near = { x: barn.x + 2, y: barn.y + 2 };
+      // Pick a far tile the villager can actually walk to. `pickHarvest` skips anything in a
+      // different walkable component, so a tile chosen blind can land across the river and be
+      // rejected before priority is ever consulted.
+      let far: { x: number; y: number } | null = null;
+      for (let r = 9; r < 18 && !far; r++) {
+        for (const [dx, dy] of [[r, r], [r, -r], [-r, r], [-r, -r], [r, 0], [0, r], [-r, 0], [0, -r]]) {
+          const p = { x: barn.x + dx, y: barn.y + dy };
+          if (p.x < 2 || p.y < 2 || p.x >= W - 3 || p.y >= H - 3) continue;
+          const t = s.tiles[idx(p.x, p.y)];
+          if (t.type === 'water' || t.type === 'stone') continue;
+          if (!g.debugPath(barn.x, barn.y, p.x, p.y)) continue;
+          far = p;
+          break;
+        }
+      }
+      if (!far) return { skip: true } as any;
+      for (const p of [near, far]) {
+        const t = s.tiles[idx(p.x, p.y)];
+        t.type = 'forest';
+        t.trees = 1;
+        delete t.stone;
+        delete t.iron;
+        s.harvest[idx(p.x, p.y)] = 1; // HARVEST_WOOD
+      }
+      const c = s.citizens[0];
+      c.x = near.x + 0.5;
+      c.y = near.y + 0.5;
+      // Walkable-connectivity labels are built inside the update loop, and `pickHarvest` refuses
+      // any tile it cannot confirm is reachable — so tick once before asking.
+      g.debugAdvance(0.1);
+
+      // With nothing under construction the nearest tree wins.
+      const plain = g.debugPickHarvest(c.id);
+
+      // Put a building over the far tree: it should now win despite being ten tiles further.
+      s.buildings.push({ id: s.nextId++, type: 'house', x: far.x, y: far.y, built: false, progress: 0,
+        workers: [], desiredWorkers: 0, growth: 0, store: {} });
+      const withSite = g.debugPickHarvest(c.id);
+
+      // Same again for a drawn path, with the building removed.
+      s.buildings.pop();
+      s.paths[idx(far.x, far.y)] = 1; // PATH_DIRT_PLAN
+      const withPath = g.debugPickHarvest(c.id);
+
+      return { plain, withSite, withPath, nearIdx: idx(near.x, near.y), farIdx: idx(far.x, far.y) };
+    }, [W, H] as const);
+
+    expect(res.skip, 'the map offered a reachable far tile to test with').toBeFalsy();
+    expect(res.plain, 'no build site: the nearest marked tile').toBe(res.nearIdx);
+    expect(res.withSite, 'a building is waiting on it: the far tile jumps the queue').toBe(res.farIdx);
+    expect(res.withPath, 'a drawn path is waiting on it too').toBe(res.farIdx);
+  });
+});

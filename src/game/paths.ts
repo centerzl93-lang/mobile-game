@@ -1,5 +1,7 @@
 import {
   GameState,
+  Tile,
+  HARVEST_NONE,
   PATH_NONE,
   PATH_DIRT,
   PATH_DIRT_PLAN,
@@ -21,6 +23,7 @@ import {
   footprintH,
 } from '../types';
 import { tileIndex, inBounds, getTile } from './world';
+import { HARVEST_WOOD, HARVEST_STONE, HARVEST_IRON } from '../types';
 import { totalStored } from './storage';
 
 export type PathTier = 'dirt' | 'stone' | 'bridge' | 'tunnel';
@@ -58,11 +61,28 @@ export function planPath(s: GameState, tx: number, ty: number, tier: PathTier): 
     // Stone is consumed by the builder when the tile is laid; just require some exists.
     if (totalStored(s, 'stone') < STONE_PATH_COST) return false;
     s.paths[idx] = PATH_STONE_PLAN;
+    markGroundHarvest(s, idx, t);
     return true;
   }
   if (cur !== PATH_NONE) return false;
   s.paths[idx] = PATH_DIRT_PLAN;
+  markGroundHarvest(s, idx, t);
   return true;
+}
+
+/**
+ * Mark whatever is growing or lying on a tile for harvest before a path is laid over it.
+ *
+ * Paving used to simply delete the trees and deposits it covered. Routing a road through the
+ * woods therefore destroyed the timber instead of collecting it, and the player had no way to
+ * ask for it first. Now planning a path queues the harvest, and `buildPath` waits for it —
+ * the same rule buildings already follow through `footprintClear`.
+ */
+function markGroundHarvest(s: GameState, idx: number, t: Tile): void {
+  if (s.harvest[idx] !== HARVEST_NONE) return; // an order is already outstanding here
+  if (t.type === 'forest' && t.trees > 0.05) s.harvest[idx] = HARVEST_WOOD;
+  else if ((t.stone ?? 0) > 0) s.harvest[idx] = HARVEST_STONE;
+  else if ((t.iron ?? 0) > 0) s.harvest[idx] = HARVEST_IRON;
 }
 
 /**

@@ -1081,10 +1081,54 @@ export function markHarvestRect(s: GameState, x0: number, y0: number, x1: number
   return marked;
 }
 
-/** Nearest reachable tile with a live harvest order, or -1. Clears stale (depleted) marks. */
+/**
+ * Tiles whose harvest order is holding up construction: anything inside an unbuilt building's
+ * footprint, or under a path the player has drawn.
+ *
+ * These jump the queue in `pickHarvest`. Without it a villager sent to clear a build site would
+ * wander off to whichever marked tree happened to be nearest, and a site could sit blocked
+ * indefinitely while its own timber went un-felled — a building the player has paid for and
+ * ordered should not wait behind scenery.
+ */
+function blockingHarvest(s: GameState): Set<number> {
+  const out = new Set<number>();
+  for (const b of s.buildings) {
+    if (b.built) continue;
+    const fw = footprintW(b);
+    const fh = footprintH(b);
+    for (let dy = 0; dy < fh; dy++) {
+      for (let dx = 0; dx < fw; dx++) {
+        const tx = b.x + dx;
+        const ty = b.y + dy;
+        if (!inBounds(tx, ty)) continue;
+        const i = tileIndex(tx, ty);
+        if (s.harvest[i] !== HARVEST_NONE) out.add(i);
+      }
+    }
+  }
+  for (let i = 0; i < s.paths.length; i++) {
+    const v = s.paths[i];
+    if (v !== PATH_DIRT_PLAN && v !== PATH_STONE_PLAN) continue;
+    if (s.harvest[i] !== HARVEST_NONE) out.add(i);
+  }
+  return out;
+}
+
+/**
+ * Nearest reachable tile with a live harvest order, or -1. Clears stale (depleted) marks.
+ *
+ * Tiles that are blocking construction win outright over ordinary marked ground, however far
+ * away they are; distance only breaks ties within each class.
+ */
+export function pickHarvestFor(s: GameState, c: Citizen): number {
+  return pickHarvest(s, c);
+}
+
 function pickHarvest(s: GameState, c: Citizen): number {
   let best = -1;
   let bestD = Infinity;
+  let bestBlocking = false;
+  const blocking = blockingHarvest(s);
   for (let i = 0; i < s.harvest.length; i++) {
     const h = s.harvest[i];
     if (h !== HARVEST_WOOD && h !== HARVEST_STONE && h !== HARVEST_IRON) continue;
@@ -1096,7 +1140,13 @@ function pickHarvest(s: GameState, c: Citizen): number {
     const ty = (i / MAP_W) | 0;
     if (!reachableTile(c, tx, ty)) continue;
     const d = (tx + 0.5 - c.x) ** 2 + (ty + 0.5 - c.y) ** 2;
-    if (d < bestD) {
+    const isBlocking = blocking.has(i);
+    if (isBlocking && !bestBlocking) {
+      // First blocking tile seen: it beats anything found so far regardless of distance.
+      bestBlocking = true;
+      bestD = d;
+      best = i;
+    } else if (isBlocking === bestBlocking && d < bestD) {
       bestD = d;
       best = i;
     }
@@ -1223,6 +1273,10 @@ function buildPath(s: GameState, c: Citizen, dt: number, maxD2 = Infinity): bool
     let stand: { x: number; y: number } | null = null;
     if (v === PATH_DIRT_PLAN || v === PATH_STONE_PLAN) {
       if (!reachableTile(c, tx, ty)) continue; // stand on the land tile itself
+      // Wait for anything growing here to be harvested first. Paving used to delete the trees
+      // and deposits it covered, so routing a road through the woods destroyed the timber
+      // instead of collecting it. `planPath` queues the order; this waits for it.
+      if (s.harvest[i] !== HARVEST_NONE) continue;
       stand = { x: tx + 0.5, y: ty + 0.5 };
     } else if (v === PATH_BRIDGE_PLAN || v === PATH_TUNNEL_PLAN) {
       // Bridges and tunnels are worked from a walkable neighbour — the tile itself is water or

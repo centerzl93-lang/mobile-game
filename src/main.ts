@@ -63,6 +63,7 @@ import {
   rejectNomads,
   markHarvestRect,
   coupleNeedsAHome,
+  pickHarvestFor,
 } from './game/simulation';
 import { canPlace, placeBuilding, canAfford, demolishBuilding, footprintClear } from './game/buildings';
 import { findPath } from './game/pathfind';
@@ -1054,6 +1055,12 @@ class Game {
   debugCoatedCount(): number {
     const r = this.renderer as Renderer3D;
     return typeof r.coatedCount === 'function' ? r.coatedCount() : 0;
+  }
+
+  /** Debug/testing helper: which tile a villager would go and harvest next (-1 for none). */
+  debugPickHarvest(citizenId: number): number {
+    const c = this.state.citizens.find((x) => x.id === citizenId);
+    return c ? pickHarvestFor(this.state, c) : -1;
   }
 
   /** Debug/testing helper: route between tiles, returns waypoint tiles or null. */

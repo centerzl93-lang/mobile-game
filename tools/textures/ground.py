@@ -1,14 +1,14 @@
-"""Generate the tiling ground atlas the terrain samples.
+"""Generate the tiling ground textures the terrain blends between.
 
-One 2x2 atlas holds the four land surfaces — grass, forest floor, rock, dirt — and a matching
-normal map gives them relief under the sun. The renderer picks a cell per tile and jitters the
-UVs so a field of identical tiles does not read as wallpaper (see syncTerrain in renderer3d.ts).
+The terrain is one continuous height-field mesh, and each vertex carries a grass/dirt/rock
+weight so surfaces fade into each other instead of changing at a tile boundary. That means the
+surfaces must be **separate repeating textures**, not an atlas: a shared atlas would need
+fract() on the UVs, whose derivative discontinuity tears mipmaps along every cell seam.
 
-Each cell is generated **seamlessly**: all noise is built on a torus (wrapped offsets) so a cell
-tiles against itself without a visible seam, which matters because one cell covers one map tile
-and there are thousands of them side by side.
+Every texture is generated on a wrapped lattice so it tiles seamlessly at any repeat count.
 
-    python3 tools/textures/ground.py        -> public/textures/ground.png, ground_n.png
+    python3 tools/textures/ground.py
+        -> public/textures/{grass,dirt,rock}.png and ground_n.png
 """
 
 import os
@@ -66,17 +66,17 @@ def grass(size: int) -> np.ndarray:
     base = fbm(11, size, octaves=(3, 6, 12), weights=(0.6, 0.3, 0.1))
     blades = fbm(12, size, octaves=(32, 64), weights=(0.6, 0.4))
     mask = np.clip(base * 0.55 + blades * 0.65, 0, 1)
-    rgb = tint("#5c8442", "#3f6330", mask)
+    rgb = tint("#6d8256", "#4d6440", mask)
     # A few sun-bleached tufts so the field is not one flat value.
     dry = np.clip((fbm(13, size, octaves=(6, 12), weights=(0.7, 0.3)) - 0.62) * 4, 0, 1)
-    rgb += (np.array([132, 138, 74]) - rgb) * dry[:, :, None] * 0.55
+    rgb += (np.array([146, 147, 104]) - rgb) * dry[:, :, None] * 0.5
     return rgb
 
 
 def forest_floor(size: int) -> np.ndarray:
     """Darker, mossier, with scattered leaf litter."""
     base = fbm(21, size, octaves=(4, 8, 16), weights=(0.5, 0.3, 0.2))
-    rgb = tint("#3d5c31", "#26401f", np.clip(base * 1.1, 0, 1))
+    rgb = tint("#4a5c3c", "#31402a", np.clip(base * 1.1, 0, 1))
     litter = np.clip((fbm(22, size, octaves=(16, 32), weights=(0.5, 0.5)) - 0.58) * 4, 0, 1)
     rgb += (np.array([96, 74, 43]) - rgb) * litter[:, :, None] * 0.6
     return rgb
@@ -85,7 +85,7 @@ def forest_floor(size: int) -> np.ndarray:
 def rock(size: int) -> np.ndarray:
     """Fractured grey stone: broad slabs with darker cracks."""
     base = fbm(31, size, octaves=(4, 8, 16, 32), weights=(0.45, 0.3, 0.15, 0.1))
-    rgb = tint("#8e9096", "#5f6167", np.clip(base * 1.15, 0, 1))
+    rgb = tint("#8a8a86", "#5c5c5a", np.clip(base * 1.15, 0, 1))
     cracks = np.clip(1 - np.abs(fbm(32, size, octaves=(6, 12), weights=(0.7, 0.3)) - 0.5) * 7, 0, 1)
     rgb += (np.array([64, 65, 70]) - rgb) * cracks[:, :, None] * 0.5
     return rgb
@@ -94,7 +94,7 @@ def rock(size: int) -> np.ndarray:
 def dirt(size: int) -> np.ndarray:
     """Trodden earth with small stones — used for foothills and worn ground."""
     base = fbm(41, size, octaves=(4, 8, 16), weights=(0.5, 0.3, 0.2))
-    rgb = tint("#8a7250", "#5f4c33", np.clip(base * 1.1, 0, 1))
+    rgb = tint("#836f52", "#5a4a37", np.clip(base * 1.1, 0, 1))
     grit = np.clip((fbm(42, size, octaves=(32, 64), weights=(0.5, 0.5)) - 0.62) * 5, 0, 1)
     rgb += (np.array([150, 143, 128]) - rgb) * grit[:, :, None] * 0.7
     return rgb
@@ -114,21 +114,25 @@ def normal_from_height(h: np.ndarray, strength: float) -> np.ndarray:
     return np.stack([(-dx / ln * 0.5 + 0.5), (-dy / ln * 0.5 + 0.5), (nz / ln * 0.5 + 0.5)], axis=2) * 255
 
 
+SIZE = 512  # per-surface texture resolution
+
+
 def main() -> None:
     os.makedirs(OUT, exist_ok=True)
-    cells = {(0, 0): grass(CELL), (1, 0): forest_floor(CELL), (0, 1): rock(CELL), (1, 1): dirt(CELL)}
-    strengths = {(0, 0): 6.0, (1, 0): 6.0, (0, 1): 12.0, (1, 1): 8.0}
-    color = np.zeros((ATLAS, ATLAS, 3))
-    normal = np.zeros((ATLAS, ATLAS, 3))
-    for (cx, cy), rgb in cells.items():
-        x, y = cx * CELL, cy * CELL
-        color[y : y + CELL, x : x + CELL] = np.clip(rgb, 0, 255)
-        normal[y : y + CELL, x : x + CELL] = normal_from_height(height_of(rgb), strengths[(cx, cy)])
-    Image.fromarray(color.astype(np.uint8)).save(os.path.join(OUT, "ground.png"), optimize=True)
-    Image.fromarray(normal.astype(np.uint8)).save(os.path.join(OUT, "ground_n.png"), optimize=True)
-    for f in ("ground.png", "ground_n.png"):
+    surfaces = {"grass": grass(SIZE), "dirt": dirt(SIZE), "rock": rock(SIZE)}
+    written = []
+    for name, rgb in surfaces.items():
+        path = os.path.join(OUT, f"{name}.png")
+        Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8)).save(path, optimize=True)
+        written.append(f"{name}.png")
+    # One shared normal map keeps the fragment shader to a single extra sample while still
+    # giving flat ground some relief; the mesh itself supplies the large-scale shape.
+    nrm = normal_from_height(height_of(surfaces["grass"]), 7.0)
+    Image.fromarray(nrm.astype(np.uint8)).save(os.path.join(OUT, "ground_n.png"), optimize=True)
+    written.append("ground_n.png")
+    for f in written:
         p = os.path.join(OUT, f)
-        print(f"{f:14} {os.path.getsize(p) / 1024:6.0f} KB  ({ATLAS}x{ATLAS})")
+        print(f"{f:14} {os.path.getsize(p) / 1024:6.0f} KB  ({SIZE}x{SIZE})")
 
 
 if __name__ == "__main__":

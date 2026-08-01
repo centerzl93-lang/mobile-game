@@ -125,10 +125,12 @@ export class Renderer3D {
   private heads: THREE.InstancedMesh | null = null; // villager heads (high tier only)
 
   // Instanced static/dynamic layers.
-  private terrain!: THREE.InstancedMesh;
+  private terrain!: THREE.Mesh;
   private landIdx: number[] = [];
-  /** Per-terrain-instance atlas cell (x,y in cell units) and orientation code (z). */
-  private tileAtlas!: THREE.InstancedBufferAttribute;
+  /** Per-vertex surface weights (grass, dirt, rock) driving the terrain texture blend. */
+  private terrSurf!: THREE.BufferAttribute;
+  /** Per-vertex ground height, indexed by vertex row-major over the (w+1)x(h+1) grid. */
+  private terrHeight: Float32Array = new Float32Array(0);
   private trees!: THREE.InstancedMesh;
   private treeTiles: number[] = [];
   private rocks!: THREE.InstancedMesh;
@@ -219,16 +221,12 @@ export class Renderer3D {
 
   /** Build the instanced layers for a freshly (re)loaded map. */
   private init(s: GameState): void {
-    // Terrain: one block per land tile (water tiles are drawn by the water plane).
+    // Terrain: one continuous height-field mesh over the whole map (the water plane draws on
+    // top of the sunken water tiles).
     this.landIdx = [];
     for (let i = 0; i < s.tiles.length; i++) if (s.tiles[i].type !== 'water') this.landIdx.push(i);
     this.mountainH = computeMountainHeights(s);
-    const terrGeo = new THREE.BoxGeometry(1, 1, 1);
-    terrGeo.translate(0, 0.5, 0); // base at y=0, grows upward with Y-scale
-    // Per-instance atlas cell (xy) plus an orientation code (z) — see makeTerrainMaterial.
-    this.tileAtlas = new THREE.InstancedBufferAttribute(new Float32Array(this.landIdx.length * 3), 3);
-    terrGeo.setAttribute('aTile', this.tileAtlas);
-    this.terrain = new THREE.InstancedMesh(terrGeo, this.makeTerrainMaterial(), this.landIdx.length);
+    this.terrain = new THREE.Mesh(this.makeTerrainGeometry(s), this.makeTerrainMaterial());
     this.terrain.receiveShadow = true;
     this.terrain.castShadow = true;
     this.scene.add(this.terrain);
@@ -482,89 +480,198 @@ export class Renderer3D {
 
   // ---- terrain ----
   /**
-   * The terrain material: one atlas texture shared by every tile, with each instance choosing
-   * its cell through the `aTile` attribute.
+   * Per-tile ground height. Flat land stays at exactly LAND_H so that everything placed at TOP —
+   * buildings, trees, villagers — still sits on the surface without sampling the mesh.
+   */
+  private tileHeight(t: Tile, i: number): number {
+    if (t.type === 'water') return 0.02; // sunk below the water plane
+    if (t.type === 'stone') return this.mountainH ? this.mountainH[i] : MOUNTAIN_BASE_H;
+    if (t.type === 'foothill') return FOOTHILL_H;
+    return LAND_H;
+  }
+
+  /**
+   * The terrain as one continuous height-field mesh.
    *
-   * A single InstancedMesh can only carry one material, so the four ground surfaces live in one
-   * 2x2 atlas and the vertex shader remaps UVs into the right quadrant. `aTile.z` additionally
-   * flips the UVs per tile, which is what stops thousands of identical squares from reading as
-   * wallpaper. UVs are clamped just inside the cell so mipmapping cannot bleed a neighbouring
-   * surface in along the seams.
+   * Previously every tile was its own cube, which is why mountains read as a staircase of
+   * coloured blocks. Here a single grid of (w+1)x(h+1) vertices samples the tile heights and
+   * then relaxes them, so a mountain rises as a slope instead of a step. Flat land is pinned
+   * back to exactly LAND_H afterwards: any vertex whose surrounding tiles are all ordinary
+   * ground must not drift, or every prop in the village would float or sink.
+   */
+  private makeTerrainGeometry(s: GameState): THREE.BufferGeometry {
+    const vw = MAP_W + 1;
+    const vh = MAP_H + 1;
+    const raw = new Float32Array(vw * vh);
+    const flat = new Uint8Array(vw * vh); // 1 = surrounded only by ordinary ground
+    const at = (x: number, y: number) => s.tiles[Math.min(MAP_H - 1, Math.max(0, y)) * MAP_W + Math.min(MAP_W - 1, Math.max(0, x))];
+    for (let vy = 0; vy < vh; vy++) {
+      for (let vx = 0; vx < vw; vx++) {
+        // A vertex sits on the corner of up to four tiles; average them.
+        let sum = 0;
+        let plain = 1;
+        for (const [dx, dy] of [[-1, -1], [0, -1], [-1, 0], [0, 0]] as const) {
+          const tx = vx + dx;
+          const ty = vy + dy;
+          const t = at(tx, ty);
+          const idx = Math.min(MAP_H - 1, Math.max(0, ty)) * MAP_W + Math.min(MAP_W - 1, Math.max(0, tx));
+          sum += this.tileHeight(t, idx);
+          if (t.type === 'stone' || t.type === 'foothill') plain = 0;
+        }
+        raw[vy * vw + vx] = sum / 4;
+        flat[vy * vw + vx] = plain;
+      }
+    }
+    // Widen the height field so mountainsides become slopes.
+    //
+    // A plain blur is wrong here: averaging a narrow ridge against the flat ground around it
+    // drags the whole mountain down to nothing. Instead each pass takes max(original, blurred),
+    // which spreads a mountain's influence outward into a skirt without ever lowering its peak.
+    // Flat ground is pinned back to LAND_H so that props placed at TOP still meet the surface.
+    const peak = new Float32Array(raw);
+    const buf = new Float32Array(raw);
+    for (let pass = 0; pass < 3; pass++) {
+      for (let vy = 0; vy < vh; vy++) {
+        for (let vx = 0; vx < vw; vx++) {
+          const k = vy * vw + vx;
+          if (flat[k]) { buf[k] = LAND_H; continue; }
+          let sum = 0;
+          let n = 0;
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const nx = vx + dx;
+              const ny = vy + dy;
+              if (nx < 0 || ny < 0 || nx >= vw || ny >= vh) continue;
+              sum += raw[ny * vw + nx];
+              n++;
+            }
+          }
+          buf[k] = Math.max(peak[k], sum / n);
+        }
+      }
+      raw.set(buf);
+    }
+    this.terrHeight = raw;
+
+    const geo = new THREE.PlaneGeometry(MAP_W, MAP_H, MAP_W, MAP_H);
+    geo.rotateX(-Math.PI / 2); // plane faces up; its local +Y is now world up
+    geo.translate(MAP_W / 2, 0, MAP_H / 2);
+    const pos = geo.attributes.position as THREE.BufferAttribute;
+    const surf = new Float32Array(pos.count * 3);
+    for (let vy = 0; vy < vh; vy++) {
+      for (let vx = 0; vx < vw; vx++) {
+        const k = vy * vw + vx;
+        const h = raw[k];
+        pos.setY(k, h);
+        // Surface mix from height: ordinary ground is grass, the foothill band is dirt, and
+        // anything climbing above it turns to rock. Blending on height rather than on tile type
+        // is what removes the hard colour edge at a tile boundary.
+        const rock = clamp01((h - FOOTHILL_H) / (MOUNTAIN_BASE_H - FOOTHILL_H));
+        const dirt = clamp01((h - LAND_H) / (FOOTHILL_H - LAND_H)) * (1 - rock);
+        const grass = Math.max(0, 1 - rock - dirt);
+        surf[k * 3] = grass;
+        surf[k * 3 + 1] = dirt;
+        surf[k * 3 + 2] = rock;
+      }
+    }
+    this.terrSurf = new THREE.BufferAttribute(surf, 3);
+    geo.setAttribute('aSurf', this.terrSurf);
+    pos.needsUpdate = true;
+    geo.computeVertexNormals(); // smooth normals — this is what makes slopes read as slopes
+    return geo;
+  }
+
+  /**
+   * The terrain material: three tiling surface textures blended per-vertex.
+   *
+   * Each surface is its own repeating texture rather than a cell in an atlas, because blending
+   * inside an atlas needs fract() on the UVs and its derivative discontinuity tears mipmaps
+   * along every seam. UVs come from world XZ so the texture scale is independent of map size.
    */
   private makeTerrainMaterial(): THREE.MeshStandardMaterial {
     const loader = new THREE.TextureLoader();
     const base = import.meta.env.BASE_URL + 'textures/';
     const mat = matte(0xffffff, 0.95);
-    const setup = (t: THREE.Texture, srgb: boolean) => {
-      t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-      if (srgb) t.colorSpace = THREE.SRGBColorSpace;
-      t.anisotropy = this.tier === 'high' ? 4 : 1;
-      return t;
+    const load = (file: string, srgb: boolean, onto: (t: THREE.Texture) => void) =>
+      loader.load(base + file, (t) => {
+        t.wrapS = t.wrapT = THREE.RepeatWrapping;
+        if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+        t.anisotropy = this.tier === 'high' ? 4 : 1;
+        onto(t);
+        mat.needsUpdate = true;
+      }, undefined, () => { /* best-effort: no texture just means untextured ground */ });
+
+    const uniforms = {
+      uGrass: { value: null as THREE.Texture | null },
+      uDirt: { value: null as THREE.Texture | null },
+      uRock: { value: null as THREE.Texture | null },
+      uTexScale: { value: 0.5 }, // one texture repeat every two tiles
     };
-    // Best-effort, exactly like the models: no texture just means untextured tiles, never a crash.
-    loader.load(base + 'ground.png', (t) => { mat.map = setup(t, true); mat.needsUpdate = true; }, undefined, () => {});
-    loader.load(base + 'ground_n.png', (t) => {
-      mat.normalMap = setup(t, false);
-      mat.normalScale.set(0.8, 0.8);
-      mat.needsUpdate = true;
-    }, undefined, () => {});
+    load('grass.png', true, (t) => { uniforms.uGrass.value = t; mat.map = t; });
+    load('dirt.png', true, (t) => { uniforms.uDirt.value = t; });
+    load('rock.png', true, (t) => { uniforms.uRock.value = t; });
+    load('ground_n.png', false, (t) => { mat.normalMap = t; mat.normalScale.set(0.6, 0.6); });
+
     mat.onBeforeCompile = (shader) => {
-      shader.vertexShader = 'attribute vec3 aTile;\n' + shader.vertexShader;
+      Object.assign(shader.uniforms, uniforms);
+      shader.vertexShader = `attribute vec3 aSurf;\nvarying vec3 vSurf;\nvarying vec2 vGroundUv;\n` + shader.vertexShader;
       shader.vertexShader = shader.vertexShader.replace(
         '#include <uv_vertex>',
         `#include <uv_vertex>
-        vec2 tileUv = uv;
-        if (aTile.z > 0.5) tileUv.x = 1.0 - tileUv.x;
-        if (aTile.z > 1.5) tileUv.y = 1.0 - tileUv.y;
-        tileUv = clamp(tileUv, 0.004, 0.996) * 0.5 + aTile.xy * 0.5;
-        #ifdef USE_MAP
-          vMapUv = tileUv;
-        #endif
-        #ifdef USE_NORMALMAP
-          vNormalMapUv = tileUv;
-        #endif`,
+        vSurf = aSurf;
+        vGroundUv = position.xz;`,
+      );
+      shader.fragmentShader =
+        `uniform sampler2D uGrass;\nuniform sampler2D uDirt;\nuniform sampler2D uRock;\nuniform float uTexScale;\nvarying vec3 vSurf;\nvarying vec2 vGroundUv;\n` +
+        shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <map_fragment>',
+        `vec2 gUv = vGroundUv * uTexScale;
+        vec3 w = vSurf / max(0.001, vSurf.x + vSurf.y + vSurf.z);
+        vec4 blended =
+          texture2D(uGrass, gUv) * w.x +
+          texture2D(uDirt, gUv) * w.y +
+          texture2D(uRock, gUv) * w.z;
+        diffuseColor *= blended;`,
       );
     };
     return mat;
   }
 
+  /**
+   * Keep the terrain in step with the world. The mesh's shape is static for a given map, so this
+   * only rebuilds when the tile layout actually changes (clear-cutting a forest, say), and
+   * otherwise just retints for snow.
+   */
   private syncTerrain(s: GameState): void {
-    const snowQ = Math.round(this.snowNow * 8); // fold snow into the signature so it rebuilds
+    const snowQ = Math.round(this.snowNow * 8); // fold snow into the signature so it retints
     let sig = snowQ;
     for (const i of this.landIdx) sig = (sig + tileKind(s.tiles[i].type) * (i + 1)) % 2147483647;
     if (sig === this.sig.land) return;
     this.sig.land = sig;
+    // Snow washes the whole surface toward white; peaks keep a permanent cap above the snowline.
     const snow = this.snowNow;
-    const mh = this.mountainH;
-    let k = 0;
-    for (const i of this.landIdx) {
-      const t = s.tiles[i];
-      const isMountain = t.type === 'stone';
-      const h = isMountain ? (mh ? mh[i] : MOUNTAIN_BASE_H) : t.type === 'foothill' ? FOOTHILL_H : LAND_H;
-      this.dummy.position.set((i % MAP_W) + 0.5, 0, ((i / MAP_W) | 0) + 0.5);
-      this.dummy.scale.set(1, h, 1);
-      this.dummy.rotation.set(0, 0, 0);
-      this.dummy.updateMatrix();
-      this.terrain.setMatrixAt(k, this.dummy.matrix);
-      // Pick the atlas cell for this surface, and flip its UVs on a hash of the tile index so
-      // neighbouring tiles of the same type do not line up into a visible grid.
-      const cell = TERRAIN_CELL[t.type] ?? TERRAIN_CELL.grass;
-      this.tileAtlas.setXYZ(k, cell[0], cell[1], (i * 2654435761) % 3);
-      this.color.set(TILE_COLOR[t.type] ?? TILE_COLOR.grass);
-      // A little brightness jitter per tile, so a large field of one surface still varies.
-      this.color.multiplyScalar(0.90 + ((i * 2246822519) % 1000) / 1000 * 0.10);
-      // Peaks wear a permanent snow cap; then every tile takes the seasonal snow tint.
-      if (isMountain && h > SNOWLINE_H) {
+    const vw = MAP_W + 1;
+    const colors = new Float32Array(this.terrHeight.length * 3);
+    for (let k = 0; k < this.terrHeight.length; k++) {
+      const h = this.terrHeight[k];
+      this.color.setRGB(1, 1, 1);
+      if (h > SNOWLINE_H) {
         const cap = Math.min(1, (h - SNOWLINE_H) / (MOUNTAIN_MAX_H - SNOWLINE_H));
         this.color.lerp(SNOW_COLOR, cap * 0.85);
       }
-      if (snow > 0.001) this.color.lerp(SNOW_COLOR, snow * (isMountain ? 0.35 : t.type === 'foothill' ? 0.7 : 0.85));
-      this.terrain.setColorAt(k, this.color);
-      k++;
+      if (snow > 0.001) this.color.lerp(SNOW_COLOR, snow * (h > FOOTHILL_H ? 0.35 : 0.85));
+      // A touch of per-vertex brightness variation so broad fields are not one flat value.
+      const vx = k % vw;
+      const vy = (k / vw) | 0;
+      this.color.multiplyScalar(0.93 + (((vx * 73856093) ^ (vy * 19349663)) % 100) / 100 * 0.07);
+      colors[k * 3] = this.color.r;
+      colors[k * 3 + 1] = this.color.g;
+      colors[k * 3 + 2] = this.color.b;
     }
-    this.terrain.instanceMatrix.needsUpdate = true;
-    this.tileAtlas.needsUpdate = true;
-    if (this.terrain.instanceColor) this.terrain.instanceColor.needsUpdate = true;
+    this.terrain.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    (this.terrain.material as THREE.MeshStandardMaterial).vertexColors = true;
+    (this.terrain.material as THREE.MeshStandardMaterial).needsUpdate = true;
   }
 
   // ---- trees ----
@@ -1015,19 +1122,9 @@ export class Renderer3D {
   }
 }
 
-/**
- * Atlas cell each tile type samples, in cell units, paired with tools/textures/ground.py.
- *
- * Note the V axis is measured from the **bottom**: textures upload with flipY, so the atlas row
- * written first in the generator (grass, forest) is the row at v = 1 here. Getting this backwards
- * silently renders every field as rock, which is exactly as confusing as it sounds.
- */
-const TERRAIN_CELL: Record<string, [number, number]> = {
-  grass: [0, 1],
-  forest: [1, 1],
-  stone: [0, 0],
-  foothill: [1, 0],
-};
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
 
 function matte(color = 0xffffff, roughness = 0.9): THREE.MeshStandardMaterial {
   // Not fully rough: a little specular response is what separates a surface from a paper cutout.

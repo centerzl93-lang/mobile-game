@@ -48,19 +48,21 @@ PITCH_DEG = 54.0
 def palette() -> dict:
     """Build every shared material once, keyed by name."""
     return {
-        "plaster": material("Plaster", srgb(PLASTER)),
-        "timber": material("Timber", srgb(TIMBER)),
-        "timber_dark": material("TimberDark", srgb(TIMBER_DARK)),
-        "stone": material("Stone", srgb(STONE)),
-        "stone_dark": material("StoneDark", srgb(STONE_DARK)),
-        "slate": material("Slate", srgb(SLATE)),
-        "slate_light": material("SlateLight", srgb(SLATE_LIGHT)),
+        # Roughness carries a lot of the material read: damp slate is glossier than dry
+        # plaster, and planed timber sits between the two.
+        "plaster": material("Plaster", srgb(PLASTER), roughness=0.95),
+        "timber": material("Timber", srgb(TIMBER), roughness=0.72),
+        "timber_dark": material("TimberDark", srgb(TIMBER_DARK), roughness=0.70),
+        "stone": material("Stone", srgb(STONE), roughness=0.88),
+        "stone_dark": material("StoneDark", srgb(STONE_DARK), roughness=0.86),
+        "slate": material("Slate", srgb(SLATE), roughness=0.52),
+        "slate_light": material("SlateLight", srgb(SLATE_LIGHT), roughness=0.48),
         "window": material("Window", srgb(WINDOW), roughness=0.35),
-        "thatch": material("Thatch", srgb(THATCH)),
-        "foliage": material("Foliage", srgb(FOLIAGE)),
-        "foliage_dark": material("FoliageDark", srgb(FOLIAGE_DARK)),
-        "foliage_light": material("FoliageLight", srgb(FOLIAGE_LIGHT)),
-        "bark": material("Bark", srgb(BARK)),
+        "thatch": material("Thatch", srgb(THATCH), roughness=0.95),
+        "foliage": material("Foliage", srgb(FOLIAGE), roughness=0.80),
+        "foliage_dark": material("FoliageDark", srgb(FOLIAGE_DARK), roughness=0.82),
+        "foliage_light": material("FoliageLight", srgb(FOLIAGE_LIGHT), roughness=0.78),
+        "bark": material("Bark", srgb(BARK), roughness=0.90),
     }
 
 

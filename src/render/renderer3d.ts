@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
   GameState,
   Building,
@@ -151,22 +152,36 @@ export class Renderer3D {
     this.tier = detectTier();
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.tier === 'low' ? 1.5 : 2));
-    if (this.tier === 'high') {
+    // Filmic tone mapping. Without it the raw linear output clips highlights to flat white and
+    // leaves midtones washed out, which reads as "cartoon" no matter how good the models are.
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.15;
+    // Shadows are what give buildings weight, so only the weakest devices go without.
+    if (this.tier !== 'low') {
       this.renderer.shadowMap.enabled = true;
       this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     }
+    // A generated environment so PBR materials have something to reflect. With no envMap a
+    // MeshStandardMaterial gets zero ambient specular and every surface looks like paper.
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.scene.environmentIntensity = 0.35;
+    pmrem.dispose();
     this.scene.background = this.skyColor;
     this.scene.fog = new THREE.Fog(this.fogColor, 60, 150);
 
-    this.hemi = new THREE.HemisphereLight(0xe6f2ff, 0x4a6b34, 1.0);
+    // Sky fill is deliberately weak against a strong sun: a bright hemisphere light lifts the
+    // shadow side to nearly the same value as the lit side, which flattens every form it touches.
+    this.hemi = new THREE.HemisphereLight(0xe6f2ff, 0x4a6b34, 0.42);
     this.scene.add(this.hemi);
-    this.sun = new THREE.DirectionalLight(0xfff3d0, 1.35);
-    this.sun.position.set(28, 46, 12);
+    this.sun = new THREE.DirectionalLight(0xfff3d0, 2.4);
+    // Lower and more to the side than a noon sun, so roof planes separate and walls catch a rake.
+    this.sun.position.set(34, 30, 20);
     this.scene.add(this.sun);
     this.scene.add(this.sun.target);
-    if (this.tier === 'high') {
+    if (this.tier !== 'low') {
       this.sun.castShadow = true;
-      this.sun.shadow.mapSize.set(2048, 2048);
+      this.sun.shadow.mapSize.set(this.tier === 'high' ? 2048 : 1024, this.tier === 'high' ? 2048 : 1024);
       const c = this.sun.shadow.camera;
       c.left = -30; c.right = 30; c.top = 30; c.bottom = -30;
       c.near = 1; c.far = 140;
@@ -939,8 +954,9 @@ export class Renderer3D {
   }
 }
 
-function matte(color = 0xffffff): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({ color, roughness: 1, metalness: 0 });
+function matte(color = 0xffffff, roughness = 0.9): THREE.MeshStandardMaterial {
+  // Not fully rough: a little specular response is what separates a surface from a paper cutout.
+  return new THREE.MeshStandardMaterial({ color, roughness, metalness: 0 });
 }
 
 /** Distinct small integer per tile kind, so terrain rebuilds when a tile's type changes. */

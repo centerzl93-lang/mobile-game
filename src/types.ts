@@ -821,6 +821,14 @@ export const LOOSE_STONE_COVERAGE = 0.05; // unused: deposits are now placed in 
 // Surface deposits are seeded in clusters rather than sprinkled evenly, so prospecting for a
 // good patch of ground is a real decision instead of uniform background noise.
 export const STONE_CLUSTER_THRESHOLD = 0.46; // cluster-noise level above which loose stone appears
+/**
+ * Extra cluster-noise a deposit needs to claim a *forest* tile.
+ *
+ * A deposit clears the trees off its own tile, so on woodland each one costs a tree. Using the
+ * open-ground threshold everywhere stripped the map back to grass — deposits are common in the
+ * open and only occasional clearings in the woods.
+ */
+export const FOREST_DEPOSIT_EXTRA = 0.30;
 export const IRON_CLUSTER_THRESHOLD = 0.58; // iron is rarer, so it needs a stronger cluster
 export const LOOSE_IRON_MIN = 3;
 export const LOOSE_IRON_MAX = 8;

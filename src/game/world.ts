@@ -1,4 +1,4 @@
-import { MAP_W, MAP_H, Tile, TileType, PATH_NONE, HARVEST_NONE, LOOSE_STONE_MIN, LOOSE_STONE_MAX, LOOSE_IRON_MIN, LOOSE_IRON_MAX, STONE_CLUSTER_THRESHOLD, IRON_CLUSTER_THRESHOLD, START_CLEARING_RADIUS, FOOTHILL_RADIUS } from '../types';
+import { MAP_W, MAP_H, Tile, TileType, PATH_NONE, HARVEST_NONE, LOOSE_STONE_MIN, LOOSE_STONE_MAX, LOOSE_IRON_MIN, LOOSE_IRON_MAX, STONE_CLUSTER_THRESHOLD, IRON_CLUSTER_THRESHOLD, FOREST_DEPOSIT_EXTRA, START_CLEARING_RADIUS, FOOTHILL_RADIUS } from '../types';
 
 export function tileIndex(x: number, y: number): number {
   return y * MAP_W + x;
@@ -89,20 +89,28 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
         type = 'water';
       } else if (elev[i] > 0.68 && moist[i] < 0.6) {
         type = 'stone'; // mountain — a wider, more prominent range than a bare peak
-      } else if (moist[i] > 0.36 && elev[i] < 0.74) {
+      } else if (moist[i] > 0.24 && elev[i] < 0.78) {
+        // Generous, because every surface deposit clears the trees off its own tile — without
+        // this the deposits alone strip the map back to open grass.
         type = 'forest'; // most of the map is woodland
         trees = 0.6 + moist[i] * 0.4;
       } else {
         type = 'grass';
       }
-      // Surface deposits sit in noise clusters, on woodland as readily as on open ground —
-      // outcrops scattered through the trees look far more natural than a rock field that stops
-      // dead at the forest edge, and it means clearing woodland is worth doing for the stone too.
+      // Surface deposits sit in noise clusters, and an outcrop in the woods clears the trees off
+      // its own tile: one tile carries one resource, never trees and ore at once. That keeps them
+      // scattered through the forest — as small natural clearings — without stacking two harvests
+      // on a tile whose harvest layer can only hold one order.
       if (type === 'grass' || type === 'forest') {
-        if (stoneField[i] > STONE_CLUSTER_THRESHOLD) {
+        const extra = type === 'forest' ? FOREST_DEPOSIT_EXTRA : 0;
+        if (stoneField[i] > STONE_CLUSTER_THRESHOLD + extra) {
           stone = Math.round(LOOSE_STONE_MIN + rand() * (LOOSE_STONE_MAX - LOOSE_STONE_MIN));
-        } else if (ironField[i] > IRON_CLUSTER_THRESHOLD) {
+        } else if (ironField[i] > IRON_CLUSTER_THRESHOLD + extra) {
           iron = Math.round(LOOSE_IRON_MIN + rand() * (LOOSE_IRON_MAX - LOOSE_IRON_MIN));
+        }
+        if (stone !== undefined || iron !== undefined) {
+          type = 'grass';
+          trees = 0;
         }
       }
       const tile: Tile = { type, trees };
@@ -131,6 +139,7 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
       }
     }
   }
+  clearWaterMargin(tiles);
   return tiles;
 }
 
@@ -254,6 +263,33 @@ function smooth(t: number): number {
 
 
 /**
+ * Clear surface deposits off tiles that touch water.
+ *
+ * The bank slopes down into the water, so a deposit on a waterside tile stands on ground that has
+ * already dropped below the water plane and reads as floating on the river. Rather than chase
+ * that per-prop, keep the margin itself clear.
+ */
+function clearWaterMargin(tiles: Tile[]): void {
+  for (let y = 0; y < MAP_H; y++) {
+    for (let x = 0; x < MAP_W; x++) {
+      const t = tiles[tileIndex(x, y)];
+      if ((t.stone ?? 0) <= 0 && (t.iron ?? 0) <= 0) continue;
+      let nearWater = false;
+      for (let dy = -1; dy <= 1 && !nearWater; dy++) {
+        for (let dx = -1; dx <= 1 && !nearWater; dx++) {
+          const n = getTile(tiles, x + dx, y + dy);
+          if (n && n.type === 'water') nearWater = true;
+        }
+      }
+      if (nearWater) {
+        delete t.stone;
+        delete t.iron;
+      }
+    }
+  }
+}
+
+/**
  * Open up the ground around the founding barn.
  *
  * Most of the map is woodland and rock now, so without this a new game can begin walled in by
@@ -301,4 +337,5 @@ export function clearStartArea(tiles: Tile[], cx: number, cy: number): void {
       if (!hasMountain) { t.type = 'grass'; t.trees = 0; }
     }
   }
+  clearWaterMargin(tiles);
 }

@@ -437,7 +437,7 @@ export class Renderer3D {
   }
 
   private animateWater(dt: number): void {
-    this.waterTime += dt * 1.2;
+    this.waterTime += dt * 0.6; // half speed; combined with half amplitude the swell reads ~25%
     const geo = this.water.geometry as THREE.PlaneGeometry;
     const base = geo.userData.base as Float32Array | undefined;
     if (!base) return;
@@ -445,7 +445,7 @@ export class Renderer3D {
     for (let i = 0; i < arr.length; i += 3) {
       const x = base[i];
       const y = base[i + 1];
-      arr[i + 2] = Math.sin(x * 0.6 + this.waterTime) * 0.06 + Math.sin(y * 0.7 + this.waterTime * 1.3) * 0.05;
+      arr[i + 2] = Math.sin(x * 0.6 + this.waterTime) * 0.03 + Math.sin(y * 0.7 + this.waterTime * 1.3) * 0.025;
     }
     geo.attributes.position.needsUpdate = true;
     if (this.tier === 'high') geo.computeVertexNormals();
@@ -771,10 +771,12 @@ export class Renderer3D {
       const t = s.tiles[i];
       const live = t.type === 'forest' && t.trees > 0.05;
       if (this.treeInst) {
-        const sc = live ? (0.7 + t.trees * 0.8) * TREE_MODEL_SIZE : 0.0001;
-        this.dummy.position.set((i % MAP_W) + 0.5, live ? TOP : -5, ((i / MAP_W) | 0) + 0.5);
+        const sc = live ? (0.7 + t.trees * 0.8) * TREE_MODEL_SIZE * (0.8 + this.tileRand(i, 0x3d) * 0.45) : 0.0001;
+        const tx = (i % MAP_W) + 0.5 + this.tileJitter(i, 0x8f);
+        const tz = ((i / MAP_W) | 0) + 0.5 + this.tileJitter(i, 0xc3);
+        this.dummy.position.set(tx, live ? this.groundAt(tx, tz) : -5, tz);
         this.dummy.scale.set(sc, sc, sc);
-        this.dummy.rotation.set(0, (i % 8) * 0.78, 0);
+        this.dummy.rotation.set(0, this.tileRand(i, 0x67) * 6.283, 0);
         this.dummy.updateMatrix();
         this.treeInst.setAt(k, this.dummy.matrix);
       } else {
@@ -796,9 +798,31 @@ export class Renderer3D {
   }
 
   // ---- loose stone ----
-  /** A stable pseudo-random offset in -0.34..0.34 for scattering a prop within its tile. */
+  /** A stable pseudo-random offset in -0.42..0.42 for scattering a prop within its tile. */
   private tileJitter(i: number, salt: number): number {
-    return ((Math.imul(i ^ salt, 2654435761) >>> 8) % 1000) / 1000 * 0.68 - 0.34;
+    return ((Math.imul(i ^ salt, 2654435761) >>> 8) % 1000) / 1000 * 0.84 - 0.42;
+  }
+
+  /** A stable pseudo-random value in 0..1 from a tile index and a salt. */
+  private tileRand(i: number, salt: number): number {
+    return ((Math.imul(i ^ salt, 374761393) >>> 8) % 1000) / 1000;
+  }
+
+  /**
+   * Ground height at a world position, sampled from the terrain height field.
+   *
+   * Props used to be drawn at a constant TOP, which is only correct on flat ground at exactly
+   * LAND_H. On a shore that slopes into the water that left them hanging over the surface, and on
+   * a foothill it buried or floated them.
+   */
+  private groundAt(px: number, pz: number): number {
+    const R = TERRAIN_RES;
+    const vw = MAP_W * R + 1;
+    const vh = MAP_H * R + 1;
+    if (this.terrHeight.length !== vw * vh) return TOP;
+    const gx = Math.min(vw - 1, Math.max(0, Math.round(px * R)));
+    const gz = Math.min(vh - 1, Math.max(0, Math.round(pz * R)));
+    return this.terrHeight[gz * vw + gx];
   }
 
   /** Place the surface iron deposits; a depleted tile drops out of view like a spent rock. */
@@ -806,13 +830,12 @@ export class Renderer3D {
     let k = 0;
     for (const i of this.ironTiles) {
       const has = (s.tiles[i].iron ?? 0) > 0;
-      this.dummy.position.set(
-        (i % MAP_W) + 0.5 + this.tileJitter(i, 0x51),
-        has ? TOP + 0.04 : -5,
-        ((i / MAP_W) | 0) + 0.5 + this.tileJitter(i, 0x9d),
-      );
-      this.dummy.scale.set(1, 0.75, 1);
-      this.dummy.rotation.set(0, (i % 7) * 0.9, 0);
+      const ix = (i % MAP_W) + 0.5 + this.tileJitter(i, 0x51);
+      const iz = ((i / MAP_W) | 0) + 0.5 + this.tileJitter(i, 0x9d);
+      const isc = 0.7 + this.tileRand(i, 0x77) * 0.7;
+      this.dummy.position.set(ix, has ? this.groundAt(ix, iz) + 0.02 : -5, iz);
+      this.dummy.scale.set(isc, isc * 0.75, isc);
+      this.dummy.rotation.set(0, this.tileRand(i, 0x23) * 6.283, 0);
       this.dummy.updateMatrix();
       this.ironNodes.setMatrixAt(k, this.dummy.matrix);
       k++;
@@ -836,22 +859,20 @@ export class Renderer3D {
     for (const i of this.rockTiles) {
       const has = (s.tiles[i].stone ?? 0) > 0;
       if (this.rockInst) {
-        const sc = has ? ROCK_MODEL_SIZE : 0.0001;
-        this.dummy.position.set(
-          (i % MAP_W) + 0.5 + this.tileJitter(i, 0x2f),
-          has ? TOP : -5,
-          ((i / MAP_W) | 0) + 0.5 + this.tileJitter(i, 0xb7),
-        );
+        // Vary the size as well as the position: identical props on a lattice is what reads as
+        // "planted in rows", and scatter alone does not break it.
+        const sc = has ? ROCK_MODEL_SIZE * (0.65 + this.tileRand(i, 0x5b) * 0.7) : 0.0001;
+        const rx = (i % MAP_W) + 0.5 + this.tileJitter(i, 0x2f);
+        const rz = ((i / MAP_W) | 0) + 0.5 + this.tileJitter(i, 0xb7);
+        this.dummy.position.set(rx, has ? this.groundAt(rx, rz) : -5, rz);
         this.dummy.scale.set(sc, sc, sc);
-        this.dummy.rotation.set(0, (i % 6) * 1.05, 0);
+        this.dummy.rotation.set(0, this.tileRand(i, 0x11) * 6.283, 0);
         this.dummy.updateMatrix();
         this.rockInst.setAt(k, this.dummy.matrix);
       } else {
-        this.dummy.position.set(
-          (i % MAP_W) + 0.5 + this.tileJitter(i, 0x2f),
-          has ? TOP + 0.1 : -5,
-          ((i / MAP_W) | 0) + 0.5 + this.tileJitter(i, 0xb7),
-        );
+        const fx = (i % MAP_W) + 0.5 + this.tileJitter(i, 0x2f);
+        const fz = ((i / MAP_W) | 0) + 0.5 + this.tileJitter(i, 0xb7);
+        this.dummy.position.set(fx, has ? this.groundAt(fx, fz) + 0.1 : -5, fz);
         this.dummy.scale.set(has ? 1 : 0.0001, has ? 1 : 0.0001, has ? 1 : 0.0001);
         this.dummy.rotation.set(0, i * 1.1, 0);
         this.dummy.updateMatrix();

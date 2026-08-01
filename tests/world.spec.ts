@@ -96,6 +96,36 @@ test.describe('world generation, placement & pathfinding', () => {
     expect(gen.blockedPct, 'blocked tiles near the barn').toBeLessThan(10);
   });
 
+  test('woodland is spread over the whole map, not bunched into one half', async ({ page }) => {
+    await startSmall(page);
+    const worst = await page.evaluate(([W, H]) => {
+      const s = (window as any).__village.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // Score each quadrant by how much of its *buildable* ground is bare open grass. Water,
+      // mountain and foothill are not meant to grow trees, and the clearing around the founding
+      // barn is deliberately open, so none of them count either way.
+      const open = [0, 0, 0, 0];
+      const usable = [0, 0, 0, 0];
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < W; x++) {
+          const t = s.tiles[y * W + x];
+          if (t.type === 'water' || t.type === 'stone' || t.type === 'foothill') continue;
+          if (barn && Math.hypot(x - barn.x, y - barn.y) < 13) continue;
+          const q = (y < H / 2 ? 0 : 2) + (x < W / 2 ? 0 : 1);
+          usable[q]++;
+          if (t.type === 'grass' && ((t.stone ?? 0) + (t.iron ?? 0)) === 0) open[q]++;
+        }
+      let mx = 0;
+      for (let q = 0; q < 4; q++) if (usable[q] >= 40) mx = Math.max(mx, open[q] / usable[q]);
+      return mx;
+    }, [W, H] as const);
+    // The moisture field is deliberately multi-octave so a dry region breaks up into patchy
+    // woodland instead of one bare plain. Measured across 60 seeds the barest quadrant peaks
+    // around 40% open; this guards the "half the map has no trees" regression without being
+    // tight enough to flake on an unlucky seed.
+    expect(worst, 'barest quadrant, fraction of buildable ground left bare').toBeLessThan(0.55);
+  });
+
   test('mountains rise into tall peaks', async ({ page }) => {
     await startSmall(page);
     const peak = await page.evaluate(() => (window as any).__village.renderer.maxPeak);

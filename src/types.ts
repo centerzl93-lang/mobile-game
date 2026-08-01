@@ -834,6 +834,14 @@ export const LOOSE_IRON_MIN = 3;
 export const LOOSE_IRON_MAX = 8;
 /** Radius of open ground cleared around the founding barn so a village has room to grow. */
 export const START_CLEARING_RADIUS = 9;
+/**
+ * Moisture (0..1) above which a tile grows woodland.
+ *
+ * The moisture field is a sum of three octaves, so its values bunch toward the middle of the
+ * range — this threshold is read against that combined field, not against a single flat one.
+ * Lower means more forest.
+ */
+export const FOREST_MOISTURE = 0.3;
 
 // ---- Mountains & foothills ----
 export const FOOTHILL_RADIUS = 1; // one-tile foothill ring hugging the edge of each mountain

@@ -19,6 +19,8 @@ export interface ModelManifest {
 export class ModelLibrary {
   private loader = new GLTFLoader();
   private base = import.meta.env.BASE_URL + 'models/';
+  /** Cache-buster so a redeployed model is not masked by the service worker's copy. */
+  private v = `?v=${__ASSET_VERSION__}`;
   private templates = new Map<string, THREE.Object3D>(); // filename -> normalized template
   private buildingFile = new Map<string, string>(); // buildingType -> filename
   treeFiles: string[] = [];
@@ -31,7 +33,7 @@ export class ModelLibrary {
   async init(): Promise<void> {
     let manifest: ModelManifest | null = null;
     try {
-      const res = await fetch(this.base + 'manifest.json', { cache: 'no-cache' });
+      const res = await fetch(this.base + 'manifest.json' + this.v, { cache: 'no-cache' });
       if (res.ok) manifest = (await res.json()) as ModelManifest;
     } catch {
       /* no manifest -> pure placeholder mode */
@@ -51,7 +53,7 @@ export class ModelLibrary {
 
   private loadFile(file: string): void {
     this.loader.load(
-      this.base + file,
+      this.base + file + this.v,
       (gltf) => {
         this.templates.set(file, normalize(gltf.scene));
         this.loadedCount++;

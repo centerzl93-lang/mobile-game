@@ -6,3 +6,5 @@
  * the device is running the newest deploy or a cached service-worker copy of an older one.
  */
 declare const __BUILD_STAMP__: string;
+/** Short commit of the build, appended to runtime-fetched asset URLs to bust the SW cache. */
+declare const __ASSET_VERSION__: string;

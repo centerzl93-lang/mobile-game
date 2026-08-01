@@ -42,6 +42,11 @@ export default defineConfig({
   base: BASE,
   define: {
     __BUILD_STAMP__: JSON.stringify(BUILD_STAMP),
+    // Models live in public/ and are runtime-cached CacheFirst by the service worker (see the
+    // workbox config below), so a returning player keeps being served the .glb that was cached
+    // on their first visit — a re-exported model would not reach them for weeks. Stamping the
+    // commit onto the URL changes the cache key on every deploy, so new art actually ships.
+    __ASSET_VERSION__: JSON.stringify(shortSha),
   },
   build: {
     rollupOptions: {

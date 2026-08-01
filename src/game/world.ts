@@ -1,4 +1,4 @@
-import { MAP_W, MAP_H, Tile, TileType, PATH_NONE, HARVEST_NONE, LOOSE_STONE_MIN, LOOSE_STONE_MAX, LOOSE_IRON_MIN, LOOSE_IRON_MAX, STONE_CLUSTER_THRESHOLD, IRON_CLUSTER_THRESHOLD, FOREST_DEPOSIT_EXTRA, START_CLEARING_RADIUS, FOOTHILL_RADIUS } from '../types';
+import { MAP_W, MAP_H, Tile, TileType, PATH_NONE, HARVEST_NONE, LOOSE_STONE_MIN, LOOSE_STONE_MAX, LOOSE_IRON_MIN, LOOSE_IRON_MAX, STONE_CLUSTER_THRESHOLD, IRON_CLUSTER_THRESHOLD, FOREST_DEPOSIT_EXTRA, FOREST_MOISTURE, START_CLEARING_RADIUS, FOOTHILL_RADIUS } from '../types';
 
 export function tileIndex(x: number, y: number): number {
   return y * MAP_W + x;
@@ -54,7 +54,18 @@ export function riverColumnX(tiles: Tile[], y: number): number {
 export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
   const rand = mulberry32(seed);
   const elev = valueNoise(MAP_W, MAP_H, rand, 6);
-  const moist = valueNoise(MAP_W, MAP_H, mulberry32(seed ^ 0x9e3779b9), 5);
+  // Moisture drives where forest grows. A single low-frequency field spans about a tenth of the
+  // map per blob, so a whole region could fall under the forest threshold at once and render as
+  // one bald half — which is exactly what it did. Three octaves keep the broad damp/dry regions
+  // but break them up locally, so a dry region becomes patchy woodland with clearings in it
+  // rather than a bare plain.
+  const moistBase = valueNoise(MAP_W, MAP_H, mulberry32(seed ^ 0x9e3779b9), 7);
+  const moistMid = valueNoise(MAP_W, MAP_H, mulberry32(seed ^ 0x7f4a7c15), 17);
+  const moistFine = valueNoise(MAP_W, MAP_H, mulberry32(seed ^ 0x27d4eb2d), 33);
+  const moist = new Float32Array(MAP_W * MAP_H);
+  for (let i = 0; i < moist.length; i++) {
+    moist[i] = moistBase[i] * 0.5 + moistMid[i] * 0.3 + moistFine[i] * 0.2;
+  }
   // Separate noise fields for the surface deposits, so stone and iron form their own patches
   // rather than appearing wherever a uniform random roll happens to land.
   const stoneField = valueNoise(MAP_W, MAP_H, mulberry32(seed ^ 0x85ebca6b), 9);
@@ -87,9 +98,11 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
       let iron: number | undefined;
       if (isRiver || inLake(x, y)) {
         type = 'water';
-      } else if (elev[i] > 0.68 && moist[i] < 0.6) {
+      } else if (elev[i] > 0.68 && moistBase[i] < 0.6) {
+        // Ranges follow the broad damp/dry regions, not the fine detail — otherwise tuning the
+        // woodland would silently move the mountains too.
         type = 'stone'; // mountain — a wider, more prominent range than a bare peak
-      } else if (moist[i] > 0.24 && elev[i] < 0.78) {
+      } else if (moist[i] > FOREST_MOISTURE && elev[i] < 0.78) {
         // Generous, because every surface deposit clears the trees off its own tile — without
         // this the deposits alone strip the map back to open grass.
         type = 'forest'; // most of the map is woodland

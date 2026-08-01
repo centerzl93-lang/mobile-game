@@ -27,6 +27,7 @@ import type { PlacementView } from './renderer';
 import { ModelLibrary, InstancedModel } from './models';
 
 const LAND_H = 0.3; // height of a normal land tile block
+const WATER_BED_H = 0.02; // lake/river floor, kept below the water plane at y = 0.14
 const FOOTHILL_H = 0.5; // low rocky band at a mountain's base
 const MOUNTAIN_BASE_H = 1.8; // shortest mountain (edge) height
 const MOUNTAIN_STEP_H = 2.2; // extra height per tile of depth into the mountain
@@ -497,7 +498,7 @@ export class Renderer3D {
    * buildings, trees, villagers — still sits on the surface without sampling the mesh.
    */
   private tileHeight(t: Tile, i: number): number {
-    if (t.type === 'water') return 0.02; // sunk below the water plane
+    if (t.type === 'water') return WATER_BED_H;
     if (t.type === 'stone') return this.mountainH ? this.mountainH[i] : MOUNTAIN_BASE_H;
     if (t.type === 'foothill') return FOOTHILL_H;
     return LAND_H;
@@ -517,24 +518,39 @@ export class Renderer3D {
     const vh = MAP_H + 1;
     const raw = new Float32Array(vw * vh);
     const flat = new Uint8Array(vw * vh); // 1 = pin to LAND_H (surrounded only by ordinary ground)
+    const anyLand = new Uint8Array(vw * vh); // 1 = at least one adjoining tile is dry land
     const at = (x: number, y: number) => s.tiles[Math.min(MAP_H - 1, Math.max(0, y)) * MAP_W + Math.min(MAP_W - 1, Math.max(0, x))];
     for (let vy = 0; vy < vh; vy++) {
       for (let vx = 0; vx < vw; vx++) {
         // A vertex sits on the corner of up to four tiles; average them.
+        // Average only the dry tiles touching this vertex. Mixing a lake bed into a shoreline
+        // vertex drags the bank down under the water plane, which submerges the edge of the land
+        // and leaves anything standing on it — a boulder, an ore node — apparently afloat.
+        // A vertex goes to bed height only when every tile around it is water.
         let sum = 0;
+        let dry = 0;
+        let wet = 0;
         let plain = 1;
         for (const [dx, dy] of [[-1, -1], [0, -1], [-1, 0], [0, 0]] as const) {
           const tx = vx + dx;
           const ty = vy + dy;
           const t = at(tx, ty);
           const idx = Math.min(MAP_H - 1, Math.max(0, ty)) * MAP_W + Math.min(MAP_W - 1, Math.max(0, tx));
-          sum += this.tileHeight(t, idx);
-          // Water must not be pinned to LAND_H: the water plane sits at 0.14, below that, so a
-          // pinned lake bed rises straight through it and the map renders with no water at all.
+          if (t.type === 'water') {
+            wet++;
+          } else {
+            sum += this.tileHeight(t, idx);
+            dry++;
+          }
+          // Water must not be pinned to LAND_H either: the water plane sits below it, so a pinned
+          // lake bed rises straight through and the map renders with no water at all.
           if (t.type === 'stone' || t.type === 'foothill' || t.type === 'water') plain = 0;
         }
-        raw[vy * vw + vx] = sum / 4;
-        flat[vy * vw + vx] = plain;
+        const k0 = vy * vw + vx;
+        raw[k0] = dry > 0 ? sum / dry : WATER_BED_H;
+        flat[k0] = plain;
+        anyLand[k0] = dry > 0 ? 1 : 0;
+        void wet;
       }
     }
     // Widen the height field so mountainsides become slopes.
@@ -550,8 +566,8 @@ export class Renderer3D {
         for (let vx = 0; vx < vw; vx++) {
           const k = vy * vw + vx;
           if (flat[k]) { buf[k] = LAND_H; continue; }
-          // Anything touching water stays at the bed height so the shoreline drops away cleanly.
-          if (peak[k] < LAND_H) { buf[k] = peak[k]; continue; }
+          // Open water keeps its bed height so the lake floor stays below the water plane.
+          if (!anyLand[k]) { buf[k] = peak[k]; continue; }
           let sum = 0;
           let n = 0;
           for (let dy = -1; dy <= 1; dy++) {

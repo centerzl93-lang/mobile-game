@@ -103,7 +103,8 @@ test.describe('world generation, placement & pathfinding', () => {
   test('mines require foothills; quarries go anywhere there is room', async ({ page }) => {
     await startSmall(page);
     const place = await page.evaluate(([W, H]) => {
-      const g = (window as any).__village, T = g.state.tiles;
+      const g = (window as any).__village;
+      let T = g.state.tiles;
       const idx = (x: number, y: number) => y * W + x;
       const is = (x: number, y: number, t: string) => x >= 0 && y >= 0 && x < W && y < H && T[idx(x, y)].type === t;
       const buildable2x2 = (x: number, y: number) => {
@@ -117,29 +118,38 @@ test.describe('world generation, placement & pathfinding', () => {
         return footTiles > 0;
       };
       let foot: number[] | null = null, grassAway: number[] | null = null, mountain: number[] | null = null;
-      for (let y = 1; y < H - 2 && !foot; y++) for (let x = 1; x < W - 2; x++) if (buildable2x2(x, y)) { foot = [x, y]; break; }
-      const nearStone = (x: number, y: number, r: number) => { for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (is(x + dx, y + dy, 'stone')) return true; return false; };
-      for (let y = 1; y < H - 2 && !grassAway; y++) for (let x = 1; x < W - 2; x++) if (is(x, y, 'grass') && is(x + 1, y, 'grass') && is(x, y + 1, 'grass') && is(x + 1, y + 1, 'grass') && !nearStone(x, y, 4)) { grassAway = [x, y]; break; }
-      for (let y = 0; y < H && !mountain; y++) for (let x = 0; x < W; x++) if (is(x, y, 'stone')) { mountain = [x, y]; break; }
-      const cp = (t: string, xy: number[] | null) => (xy ? g.debugCanPlace(t, xy[0], xy[1]) : { ok: null });
-      // The quarry is a fixed 3×6 pit that no longer needs a mountainside, so look for open ground
-      // well clear of any rock — the case that used to be refused.
       let quarryOpen: number[] | null = null;
+      let worldsTried = 0;
+      const nearStone = (x: number, y: number, r: number) => { for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (is(x + dx, y + dy, 'stone')) return true; return false; };
+      const cp = (t: string, xy: number[] | null) => (xy ? g.debugCanPlace(t, xy[0], xy[1]) : { ok: null });
       const clearRect = (x: number, y: number, w: number, h: number) => {
         for (let dy = 0; dy < h; dy++)
           for (let dx = 0; dx < w; dx++) if (!is(x + dx, y + dy, 'grass')) return false;
         return true;
       };
-      // `debugCanPlace` is the final authority: all-grass tiles can still be occupied by the
-      // starter buildings, and the quarry now costs 30 wood, so terrain alone doesn't decide it.
-      for (let y = 1; y < H - 7 && !quarryOpen; y++)
-        for (let x = 1; x < W - 4; x++)
-          if (clearRect(x, y, 3, 6) && !nearStone(x, y, 6) && cp('quarry', [x, y]).ok) {
-            quarryOpen = [x, y];
-            break;
-          }
+      // Most of the map is woodland and rock now, so a 3x6 all-grass pit site well clear of any
+      // stone is scarce and some seeds simply have none. Try a few worlds rather than assert on
+      // one lucky map — the claim under test is that such a site is *placeable*, not that every
+      // generated world contains one.
+      for (worldsTried = 1; worldsTried <= 8; worldsTried++) {
+        T = g.state.tiles;
+        foot = null; grassAway = null; mountain = null; quarryOpen = null;
+        for (let y = 1; y < H - 2 && !foot; y++) for (let x = 1; x < W - 2; x++) if (buildable2x2(x, y)) { foot = [x, y]; break; }
+        for (let y = 1; y < H - 2 && !grassAway; y++) for (let x = 1; x < W - 2; x++) if (is(x, y, 'grass') && is(x + 1, y, 'grass') && is(x, y + 1, 'grass') && is(x + 1, y + 1, 'grass') && !nearStone(x, y, 4)) { grassAway = [x, y]; break; }
+        for (let y = 0; y < H && !mountain; y++) for (let x = 0; x < W; x++) if (is(x, y, 'stone')) { mountain = [x, y]; break; }
+        // `debugCanPlace` is the final authority: all-grass tiles can still be occupied by the
+        // starter buildings, and the quarry costs wood, so terrain alone doesn't decide it.
+        for (let y = 1; y < H - 7 && !quarryOpen; y++)
+          for (let x = 1; x < W - 4; x++)
+            if (clearRect(x, y, 3, 6) && !nearStone(x, y, 6) && cp('quarry', [x, y]).ok) {
+              quarryOpen = [x, y];
+              break;
+            }
+        if (foot && grassAway && mountain && quarryOpen) break;
+        g.startNewGame('small', 'normal', true);
+      }
       return {
-        foot, grassAway, mountain, quarryOpen,
+        foot, grassAway, mountain, quarryOpen, worldsTried,
         mineOnFoot: cp('mine', foot), mineOnGrass: cp('mine', grassAway), mineOnMountain: cp('mine', mountain),
         quarryOnOpenGround: cp('quarry', quarryOpen), quarryOnMountain: cp('quarry', mountain),
         houseOnFoot: cp('house', foot),
@@ -152,7 +162,7 @@ test.describe('world generation, placement & pathfinding', () => {
     expect(place.mineOnMountain.ok).toBe(false);
     expect(place.houseOnFoot.ok).toBe(true);
     // A quarry sinks its own pit: open ground far from any rock is fine now.
-    expect(place.quarryOpen).not.toBeNull();
+    expect(place.quarryOpen, `no open pit site in ${place.worldsTried} worlds`).not.toBeNull();
     expect(place.quarryOnOpenGround.ok).toBe(true);
     // It still cannot be cut into solid mountain rock.
     expect(place.quarryOnMountain.ok).toBe(false);

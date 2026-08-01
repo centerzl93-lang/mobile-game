@@ -39,7 +39,7 @@ import {
   isAdult,
 } from '../types';
 import { footprintClear } from '../game/buildings';
-import { totalStoredAll, totalFood } from '../game/storage';
+import { totalStoredAll, totalFoodAvailable, totalInLarders } from '../game/storage';
 import {
   LogKind,
   TradeResult,
@@ -250,12 +250,19 @@ export class UI {
     this.el.sick.classList.toggle('hidden', sick === 0);
     this.el.sick.classList.add('low');
     this.el.sick.querySelector('.val')!.textContent = `${sick}`;
-    const food = totalFood(s);
+    // Count what households have already carried home, not just what is left in the barns.
+    // The simulation has always fed villagers from their own larder first and only then from the
+    // barns, so a barn-only total reads as famine in a village whose houses are full — which is
+    // exactly what it did: the chip went red while every household had a season's food indoors.
+    const food = totalFoodAvailable(s);
     this.foodChip.querySelector('.val')!.textContent = `${Math.floor(food)}`;
+    this.foodChip.title = 'Total food (all types), including household larders';
     this.foodChip.classList.toggle('low', food < pop * FOOD_PER_CITIZEN_PER_SEASON);
     for (const kind of HUD_RESOURCES) {
       const chip = this.resChips.get(kind)!;
-      const v = totals[kind] ?? 0;
+      // Firewood and clothing live in larders too, and are consumed from there first, so their
+      // warnings have to count them for the same reason.
+      const v = (totals[kind] ?? 0) + totalInLarders(s, kind);
       chip.querySelector('.val')!.textContent = `${Math.floor(v)}`;
       if (SURVIVAL_RESOURCES.includes(kind)) {
         chip.classList.toggle('low', v < pop * (LOW_NEED[kind] ?? 0));

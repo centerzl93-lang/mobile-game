@@ -1009,7 +1009,7 @@ test.describe('household larders', () => {
     }
   });
 
-  test('larder stock is excluded from the top-line HUD', async ({ page }) => {
+  test('the top-line HUD counts food a household has already carried home', async ({ page }) => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -1027,8 +1027,10 @@ test.describe('household larders', () => {
       const chip = document.querySelector('#stat-resources .stat .val')!.textContent;
       return { chip, barnFood: Math.floor(barnFood()) };
     });
-    // The chip reports what is *free* in the barns; the 500 committed to a household is not counted.
-    expect(out.chip).toBe(String(out.barnFood));
+    // Villagers eat from their own larder first, so food indoors is food the village has. Counting
+    // only the barns made the chip go red — a famine warning — in a village whose houses were all
+    // full, which is exactly what a player reported.
+    expect(Number(out.chip)).toBeGreaterThanOrEqual(out.barnFood + 500);
   });
 
   test('villagers eat and heat from their own larder before the barns', async ({ page }) => {
@@ -2232,5 +2234,31 @@ test.describe('villager coats', () => {
     // And back again — a household that runs its press dry loses the coats.
     await setClothing(0);
     await expectCoats(0, 'clothing used up -> coats come off');
+  });
+});
+
+test.describe('food consumption', () => {
+  test('villagers eat continuously, not in one lump at the season boundary', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const FOODS = ['fruit', 'grain', 'corn', 'potato', 'rice', 'barley', 'carrot', 'tomato', 'onion',
+        'pepper', 'cabbage', 'beans', 'pumpkin', 'apple', 'grapes', 'strawberry', 'melon', 'eggs', 'fish', 'meat'];
+      const allFood = () =>
+        s.buildings.reduce((n: number, b: any) => n + FOODS.reduce((m: number, k: string) => m + (b.store[k] ?? 0), 0), 0);
+
+      const start = allFood();
+      // A fifth of a season. Under the old model nothing at all was eaten until the boundary.
+      const step = s.seasonLength ? s.seasonLength / 5 : 120;
+      for (let i = 0; i < step * 10; i++) g.debugAdvance(0.1);
+      const mid = allFood();
+      return { start, mid, pop: s.citizens.length };
+    });
+    // Food is drawn down steadily as the season runs, so a shortage is visible while there is
+    // still time to react instead of arriving all at once when the season turns over.
+    expect(out.pop).toBeGreaterThan(0);
+    expect(out.mid, 'food is consumed during the season').toBeLessThan(out.start);
   });
 });

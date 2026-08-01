@@ -9,6 +9,8 @@ import {
   MAP_W,
   MAP_H,
   SEASON_LENGTH,
+  STARVE_SECONDS,
+  STARVE_RECOVERY,
   SEASONS,
   Season,
   BASE_WALK_SPEED,
@@ -213,10 +215,52 @@ export function update(s: GameState, dt: number, log: LogFn): void {
     rehouseVillagers(s);
   }
 
+  eat(s, dt, log);
+
   s.seasonTimer += dt;
   if (s.seasonTimer >= SEASON_LENGTH) {
     s.seasonTimer -= SEASON_LENGTH;
     endSeason(s, log);
+  }
+}
+
+/**
+ * Villagers eat, a little every tick.
+ *
+ * Food used to be deducted in one lump at the season boundary, which made hunger invisible until
+ * it was fatal: the stores looked fine all season, then a quarter of a year's rations vanished in
+ * one frame and someone died on the spot. Draining continuously means the larders empty
+ * gradually, the household hauler tops them up from the barns as they run down, and a shortage
+ * shows up as a falling counter well before anyone is at risk.
+ *
+ * Each villager eats from their own larder first and only then from the barns. Going without
+ * accumulates in `starve` rather than killing outright — a villager has to be unfed for
+ * STARVE_SECONDS before they die, so a brief gap while a hauler is walking is survivable and a
+ * genuine famine is not.
+ */
+function eat(s: GameState, dt: number, log: LogFn): void {
+  if (s.citizens.length === 0) return;
+  const rate = dt / SEASON_LENGTH; // fraction of a season's ration owed this tick
+  const homeById = new Map<number, Building>();
+  for (const b of s.buildings) if (b.built && isHouse(b.type)) homeById.set(b.id, b);
+
+  const starved: Citizen[] = [];
+  for (const c of s.citizens) {
+    let need = FOOD_PER_CITIZEN_PER_SEASON * (isAdult(c) ? 1 : CHILD_FOOD_FACTOR) * rate;
+    const home = c.homeId !== null ? homeById.get(c.homeId) : undefined;
+    if (home) need = takeFoodFromLarder(home, need);
+    if (need > 0.000001) need = consumeFood(s, need);
+    if (need > 0.000001) {
+      c.starve = (c.starve ?? 0) + dt;
+      if (c.starve >= STARVE_SECONDS) starved.push(c);
+    } else if (c.starve) {
+      // Fed again: recover, but not instantly — a villager who nearly starved stays vulnerable.
+      c.starve = Math.max(0, c.starve - dt * STARVE_RECOVERY);
+    }
+  }
+  if (starved.length > 0) {
+    killFrom(s, starved, starved.length);
+    log(`${starved.length} villager${starved.length > 1 ? 's' : ''} starved`, 'bad');
   }
 }
 
@@ -612,7 +656,21 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
         // Healthier, happier, and educated workers produce more.
         const wellbeing = (0.7 + 0.3 * (c.health / 100)) * (0.85 + 0.15 * (c.happiness / 100));
         const prod = wellbeing * (c.educated ? EDUCATED_BONUS : 1);
-        c.carry = { kind: out.kind, amount: Math.min(carryLimit(out.kind), out.amount * prod) };
+        const limit = carryLimit(out.kind);
+        // Keep working until the load is full, rather than setting off with whatever one cycle
+        // produced. A single cycle yields well under a full load, so workers were walking the
+        // round trip to the barn with a third of a load — most of a forester's day spent
+        // commuting. `pending` accumulates across cycles and only becomes a carry when it is
+        // full, at which point the delivery branch above takes over.
+        const made = Math.min(limit, out.amount * prod);
+        const held = c.pending && c.pending.kind === out.kind ? c.pending.amount : 0;
+        const total = Math.min(limit, held + made);
+        if (total >= limit - 0.01) {
+          c.pending = null;
+          c.carry = { kind: out.kind, amount: total };
+        } else {
+          c.pending = { kind: out.kind, amount: total };
+        }
       }
     }
   }
@@ -1355,24 +1413,11 @@ function endSeason(s: GameState, log: LogFn): void {
   const homeOf = (c: Citizen): Building | undefined =>
     c.homeId !== null ? homeById.get(c.homeId) : undefined;
 
-  // Food — adults eat a full ration, children half. Each villager eats out of their own household
-  // larder first and only falls back to the village barns once it runs dry, so a stocked house
-  // rides out a bad season that would otherwise have starved its residents.
-  let shortFood = 0;
-  const hungry: Citizen[] = [];
-  for (const c of s.citizens) {
-    let need = FOOD_PER_CITIZEN_PER_SEASON * (isAdult(c) ? 1 : CHILD_FOOD_FACTOR);
-    const home = homeOf(c);
-    if (home) need = takeFoodFromLarder(home, need);
-    if (need > 0) need = consumeFood(s, need);
-    if (need > 0.001) hungry.push(c); // went without — the pool starvation draws from
-    shortFood += need;
-  }
-  if (shortFood > 0) {
-    const starved = Math.min(hungry.length, Math.ceil(shortFood / FOOD_PER_CITIZEN_PER_SEASON));
-    killFrom(s, hungry, starved);
-    if (starved > 0) log(`${starved} villager${starved > 1 ? 's' : ''} starved`, 'bad');
-  }
+  // Food is *not* taken here. Villagers eat continuously (`eat`, called every tick) rather than
+  // in one lump at the boundary — a season's worth vanishing from the stores in a single frame
+  // is what made a village look comfortable all season and then starve someone the instant it
+  // turned over, with no chance to react.
+  const shortFood = totalFoodAvailable(s) <= 0 ? 1 : 0;
 
   // Clothing and firewood are used every season, at a seasonal rate (winter heaviest, summer
   // lightest). Clothing is issued first because being warmly dressed cuts the fuel a villager

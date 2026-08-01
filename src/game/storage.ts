@@ -10,6 +10,7 @@ import {
   FOOD_KINDS,
   RESOURCE_VOLUME,
   LARDER_KINDS,
+  LARDER_RESTOCK_AT,
   HOUSE_FOOD_PER_RESIDENT,
   HOUSE_FIREWOOD_PER_RESIDENT,
   HOUSE_CLOTHING_PER_RESIDENT,
@@ -316,8 +317,15 @@ export function larderShortfall(
   s: GameState,
   house: Building,
 ): { kind: ResourceKind; amount: number } | null {
-  const foodGap = larderFoodTarget(s, house) - larderFood(house);
-  if (foodGap > 0.5) {
+  // Restock a good only once it has fallen below a fraction of its target, then fill it right up.
+  //
+  // This threshold is load-bearing now that villagers eat continuously rather than in one lump at
+  // the season boundary. Food is checked first, so with a hair-trigger gap it was *always* the
+  // answer — the household's single shopper spent every trip fetching a few crumbs of food and
+  // never reached firewood, clothing or medicine at all. Households froze with full pantries.
+  const foodTarget = larderFoodTarget(s, house);
+  const foodGap = foodTarget - larderFood(house);
+  if (foodGap > 0.5 && larderFood(house) < foodTarget * LARDER_RESTOCK_AT) {
     // Pull whichever food the barns hold most of, so households end up with a varied larder.
     let best: ResourceKind | null = null;
     let bestHave = 0;
@@ -331,7 +339,10 @@ export function larderShortfall(
     if (best) return { kind: best, amount: foodGap };
   }
   for (const kind of LARDER_KINDS) {
-    const gap = larderTarget(s, house, kind) - (house.store[kind] ?? 0);
+    const target = larderTarget(s, house, kind);
+    const have = house.store[kind] ?? 0;
+    if (have >= target * LARDER_RESTOCK_AT) continue;
+    const gap = target - have;
     if (gap > 0.5 && totalStored(s, kind) > 0) return { kind, amount: gap };
   }
   return null;

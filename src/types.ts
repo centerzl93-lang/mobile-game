@@ -537,6 +537,15 @@ export interface Citizen {
   jobId: number | null;
   /** What this villager is carrying (single kind at a time). */
   carry: { kind: ResourceKind; amount: number } | null;
+  /**
+   * Output a worker has accumulated at their workplace but not yet picked up.
+   *
+   * One work cycle produces well under a full load, so without this a worker set off for the
+   * barn after every cycle and spent most of the day walking. Work continues until `pending`
+   * reaches a full load and it becomes a `carry`. Transient — not saved, so a reload costs a
+   * villager at most one partial load.
+   */
+  pending?: { kind: ResourceKind; amount: number } | null;
   task: CitizenTask;
   timer: number; // seconds remaining in current work action
   sex: Sex;
@@ -562,6 +571,11 @@ export interface Citizen {
    * falling ill in winter.
    */
   clothed?: boolean;
+  /**
+   * Seconds this villager has gone unfed. Death comes at STARVE_SECONDS, so a short gap while a
+   * hauler restocks the larder is survivable. Transient — not saved.
+   */
+  starve?: number;
   /** Assigned to the Builders job this tick (recomputed every tick, not persisted). A builder has
    * jobId === null but constructs work buildings; a plain laborer (jobId null, builder false) does
    * not. */
@@ -880,6 +894,17 @@ export const FOREST_MOISTURE = 0.3;
 export const FOOTHILL_RADIUS = 1; // one-tile foothill ring hugging the edge of each mountain
 
 // ---- Consumption (per season) — sized for the per-trip hauling economy ----
+/**
+ * How long a villager can go completely unfed before they die, in seconds.
+ *
+ * Sized against SEASON_LENGTH: roughly a third of a season, so a household whose hauler is a
+ * long walk from the barns survives the gap, while a village that has genuinely run out loses
+ * people within the season rather than instantly at its boundary.
+ */
+export const STARVE_SECONDS = SEASON_LENGTH / 3;
+/** How fast the starvation clock unwinds once a villager is eating again, per second. */
+export const STARVE_RECOVERY = 2;
+
 export const FOOD_PER_CITIZEN_PER_SEASON = 60;
 export const HEAT_PER_CITIZEN_WINTER = 40; // heat units; firewood = 1, coal = 2
 export const FIREWOOD_HEAT = 1;
@@ -935,6 +960,14 @@ export const HOUSE_MEDICINE_PER_RESIDENT = 2;
  * clothing and goes without when it does not.
  */
 export const HOUSE_CLOTHING_PER_RESIDENT = CLOTHING_PER_CITIZEN_WINTER * HOUSE_LARDER_SEASONS;
+/**
+ * Fraction of its target a larder must fall to before the household bothers restocking it.
+ *
+ * A household has one shopper and checks its goods in a fixed order, so without a threshold the
+ * first item to dip by any amount monopolises every trip. Restocking in batches lets one errand
+ * run cover food, then fuel, then medicine.
+ */
+export const LARDER_RESTOCK_AT = 0.6;
 /** Resources a household keeps at home, in the order a resident restocks them. */
 export const LARDER_KINDS: ResourceKind[] = ['firewood', 'clothing', 'medicine'];
 
@@ -1127,7 +1160,15 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
   chickens: 8,
   medicine: 5,
 };
-export const MERCHANT_MARGIN = 0.8; // you must offer value ≥ goods' value / margin (merchant's cut); 1 = exact parity
+/**
+ * Trades settle at parity: goods are worth what TRADE_VALUE says, both directions.
+ *
+ * There used to be a 0.8 here — a 25% cut that turned 12 medicine at ◈5 into ◈75 with no
+ * explanation anywhere in the UI, which reads as the merchant being unable to multiply. If a
+ * merchant's margin is ever wanted back it belongs in the prices themselves, where a player can
+ * see it, not as an invisible divisor.
+ */
+export const MERCHANT_MARGIN = 1;
 export const MERCHANT_STAY_SEASONS = 1; // how many seasons a docked merchant lingers before sailing off
 export const MERCHANT_ARRIVAL_CHANCE = 0.5; // per-season chance a merchant appears (staffed post, not just departed)
 

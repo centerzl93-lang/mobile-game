@@ -1603,7 +1603,7 @@ test.describe('quarry', () => {
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
-      const s = g.state;
+      let s = g.state;
       const idx = (x: number, y: number) => y * s.w + x;
       const isGrass = (x: number, y: number) =>
         x >= 0 && y >= 0 && x < s.w && y < s.h && s.tiles[idx(x, y)].type === 'grass';
@@ -1619,17 +1619,28 @@ test.describe('quarry', () => {
       // Open grass with no rock within 6 tiles — the placement the old mountainside rule refused.
       // Searched outward from the barn so the pit lands within walking distance of the workforce;
       // scanning from the map origin instead can strand it half a map away and nothing gets mined.
-      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // A 3x6 stone-free clearing near the barn is genuinely scarce: surface deposits clear the
+      // trees off their own tile, so the map has plenty of grass but little of it contiguous and
+      // clear of rock. Try a few worlds rather than assert on one lucky seed — the claim under
+      // test is the quarry's *rate* on open ground, not that every world offers a site.
+      let barn = s.buildings.find((b: any) => b.type === 'barn');
       let spot: number[] | null = null;
-      for (let r = 3; r < 22 && !spot; r++)
-        for (let dy = -r; dy <= r && !spot; dy++)
-          for (let dx = -r; dx <= r; dx++) {
-            const x = barn.x + dx, y = barn.y + dy;
-            let clear = true;
-            for (let cy = 0; cy < 6 && clear; cy++)
-              for (let cx = 0; cx < 3; cx++) if (!isGrass(x + cx, y + cy)) { clear = false; break; }
-            if (clear && !nearRock(x, y, 6) && g.debugCanPlace('quarry', x, y).ok) { spot = [x, y]; break; }
-          }
+      for (let world = 0; world < 8 && !spot; world++) {
+        if (world > 0) {
+          g.startNewGame('small', 'easy', false);
+          s = g.state; // isGrass/nearRock close over `s`, so it must follow the new world
+          barn = s.buildings.find((b: any) => b.type === 'barn');
+        }
+        for (let r = 3; r < 22 && !spot; r++)
+          for (let dy = -r; dy <= r && !spot; dy++)
+            for (let dx = -r; dx <= r; dx++) {
+              const x = barn.x + dx, y = barn.y + dy;
+              let clear = true;
+              for (let cy = 0; cy < 6 && clear; cy++)
+                for (let cx = 0; cx < 3; cx++) if (!isGrass(x + cx, y + cy)) { clear = false; break; }
+              if (clear && !nearRock(x, y, 6) && g.debugCanPlace('quarry', x, y).ok) { spot = [x, y]; break; }
+            }
+      }
       if (!spot) return { error: 'nowhere clear to place a quarry' };
 
       const id = g.debugPlace('quarry', spot[0], spot[1]);

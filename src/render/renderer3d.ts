@@ -42,7 +42,22 @@ const MOUNTAIN_MAX_H = 11.0; // tallest peak
 const SNOWLINE_H = 6.0; // peaks above this get a permanent snow cap
 const TOP = LAND_H; // y of the walkable surface props sit on
 const TREE_MODEL_SIZE = 0.55; // world scale for a normalized (footprint=1) tree model — see tools/models/pine.py
-const ROCK_MODEL_SIZE = 0.5; // world scale applied to a normalized loose-stone model
+const ROCK_MODEL_SIZE = 0.34; // world scale applied to a normalized loose-stone model
+/**
+ * Props drawn per resource tile.
+ *
+ * One prop per tile is what makes a resource field read as polka dots on a grid however much the
+ * position is jittered — real ground has outcrops of several stones together and stands of
+ * overlapping trees. Trees are the expensive one, so a large map keeps a single tree per tile:
+ * at ~18k forest tiles a second pass would cost millions of triangles.
+ */
+const rocksPerTile = () => 5;
+const ironPerTile = () => 4;
+// Trees are much heavier than the ore chunks, and their count scales with map area, so the
+// largest map keeps one per tile. Medium is unchanged: a stability-check timeout in the headless
+// suite looked like it was caused by this, but the same test fails on the commit before it, so
+// the density is not what pushed it over.
+const treesPerTile = () => (MAP_W > 96 ? 1 : 2);
 
 // The ground atlas supplies each surface's colour now, so these are near-white multipliers
 // that only carry a slight per-type bias. A flat green here would double up with the texture.
@@ -256,8 +271,8 @@ export class Renderer3D {
     this.rockTiles = [];
     for (let i = 0; i < s.tiles.length; i++) if ((s.tiles[i].stone ?? 0) > 0) this.rockTiles.push(i);
     const rockGeo = new THREE.DodecahedronGeometry(0.13);
-    this.rocks = new THREE.InstancedMesh(rockGeo, matte(0x9a9ca1), Math.max(1, this.rockTiles.length));
-    this.rocks.count = this.rockTiles.length;
+    this.rocks = new THREE.InstancedMesh(rockGeo, matte(0x9a9ca1), Math.max(1, this.rockTiles.length * rocksPerTile()));
+    this.rocks.count = this.rockTiles.length * rocksPerTile();
     this.scene.add(this.rocks);
 
     // Surface iron ore: same hand-harvested deposit as loose stone, but rust-coloured and
@@ -265,8 +280,8 @@ export class Renderer3D {
     this.ironTiles = [];
     for (let i = 0; i < s.tiles.length; i++) if ((s.tiles[i].iron ?? 0) > 0) this.ironTiles.push(i);
     const ironGeo = new THREE.OctahedronGeometry(0.15);
-    this.ironNodes = new THREE.InstancedMesh(ironGeo, matte(0x9c5f3a, 0.65), Math.max(1, this.ironTiles.length));
-    this.ironNodes.count = this.ironTiles.length;
+    this.ironNodes = new THREE.InstancedMesh(ironGeo, matte(0x9c5f3a, 0.65), Math.max(1, this.ironTiles.length * ironPerTile()));
+    this.ironNodes.count = this.ironTiles.length * ironPerTile();
     this.ironNodes.castShadow = true;
     this.scene.add(this.ironNodes);
 
@@ -732,13 +747,13 @@ export class Renderer3D {
   private rebuildTreeLayer(s: GameState): void {
     this.treeTiles = [];
     for (let i = 0; i < s.tiles.length; i++) if (s.tiles[i].type === 'forest') this.treeTiles.push(i);
-    const cap = Math.max(1, this.treeTiles.length);
+    const cap = Math.max(1, this.treeTiles.length * treesPerTile());
     // Rebuild the cone fallback mesh at the new capacity.
     this.scene.remove(this.trees);
     const geo = this.trees.geometry;
     (this.trees.material as THREE.Material).dispose();
     this.trees = new THREE.InstancedMesh(geo, matte(0x2f5a2a), cap);
-    this.trees.count = this.treeInst ? 0 : this.treeTiles.length;
+    this.trees.count = this.treeInst ? 0 : this.treeTiles.length * treesPerTile();
     this.trees.castShadow = true;
     this.scene.add(this.trees);
     // Rebuild the model instances at the new capacity if models are in use.
@@ -757,7 +772,7 @@ export class Renderer3D {
     // Upgrade to a model the first frame one is available (hide the cone fallback).
     const tpl = this.models.firstTree();
     if (tpl && !this.treeInst) {
-      this.treeInst = new InstancedModel(tpl, this.treeTiles.length || 1);
+      this.treeInst = new InstancedModel(tpl, this.treeTiles.length * treesPerTile() || 1);
       this.treeInst.addTo(this.scene);
       this.trees.count = 0;
       this.sig.tree = -3;
@@ -770,27 +785,35 @@ export class Renderer3D {
     for (const i of this.treeTiles) {
       const t = s.tiles[i];
       const live = t.type === 'forest' && t.trees > 0.05;
-      if (this.treeInst) {
-        const sc = live ? (0.7 + t.trees * 0.8) * TREE_MODEL_SIZE * (0.8 + this.tileRand(i, 0x3d) * 0.45) : 0.0001;
-        const tx = (i % MAP_W) + 0.5 + this.tileJitter(i, 0x8f);
-        const tz = ((i / MAP_W) | 0) + 0.5 + this.tileJitter(i, 0xc3);
-        this.dummy.position.set(tx, live ? this.groundAt(tx, tz) : -5, tz);
-        this.dummy.scale.set(sc, sc, sc);
-        this.dummy.rotation.set(0, this.tileRand(i, 0x67) * 6.283, 0);
-        this.dummy.updateMatrix();
-        this.treeInst.setAt(k, this.dummy.matrix);
-      } else {
-        const sc = live ? 0.5 + t.trees * 0.9 : 0;
-        this.dummy.position.set((i % MAP_W) + 0.5, live ? TOP : -5, ((i / MAP_W) | 0) + 0.5);
-        this.dummy.scale.set(sc, sc, sc);
-        this.dummy.rotation.set(0, 0, 0);
-        this.dummy.updateMatrix();
-        this.trees.setMatrixAt(k, this.dummy.matrix);
+      // A stand of trees per tile, spread across the whole cell at mixed sizes, so canopies
+      // overlap between neighbours instead of each tile showing one spire on a lattice.
+      const per = treesPerTile();
+      for (let n = 0; n < per; n++) {
+        const salt = 0x8f + n * 0x61;
+        const tx = (i % MAP_W) + 0.5 + (this.tileRand(i, salt) - 0.5) * 0.92;
+        const tz = ((i / MAP_W) | 0) + 0.5 + (this.tileRand(i, salt + 0x1d) - 0.5) * 0.92;
+        const vary = 0.7 + this.tileRand(i, salt + 0x2f) * 0.6;
+        const gy = live ? this.groundAt(tx, tz) : -5;
+        if (this.treeInst) {
+          const sc = live ? (0.7 + t.trees * 0.8) * TREE_MODEL_SIZE * vary : 0.0001;
+          this.dummy.position.set(tx, gy, tz);
+          this.dummy.scale.set(sc, sc, sc);
+          this.dummy.rotation.set(0, this.tileRand(i, salt + 0x43) * 6.283, 0);
+          this.dummy.updateMatrix();
+          this.treeInst.setAt(k, this.dummy.matrix);
+        } else {
+          const sc = live ? (0.5 + t.trees * 0.9) * vary : 0;
+          this.dummy.position.set(tx, gy, tz);
+          this.dummy.scale.set(sc, sc, sc);
+          this.dummy.rotation.set(0, this.tileRand(i, salt + 0x43) * 6.283, 0);
+          this.dummy.updateMatrix();
+          this.trees.setMatrixAt(k, this.dummy.matrix);
+        }
+        k++;
       }
-      k++;
     }
     if (this.treeInst) {
-      this.treeInst.setCount(this.treeTiles.length);
+      this.treeInst.setCount(this.treeTiles.length * treesPerTile());
       this.treeInst.update();
     } else {
       this.trees.instanceMatrix.needsUpdate = true;
@@ -830,15 +853,22 @@ export class Renderer3D {
     let k = 0;
     for (const i of this.ironTiles) {
       const has = (s.tiles[i].iron ?? 0) > 0;
-      const ix = (i % MAP_W) + 0.5 + this.tileJitter(i, 0x51);
-      const iz = ((i / MAP_W) | 0) + 0.5 + this.tileJitter(i, 0x9d);
-      const isc = 0.7 + this.tileRand(i, 0x77) * 0.7;
-      this.dummy.position.set(ix, has ? this.groundAt(ix, iz) + 0.02 : -5, iz);
-      this.dummy.scale.set(isc, isc * 0.75, isc);
-      this.dummy.rotation.set(0, this.tileRand(i, 0x23) * 6.283, 0);
-      this.dummy.updateMatrix();
-      this.ironNodes.setMatrixAt(k, this.dummy.matrix);
-      k++;
+      // Seed a tight cluster: the whole group sits somewhere in the tile, and the chunks huddle
+      // around that point rather than spreading evenly, so it reads as one seam of ore.
+      const cx = (i % MAP_W) + 0.5 + this.tileJitter(i, 0x51) * 0.6;
+      const cz = ((i / MAP_W) | 0) + 0.5 + this.tileJitter(i, 0x9d) * 0.6;
+      for (let n = 0; n < ironPerTile(); n++) {
+        const salt = 0x51 + n * 0x3b;
+        const ix = cx + (this.tileRand(i, salt) - 0.5) * 0.62;
+        const iz = cz + (this.tileRand(i, salt + 0x17) - 0.5) * 0.62;
+        const isc = 0.45 + this.tileRand(i, salt + 0x29) * 0.75;
+        this.dummy.position.set(ix, has ? this.groundAt(ix, iz) + 0.02 : -5, iz);
+        this.dummy.scale.set(isc, isc * 0.75, isc);
+        this.dummy.rotation.set(0, this.tileRand(i, salt + 0x41) * 6.283, 0);
+        this.dummy.updateMatrix();
+        this.ironNodes.setMatrixAt(k, this.dummy.matrix);
+        k++;
+      }
     }
     this.ironNodes.instanceMatrix.needsUpdate = true;
   }
@@ -846,7 +876,7 @@ export class Renderer3D {
   private syncRocks(s: GameState): void {
     const tpl = this.models.firstRock();
     if (tpl && !this.rockInst) {
-      this.rockInst = new InstancedModel(tpl, this.rockTiles.length || 1);
+      this.rockInst = new InstancedModel(tpl, this.rockTiles.length * rocksPerTile() || 1);
       this.rockInst.addTo(this.scene);
       this.rocks.count = 0;
       this.sig.rock = -3;
@@ -881,7 +911,7 @@ export class Renderer3D {
       k++;
     }
     if (this.rockInst) {
-      this.rockInst.setCount(this.rockTiles.length);
+      this.rockInst.setCount(this.rockTiles.length * rocksPerTile());
       this.rockInst.update();
     } else {
       this.rocks.instanceMatrix.needsUpdate = true;

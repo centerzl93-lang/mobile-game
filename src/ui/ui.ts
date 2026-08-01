@@ -51,7 +51,7 @@ import {
   avgHappiness,
 } from '../game/simulation';
 
-export type PathTier = 'dirt' | 'stone' | 'bridge';
+export type PathTier = 'dirt' | 'stone' | 'bridge' | 'tunnel';
 
 /** Version / commit / build date, injected at build time — see `__BUILD_STAMP__`. */
 export const BUILD_STAMP = __BUILD_STAMP__;
@@ -356,6 +356,7 @@ export class UI {
         ['dirt', '🟤', 'Dirt Path', 'free'],
         ['stone', '⬜', 'Stone Path', '🪨1/tile'],
         ['bridge', '🌉', 'Bridge', '🪵3/tile'],
+        ['tunnel', '⛰️', 'Tunnel', '🪵6 🪨4/tile'],
       ] as [PathTier, string, string, string][]) {
         po.appendChild(this.buildBtn(emoji, label, cost, tier === this.selectedPath, () => this.selectPath(tier)));
       }

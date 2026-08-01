@@ -630,6 +630,8 @@ export const PATH_STONE_PLAN = 3;
 export const PATH_STONE = 4;
 export const PATH_BRIDGE_PLAN = 5;
 export const PATH_BRIDGE = 6; // a built bridge — the only walkable water tile
+export const PATH_TUNNEL_PLAN = 7;
+export const PATH_TUNNEL = 8; // a driven tunnel — the only walkable mountain tile
 
 // Harvest layer values (per tile): what unemployed villagers should gather here.
 export const HARVEST_NONE = 0;
@@ -811,6 +813,18 @@ export const PATH_STONE_MULT = 2.0;
 export const PATH_BRIDGE_MULT = 1.5; // crossing a built bridge (like a dirt path)
 export const STONE_PATH_COST = 1; // stone per stone-path tile
 export const BRIDGE_WOOD_COST = 3; // wood per bridge tile
+/**
+ * A tunnel is the mountain counterpart of a bridge: the only way through rock that villagers
+ * otherwise have to walk the whole length of a range to get around.
+ *
+ * It costs both timber and stone per tile — the timber props the roof, the stone lines it — and
+ * is deliberately the most expensive thing in the paths menu. Driving one should be a decision
+ * about whether a range is worth cutting through, not a default.
+ */
+export const TUNNEL_WOOD_COST = 6;
+export const TUNNEL_STONE_COST = 4;
+/** Underground and hand-cut: passable, but no faster than bare ground. */
+export const PATH_TUNNEL_MULT = 1.0;
 export const PATH_BUILD_TILES_PER_SEC = 0.6; // per free builder
 
 // ---- Hand harvesting (unemployed villagers gathering marked wood / loose stone) ----

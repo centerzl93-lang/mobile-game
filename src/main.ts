@@ -66,9 +66,11 @@ import {
 } from './game/simulation';
 import { canPlace, placeBuilding, canAfford, demolishBuilding, footprintClear } from './game/buildings';
 import { findPath } from './game/pathfind';
+import { tileIndex } from './game/world';
 import { addNearest, barnLoad, capacityOf, larderFood, larderFoodTarget, larderTarget } from './game/storage';
 import {
   planPath, markPending, pendingPathCount, confirmPendingPaths, cancelPendingPaths,
+  isSpanTier, spanLine, unplanTiles,
 } from './game/paths';
 import { saveGame, loadGame, hasSave, clearSave, slotInfo, lastSlot, SLOTS } from './game/save';
 import { InspectRow, InspectControls } from './ui/ui';
@@ -165,6 +167,8 @@ class Game {
     this.input = new InputManager(this.canvas, this.camera);
     this.input.onTap = (sx, sy) => this.onTap(sx, sy);
     this.input.onPaint = (sx, sy) => this.onPaint(sx, sy);
+    this.input.onPaintStart = (sx, sy) => this.onPaintStart(sx, sy);
+    this.input.onPaintEnd = () => this.onPaintEnd();
     this.input.onMarqueeMove = (a, b, c, d) => this.onMarqueeMove(a, b, c, d);
     this.input.onMarqueeEnd = (a, b, c, d) => this.onMarqueeEnd(a, b, c, d);
     this.input.onMarqueeCancel = () => { this.marquee = null; };
@@ -457,13 +461,45 @@ class Game {
     this.persist();
   }
 
+  /** Where a bridge/tunnel drag is anchored, and the tiles that stroke has planned so far. */
+  private spanStart: { x: number; y: number } | null = null;
+  private spanTiles: number[] = [];
+
+  private onPaintStart(sx: number, sy: number): void {
+    if (!this.selectedPath || !this.running || this.state.gameOver) return;
+    const [wx, wy] = this.camera.screenToTile(sx, sy, this.cw, this.ch);
+    this.spanStart = { x: Math.floor(wx), y: Math.floor(wy) };
+    this.spanTiles = [];
+    this.onPaint(sx, sy);
+  }
+
+  private onPaintEnd(): void {
+    this.spanStart = null;
+    this.spanTiles = [];
+  }
+
   private onPaint(sx: number, sy: number): void {
     if (!this.selectedPath || !this.running || this.state.gameOver) return;
     const [wx, wy] = this.camera.screenToTile(sx, sy, this.cw, this.ch);
     const tx = Math.floor(wx);
     const ty = Math.floor(wy);
     // Drawn tiles are held pending until the player confirms, so a stray drag can be undone.
-    if (planPath(this.state, tx, ty, this.selectedPath)) markPending(this.state, tx, ty);
+    if (!isSpanTier(this.selectedPath) || !this.spanStart) {
+      if (planPath(this.state, tx, ty, this.selectedPath)) markPending(this.state, tx, ty);
+      return;
+    }
+    // A bridge or tunnel is one crossing: the player drags a straight line from bank to bank (or
+    // hillside to hillside) and the whole line is re-planned on every move, so the preview
+    // follows the pointer instead of leaving a trail of every tile it passed over. Only the
+    // tiles actually over water / inside the rock take — `planPath` refuses the rest — which is
+    // what lets the drag start and end on ordinary ground.
+    unplanTiles(this.state, this.spanTiles);
+    this.spanTiles = [];
+    for (const p of spanLine(this.spanStart.x, this.spanStart.y, tx, ty)) {
+      if (!planPath(this.state, p.x, p.y, this.selectedPath)) continue;
+      markPending(this.state, p.x, p.y);
+      this.spanTiles.push(tileIndex(p.x, p.y));
+    }
   }
 
   /** Accept the drawn path tiles — villagers can now lay them. */

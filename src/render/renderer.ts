@@ -35,7 +35,7 @@ export interface PlacementView {
   ph?: number;
   valid: boolean;
   /** True while in path-drawing mode (shows a hint reticle at screen centre). */
-  pathTier?: 'dirt' | 'stone' | 'bridge' | null;
+  pathTier?: 'dirt' | 'stone' | 'bridge' | 'tunnel' | null;
   selBuildingId?: number | null;
   selCitizenId?: number | null;
   /** Live harvest-marquee rectangle in world coords while dragging, else null. */

@@ -2182,35 +2182,55 @@ test.describe('villager coats', () => {
   test('a villager wears a coat when their household holds clothing, and not when it does not', async ({ page }) => {
     await open(page);
     // Easy starts with houses already standing, so there are households to stock.
-    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
-    await page.waitForTimeout(400);
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      g.ui.hideOverlay(); // the coat layer is filled while rendering, so the game has to be running
+    });
+    // Housing is assigned on a simulation tick, not at spawn, so wait for it rather than
+    // guessing a delay — this is what the test is about and there is nothing to measure until
+    // villagers actually have homes.
+    await page.waitForFunction(
+      () => (window as any).__village.state.citizens.some((c: any) => c.homeId !== null),
+      undefined,
+      { timeout: 10_000 },
+    );
 
-    const count = async (): Promise<number> => {
-      // The coat layer is filled during render, so let a frame go by after changing the stores.
-      await page.waitForTimeout(250);
-      return page.evaluate(() => (window as any).__village.debugCoatedCount());
-    };
-
+    /**
+     * Put `n` clothing in every house and none anywhere else.
+     *
+     * Clothing is a larder good, so leaving any in the barns would have residents hauling it
+     * home mid-assertion. Housing is left entirely alone: the simulation reassigns `homeId` on
+     * its own, so a test that herds everyone into one house loses the race against it.
+     * Returns how many villagers actually have a home to keep a coat in.
+     */
     const setClothing = (n: number) =>
       page.evaluate((n) => {
         const g = (window as any).__village;
-        // Put everyone in one house so the switch is a single store edit either way.
-        const home = g.state.buildings.find((b: any) => b.type === 'house');
-        for (const b of g.state.buildings) delete b.store.clothing;
-        for (const c of g.state.citizens) c.homeId = home.id;
-        if (n > 0) home.store.clothing = n;
-        return g.state.citizens.length;
+        for (const b of g.state.buildings) {
+          delete b.store.clothing;
+          if (n > 0 && b.built && (b.type === 'house' || b.type === 'stonehouse')) b.store.clothing = n;
+        }
+        for (const c of g.state.citizens) if (c.carry?.kind === 'clothing') c.carry = null;
+        const homes = new Set(g.state.buildings.filter((b: any) => b.built).map((b: any) => b.id));
+        return g.state.citizens.filter((c: any) => c.homeId !== null && homes.has(c.homeId)).length;
       }, n);
 
-    const pop = await setClothing(0);
-    expect(pop, 'the village has villagers to dress').toBeGreaterThan(0);
-    expect(await count(), 'no clothing at home -> nobody in a coat').toBe(0);
+    // The coat layer is filled during render, so this is polled rather than read once after a
+    // fixed wait — how soon the next frame lands is not something the test controls.
+    const expectCoats = (n: number, why: string) =>
+      expect
+        .poll(() => page.evaluate(() => (window as any).__village.debugCoatedCount()), { message: why, timeout: 5000 })
+        .toBe(n);
 
-    await setClothing(50);
-    expect(await count(), 'clothing at home -> the whole household in coats').toBe(pop);
+    expect(await setClothing(0), 'the village has housed villagers to dress').toBeGreaterThan(0);
+    await expectCoats(0, 'no clothing at home -> nobody in a coat');
+
+    const housed = await setClothing(50);
+    await expectCoats(housed, 'clothing at home -> every housed villager in a coat');
 
     // And back again — a household that runs its press dry loses the coats.
     await setClothing(0);
-    expect(await count(), 'clothing used up -> coats come off').toBe(0);
+    await expectCoats(0, 'clothing used up -> coats come off');
   });
 });

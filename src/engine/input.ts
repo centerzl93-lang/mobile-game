@@ -32,6 +32,10 @@ export class InputManager {
   mode: InputMode = 'normal';
   onTap: (sx: number, sy: number) => void = () => {};
   onPaint: (sx: number, sy: number) => void = () => {};
+  /** A path stroke began (pointer down in path mode) — where the drag is anchored. */
+  onPaintStart: (sx: number, sy: number) => void = () => {};
+  /** The path stroke ended (pointer up). */
+  onPaintEnd: () => void = () => {};
   onMarqueeMove: (sx0: number, sy0: number, sx1: number, sy1: number) => void = () => {};
   onMarqueeEnd: (sx0: number, sy0: number, sx1: number, sy1: number) => void = () => {};
   onMarqueeCancel: () => void = () => {};
@@ -71,7 +75,7 @@ export class InputManager {
         this.onMarqueeCancel(); // a second finger cancels the marquee and pans/zooms
       }
     } else if (this.pointers.size === 1 && this.mode === 'path') {
-      this.onPaint(e.clientX, e.clientY);
+      this.onPaintStart(e.clientX, e.clientY);
     } else if (this.pointers.size === 1 && this.mode === 'marquee') {
       this.marqueeStart = [e.clientX, e.clientY];
       this.onMarqueeMove(e.clientX, e.clientY, e.clientX, e.clientY);
@@ -116,6 +120,7 @@ export class InputManager {
     const p = this.pointers.get(e.pointerId);
     if (!p) return;
     const wasTap = !p.moved && this.pointers.size === 1 && this.mode === 'normal';
+    if (this.mode === 'path' && this.pointers.size === 1) this.onPaintEnd();
     const finishMarquee = this.mode === 'marquee' && this.marqueeStart !== null && this.pointers.size === 1;
     this.pointers.delete(e.pointerId);
     if (this.pointers.size < 2) {

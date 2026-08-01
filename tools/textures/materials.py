@@ -106,6 +106,53 @@ def wool(size: int) -> np.ndarray:
     return rgb
 
 
+def path_dirt(size: int) -> np.ndarray:
+    """A trodden earth track: compacted soil, loose grit, a few stones pressed into it.
+
+    Deliberately free of any large-scale feature. A path tile is drawn one texture repeat per
+    map tile, so anything with a recognisable centre would stamp itself down the whole path and
+    turn a road into a row of identical squares — which is exactly how the flat-coloured tiles
+    read before. What sells continuity is grain fine enough that the eye cannot find the seam.
+    """
+    grit = fbm(151, size, octaves=(16, 40, 90), weights=(0.45, 0.35, 0.2))
+    rgb = tint("#8a6d4c", "#5a442d", np.clip(grit * 1.05, 0, 1))
+    # Wheel-worn hollows: broad, low-contrast damp patches.
+    worn = fbm(152, size, octaves=(5, 11), weights=(0.6, 0.4))
+    rgb *= (0.88 + 0.24 * worn)[:, :, None]
+    # A scatter of small stones trodden into the surface.
+    pebbles = np.clip((fbm(153, size, octaves=(30, 60), weights=(0.5, 0.5)) - 0.70) * 5, 0, 1)
+    rgb += (np.array([150, 142, 128]) - rgb) * pebbles[:, :, None] * 0.7
+    return rgb
+
+
+def path_stone(size: int) -> np.ndarray:
+    """A cobbled road: rounded setts bedded in sand, in the irregular courses a paver lays them.
+
+    Uses the same staggered-course construction as the walls, at a much finer pitch and with the
+    joints widened, so it reads as cobbles rather than as brickwork seen from above.
+    """
+    mask = _brick(size, courses=11, per_course=9, seed=161)
+    rgb = tint("#9d9a92", "#605c53", mask)
+    # Each sett weathers differently, and the whole road dips and rises.
+    grain = fbm(162, size, octaves=(28, 64), weights=(0.5, 0.5))
+    rgb *= (0.88 + 0.24 * grain)[:, :, None]
+    damp = np.clip((fbm(163, size, octaves=(4, 9), weights=(0.6, 0.4)) - 0.55) * 2.2, 0, 1)
+    rgb += (np.array([92, 92, 96]) - rgb) * damp[:, :, None] * 0.35
+    return rgb
+
+
+def path_plank(size: int) -> np.ndarray:
+    """Bridge decking: boards running across the span, with gaps you could drop a coin through."""
+    boards = _stripes(size, 9, 1, 0.5, 171)
+    grain = fbm(172, size, octaves=(40, 90), weights=(0.5, 0.5))
+    grain = np.repeat(grain[:1, :], size, axis=0) * 0.6 + grain * 0.4  # grain along the board
+    mask = np.clip(boards * 0.7 + grain * 0.3, 0, 1)
+    rgb = tint("#8a6238", "#4a3320", mask)
+    nails = np.clip((fbm(173, size, octaves=(64, 128), weights=(0.5, 0.5)) - 0.80) * 6, 0, 1)
+    rgb += (np.array([70, 70, 74]) - rgb) * nails[:, :, None] * 0.6
+    return rgb
+
+
 def masonry(size: int) -> np.ndarray:
     """Coursed rubble stone for footings, chimneys and walls.
 
@@ -206,6 +253,9 @@ MATERIALS = {
     "shingle": (shingle, 11.0),
     "shake": (shake, 12.0),
     "wool": (wool, 6.0),
+    "path_dirt": (path_dirt, 9.0),
+    "path_stone": (path_stone, 13.0),
+    "path_plank": (path_plank, 10.0),
     "masonry": (masonry, 12.0),
     "thatch": (thatch, 10.0),
 }

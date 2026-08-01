@@ -1,16 +1,16 @@
-import { GameState, MAP_W, MAP_H, PATH_BRIDGE } from '../types';
+import { GameState, MAP_W, MAP_H, PATH_BRIDGE, PATH_TUNNEL } from '../types';
 import { tileIndex, inBounds } from './world';
 
 /**
  * A tile can be walked if it is on the map and passable. Water and mountains (`stone`) block
- * movement — villagers route around mountains, and cross water only over a built bridge.
- * Foothills, grass and forest are walkable.
+ * movement on their own: water is crossed only over a built bridge, mountain only through a
+ * driven tunnel. Foothills, grass and forest are walkable.
  */
 export function isWalkable(s: GameState, tx: number, ty: number): boolean {
   if (!inBounds(tx, ty)) return false;
   const idx = tileIndex(tx, ty);
   const type = s.tiles[idx].type;
-  if (type === 'stone') return false; // impassable mountain
+  if (type === 'stone') return s.paths[idx] === PATH_TUNNEL;
   if (type !== 'water') return true;
   return s.paths[idx] === PATH_BRIDGE;
 }

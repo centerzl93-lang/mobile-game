@@ -19,13 +19,17 @@ import {
   PATH_STONE_PLAN,
   PATH_BRIDGE,
   PATH_BRIDGE_PLAN,
+  PATH_TUNNEL,
+  PATH_TUNNEL_PLAN,
+  PATH_NONE,
   HARVEST_WOOD,
   HARVEST_STONE,
 } from '../types';
-import { tileIndex } from '../game/world';
+import { tileIndex, inBounds } from '../game/world';
 import { Camera3D } from '../engine/camera3d';
 import type { PlacementView } from './renderer';
 import { ModelLibrary, InstancedModel } from './models';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { bodyGeometry, skinGeometry, hairGeometry, legGeometry, coatGeometry, HEAD_Y, HIP_Y, LEG_X } from './villager';
 
 const LAND_H = 0.3; // height of a normal land tile block
@@ -202,8 +206,10 @@ export class Renderer3D {
   private rockTiles: number[] = [];
   private ironNodes!: THREE.InstancedMesh;
   private ironTiles: number[] = [];
-  private paths!: THREE.InstancedMesh;
   private marks!: THREE.InstancedMesh;
+  /** One instanced surface per path kind, so each can carry its own texture. */
+  private pathLayers: Record<PathSurface, THREE.InstancedMesh> = {} as Record<PathSurface, THREE.InstancedMesh>;
+  private portals!: THREE.InstancedMesh;
   private citizens!: THREE.InstancedMesh;
   private hair!: THREE.InstancedMesh | null;
   /** Left and right leg, instanced separately so each can swing on its own transform. */
@@ -214,7 +220,11 @@ export class Renderer3D {
 
   // Per-building objects (box mesh or cloned model) + reused overlays.
   private buildingMeshes = new Map<number, THREE.Object3D>();
-  private ghost!: THREE.Mesh;
+  private ghost!: THREE.Group;
+  /** Which building type (and footprint) the ghost currently holds a silhouette for. */
+  private ghostKey = '';
+  /** Hash of which tiles carry a finished tunnel — a change means the terrain must be recut. */
+  private tunnelSig = 0;
   private selRing!: THREE.Mesh;
   private workRing!: THREE.Group; // ground circle (fill + outline) for a selected building's work radius
   private marquee!: THREE.Mesh;
@@ -340,15 +350,42 @@ export class Renderer3D {
     this.ironNodes.castShadow = true;
     this.scene.add(this.ironNodes);
 
-    // Paths / bridges and harvest marks: flat quads covering a whole map's worth of tiles.
-    const flat = new THREE.BoxGeometry(0.96, 0.06, 0.96);
-    this.paths = new THREE.InstancedMesh(flat, matte(0xffffff), MAP_W * MAP_H);
-    this.paths.count = 0;
-    // Instanced layers whose instances change (paths drawn, tiles marked, villagers moving) must skip
-    // frustum culling: Three culls the whole InstancedMesh by a bounding volume that doesn't track
-    // live instance matrices, so a stale volume makes the entire layer pop in/out as the camera moves.
-    this.paths.frustumCulled = false;
-    this.scene.add(this.paths);
+    // Paths: one instanced layer per surface, so each can carry its own texture.
+    //
+    // A tile is a full 1x1 quad with a hair of overlap — the old 0.96 quads left a bare strip of
+    // ground between every pair, which is what made a road read as a dotted line of separate
+    // squares rather than as one continuous surface.
+    for (const [key, tex, tint] of [
+      ['dirt', 'path_dirt', 0xffffff],
+      ['stone', 'path_stone', 0xffffff],
+      ['bridge', 'path_plank', 0xffffff],
+      // A tunnel's floor is the same lining stone as its walls, kept dark: it is underground.
+      ['tunnel', 'path_stone', 0x8d8f96],
+    ] as [PathSurface, string, number][]) {
+      const mat = matte(tint, 0.95);
+      new THREE.TextureLoader().load(
+        import.meta.env.BASE_URL + `textures/mat_${tex}.png`,
+        (t) => { t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; mat.map = t; mat.needsUpdate = true; },
+        undefined,
+        () => { /* untextured paths still show as coloured ground */ },
+      );
+      const m = new THREE.InstancedMesh(new THREE.BoxGeometry(1.02, 0.06, 1.02), mat, MAP_W * MAP_H);
+      m.count = 0;
+      // Instanced layers whose instances change (paths drawn, tiles marked, villagers moving) must
+      // skip frustum culling: Three culls the whole InstancedMesh by a bounding volume that doesn't
+      // track live instance matrices, so a stale volume makes the layer pop in/out with the camera.
+      m.frustumCulled = false;
+      m.receiveShadow = this.tier === 'high';
+      this.scene.add(m);
+      this.pathLayers[key] = m;
+    }
+    // Tunnel portals: the timbered mouth where a tunnel meets open air. Drawn separately because
+    // it is a standing structure, not a surface, and only the end tiles get one.
+    this.portals = new THREE.InstancedMesh(portalGeometry(), matte(0x6a5236, 0.9), 256);
+    this.portals.count = 0;
+    this.portals.frustumCulled = false;
+    this.portals.castShadow = this.tier === 'high';
+    this.scene.add(this.portals);
     const flat2 = new THREE.BoxGeometry(1, 0.04, 1);
     const markMat = matte(0xffffff);
     markMat.transparent = true;
@@ -423,7 +460,10 @@ export class Renderer3D {
     if (this.tier === 'high') this.initSmoke();
 
     // Reusable overlays.
-    this.ghost = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x5ad06a, transparent: true, opacity: 0.5 }));
+    // The placement ghost is a container: `syncOverlays` swaps the actual building's silhouette
+    // into it as the player changes what they are placing, so what you drag around the map is the
+    // shape you are about to get rather than a featureless block.
+    this.ghost = new THREE.Group();
     this.ghost.visible = false;
     this.scene.add(this.ghost);
     this.selRing = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.06, 6, 20), new THREE.MeshBasicMaterial({ color: 0xffd76b }));
@@ -463,6 +503,7 @@ export class Renderer3D {
     this.scene.add(this.boat);
 
     this.sig = { land: -1, tree: -1, rock: -1, path: -1, mark: -1, bld: '' };
+    this.tunnelSig = tunnelSignature(s);
     this.ready = true;
   }
 
@@ -480,6 +521,15 @@ export class Renderer3D {
     cam.apply();
     this.applySeason(s, dt);
     this.trackSun(cam);
+    // A finished tunnel lowers the rock it runs through, so the terrain mesh has to be rebuilt
+    // when one appears or is demolished. Cheap to check and rare to fire.
+    const tsig = tunnelSignature(s);
+    if (tsig !== this.tunnelSig) {
+      this.tunnelSig = tsig;
+      this.terrain.geometry.dispose();
+      this.terrain.geometry = this.makeTerrainGeometry(s);
+      this.sig.land = -1; // force the colour pass to re-run over the new vertices
+    }
     this.syncTerrain(s);
     this.syncTrees(s);
     this.syncRocks(s);
@@ -600,9 +650,17 @@ export class Renderer3D {
    * Per-tile ground height. Flat land stays at exactly LAND_H so that everything placed at TOP —
    * buildings, trees, villagers — still sits on the surface without sampling the mesh.
    */
-  private tileHeight(t: Tile, i: number): number {
+  private tileHeight(t: Tile, i: number, s?: GameState): number {
     if (t.type === 'water') return WATER_BED_H;
-    if (t.type === 'stone') return this.mountainH ? this.mountainH[i] : MOUNTAIN_BASE_H;
+    if (t.type === 'stone') {
+      // A driven tunnel brings the rock down to a pass. Mountains here are a smooth heightfield
+      // rather than cliffs at tile boundaries, so there is no vertical face to hang a portal on —
+      // a bore would be completely invisible from the play camera, and its mouth ends up buried in
+      // the flank. Cutting the height instead makes the route through the range obvious at a
+      // glance, and the stone-lined floor drawn on top reads as the road it is.
+      if (s && s.paths[i] === PATH_TUNNEL) return FOOTHILL_H;
+      return this.mountainH ? this.mountainH[i] : MOUNTAIN_BASE_H;
+    }
     if (t.type === 'foothill') return FOOTHILL_H;
     return LAND_H;
   }
@@ -638,7 +696,7 @@ export class Renderer3D {
         const i = y * MAP_W + x;
         const t = s.tiles[i];
         wetT[i] = t.type === 'water' ? 1 : 0;
-        dryH[i] = t.type === 'water' ? LAND_H : this.tileHeight(t, i);
+        dryH[i] = t.type === 'water' ? LAND_H : this.tileHeight(t, i, s);
       }
     }
     // Round off the tile staircase before sampling. The water mask is quantised to whole tiles,
@@ -1006,24 +1064,71 @@ export class Renderer3D {
     for (let i = 0; i < s.paths.length; i++) if (s.paths[i]) sig = (Math.imul(sig, 31) + (i + 1) * s.paths[i]) >>> 0;
     if (sig === this.sig.path) return;
     this.sig.path = sig;
-    let k = 0;
+
+    const n: Record<PathSurface, number> = { dirt: 0, stone: 0, bridge: 0, tunnel: 0 };
+    let portals = 0;
+    const built = (v: number) => v === PATH_DIRT || v === PATH_STONE || v === PATH_BRIDGE || v === PATH_TUNNEL;
     for (let i = 0; i < s.paths.length; i++) {
       const v = s.paths[i];
       if (!v) continue;
-      const bridge = v === PATH_BRIDGE || v === PATH_BRIDGE_PLAN;
-      const built = v === PATH_DIRT || v === PATH_STONE || v === PATH_BRIDGE;
-      const col = bridge ? 0x7a5230 : v === PATH_STONE || v === PATH_STONE_PLAN ? 0xa6a8af : 0x6b5236;
-      this.dummy.position.set((i % MAP_W) + 0.5, (bridge ? 0.14 : TOP) + 0.03, ((i / MAP_W) | 0) + 0.5);
+      const x = i % MAP_W;
+      const z = (i / MAP_W) | 0;
+      let surf: PathSurface;
+      let y: number;
+      if (v === PATH_BRIDGE || v === PATH_BRIDGE_PLAN) {
+        surf = 'bridge';
+        y = 0.14 + 0.03; // decking sits just over the water plane
+      } else if (v === PATH_TUNNEL || v === PATH_TUNNEL_PLAN) {
+        surf = 'tunnel';
+        // A planned tunnel has to be visible while it is still solid rock, so its marker rides on
+        // the mountain surface. A finished one is a floor at ground level, inside the hill — which
+        // is exactly where a villager walking through it should be.
+        y = v === PATH_TUNNEL ? FOOTHILL_H + 0.03 : this.groundAt(x + 0.5, z + 0.5) + 0.05;
+      } else {
+        surf = v === PATH_STONE || v === PATH_STONE_PLAN ? 'stone' : 'dirt';
+        y = TOP + 0.03;
+      }
+      const layer = this.pathLayers[surf];
+      const k = n[surf]++;
+      this.dummy.position.set(x + 0.5, y, z + 0.5);
       this.dummy.scale.set(1, 1, 1);
       this.dummy.rotation.set(0, 0, 0);
       this.dummy.updateMatrix();
-      this.paths.setMatrixAt(k, this.dummy.matrix);
-      this.paths.setColorAt(k, this.color.set(col).multiplyScalar(built ? 1 : 0.6));
-      k++;
+      layer.setMatrixAt(k, this.dummy.matrix);
+      // Unbuilt tiles are dimmed rather than differently coloured, so a plan reads as the same
+      // road not yet laid.
+      layer.setColorAt(k, this.color.set(0xffffff).multiplyScalar(built(v) ? 1 : 0.55));
+
+      // A finished tunnel gets a timbered portal wherever it opens onto something that is not
+      // more tunnel — the only part of it visible from outside the mountain.
+      if (v === PATH_TUNNEL && portals < 256) {
+        for (const [dx, dz, yaw] of [[1, 0, Math.PI / 2], [-1, 0, -Math.PI / 2], [0, 1, 0], [0, -1, Math.PI]] as const) {
+          if (portals >= 256) break;
+          const nx = x + dx;
+          const nz = z + dz;
+          if (!inBounds(nx, nz)) continue;
+          const ni = tileIndex(nx, nz);
+          // A mouth is where the bore meets something that is not mountain. Any mountain
+          // neighbour is either more tunnel or unbroken rock; neither is an opening.
+          if (s.tiles[ni].type === 'stone') continue;
+          // The cut floor sits at foothill height, so the frame stands on the tunnel's own
+          // roadway at the point where it opens out of the rock.
+          this.dummy.position.set(x + 0.5 + dx * 0.48, FOOTHILL_H, z + 0.5 + dz * 0.48);
+          this.dummy.scale.set(1.15, 1.15, 1.15);
+          this.dummy.rotation.set(0, yaw, 0);
+          this.dummy.updateMatrix();
+          this.portals.setMatrixAt(portals++, this.dummy.matrix);
+        }
+      }
     }
-    this.paths.count = k;
-    this.paths.instanceMatrix.needsUpdate = true;
-    if (this.paths.instanceColor) this.paths.instanceColor.needsUpdate = true;
+    for (const key of ['dirt', 'stone', 'bridge', 'tunnel'] as PathSurface[]) {
+      const layer = this.pathLayers[key];
+      layer.count = n[key];
+      layer.instanceMatrix.needsUpdate = true;
+      if (layer.instanceColor) layer.instanceColor.needsUpdate = true;
+    }
+    this.portals.count = portals;
+    this.portals.instanceMatrix.needsUpdate = true;
   }
 
   // ---- harvest marks ----
@@ -1181,8 +1286,12 @@ export class Renderer3D {
         mat.opacity = 1;
       } else {
         mat.emissive?.set(0x000000);
+        // An unbuilt site is the finished building's silhouette in glass — same shape, same
+        // materials, see-through — so the player can read what is going up there. depthWrite has
+        // to go with the transparency or the near faces punch holes in the far ones.
         mat.transparent = !built;
-        mat.opacity = built ? 1 : 0.5;
+        mat.opacity = built ? 1 : GHOST_OPACITY;
+        mat.depthWrite = built;
       }
       mat.needsUpdate = true;
     });
@@ -1349,11 +1458,23 @@ export class Renderer3D {
       const def = BUILDING_DEFS[pv.type];
       const pw = pv.pw ?? def.w;
       const ph = pv.ph ?? def.h;
-      const h = buildingHeight(pv.type);
+      const key = `${pv.type}:${pw}x${ph}`;
+      if (key !== this.ghostKey) {
+        this.ghostKey = key;
+        for (const child of [...this.ghost.children]) {
+          this.ghost.remove(child);
+          disposeTree(child);
+        }
+        this.ghost.add(this.makeGhostShape(pv.type, pw, ph));
+      }
       this.ghost.visible = true;
-      this.ghost.scale.set(pw * 0.9, h, ph * 0.9);
-      this.ghost.position.set(pv.tx + pw / 2, TOP + h / 2, pv.ty + ph / 2);
-      (this.ghost.material as THREE.MeshStandardMaterial).color.set(pv.valid ? 0x5ad06a : 0xe0574a);
+      this.ghost.position.set(pv.tx + pw / 2, TOP, pv.ty + ph / 2);
+      // Green means it will go here, red means it will not. The tint is applied over the
+      // silhouette rather than replacing it, so the building stays recognisable either way.
+      this.ghost.traverse((o) => {
+        const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+        if (m && !Array.isArray(m) && m.emissive) m.emissive.set(pv.valid ? 0x1d5c26 : 0x6b1a12);
+      });
     } else {
       this.ghost.visible = false;
     }
@@ -1399,6 +1520,40 @@ export class Renderer3D {
     }
   }
 
+  /**
+   * The translucent shape shown while placing `type`.
+   *
+   * Uses the building's own model wherever one exists, so the player is dragging the silhouette
+   * of the thing they are about to build. Ranches and fields have no model — they are
+   * player-sized fenced plots — so they get their plot outline instead, at the size being dragged.
+   */
+  private makeGhostShape(type: BuildingType, pw: number, ph: number): THREE.Object3D {
+    const model = this.models.buildingClone(type);
+    let shape: THREE.Object3D;
+    if (model && type !== 'ranch' && type !== 'farm') {
+      model.scale.multiplyScalar(Math.max(pw, ph) * 0.95);
+      shape = model;
+    } else {
+      shape = this.makeFencedPlot(pw, ph, { shed: type === 'ranch', ground: type === 'ranch' ? 0x6f7a3f : 0x7a5a34 });
+    }
+    // Ghost materials are cloned so tinting the preview never bleeds into the real buildings,
+    // which share the model's materials through `clone(true)`.
+    shape.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!(mesh as unknown as { isMesh?: boolean }).isMesh) return;
+      const src = mesh.material as THREE.MeshStandardMaterial;
+      if (!src || Array.isArray(src)) return;
+      const m = src.clone();
+      m.transparent = true;
+      m.opacity = GHOST_OPACITY;
+      m.depthWrite = false; // or the near faces punch holes in the far ones through the glass
+      mesh.material = m;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+    });
+    return shape;
+  }
+
   /** Drop the instanced layers and building meshes (called before rebuilding on a new map). */
   /** Position and show the merchant boat while it's on the water. */
   private syncBoat(s: GameState): void {
@@ -1413,7 +1568,12 @@ export class Renderer3D {
 
   private teardown(): void {
     if (!this.ready) return;
-    for (const m of [this.terrain, this.trees, this.rocks, this.paths, this.marks, this.citizens]) {
+    const pathMeshes = Object.values(this.pathLayers);
+    // Every villager body part is its own layer now, and the head always existed — all of them
+    // have to be released here or a new map leaks the old map's meshes.
+    const villagerMeshes = [this.citizens, this.heads, this.hair, this.coats, ...(this.legs ?? [])]
+      .filter((m): m is THREE.InstancedMesh => !!m);
+    for (const m of [this.terrain, this.trees, this.rocks, ...pathMeshes, this.portals, this.marks, ...villagerMeshes]) {
       this.scene.remove(m);
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
@@ -1448,6 +1608,62 @@ export class Renderer3D {
 
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+/** The four path surfaces, each drawn by its own instanced layer with its own texture. */
+type PathSurface = 'dirt' | 'stone' | 'bridge' | 'tunnel';
+
+/**
+ * How solid a building looks before it exists — both the placement ghost and a site under
+ * construction. Low enough to read as "not there yet", high enough that the silhouette is still
+ * legible against grass.
+ */
+const GHOST_OPACITY = 0.42;
+
+/** Rolling hash of the finished-tunnel tiles, to notice when the mountain needs recutting. */
+function tunnelSignature(s: GameState): number {
+  let sig = 0;
+  for (let i = 0; i < s.paths.length; i++) {
+    if (s.paths[i] === PATH_TUNNEL) sig = (Math.imul(sig, 31) + i + 1) >>> 0;
+  }
+  return sig;
+}
+
+/** Release every geometry and material under an object (used when swapping the ghost's shape). */
+function disposeTree(root: THREE.Object3D): void {
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
+    m.geometry?.dispose();
+    const mat = m.material;
+    if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+    else mat?.dispose();
+  });
+}
+
+/**
+ * The timbered mouth of a tunnel: two posts and a lintel, set into the rock face.
+ *
+ * Built facing -Z so an instance's yaw points it out of the hillside. This is the only part of a
+ * tunnel visible from outside — the bore itself is inside the terrain mesh, which is also why a
+ * villager crossing one correctly disappears from view partway through.
+ */
+function portalGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const post = (x: number) => {
+    const g = new THREE.BoxGeometry(0.13, 0.62, 0.16);
+    g.translate(x, 0.31, 0);
+    return g;
+  };
+  parts.push(post(-0.3), post(0.3));
+  const lintel = new THREE.BoxGeometry(0.86, 0.15, 0.2);
+  lintel.translate(0, 0.68, 0);
+  parts.push(lintel);
+  // The dark opening between them, pushed back into the rock.
+  const mouth = new THREE.BoxGeometry(0.5, 0.6, 0.06);
+  mouth.translate(0, 0.3, -0.1);
+  parts.push(mouth);
+  return mergeGeometries(parts, false)!;
 }
 
 function matte(color = 0xffffff, roughness = 0.9): THREE.MeshStandardMaterial {

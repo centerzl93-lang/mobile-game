@@ -24,6 +24,10 @@ import {
   PATH_STONE,
   PATH_BRIDGE,
   PATH_BRIDGE_PLAN,
+  PATH_TUNNEL,
+  PATH_TUNNEL_PLAN,
+  TUNNEL_WOOD_COST,
+  TUNNEL_STONE_COST,
   BRIDGE_WOOD_COST,
   HARVEST_NONE,
   PATH_NONE,
@@ -1162,8 +1166,10 @@ function buildPath(s: GameState, c: Citizen, dt: number, maxD2 = Infinity): bool
     if (v === PATH_DIRT_PLAN || v === PATH_STONE_PLAN) {
       if (!reachableTile(c, tx, ty)) continue; // stand on the land tile itself
       stand = { x: tx + 0.5, y: ty + 0.5 };
-    } else if (v === PATH_BRIDGE_PLAN) {
-      stand = adjacentStand(s, c, tx, ty); // bridges are laid from a walkable neighbour
+    } else if (v === PATH_BRIDGE_PLAN || v === PATH_TUNNEL_PLAN) {
+      // Bridges and tunnels are worked from a walkable neighbour — the tile itself is water or
+      // solid rock until the moment it is finished.
+      stand = adjacentStand(s, c, tx, ty);
       if (!stand) continue;
     } else {
       continue;
@@ -1192,6 +1198,14 @@ function buildPath(s: GameState, c: Citizen, dt: number, maxD2 = Infinity): bool
         takeNearest(s, bestStand, 'wood', BRIDGE_WOOD_COST);
         s.paths[bestIdx] = PATH_BRIDGE;
         s.navVersion = (s.navVersion ?? 0) + 1; // a new bridge changed walkability
+      }
+    } else if (v === PATH_TUNNEL_PLAN) {
+      // Timber to prop the roof and stone to line it — both, or the tile stays unworked.
+      if (totalStored(s, 'wood') >= TUNNEL_WOOD_COST && totalStored(s, 'stone') >= TUNNEL_STONE_COST) {
+        takeNearest(s, bestStand, 'wood', TUNNEL_WOOD_COST);
+        takeNearest(s, bestStand, 'stone', TUNNEL_STONE_COST);
+        s.paths[bestIdx] = PATH_TUNNEL;
+        s.navVersion = (s.navVersion ?? 0) + 1; // a new tunnel changed walkability
       }
     } else {
       s.paths[bestIdx] = PATH_DIRT;

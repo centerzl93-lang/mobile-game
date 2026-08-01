@@ -301,3 +301,57 @@ test.describe('world generation, placement & pathfinding', () => {
     expect((page as unknown as { _errors: string[] })._errors).toEqual([]);
   });
 });
+
+test.describe('tunnels', () => {
+  test('a tunnel makes a mountain walkable, and a span drag only builds the crossing', async ({ page }) => {
+    await startSmall(page);
+    const res = await page.evaluate(([W, H]) => {
+      const g = (window as any).__village;
+      const s = g.state;
+      const idx = (x: number, y: number) => y * W + x;
+
+      // Carve a known three-tile mountain wall with open ground either side, so the test does not
+      // depend on where world generation happened to put a range.
+      const y = Math.floor(H / 2);
+      const x0 = Math.floor(W / 2) - 4;
+      for (let x = x0 - 2; x <= x0 + 5; x++) {
+        const t = s.tiles[idx(x, y)];
+        t.type = x >= x0 && x < x0 + 3 ? 'stone' : 'grass';
+        t.trees = 0;
+        delete t.stone;
+        delete t.iron;
+        s.paths[idx(x, y)] = 0;
+      }
+      const before = g.debugPath(x0 - 2, y, x0 + 5, y);
+
+      // Drag a tunnel from open ground on one side to open ground on the other. Only the three
+      // mountain tiles should take: the drag deliberately starts and ends on walkable land.
+      g.selectedPath = 'tunnel';
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      barn.store.wood = 500;
+      barn.store.stone = 500;
+      let planned = 0;
+      for (let x = x0 - 2; x <= x0 + 5; x++) if (g.debugPlanPath('tunnel', x, y)) planned++;
+
+      // Finish them, as a builder would.
+      let built = 0;
+      for (let x = x0 - 2; x <= x0 + 5; x++) {
+        if (s.paths[idx(x, y)] === 7) { s.paths[idx(x, y)] = 8; built++; }
+      }
+      s.navVersion = (s.navVersion ?? 0) + 1;
+      const after = g.debugPath(x0 - 2, y, x0 + 5, y);
+      // Routing must actually go through the wall, not around it.
+      const throughWall = after ? after.filter((p: any) => p.x >= x0 && p.x < x0 + 3 && Math.abs(p.y - y) < 1).length : 0;
+      return { planned, built, beforeLen: before ? before.length : -1, afterLen: after ? after.length : -1, throughWall };
+    }, [W, H] as const);
+
+    // Eight tiles were dragged over; only the three inside the rock are tunnel.
+    expect(res.planned, 'tiles a tunnel drag actually claims').toBe(3);
+    expect(res.built).toBe(3);
+    // Before the tunnel the wall had to be walked around (or was impassable); after, the route is
+    // the straight eight-tile line through it.
+    expect(res.afterLen, 'route once the tunnel is open').toBeGreaterThan(0);
+    expect(res.throughWall, 'the route goes through the mountain, not around it').toBe(3);
+    expect(res.beforeLen === -1 || res.afterLen < res.beforeLen).toBe(true);
+  });
+});

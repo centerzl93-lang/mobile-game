@@ -2177,3 +2177,40 @@ test.describe('disasters toggle', () => {
     expect(await page.evaluate(() => (window as any).__village.state.disasters)).toBe(false);
   });
 });
+
+test.describe('villager coats', () => {
+  test('a villager wears a coat when their household holds clothing, and not when it does not', async ({ page }) => {
+    await open(page);
+    // Easy starts with houses already standing, so there are households to stock.
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+    await page.waitForTimeout(400);
+
+    const count = async (): Promise<number> => {
+      // The coat layer is filled during render, so let a frame go by after changing the stores.
+      await page.waitForTimeout(250);
+      return page.evaluate(() => (window as any).__village.debugCoatedCount());
+    };
+
+    const setClothing = (n: number) =>
+      page.evaluate((n) => {
+        const g = (window as any).__village;
+        // Put everyone in one house so the switch is a single store edit either way.
+        const home = g.state.buildings.find((b: any) => b.type === 'house');
+        for (const b of g.state.buildings) delete b.store.clothing;
+        for (const c of g.state.citizens) c.homeId = home.id;
+        if (n > 0) home.store.clothing = n;
+        return g.state.citizens.length;
+      }, n);
+
+    const pop = await setClothing(0);
+    expect(pop, 'the village has villagers to dress').toBeGreaterThan(0);
+    expect(await count(), 'no clothing at home -> nobody in a coat').toBe(0);
+
+    await setClothing(50);
+    expect(await count(), 'clothing at home -> the whole household in coats').toBe(pop);
+
+    // And back again — a household that runs its press dry loses the coats.
+    await setClothing(0);
+    expect(await count(), 'clothing used up -> coats come off').toBe(0);
+  });
+});

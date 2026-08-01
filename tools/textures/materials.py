@@ -84,6 +84,28 @@ def shake(size: int) -> np.ndarray:
     return rgb
 
 
+def wool(size: int) -> np.ndarray:
+    """Coarse woven wool for villagers' tunics and coats.
+
+    Near-white on purpose: the renderer tints every garment per villager to give the population
+    its variety, and the tint multiplies, so anything strongly coloured here would drag all six
+    outfits toward the same hue. What this map contributes is the *weave* — a visible warp and
+    weft plus slubs in the yarn — so a villager reads as cloth rather than as a plastic capsule.
+    """
+    warp = _stripes(size, 26, 0, 0.35, 141)
+    weft = _stripes(size, 26, 1, 0.35, 142)
+    # Over-under: alternate which thread sits on top, checkerboard fashion, so the cloth has an
+    # actual weave rather than a grid of crossing lines.
+    coord = np.arange(size) / size * 26
+    cell = np.floor(coord).astype(int)
+    over = ((cell[None, :] + cell[:, None]) % 2).astype(float)
+    mask = np.clip(warp * over + weft * (1 - over), 0, 1)
+    rgb = tint("#f2efe8", "#b9b2a4", mask)
+    slub = fbm(143, size, octaves=(12, 40), weights=(0.5, 0.5))  # thick spots in the yarn
+    rgb *= (0.90 + 0.20 * slub)[:, :, None]
+    return rgb
+
+
 def masonry(size: int) -> np.ndarray:
     """Coursed rubble stone for footings, chimneys and walls.
 
@@ -183,6 +205,7 @@ MATERIALS = {
     "plaster": (plaster, 4.0),
     "shingle": (shingle, 11.0),
     "shake": (shake, 12.0),
+    "wool": (wool, 6.0),
     "masonry": (masonry, 12.0),
     "thatch": (thatch, 10.0),
 }

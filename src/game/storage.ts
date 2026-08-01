@@ -12,6 +12,7 @@ import {
   LARDER_KINDS,
   HOUSE_FOOD_PER_RESIDENT,
   HOUSE_FIREWOOD_PER_RESIDENT,
+  HOUSE_CLOTHING_PER_RESIDENT,
   HOUSE_MEDICINE_PER_RESIDENT,
   CHILD_FOOD_FACTOR,
   STONE_HOUSE_HEAT_FACTOR,
@@ -241,6 +242,7 @@ export function larderTarget(s: GameState, house: Building, kind: ResourceKind):
     const factor = house.type === 'stonehouse' ? STONE_HOUSE_HEAT_FACTOR : 1;
     return residents * HOUSE_FIREWOOD_PER_RESIDENT * factor;
   }
+  if (kind === 'clothing') return residents * HOUSE_CLOTHING_PER_RESIDENT;
   if (kind === 'medicine') return residents * HOUSE_MEDICINE_PER_RESIDENT;
   return 0;
 }

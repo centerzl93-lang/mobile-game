@@ -1014,6 +1014,12 @@ class Game {
     return b ? workRadiusOf(b) : undefined;
   }
 
+  /** Debug/testing helper: how many villagers are drawn in a coat this frame (3D only). */
+  debugCoatedCount(): number {
+    const r = this.renderer as Renderer3D;
+    return typeof r.coatedCount === 'function' ? r.coatedCount() : 0;
+  }
+
   /** Debug/testing helper: route between tiles, returns waypoint tiles or null. */
   debugPath(fx: number, fy: number, tx: number, ty: number): { x: number; y: number }[] | null {
     return findPath(this.state, fx, fy, tx, ty);

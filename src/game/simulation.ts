@@ -1368,8 +1368,20 @@ function endSeason(s: GameState, log: LogFn): void {
     const clothEach = CLOTHING_PER_CITIZEN_WINTER * burn;
     const unclothed: Citizen[] = [];
     for (const c of s.citizens) {
-      // Clothing stays a village-wide store: it is issued from the barns, not kept in larders.
-      c.clothed = clothEach <= 0 || consume(s, 'clothing', clothEach) <= 0.001;
+      // Out of the household's own press first, then the barns — the same larder-first rule food
+      // and fuel follow. It also makes what the renderer draws honest: a villager wears a coat
+      // when their home holds clothing, and that is the clothing they are actually issued.
+      let need = clothEach;
+      const home = homeOf(c);
+      if (home && need > 0) {
+        const fromLarder = Math.min(need, home.store['clothing'] ?? 0);
+        if (fromLarder > 0) {
+          takeFromLarder(home, 'clothing', fromLarder);
+          need -= fromLarder;
+        }
+      }
+      if (need > 0) need = consume(s, 'clothing', need);
+      c.clothed = need <= 0.001;
       if (!c.clothed) unclothed.push(c);
     }
 

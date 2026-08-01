@@ -12,6 +12,7 @@ import {
   MAP_W,
   MAP_H,
   ADULT_AGE,
+  isHouse,
   PATH_DIRT,
   PATH_DIRT_PLAN,
   PATH_STONE,
@@ -25,6 +26,7 @@ import { tileIndex } from '../game/world';
 import { Camera3D } from '../engine/camera3d';
 import type { PlacementView } from './renderer';
 import { ModelLibrary, InstancedModel } from './models';
+import { bodyGeometry, skinGeometry, hairGeometry, legGeometry, coatGeometry, HEAD_Y, HIP_Y, LEG_X } from './villager';
 
 const LAND_H = 0.3; // height of a normal land tile block
 const WATER_BED_H = 0.02; // lake/river floor, kept below the water plane at y = 0.14
@@ -97,6 +99,46 @@ const SNOW_COLOR = new THREE.Color(0xeef3f7);
 // Instanced-mesh capacity for villagers — sized for a busy Large map's population.
 const CITIZEN_CAP = 1200;
 
+/**
+ * The village wardrobe. Each entry is one villager "look": a tunic, the coat worn over it when
+ * the household has clothing, and a hair colour.
+ *
+ * A villager's look is picked by hashing their id, so it is stable for life — the child you
+ * watched growing up is recognisably the same person as an adult, which is the point of having
+ * variants at all. Adults and children draw from this same table; only their proportions differ.
+ *
+ * The tunic colours are muted earths and plant dyes on purpose. These are villagers who spin and
+ * dye their own cloth, and a saturated palette at this scale reads as a scatter of confetti when
+ * a hundred of them are on screen.
+ */
+interface Outfit {
+  tunic: number;
+  /** Hose/leggings. Always darker than the tunic — undyed or overdyed cloth got the hard wear. */
+  legs: number;
+  coat: number;
+  hair: number;
+}
+const OUTFITS: Outfit[] = [
+  { tunic: 0x8a6a45, legs: 0x4c3a24, coat: 0x5f4526, hair: 0x2b1d12 }, // undyed brown / dark oak
+  { tunic: 0x6d7f5a, legs: 0x3d4433, coat: 0x47543a, hair: 0x5a3a20 }, // weld green / moss
+  { tunic: 0x8a5a52, legs: 0x4a352f, coat: 0x5d3a33, hair: 0x8a6a3a }, // madder red / oxblood
+  { tunic: 0x5b7188, legs: 0x37424e, coat: 0x3b4c5e, hair: 0x3a3a3a }, // woad blue / slate
+  { tunic: 0xb0a184, legs: 0x6d6047, coat: 0x7d7057, hair: 0xa8834f }, // bleached linen / flax
+  { tunic: 0x7a6288, legs: 0x453a52, coat: 0x50405c, hair: 0x4a3020 }, // logwood purple / plum
+];
+/** Skin tones, chosen by a second, independent hash so looks are not locked to one complexion. */
+const SKIN_TONES = [0xf1c9a5, 0xe3b489, 0xc8925f, 0xa9714a, 0x855235];
+/** A sick villager is tinted toward this regardless of their outfit, so illness stays readable. */
+const SICK_TINT = 0xd24a4a;
+
+/**
+ * Deterministic small hash of a villager id. Two different salts give two independent choices
+ * (outfit and skin) from the same id without correlating them.
+ */
+function lookIndex(id: number, salt: number, n: number): number {
+  return (Math.imul(id ^ salt, 2654435761) >>> 8) % n;
+}
+
 interface SeasonPalette {
   sky: number; fog: number; hemiSky: number; hemiGround: number; sun: number; sunI: number; snow: number;
 }
@@ -163,6 +205,10 @@ export class Renderer3D {
   private paths!: THREE.InstancedMesh;
   private marks!: THREE.InstancedMesh;
   private citizens!: THREE.InstancedMesh;
+  private hair!: THREE.InstancedMesh | null;
+  /** Left and right leg, instanced separately so each can swing on its own transform. */
+  private legs!: [THREE.InstancedMesh, THREE.InstancedMesh];
+  private coats!: THREE.InstancedMesh | null;
   private water!: THREE.Mesh;
   private mountainH: Float32Array | null = null; // per-tile mountain block height (0 = not a mountain)
 
@@ -312,24 +358,50 @@ export class Renderer3D {
     this.marks.frustumCulled = false;
     this.scene.add(this.marks);
 
-    // Citizens: capsule bodies (all tiers) + small heads (high tier), refreshed every frame.
-    const capGeo = new THREE.CapsuleGeometry(0.16, 0.34, 3, 6);
-    capGeo.translate(0, 0.33, 0);
-    this.citizens = new THREE.InstancedMesh(capGeo, matte(0xffffff), CITIZEN_CAP);
+    // Citizens: a figure assembled from separately-instanced body parts (see render/villager.ts).
+    // Instancing is non-negotiable at these populations, and one instanced mesh carries only one
+    // colour and one transform — which is why villagers were a tinted capsule. A mesh per part
+    // gives each of them its own colour, and the legs their own transforms so they can walk.
+    //
+    // Variety comes from OUTFITS, indexed by a stable hash of the villager's id, so a child keeps
+    // the same colouring when they grow up.
+    const woolMat = matte(0xffffff, 0.92);
+    this.loadVillagerTexture(woolMat, 2.2);
+    this.citizens = new THREE.InstancedMesh(bodyGeometry(), woolMat, CITIZEN_CAP);
     this.citizens.count = 0;
     this.citizens.castShadow = this.tier === 'high';
     this.citizens.frustumCulled = false;
     this.scene.add(this.citizens);
-    if (this.tier === 'high') {
-      const headGeo = new THREE.SphereGeometry(0.13, 8, 6);
-      this.heads = new THREE.InstancedMesh(headGeo, matte(0xffffff), CITIZEN_CAP);
-      this.heads.count = 0;
-      this.heads.castShadow = true;
-      this.heads.frustumCulled = false;
-      this.scene.add(this.heads);
-    } else {
-      this.heads = null;
-    }
+
+    const mkLayer = (geo: THREE.BufferGeometry, mat: THREE.Material, shadow = false) => {
+      const m = new THREE.InstancedMesh(geo, mat, CITIZEN_CAP);
+      m.count = 0;
+      m.castShadow = shadow;
+      m.frustumCulled = false;
+      this.scene.add(m);
+      return m;
+    };
+    // Legs are drawn on every tier: without them a villager slides rather than walks, and that
+    // reads worse than any amount of missing surface detail.
+    // Only the torso casts a shadow. Each shadow-casting layer is a whole extra pass over the
+    // light's depth map, and six of them measured 25% slower per frame with 400 villagers than
+    // the two-capsule figure they replaced; the legs, head and coat sit inside the body's own
+    // shadow at this scale anyway.
+    const legMat = matte(0xffffff, 0.9);
+    this.loadVillagerTexture(legMat, 2.6);
+    this.legs = [mkLayer(legGeometry(), legMat), mkLayer(legGeometry(), legMat)];
+    // Head and hands are drawn on every tier too — the body has a neck, and a headless villager
+    // is not a graceful degradation.
+    this.heads = mkLayer(skinGeometry(), matte(0xffffff, 0.72));
+    // Coats are drawn on every tier: whether a household has warm clothing is information the
+    // player acts on, not decoration, and it should not disappear on a weaker device. Its own
+    // running count, because the coated villagers are an arbitrary subset — instance i in this
+    // layer is not citizen i.
+    const coatMat = matte(0xffffff, 0.94);
+    this.loadVillagerTexture(coatMat, 1.7);
+    this.coats = mkLayer(coatGeometry(), coatMat);
+    // Hair is the one part that is purely cosmetic, so it is the one part the low tier drops.
+    this.hair = this.tier === 'high' ? mkLayer(hairGeometry(), matte(0xffffff, 0.85)) : null;
 
     // Water plane just beneath the land surface — subdivided so it can ripple.
     const waterMat = new THREE.MeshStandardMaterial({
@@ -1129,41 +1201,146 @@ export class Renderer3D {
   }
 
   // ---- citizens ----
+  /**
+   * Which households have warm clothing in store, rebuilt each frame.
+   *
+   * Cheaper than it looks — a house is one map entry, and this is a few hundred at most, against
+   * the thousand-odd villagers that would each otherwise scan the building list.
+   */
+  private clothedHomes(s: GameState): Set<number> {
+    const out = new Set<number>();
+    for (const b of s.buildings) {
+      if (b.built && isHouse(b.type) && (b.store['clothing'] ?? 0) > 0) out.add(b.id);
+    }
+    return out;
+  }
+
   private syncCitizens(s: GameState, now: number): void {
     const cap = (this.citizens.instanceMatrix.array.length / 16) | 0;
     const n = Math.min(s.citizens.length, cap);
+    const warmHomes = this.coats ? this.clothedHomes(s) : null;
+    let coated = 0;
     for (let i = 0; i < n; i++) {
       const c = s.citizens[i];
       const child = c.age < ADULT_AGE;
       const sc = child ? 0.62 : 1;
-      // A little hop while walking so villagers read as moving, not sliding.
+      const fit = OUTFITS[lookIndex(c.id, 0x9e3779b9, OUTFITS.length)];
       const moving = Math.abs(c.tx - c.x) + Math.abs(c.ty - c.y) > 0.03;
-      const bob = moving ? Math.abs(Math.sin(now * 6 + c.id)) * 0.06 : 0;
+      // A small rise and fall on each stride, in step with the legs below (hence the doubled
+      // frequency — the body bobs once per footfall, the legs swing once per full cycle).
+      const stride = now * 5.2 + c.id;
+      const bob = moving ? Math.abs(Math.sin(stride)) * 0.022 : 0;
       const yaw = moving ? Math.atan2(c.tx - c.x, c.ty - c.y) : 0;
-      this.dummy.position.set(c.x, TOP + bob, c.y);
+      const y0 = TOP + bob;
+
+      // Everything above the hips shares one transform; only the legs move independently.
+      this.dummy.position.set(c.x, y0, c.y);
       this.dummy.scale.set(sc, sc, sc);
       this.dummy.rotation.set(0, yaw, 0);
       this.dummy.updateMatrix();
       this.citizens.setMatrixAt(i, this.dummy.matrix);
-      const base = c.sick ? 0xd24a4a : c.sex === 'm' ? 0x9ec7f0 : 0xf0b9d2;
-      this.citizens.setColorAt(i, this.color.set(base));
-      if (this.heads) {
-        this.dummy.position.set(c.x, TOP + bob + 0.62 * sc, c.y);
+      this.citizens.setColorAt(i, this.color.set(c.sick ? SICK_TINT : fit.tunic));
+
+      // Legs swing about the hip, a half cycle out of phase with each other.
+      const cos = Math.cos(yaw);
+      const sin = Math.sin(yaw);
+      for (let k = 0; k < 2; k++) {
+        const swing = moving ? Math.sin(stride + k * Math.PI) * 0.42 : 0;
+        const dx = (k === 0 ? -LEG_X : LEG_X) * sc;
+        this.dummy.position.set(c.x + dx * cos, y0 + HIP_Y * sc, c.y - dx * sin);
         this.dummy.scale.set(sc, sc, sc);
-        this.dummy.rotation.set(0, 0, 0);
+        // YXZ so the yaw is applied first and the swing then happens in the villager's own
+        // forward plane — with the default XYZ order a turned villager kicks sideways.
+        this.dummy.rotation.set(swing, yaw, 0, 'YXZ');
+        this.dummy.updateMatrix();
+        this.legs[k].setMatrixAt(i, this.dummy.matrix);
+        this.legs[k].setColorAt(i, this.color.set(c.sick ? SICK_TINT : fit.legs));
+      }
+      this.dummy.rotation.order = 'XYZ'; // restore the default for every other user of the dummy
+
+      // Children get a proportionally larger head, which is most of what makes a scaled-down
+      // adult read as a child rather than as a distant one.
+      const headScale = sc * (child ? 1.22 : 1);
+      // The head geometry is authored at its true height, so scaling it up for a child would also
+      // lift it off the neck — position it explicitly and let the scale act about that point.
+      const headY = y0 + HEAD_Y * sc;
+      if (this.heads) {
+        this.dummy.position.set(c.x, headY - HEAD_Y * headScale, c.y);
+        this.dummy.scale.set(headScale, headScale, headScale);
+        this.dummy.rotation.set(0, yaw, 0);
         this.dummy.updateMatrix();
         this.heads.setMatrixAt(i, this.dummy.matrix);
-        this.heads.setColorAt(i, this.color.set(0xf1c9a5));
+        this.heads.setColorAt(i, this.color.set(SKIN_TONES[lookIndex(c.id, 0x85ebca6b, SKIN_TONES.length)]));
+      }
+      if (this.hair) {
+        this.dummy.position.set(c.x, headY - HEAD_Y * headScale, c.y);
+        this.dummy.scale.set(headScale, headScale, headScale);
+        this.dummy.rotation.set(0, yaw, 0);
+        this.dummy.updateMatrix();
+        this.hair.setMatrixAt(i, this.dummy.matrix);
+        this.hair.setColorAt(i, this.color.set(fit.hair));
+      }
+      // The coat is the visible answer to "does this household have clothing?". A villager with
+      // no home at all (a newcomer yet to be housed) has nowhere to keep a coat, so goes without.
+      if (this.coats && warmHomes && c.homeId !== null && warmHomes.has(c.homeId)) {
+        this.dummy.position.set(c.x, y0, c.y);
+        this.dummy.scale.set(sc, sc, sc);
+        this.dummy.rotation.set(0, yaw, 0);
+        this.dummy.updateMatrix();
+        this.coats.setMatrixAt(coated, this.dummy.matrix);
+        this.coats.setColorAt(coated, this.color.set(c.sick ? SICK_TINT : fit.coat));
+        coated++;
       }
     }
     this.citizens.count = n;
     this.citizens.instanceMatrix.needsUpdate = true;
     if (this.citizens.instanceColor) this.citizens.instanceColor.needsUpdate = true;
-    if (this.heads) {
-      this.heads.count = n;
-      this.heads.instanceMatrix.needsUpdate = true;
-      if (this.heads.instanceColor) this.heads.instanceColor.needsUpdate = true;
+    for (const layer of [this.heads, this.hair, this.legs[0], this.legs[1]] as (THREE.InstancedMesh | null)[]) {
+      if (!layer) continue;
+      layer.count = n;
+      layer.instanceMatrix.needsUpdate = true;
+      if (layer.instanceColor) layer.instanceColor.needsUpdate = true;
     }
+    if (this.coats) {
+      this.coats.count = coated;
+      this.coats.instanceMatrix.needsUpdate = true;
+      if (this.coats.instanceColor) this.coats.instanceColor.needsUpdate = true;
+    }
+  }
+
+  /**
+   * How many villagers are currently drawn wearing a coat.
+   *
+   * Exposed for tests: the coat is the visible answer to "does this household hold clothing?",
+   * and that link between simulation state and what is on screen is worth pinning down.
+   */
+  coatedCount(): number {
+    return this.coats ? this.coats.count : 0;
+  }
+
+  /**
+   * Put the woven-wool map on a villager garment material.
+   *
+   * Best-effort like the other runtime textures: if it fails to load the material keeps its flat
+   * per-instance colour, so villagers never vanish over a missing file. `repeat` is in texture
+   * units across the whole garment — the tunic takes more repeats than the coat so the weave
+   * stays the same physical size on both.
+   */
+  private loadVillagerTexture(mat: THREE.MeshStandardMaterial, repeat: number): void {
+    new THREE.TextureLoader().load(
+      import.meta.env.BASE_URL + 'textures/mat_wool.png',
+      (t) => {
+        t.colorSpace = THREE.SRGBColorSpace;
+        t.wrapS = t.wrapT = THREE.RepeatWrapping;
+        t.repeat.set(repeat, repeat);
+        mat.map = t;
+        mat.needsUpdate = true;
+      },
+      undefined,
+      () => {
+        /* no weave — the instance colour alone still reads as a clothed villager */
+      },
+    );
   }
 
   // ---- overlays (placement ghost, selection ring, marquee) ----

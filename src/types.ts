@@ -911,8 +911,18 @@ export const HOUSE_FOOD_PER_RESIDENT = FOOD_PER_CITIZEN_PER_SEASON * HOUSE_LARDE
 export const HOUSE_FIREWOOD_PER_RESIDENT = HEAT_PER_CITIZEN_WINTER * HOUSE_LARDER_SEASONS;
 /** Doses kept at home per resident — enough to treat a household through an outbreak. */
 export const HOUSE_MEDICINE_PER_RESIDENT = 2;
+/**
+ * Warm clothing kept at home per resident — a season's worth, so a household that has been
+ * supplied is dressed for the winter out of its own press.
+ *
+ * Clothing used to be issued straight from the barns and never went home. Keeping it in the
+ * larder makes "is this family clothed?" a property of the household rather than of the village
+ * average, which is what the renderer draws: a villager wears a coat when their home holds
+ * clothing and goes without when it does not.
+ */
+export const HOUSE_CLOTHING_PER_RESIDENT = CLOTHING_PER_CITIZEN_WINTER * HOUSE_LARDER_SEASONS;
 /** Resources a household keeps at home, in the order a resident restocks them. */
-export const LARDER_KINDS: ResourceKind[] = ['firewood', 'medicine'];
+export const LARDER_KINDS: ResourceKind[] = ['firewood', 'clothing', 'medicine'];
 
 /**
  * Carrying space for a grocery run — a proper basket of provisions, rather than the single

@@ -126,6 +126,68 @@ test.describe('world generation, placement & pathfinding', () => {
     expect(worst, 'barest quadrant, fraction of buildable ground left bare').toBeLessThan(0.55);
   });
 
+  test('deposits are small, stay off the shore, and sit among the trees', async ({ page }) => {
+    await startSmall(page);
+    const dep = await page.evaluate(([W, H]) => {
+      const s = (window as any).__village.state;
+      const T = s.tiles;
+      const has = (t: any) => ((t.stone ?? 0) + (t.iron ?? 0)) > 0;
+
+      // Largest connected run of deposit tiles. Outcrops are grown as bounded clusters, so no
+      // single one should sprawl across the map the way a thresholded noise field did.
+      const seen = new Uint8Array(W * H);
+      let biggest = 0;
+      for (let i = 0; i < W * H; i++) {
+        if (seen[i] || !has(T[i])) continue;
+        let n = 0;
+        const stack = [i];
+        seen[i] = 1;
+        while (stack.length) {
+          const k = stack.pop()!;
+          n++;
+          const x = k % W, y = (k / W) | 0;
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+            const j = ny * W + nx;
+            if (!seen[j] && has(T[j])) { seen[j] = 1; stack.push(j); }
+          }
+        }
+        biggest = Math.max(biggest, n);
+      }
+
+      // Closest any deposit gets to open water, and how wooded a deposit's surroundings are.
+      let minWaterDist = 99, neighbours = 0, wooded = 0;
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < W; x++) {
+          if (!has(T[y * W + x])) continue;
+          for (let dy = -2; dy <= 2; dy++)
+            for (let dx = -2; dx <= 2; dx++) {
+              const nx = x + dx, ny = y + dy;
+              if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+              const n = T[ny * W + nx];
+              if (n.type === 'water') minWaterDist = Math.min(minWaterDist, Math.max(Math.abs(dx), Math.abs(dy)));
+              if (Math.abs(dx) > 1 || Math.abs(dy) > 1 || (!dx && !dy)) continue;
+              if (n.type === 'water' || n.type === 'stone') continue;
+              neighbours++;
+              if (n.type === 'forest') wooded++;
+            }
+        }
+      return { biggest, minWaterDist, woodedPct: neighbours ? (wooded / neighbours) * 100 : 0 };
+    }, [W, H] as const);
+
+    // Clusters are capped at DEPOSIT_CLUSTER_MAX (18) tiles, only half of which carries ore, and
+    // DEPOSIT_SPACING keeps them from chaining into each other. Measured over 200 worlds the
+    // largest connected run peaks at 15 (median 10); before bounded clusters it was 149 tiles —
+    // a bald quarter of the map.
+    expect(dep.biggest, 'largest connected deposit').toBeLessThan(22);
+    // Nothing within DEPOSIT_WATER_MARGIN of water: the shader blends sand that far out, so a
+    // deposit any closer renders standing on the beach.
+    expect(dep.minWaterDist, 'closest deposit-to-water distance').toBeGreaterThan(2);
+    // Deposits are scattered *through* the woodland, not carved out of it.
+    expect(dep.woodedPct, 'deposit neighbours that are woodland').toBeGreaterThan(25);
+  });
+
   test('mountains rise into tall peaks', async ({ page }) => {
     await startSmall(page);
     const peak = await page.evaluate(() => (window as any).__village.renderer.maxPeak);

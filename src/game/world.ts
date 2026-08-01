@@ -1,4 +1,4 @@
-import { MAP_W, MAP_H, Tile, TileType, PATH_NONE, HARVEST_NONE, LOOSE_STONE_MIN, LOOSE_STONE_MAX, LOOSE_IRON_MIN, LOOSE_IRON_MAX, STONE_CLUSTER_THRESHOLD, IRON_CLUSTER_THRESHOLD, FOREST_DEPOSIT_EXTRA, FOREST_MOISTURE, START_CLEARING_RADIUS, FOOTHILL_RADIUS } from '../types';
+import { MAP_W, MAP_H, Tile, TileType, PATH_NONE, HARVEST_NONE, LOOSE_STONE_MIN, LOOSE_STONE_MAX, LOOSE_IRON_MIN, LOOSE_IRON_MAX, DEPOSIT_SPACING, DEPOSIT_CLUSTER_MIN, DEPOSIT_CLUSTER_MAX, DEPOSIT_FILL, DEPOSIT_WATER_MARGIN, STONE_CLUSTER_DENSITY, IRON_CLUSTER_DENSITY, FOREST_MOISTURE, START_CLEARING_RADIUS, FOOTHILL_RADIUS } from '../types';
 
 export function tileIndex(x: number, y: number): number {
   return y * MAP_W + x;
@@ -66,11 +66,6 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
   for (let i = 0; i < moist.length; i++) {
     moist[i] = moistBase[i] * 0.5 + moistMid[i] * 0.3 + moistFine[i] * 0.2;
   }
-  // Separate noise fields for the surface deposits, so stone and iron form their own patches
-  // rather than appearing wherever a uniform random roll happens to land.
-  const stoneField = valueNoise(MAP_W, MAP_H, mulberry32(seed ^ 0x85ebca6b), 9);
-  const ironField = valueNoise(MAP_W, MAP_H, mulberry32(seed ^ 0xc2b2ae35), 11);
-
   // River centre-line meanders around the middle column (sine + slow noise), width ~2–3.
   const wobble = valueNoise(MAP_W, MAP_H, mulberry32(seed ^ 0x2545f491), 3);
   const riverCx = (y: number): number => {
@@ -94,8 +89,6 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
       const isRiver = Math.abs(x + 0.5 - riverCx(y)) <= riverHalf(y);
       let type: TileType;
       let trees = 0;
-      let stone: number | undefined;
-      let iron: number | undefined;
       if (isRiver || inLake(x, y)) {
         type = 'water';
       } else if (elev[i] > 0.68 && moistBase[i] < 0.6) {
@@ -110,28 +103,19 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
       } else {
         type = 'grass';
       }
-      // Surface deposits sit in noise clusters, and an outcrop in the woods clears the trees off
-      // its own tile: one tile carries one resource, never trees and ore at once. That keeps them
-      // scattered through the forest — as small natural clearings — without stacking two harvests
-      // on a tile whose harvest layer can only hold one order.
-      if (type === 'grass' || type === 'forest') {
-        const extra = type === 'forest' ? FOREST_DEPOSIT_EXTRA : 0;
-        if (stoneField[i] > STONE_CLUSTER_THRESHOLD + extra) {
-          stone = Math.round(LOOSE_STONE_MIN + rand() * (LOOSE_STONE_MAX - LOOSE_STONE_MIN));
-        } else if (ironField[i] > IRON_CLUSTER_THRESHOLD + extra) {
-          iron = Math.round(LOOSE_IRON_MIN + rand() * (LOOSE_IRON_MAX - LOOSE_IRON_MIN));
-        }
-        if (stone !== undefined || iron !== undefined) {
-          type = 'grass';
-          trees = 0;
-        }
-      }
-      const tile: Tile = { type, trees };
-      if (stone !== undefined) tile.stone = stone;
-      if (iron !== undefined) tile.iron = iron;
-      tiles[i] = tile;
+      tiles[i] = { type, trees };
     }
   }
+
+  // Surface deposits go in after the landscape exists, as individual bounded outcrops. Both
+  // passes share one keep-out mask — seeded with the shoreline margin, then extended around each
+  // outcrop as it is placed — so stone and iron cannot chain into each other either.
+  const area = (MAP_W * MAP_H) / 1000;
+  // Iron goes first: it is the rarer of the two, and seeding the common one first left it
+  // fenced out of almost the whole map — four iron tiles a world instead of fifty.
+  const blocked = waterProximity(tiles, DEPOSIT_WATER_MARGIN);
+  seedDeposits(tiles, rand, 'iron', Math.round(IRON_CLUSTER_DENSITY * area), blocked);
+  seedDeposits(tiles, rand, 'stone', Math.round(STONE_CLUSTER_DENSITY * area), blocked);
 
   // Carve foothills: the low, buildable rocky band at each mountain's base. Any land tile
   // within FOOTHILL_RADIUS of a mountain (stone) tile becomes foothill (losing its trees /
@@ -276,29 +260,130 @@ function smooth(t: number): number {
 
 
 /**
- * Clear surface deposits off tiles that touch water.
+ * Scatter `count` bounded outcrops of one resource across the map.
  *
- * The bank slopes down into the water, so a deposit on a waterside tile stands on ground that has
- * already dropped below the water plane and reads as floating on the river. Rather than chase
- * that per-prop, keep the margin itself clear.
+ * Each is grown from a single seed tile into an irregular footprint of at most
+ * `DEPOSIT_CLUSTER_MAX` tiles, and then only `DEPOSIT_FILL` of that footprint actually carries
+ * ore. Both parts matter: the cap stops one outcrop swallowing a quarter of the map, and the
+ * partial fill leaves the woodland standing between the nodes, so rock reads as showing through
+ * the trees instead of as a felled clearing.
  */
-function clearWaterMargin(tiles: Tile[]): void {
-  for (let y = 0; y < MAP_H; y++) {
-    for (let x = 0; x < MAP_W; x++) {
-      const t = tiles[tileIndex(x, y)];
-      if ((t.stone ?? 0) <= 0 && (t.iron ?? 0) <= 0) continue;
-      let nearWater = false;
-      for (let dy = -1; dy <= 1 && !nearWater; dy++) {
-        for (let dx = -1; dx <= 1 && !nearWater; dx++) {
-          const n = getTile(tiles, x + dx, y + dy);
-          if (n && n.type === 'water') nearWater = true;
+function seedDeposits(
+  tiles: Tile[],
+  rand: () => number,
+  kind: 'stone' | 'iron',
+  count: number,
+  blocked: Uint8Array,
+): void {
+  const canHost = (i: number): boolean => {
+    const t = tiles[i];
+    if (t.type !== 'grass' && t.type !== 'forest') return false;
+    return !blocked[i];
+  };
+
+  for (let c = 0; c < count; c++) {
+    // Find somewhere to start. Give up on this cluster rather than search exhaustively — on a
+    // map with little open ground, fewer outcrops is the right answer.
+    let seed = -1;
+    for (let tries = 0; tries < 60 && seed < 0; tries++) {
+      const i = Math.floor(rand() * tiles.length);
+      if (canHost(i)) seed = i;
+    }
+    if (seed < 0) continue;
+
+    const target = DEPOSIT_CLUSTER_MIN + Math.floor(rand() * (DEPOSIT_CLUSTER_MAX - DEPOSIT_CLUSTER_MIN + 1));
+    const region = growRegion(seed, target, rand, canHost);
+    // Fence the whole footprint off before placing anything, so the next outcrop keeps its
+    // distance whether or not a given tile in this one ended up carrying ore.
+    for (const i of region) {
+      const x = i % MAP_W;
+      const y = (i / MAP_W) | 0;
+      for (let dy = -DEPOSIT_SPACING; dy <= DEPOSIT_SPACING; dy++) {
+        for (let dx = -DEPOSIT_SPACING; dx <= DEPOSIT_SPACING; dx++) {
+          if (inBounds(x + dx, y + dy)) blocked[tileIndex(x + dx, y + dy)] = 1;
         }
       }
-      if (nearWater) {
-        delete t.stone;
-        delete t.iron;
+    }
+    for (const i of region) {
+      if (rand() > DEPOSIT_FILL) continue;
+      const t = tiles[i];
+      // One tile carries one resource, never trees and ore at once — the harvest layer holds a
+      // single order per tile, so a tile with both would be unharvestable in one of the two ways.
+      t.type = 'grass';
+      t.trees = 0;
+      if (kind === 'stone') t.stone = Math.round(LOOSE_STONE_MIN + rand() * (LOOSE_STONE_MAX - LOOSE_STONE_MIN));
+      else t.iron = Math.round(LOOSE_IRON_MIN + rand() * (LOOSE_IRON_MAX - LOOSE_IRON_MIN));
+    }
+  }
+}
+
+/**
+ * Grow a connected blob of up to `target` tiles from `seed`, taking a random tile off the
+ * frontier each step. Picking randomly rather than breadth-first is what makes the outline
+ * ragged; breadth-first growth produces a diamond.
+ */
+function growRegion(seed: number, target: number, rand: () => number, ok: (i: number) => boolean): number[] {
+  const region = [seed];
+  const claimed = new Set<number>([seed]);
+  const frontier: number[] = [];
+  const pushNeighbours = (i: number): void => {
+    const x = i % MAP_W;
+    const y = (i / MAP_W) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!inBounds(nx, ny)) continue;
+      const j = tileIndex(nx, ny);
+      if (!claimed.has(j) && ok(j)) frontier.push(j);
+    }
+  };
+  pushNeighbours(seed);
+  while (region.length < target && frontier.length > 0) {
+    const k = Math.floor(rand() * frontier.length);
+    const i = frontier[k];
+    frontier[k] = frontier[frontier.length - 1];
+    frontier.pop();
+    if (claimed.has(i)) continue;
+    claimed.add(i);
+    region.push(i);
+    pushNeighbours(i);
+  }
+  return region;
+}
+
+/** Mask of tiles within `margin` (Chebyshev) of a water tile. */
+function waterProximity(tiles: Tile[], margin: number): Uint8Array {
+  const near = new Uint8Array(tiles.length);
+  for (let y = 0; y < MAP_H; y++) {
+    for (let x = 0; x < MAP_W; x++) {
+      if (tiles[tileIndex(x, y)].type !== 'water') continue;
+      for (let dy = -margin; dy <= margin; dy++) {
+        for (let dx = -margin; dx <= margin; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (inBounds(nx, ny)) near[tileIndex(nx, ny)] = 1;
+        }
       }
     }
+  }
+  return near;
+}
+
+/**
+ * Clear surface deposits off tiles near water.
+ *
+ * The bank slopes down into the water and the terrain shader blends sand well past the water's
+ * edge, so a deposit close to shore stands on ground that has already begun dropping toward the
+ * lake bed and renders as sitting on the beach. Rather than chase that per-prop, keep the whole
+ * margin clear. `seedDeposits` already avoids it; this catches the tiles that *become* margin
+ * when a later pass reshapes the map.
+ */
+function clearWaterMargin(tiles: Tile[]): void {
+  const near = waterProximity(tiles, DEPOSIT_WATER_MARGIN);
+  for (let i = 0; i < tiles.length; i++) {
+    if (!near[i]) continue;
+    delete tiles[i].stone;
+    delete tiles[i].iron;
   }
 }
 

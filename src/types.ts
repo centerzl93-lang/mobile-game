@@ -817,21 +817,40 @@ export const PATH_BUILD_TILES_PER_SEC = 0.6; // per free builder
 export const HARVEST_WOOD_PER_TREE = 20; // wood a full forest tile (trees=1) yields when cleared
 export const LOOSE_STONE_MIN = 4; // units on a loose-stone deposit — small nodes, many of them
 export const LOOSE_STONE_MAX = 10;
-export const LOOSE_STONE_COVERAGE = 0.05; // unused: deposits are now placed in noise clusters
-// Surface deposits are seeded in clusters rather than sprinkled evenly, so prospecting for a
-// good patch of ground is a real decision instead of uniform background noise.
-export const STONE_CLUSTER_THRESHOLD = 0.46; // cluster-noise level above which loose stone appears
-/**
- * Extra cluster-noise a deposit needs to claim a *forest* tile.
- *
- * A deposit clears the trees off its own tile, so on woodland each one costs a tree. Using the
- * open-ground threshold everywhere stripped the map back to grass — deposits are common in the
- * open and only occasional clearings in the woods.
- */
-export const FOREST_DEPOSIT_EXTRA = 0.30;
-export const IRON_CLUSTER_THRESHOLD = 0.58; // iron is rarer, so it needs a stronger cluster
 export const LOOSE_IRON_MIN = 3;
 export const LOOSE_IRON_MAX = 8;
+
+/**
+ * Surface deposits are grown as individual bounded clusters, not thresholded out of a noise
+ * field. Thresholding produced one contiguous outcrop of 149 tiles on a 48x48 map — a bald
+ * quarter of the landscape, because a deposit clears the trees off its own tile.
+ *
+ * A cluster is a small irregular *footprint* grown from one seed, and only `DEPOSIT_FILL` of the
+ * tiles in that footprint actually carry ore. The rest keep their woodland, so an outcrop reads
+ * as rock showing through the trees rather than as a clearcut patch.
+ */
+export const DEPOSIT_CLUSTER_MIN = 5;
+export const DEPOSIT_CLUSTER_MAX = 18; // hard cap on a single outcrop's footprint, in tiles
+export const DEPOSIT_FILL = 0.5;
+/** Clusters seeded per 1000 map tiles. Stone is the common one; iron is a find. */
+export const STONE_CLUSTER_DENSITY = 34;
+export const IRON_CLUSTER_DENSITY = 4;
+/**
+ * Tiles of clear ground kept between one outcrop and the next.
+ *
+ * Without this, capping each cluster achieves nothing in the tail: neighbouring clusters grow
+ * into each other and chain, and the largest connected run still hit 95 tiles across 200 worlds.
+ * Enforcing separation makes the cap actually bind.
+ */
+export const DEPOSIT_SPACING = 1;
+/**
+ * Chebyshev distance a deposit must keep from open water.
+ *
+ * One tile was not enough: the terrain shader blends sand well past the water's edge, so a
+ * deposit two tiles out still renders sitting on the beach, and the ground under it has already
+ * begun sloping toward the lake bed.
+ */
+export const DEPOSIT_WATER_MARGIN = 2;
 /** Radius of open ground cleared around the founding barn so a village has room to grow. */
 export const START_CLEARING_RADIUS = 9;
 /**

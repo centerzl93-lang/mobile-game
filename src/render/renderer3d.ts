@@ -28,6 +28,13 @@ import { ModelLibrary, InstancedModel } from './models';
 
 const LAND_H = 0.3; // height of a normal land tile block
 const WATER_BED_H = 0.02; // lake/river floor, kept below the water plane at y = 0.14
+/** Terrain vertices per tile edge. See makeTerrainGeometry — 1 breaks narrow rivers apart. */
+const TERRAIN_RES = 2;
+/** Wetness at which the ground has dropped to the waterline, and at which it reaches full depth. */
+const WET_SHORE = 0.42;
+const WET_DEEP = 0.85;
+/** Wetness where the sand margin starts fading in, a little inland of the shore. */
+const SAND_START = 0.06;
 const FOOTHILL_H = 0.5; // low rocky band at a mountain's base
 const MOUNTAIN_BASE_H = 1.8; // shortest mountain (edge) height
 const MOUNTAIN_STEP_H = 2.2; // extra height per tile of depth into the mountain
@@ -505,114 +512,123 @@ export class Renderer3D {
   }
 
   /**
-   * The terrain as one continuous height-field mesh.
+   * The terrain as one continuous height-field mesh, subdivided finer than the tile grid.
    *
-   * Previously every tile was its own cube, which is why mountains read as a staircase of
-   * coloured blocks. Here a single grid of (w+1)x(h+1) vertices samples the tile heights and
-   * then relaxes them, so a mountain rises as a slope instead of a step. Flat land is pinned
-   * back to exactly LAND_H afterwards: any vertex whose surrounding tiles are all ordinary
-   * ground must not drift, or every prop in the village would float or sink.
+   * TERRAIN_RES matters more than it looks. With one vertex per tile corner, almost every vertex
+   * along a two-tile-wide river also touches dry land, so any rule that keeps banks above the
+   * water plane necessarily lifts the river bed with them — the river then survives only where
+   * four water tiles happen to meet and renders as a chain of disconnected pools. Subdividing
+   * gives narrow water interior vertices of its own, so a river can sit below the plane along its
+   * whole length while the banks either side stay above it.
+   *
+   * Height comes from a smoothly interpolated "wetness" field rather than from tile types
+   * directly, which is also what turns the shoreline from a stepped tile boundary into a bank
+   * that slopes into the water.
    */
   private makeTerrainGeometry(s: GameState): THREE.BufferGeometry {
-    const vw = MAP_W + 1;
-    const vh = MAP_H + 1;
-    const raw = new Float32Array(vw * vh);
-    const flat = new Uint8Array(vw * vh); // 1 = pin to LAND_H (surrounded only by ordinary ground)
-    const anyLand = new Uint8Array(vw * vh); // 1 = at least one adjoining tile is dry land
-    const at = (x: number, y: number) => s.tiles[Math.min(MAP_H - 1, Math.max(0, y)) * MAP_W + Math.min(MAP_W - 1, Math.max(0, x))];
+    const R = TERRAIN_RES;
+    const vw = MAP_W * R + 1;
+    const vh = MAP_H * R + 1;
+    const tileAt = (x: number, y: number) =>
+      s.tiles[Math.min(MAP_H - 1, Math.max(0, y)) * MAP_W + Math.min(MAP_W - 1, Math.max(0, x))];
+    const tileIdx = (x: number, y: number) =>
+      Math.min(MAP_H - 1, Math.max(0, y)) * MAP_W + Math.min(MAP_W - 1, Math.max(0, x));
+
+    // Per-tile dry height and wetness, sampled bilinearly between tile centres below.
+    const dryH = new Float32Array(MAP_W * MAP_H);
+    const wetT = new Float32Array(MAP_W * MAP_H);
+    for (let y = 0; y < MAP_H; y++) {
+      for (let x = 0; x < MAP_W; x++) {
+        const i = y * MAP_W + x;
+        const t = s.tiles[i];
+        wetT[i] = t.type === 'water' ? 1 : 0;
+        dryH[i] = t.type === 'water' ? LAND_H : this.tileHeight(t, i);
+      }
+    }
+    // Round off the tile staircase before sampling. The water mask is quantised to whole tiles,
+    // so bilinear interpolation alone still traces a zigzag along the bank; one gentle blur of the
+    // mask turns that into a curve. Weighted toward the centre so a narrow river keeps enough
+    // wetness at its middle to stay below the water plane.
+    const blurred = new Float32Array(wetT);
+    for (let y = 0; y < MAP_H; y++) {
+      for (let x = 0; x < MAP_W; x++) {
+        let sum = 0;
+        let wsum = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const w = dx === 0 && dy === 0 ? 4 : dx === 0 || dy === 0 ? 1.4 : 0.6;
+            sum += wetT[tileIdx(x + dx, y + dy)] * w;
+            wsum += w;
+          }
+        }
+        blurred[y * MAP_W + x] = sum / wsum;
+      }
+    }
+    wetT.set(blurred);
+
+    const bilinear = (f: Float32Array, px: number, pz: number) => {
+      // Sample about tile centres, which sit at (x+0.5, y+0.5).
+      const fx = px - 0.5;
+      const fz = pz - 0.5;
+      const x0 = Math.floor(fx);
+      const z0 = Math.floor(fz);
+      const tx = fx - x0;
+      const tz = fz - z0;
+      const a = f[tileIdx(x0, z0)];
+      const b = f[tileIdx(x0 + 1, z0)];
+      const c = f[tileIdx(x0, z0 + 1)];
+      const d = f[tileIdx(x0 + 1, z0 + 1)];
+      return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+    };
+
+    const height = new Float32Array(vw * vh);
+    const wetness = new Float32Array(vw * vh);
     for (let vy = 0; vy < vh; vy++) {
       for (let vx = 0; vx < vw; vx++) {
-        // A vertex sits on the corner of up to four tiles; average them.
-        // Average only the dry tiles touching this vertex. Mixing a lake bed into a shoreline
-        // vertex drags the bank down under the water plane, which submerges the edge of the land
-        // and leaves anything standing on it — a boulder, an ore node — apparently afloat.
-        // A vertex goes to bed height only when every tile around it is water.
-        let sum = 0;
-        let dry = 0;
-        let wet = 0;
-        let plain = 1;
-        for (const [dx, dy] of [[-1, -1], [0, -1], [-1, 0], [0, 0]] as const) {
-          const tx = vx + dx;
-          const ty = vy + dy;
-          const t = at(tx, ty);
-          const idx = Math.min(MAP_H - 1, Math.max(0, ty)) * MAP_W + Math.min(MAP_W - 1, Math.max(0, tx));
-          if (t.type === 'water') {
-            wet++;
-          } else {
-            sum += this.tileHeight(t, idx);
-            dry++;
-          }
-          // Water must not be pinned to LAND_H either: the water plane sits below it, so a pinned
-          // lake bed rises straight through and the map renders with no water at all.
-          if (t.type === 'stone' || t.type === 'foothill' || t.type === 'water') plain = 0;
-        }
-        const k0 = vy * vw + vx;
-        raw[k0] = dry > 0 ? sum / dry : WATER_BED_H;
-        flat[k0] = plain;
-        anyLand[k0] = dry > 0 ? 1 : 0;
-        void wet;
+        const px = vx / R;
+        const pz = vy / R;
+        const wet = bilinear(wetT, px, pz);
+        const dry = bilinear(dryH, px, pz);
+        // Ease across the waterline so the bank is a ramp, not a cliff, and so the midpoint of
+        // the transition still sits above the water plane and keeps the shore dry.
+        const k = clamp01((wet - WET_SHORE) / (WET_DEEP - WET_SHORE));
+        let e = k * k * (3 - 2 * k);
+        // High ground meets water as a cliff, not a beach. Without this the blurred water mask
+        // erodes any mountain standing on a shoreline, carving chunks out of coastal ranges.
+        e *= 1 - clamp01((dry - LAND_H) / (MOUNTAIN_BASE_H - LAND_H)) * 0.85;
+        const kk = vy * vw + vx;
+        height[kk] = dry + (WATER_BED_H - dry) * e;
+        wetness[kk] = wet;
       }
     }
-    // Widen the height field so mountainsides become slopes.
-    //
-    // A plain blur is wrong here: averaging a narrow ridge against the flat ground around it
-    // drags the whole mountain down to nothing. Instead each pass takes max(original, blurred),
-    // which spreads a mountain's influence outward into a skirt without ever lowering its peak.
-    // Flat ground is pinned back to LAND_H so that props placed at TOP still meet the surface.
-    const peak = new Float32Array(raw);
-    const buf = new Float32Array(raw);
-    for (let pass = 0; pass < 3; pass++) {
-      for (let vy = 0; vy < vh; vy++) {
-        for (let vx = 0; vx < vw; vx++) {
-          const k = vy * vw + vx;
-          if (flat[k]) { buf[k] = LAND_H; continue; }
-          // Open water keeps its bed height so the lake floor stays below the water plane.
-          if (!anyLand[k]) { buf[k] = peak[k]; continue; }
-          let sum = 0;
-          let n = 0;
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              const nx = vx + dx;
-              const ny = vy + dy;
-              if (nx < 0 || ny < 0 || nx >= vw || ny >= vh) continue;
-              sum += raw[ny * vw + nx];
-              n++;
-            }
-          }
-          buf[k] = Math.max(peak[k], sum / n);
-        }
-      }
-      raw.set(buf);
-    }
-    this.terrHeight = raw;
+    this.terrHeight = height;
 
-    const geo = new THREE.PlaneGeometry(MAP_W, MAP_H, MAP_W, MAP_H);
-    geo.rotateX(-Math.PI / 2); // plane faces up; its local +Y is now world up
+    const geo = new THREE.PlaneGeometry(MAP_W, MAP_H, MAP_W * R, MAP_H * R);
+    geo.rotateX(-Math.PI / 2);
     geo.translate(MAP_W / 2, 0, MAP_H / 2);
     const pos = geo.attributes.position as THREE.BufferAttribute;
-    const surf = new Float32Array(pos.count * 3);
-    for (let vy = 0; vy < vh; vy++) {
-      for (let vx = 0; vx < vw; vx++) {
-        const k = vy * vw + vx;
-        const h = raw[k];
-        pos.setY(k, h);
-        // Surface mix from height: ordinary ground is grass, the foothill band is dirt, and
-        // anything climbing above it turns to rock. Blending on height rather than on tile type
-        // is what removes the hard colour edge at a tile boundary.
-        const rock = clamp01((h - FOOTHILL_H) / (MOUNTAIN_BASE_H - FOOTHILL_H));
-        const dirt = clamp01((h - LAND_H) / (FOOTHILL_H - LAND_H)) * (1 - rock);
-        const grass = Math.max(0, 1 - rock - dirt);
-        surf[k * 3] = grass;
-        surf[k * 3 + 1] = dirt;
-        surf[k * 3 + 2] = rock;
-      }
+    const surf = new Float32Array(pos.count * 4);
+    for (let k = 0; k < vw * vh; k++) {
+      const h = height[k];
+      pos.setY(k, h);
+      // Surface mix. Rock climbs in above the foothill band, dirt covers the foothills, and a
+      // sand margin follows the waterline — widest right at the shore and gone a little inland.
+      const rockW = clamp01((h - FOOTHILL_H) / (MOUNTAIN_BASE_H - FOOTHILL_H));
+      const dirtW = clamp01((h - LAND_H) / (FOOTHILL_H - LAND_H)) * (1 - rockW);
+      const sandW = clamp01((wetness[k] - SAND_START) / (WET_SHORE - SAND_START)) * (1 - rockW);
+      const grassW = Math.max(0, 1 - rockW - dirtW - sandW);
+      surf[k * 4] = grassW;
+      surf[k * 4 + 1] = dirtW;
+      surf[k * 4 + 2] = rockW;
+      surf[k * 4 + 3] = sandW;
     }
-    this.terrSurf = new THREE.BufferAttribute(surf, 3);
+    this.terrSurf = new THREE.BufferAttribute(surf, 4);
     geo.setAttribute('aSurf', this.terrSurf);
     pos.needsUpdate = true;
-    geo.computeVertexNormals(); // smooth normals — this is what makes slopes read as slopes
+    geo.computeVertexNormals();
     return geo;
   }
+
 
   /**
    * The terrain material: three tiling surface textures blended per-vertex.
@@ -638,16 +654,18 @@ export class Renderer3D {
       uGrass: { value: null as THREE.Texture | null },
       uDirt: { value: null as THREE.Texture | null },
       uRock: { value: null as THREE.Texture | null },
+      uSand: { value: null as THREE.Texture | null },
       uTexScale: { value: 0.5 }, // one texture repeat every two tiles
     };
     load('grass.png', true, (t) => { uniforms.uGrass.value = t; mat.map = t; });
     load('dirt.png', true, (t) => { uniforms.uDirt.value = t; });
     load('rock.png', true, (t) => { uniforms.uRock.value = t; });
+    load('sand.png', true, (t) => { uniforms.uSand.value = t; });
     load('ground_n.png', false, (t) => { mat.normalMap = t; mat.normalScale.set(0.6, 0.6); });
 
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
-      shader.vertexShader = `attribute vec3 aSurf;\nvarying vec3 vSurf;\nvarying vec2 vGroundUv;\n` + shader.vertexShader;
+      shader.vertexShader = `attribute vec4 aSurf;\nvarying vec4 vSurf;\nvarying vec2 vGroundUv;\n` + shader.vertexShader;
       shader.vertexShader = shader.vertexShader.replace(
         '#include <uv_vertex>',
         `#include <uv_vertex>
@@ -655,16 +673,17 @@ export class Renderer3D {
         vGroundUv = position.xz;`,
       );
       shader.fragmentShader =
-        `uniform sampler2D uGrass;\nuniform sampler2D uDirt;\nuniform sampler2D uRock;\nuniform float uTexScale;\nvarying vec3 vSurf;\nvarying vec2 vGroundUv;\n` +
+        `uniform sampler2D uGrass;\nuniform sampler2D uDirt;\nuniform sampler2D uRock;\nuniform sampler2D uSand;\nuniform float uTexScale;\nvarying vec4 vSurf;\nvarying vec2 vGroundUv;\n` +
         shader.fragmentShader;
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <map_fragment>',
         `vec2 gUv = vGroundUv * uTexScale;
-        vec3 w = vSurf / max(0.001, vSurf.x + vSurf.y + vSurf.z);
+        vec4 w = vSurf / max(0.001, vSurf.x + vSurf.y + vSurf.z + vSurf.w);
         vec4 blended =
           texture2D(uGrass, gUv) * w.x +
           texture2D(uDirt, gUv) * w.y +
-          texture2D(uRock, gUv) * w.z;
+          texture2D(uRock, gUv) * w.z +
+          texture2D(uSand, gUv) * w.w;
         diffuseColor *= blended;`,
       );
     };
@@ -684,7 +703,7 @@ export class Renderer3D {
     this.sig.land = sig;
     // Snow washes the whole surface toward white; peaks keep a permanent cap above the snowline.
     const snow = this.snowNow;
-    const vw = MAP_W + 1;
+    const vw = MAP_W * TERRAIN_RES + 1;
     const colors = new Float32Array(this.terrHeight.length * 3);
     for (let k = 0; k < this.terrHeight.length; k++) {
       const h = this.terrHeight[k];

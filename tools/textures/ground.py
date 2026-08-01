@@ -8,7 +8,7 @@ fract() on the UVs, whose derivative discontinuity tears mipmaps along every cel
 Every texture is generated on a wrapped lattice so it tiles seamlessly at any repeat count.
 
     python3 tools/textures/ground.py
-        -> public/textures/{grass,dirt,rock}.png and ground_n.png
+        -> public/textures/{grass,dirt,rock,sand}.png and ground_n.png
 """
 
 import os
@@ -112,6 +112,17 @@ def dirt(size: int) -> np.ndarray:
     return rgb
 
 
+def sand(size: int) -> np.ndarray:
+    """Wet-margin sand: fine pale grains with faint tide ripples and a few shell-pale flecks."""
+    grains = fbm(51, size, octaves=(64, 128), weights=(0.5, 0.5))
+    ripple = fbm(52, size, octaves=(6, 14), weights=(0.7, 0.3))
+    mask = np.clip(grains * 0.55 + ripple * 0.45, 0, 1)
+    rgb = tint("#cbb98d", "#a18f66", mask)
+    pale = np.clip((fbm(53, size, octaves=(24, 48), weights=(0.5, 0.5)) - 0.7) * 3.2, 0, 1)
+    rgb += (np.array([226, 214, 184]) - rgb) * pale[:, :, None] * 0.6
+    return rgb
+
+
 def height_of(rgb: np.ndarray) -> np.ndarray:
     """Luminance doubles as a height field for deriving the normal map."""
     return (rgb[:, :, 0] * 0.299 + rgb[:, :, 1] * 0.587 + rgb[:, :, 2] * 0.114) / 255.0
@@ -131,7 +142,7 @@ SIZE = 512  # per-surface texture resolution
 
 def main() -> None:
     os.makedirs(OUT, exist_ok=True)
-    surfaces = {"grass": grass(SIZE), "dirt": dirt(SIZE), "rock": rock(SIZE)}
+    surfaces = {"grass": grass(SIZE), "dirt": dirt(SIZE), "rock": rock(SIZE), "sand": sand(SIZE)}
     written = []
     for name, rgb in surfaces.items():
         path = os.path.join(OUT, f"{name}.png")

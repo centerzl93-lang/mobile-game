@@ -28,10 +28,10 @@ import { ModelLibrary, InstancedModel } from './models';
 
 const LAND_H = 0.3; // height of a normal land tile block
 const FOOTHILL_H = 0.5; // low rocky band at a mountain's base
-const MOUNTAIN_BASE_H = 1.4; // shortest mountain (edge) block height
-const MOUNTAIN_STEP_H = 1.3; // extra height per tile of depth into the mountain
-const MOUNTAIN_MAX_H = 5.5; // tallest peak
-const SNOWLINE_H = 2.6; // peaks above this get a permanent snow cap
+const MOUNTAIN_BASE_H = 1.8; // shortest mountain (edge) height
+const MOUNTAIN_STEP_H = 2.2; // extra height per tile of depth into the mountain
+const MOUNTAIN_MAX_H = 11.0; // tallest peak
+const SNOWLINE_H = 6.0; // peaks above this get a permanent snow cap
 const TOP = LAND_H; // y of the walkable surface props sit on
 const TREE_MODEL_SIZE = 0.55; // world scale for a normalized (footprint=1) tree model — see tools/models/pine.py
 const ROCK_MODEL_SIZE = 0.9; // world scale applied to a normalized loose-stone model
@@ -135,6 +135,8 @@ export class Renderer3D {
   private treeTiles: number[] = [];
   private rocks!: THREE.InstancedMesh;
   private rockTiles: number[] = [];
+  private ironNodes!: THREE.InstancedMesh;
+  private ironTiles: number[] = [];
   private paths!: THREE.InstancedMesh;
   private marks!: THREE.InstancedMesh;
   private citizens!: THREE.InstancedMesh;
@@ -249,6 +251,16 @@ export class Renderer3D {
     this.rocks = new THREE.InstancedMesh(rockGeo, matte(0x9a9ca1), Math.max(1, this.rockTiles.length));
     this.rocks.count = this.rockTiles.length;
     this.scene.add(this.rocks);
+
+    // Surface iron ore: same hand-harvested deposit as loose stone, but rust-coloured and
+    // slightly craggier so a player can tell the two apart at a glance from the play camera.
+    this.ironTiles = [];
+    for (let i = 0; i < s.tiles.length; i++) if ((s.tiles[i].iron ?? 0) > 0) this.ironTiles.push(i);
+    const ironGeo = new THREE.OctahedronGeometry(0.26);
+    this.ironNodes = new THREE.InstancedMesh(ironGeo, matte(0x9c5f3a, 0.65), Math.max(1, this.ironTiles.length));
+    this.ironNodes.count = this.ironTiles.length;
+    this.ironNodes.castShadow = true;
+    this.scene.add(this.ironNodes);
 
     // Paths / bridges and harvest marks: flat quads covering a whole map's worth of tiles.
     const flat = new THREE.BoxGeometry(0.96, 0.06, 0.96);
@@ -367,6 +379,7 @@ export class Renderer3D {
     this.syncTerrain(s);
     this.syncTrees(s);
     this.syncRocks(s);
+    this.syncIron(s);
     this.syncPaths(s);
     this.syncMarks(s);
     this.syncBuildings(s);
@@ -744,6 +757,21 @@ export class Renderer3D {
   }
 
   // ---- loose stone ----
+  /** Place the surface iron deposits; a depleted tile drops out of view like a spent rock. */
+  private syncIron(s: GameState): void {
+    let k = 0;
+    for (const i of this.ironTiles) {
+      const has = (s.tiles[i].iron ?? 0) > 0;
+      this.dummy.position.set((i % MAP_W) + 0.5, has ? TOP + 0.06 : -5, ((i / MAP_W) | 0) + 0.5);
+      this.dummy.scale.set(1, 0.75, 1);
+      this.dummy.rotation.set(0, (i % 7) * 0.9, 0);
+      this.dummy.updateMatrix();
+      this.ironNodes.setMatrixAt(k, this.dummy.matrix);
+      k++;
+    }
+    this.ironNodes.instanceMatrix.needsUpdate = true;
+  }
+
   private syncRocks(s: GameState): void {
     const tpl = this.models.firstRock();
     if (tpl && !this.rockInst) {

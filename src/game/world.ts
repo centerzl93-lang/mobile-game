@@ -1,4 +1,4 @@
-import { MAP_W, MAP_H, Tile, TileType, PATH_NONE, HARVEST_NONE, LOOSE_STONE_MIN, LOOSE_STONE_MAX, LOOSE_STONE_COVERAGE, FOOTHILL_RADIUS } from '../types';
+import { MAP_W, MAP_H, Tile, TileType, PATH_NONE, HARVEST_NONE, LOOSE_STONE_MIN, LOOSE_STONE_MAX, LOOSE_IRON_MIN, LOOSE_IRON_MAX, STONE_CLUSTER_THRESHOLD, IRON_CLUSTER_THRESHOLD, START_CLEARING_RADIUS, FOOTHILL_RADIUS } from '../types';
 
 export function tileIndex(x: number, y: number): number {
   return y * MAP_W + x;
@@ -55,6 +55,10 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
   const rand = mulberry32(seed);
   const elev = valueNoise(MAP_W, MAP_H, rand, 6);
   const moist = valueNoise(MAP_W, MAP_H, mulberry32(seed ^ 0x9e3779b9), 5);
+  // Separate noise fields for the surface deposits, so stone and iron form their own patches
+  // rather than appearing wherever a uniform random roll happens to land.
+  const stoneField = valueNoise(MAP_W, MAP_H, mulberry32(seed ^ 0x85ebca6b), 9);
+  const ironField = valueNoise(MAP_W, MAP_H, mulberry32(seed ^ 0xc2b2ae35), 11);
 
   // River centre-line meanders around the middle column (sine + slow noise), width ~2–3.
   const wobble = valueNoise(MAP_W, MAP_H, mulberry32(seed ^ 0x2545f491), 3);
@@ -80,21 +84,27 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
       let type: TileType;
       let trees = 0;
       let stone: number | undefined;
+      let iron: number | undefined;
       if (isRiver || inLake(x, y)) {
         type = 'water';
-      } else if (elev[i] > 0.78 && moist[i] < 0.55) {
-        type = 'stone'; // mountain peak — smaller footprint, only the highest ground
-      } else if (moist[i] > 0.5 && elev[i] < 0.7) {
-        type = 'forest';
+      } else if (elev[i] > 0.68 && moist[i] < 0.6) {
+        type = 'stone'; // mountain — a wider, more prominent range than a bare peak
+      } else if (moist[i] > 0.36 && elev[i] < 0.74) {
+        type = 'forest'; // most of the map is woodland
         trees = 0.6 + moist[i] * 0.4;
       } else {
         type = 'grass';
-        // Scatter loose-stone deposits on some grass, in small clusters.
-        if (rand() < LOOSE_STONE_COVERAGE) {
+        // Surface deposits sit in noise clusters, so a patch of ground is worth prospecting.
+        if (stoneField[i] > STONE_CLUSTER_THRESHOLD) {
           stone = Math.round(LOOSE_STONE_MIN + rand() * (LOOSE_STONE_MAX - LOOSE_STONE_MIN));
+        } else if (ironField[i] > IRON_CLUSTER_THRESHOLD) {
+          iron = Math.round(LOOSE_IRON_MIN + rand() * (LOOSE_IRON_MAX - LOOSE_IRON_MIN));
         }
       }
-      tiles[i] = stone !== undefined ? { type, trees, stone } : { type, trees };
+      const tile: Tile = { type, trees };
+      if (stone !== undefined) tile.stone = stone;
+      if (iron !== undefined) tile.iron = iron;
+      tiles[i] = tile;
     }
   }
 
@@ -113,6 +123,7 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
         t.type = 'foothill';
         t.trees = 0;
         delete t.stone;
+        delete t.iron;
       }
     }
   }
@@ -235,4 +246,55 @@ function valueNoise(w: number, h: number, rand: () => number, cells: number): Fl
 
 function smooth(t: number): number {
   return t * t * (3 - 2 * t);
+}
+
+
+/**
+ * Open up the ground around the founding barn.
+ *
+ * Most of the map is woodland and rock now, so without this a new game can begin walled in by
+ * trees with nowhere to build. The clearing is deliberately irregular — its radius wobbles with
+ * angle — because a perfect circle of grass in the middle of a forest reads as a crop circle.
+ * Water is never touched, so a riverbank start keeps its river.
+ */
+export function clearStartArea(tiles: Tile[], cx: number, cy: number): void {
+  const r = START_CLEARING_RADIUS;
+  for (let y = Math.floor(cy - r - 1); y <= Math.ceil(cy + r + 1); y++) {
+    for (let x = Math.floor(cx - r - 1); x <= Math.ceil(cx + r + 1); x++) {
+      if (!inBounds(x, y)) continue;
+      const dx = x - cx;
+      const dy = y - cy;
+      const dist = Math.hypot(dx, dy);
+      // Wobble the edge with a couple of harmonics so the clearing has an organic outline.
+      const a = Math.atan2(dy, dx);
+      // Keep the wobble well above zero: the amplitudes must leave a guaranteed open core, or a
+      // narrow lobe can land on the barn and the village starts boxed in after all.
+      const edge = r * (0.80 + 0.12 * Math.sin(a * 3 + cx) + 0.08 * Math.sin(a * 5 - cy));
+      if (dist > edge) continue;
+      const t = tiles[tileIndex(x, y)];
+      if (t.type === 'water') continue;
+      t.type = 'grass';
+      t.trees = 0;
+      delete t.stone;
+      delete t.iron;
+    }
+  }
+  // Clearing can remove a mountain tile that a foothill was hugging, which would leave that
+  // foothill orphaned — foothills exist only as the buildable skirt of a mountain, and mines
+  // rely on that. Demote any foothill that just lost its mountain.
+  for (let y = Math.floor(cy - r - 3); y <= Math.ceil(cy + r + 3); y++) {
+    for (let x = Math.floor(cx - r - 3); x <= Math.ceil(cx + r + 3); x++) {
+      if (!inBounds(x, y)) continue;
+      const t = tiles[tileIndex(x, y)];
+      if (t.type !== 'foothill') continue;
+      let hasMountain = false;
+      for (let dy = -FOOTHILL_RADIUS; dy <= FOOTHILL_RADIUS && !hasMountain; dy++) {
+        for (let dx = -FOOTHILL_RADIUS; dx <= FOOTHILL_RADIUS && !hasMountain; dx++) {
+          const n = getTile(tiles, x + dx, y + dy);
+          if (n && n.type === 'stone') hasMountain = true;
+        }
+      }
+      if (!hasMountain) { t.type = 'grass'; t.trees = 0; }
+    }
+  }
 }

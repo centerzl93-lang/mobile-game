@@ -30,6 +30,7 @@ import {
   EVENT_LOG_MAX,
   HARVEST_WOOD,
   HARVEST_STONE,
+  HARVEST_IRON,
   HARVEST_WOOD_PER_TREE,
   FOOD_PER_CITIZEN_PER_SEASON,
   HEAT_PER_CITIZEN_WINTER,
@@ -1009,6 +1010,9 @@ export function markHarvestRect(s: GameState, x0: number, y0: number, x1: number
       } else if ((t.stone ?? 0) > 0) {
         s.harvest[i] = HARVEST_STONE;
         marked++;
+      } else if ((t.iron ?? 0) > 0) {
+        s.harvest[i] = HARVEST_IRON;
+        marked++;
       }
     }
   }
@@ -1021,10 +1025,11 @@ function pickHarvest(s: GameState, c: Citizen): number {
   let bestD = Infinity;
   for (let i = 0; i < s.harvest.length; i++) {
     const h = s.harvest[i];
-    if (h !== HARVEST_WOOD && h !== HARVEST_STONE) continue;
+    if (h !== HARVEST_WOOD && h !== HARVEST_STONE && h !== HARVEST_IRON) continue;
     const t = s.tiles[i];
     if (h === HARVEST_WOOD && t.trees <= 0.05) { s.harvest[i] = HARVEST_NONE; continue; }
     if (h === HARVEST_STONE && (t.stone ?? 0) <= 0) { s.harvest[i] = HARVEST_NONE; continue; }
+    if (h === HARVEST_IRON && (t.iron ?? 0) <= 0) { s.harvest[i] = HARVEST_NONE; continue; }
     const tx = i % MAP_W;
     const ty = (i / MAP_W) | 0;
     if (!reachableTile(c, tx, ty)) continue;
@@ -1070,6 +1075,18 @@ function runHarvest(s: GameState, c: Citizen, idx: number, dt: number): void {
     }
     if ((t.stone ?? 0) <= 0) {
       t.stone = 0;
+      s.harvest[idx] = HARVEST_NONE;
+    }
+  } else if (s.harvest[idx] === HARVEST_IRON) {
+    // Surface ore works exactly like loose stone: dug by hand, no mine required.
+    const avail = t.iron ?? 0;
+    const take = Math.min(carryLimit('iron'), avail);
+    if (take > 0.01) {
+      t.iron = avail - take;
+      c.carry = { kind: 'iron', amount: take };
+    }
+    if ((t.iron ?? 0) <= 0) {
+      t.iron = 0;
       s.harvest[idx] = HARVEST_NONE;
     }
   }

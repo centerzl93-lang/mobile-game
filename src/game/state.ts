@@ -33,7 +33,7 @@ import {
   CHILD_MIN_AGE,
   ADULT_AGE,
 } from '../types';
-import { generateWorld, findStartTile, getTile, emptyPaths, emptyHarvest } from './world';
+import { generateWorld, findStartTile, getTile, emptyPaths, emptyHarvest, clearStartArea } from './world';
 import { randomName } from './names';
 
 export function makeCitizen(s: { nextId: number }, sex: Sex, age: number, x: number, y: number): Citizen {
@@ -128,6 +128,8 @@ export function newGame(
 
   // A starting barn holds the opening stockpile for the chosen difficulty, scaled up for the
   // larger founding population so the village isn't starving on day one.
+  // Most of the map is woodland and rock, so open a clearing before founding the village.
+  clearStartArea(state.tiles, start.x + 1, start.y + 1);
   const barn = makeBuilding(state, 'barn', start.x, start.y, true);
   const stock = DIFFICULTY_RESOURCES[difficulty];
   for (const k of Object.keys(stock) as ResourceKind[]) {

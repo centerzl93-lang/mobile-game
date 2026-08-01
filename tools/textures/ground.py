@@ -62,14 +62,26 @@ def tint(base: str, shade: str, mask: np.ndarray) -> np.ndarray:
 
 
 def grass(size: int) -> np.ndarray:
-    """Blades: fine high-frequency streaks over a soft patchy base."""
-    base = fbm(11, size, octaves=(3, 6, 12), weights=(0.6, 0.3, 0.1))
-    blades = fbm(12, size, octaves=(32, 64), weights=(0.6, 0.4))
-    mask = np.clip(base * 0.55 + blades * 0.65, 0, 1)
-    rgb = tint("#6d8256", "#4d6440", mask)
-    # A few sun-bleached tufts so the field is not one flat value.
-    dry = np.clip((fbm(13, size, octaves=(6, 12), weights=(0.7, 0.3)) - 0.62) * 4, 0, 1)
-    rgb += (np.array([146, 147, 104]) - rgb) * dry[:, :, None] * 0.5
+    """Turf built from several uncorrelated scales so no single pattern is legible.
+
+    A texture this size covers only two map tiles, so it repeats constantly across a field and
+    any strong feature turns into visible wallpaper. The fix is many weak layers rather than one
+    strong one: fine blades, a mid clump, a broad tonal drift, and a sparse dark fleck, each on
+    its own seed and frequency so their peaks rarely coincide.
+    """
+    blades_a = fbm(12, size, octaves=(48, 96), weights=(0.6, 0.4))
+    blades_b = fbm(17, size, octaves=(64, 128), weights=(0.5, 0.5))
+    clump = fbm(11, size, octaves=(8, 16), weights=(0.6, 0.4))
+    drift = fbm(14, size, octaves=(3, 5), weights=(0.65, 0.35))
+    mask = np.clip(blades_a * 0.34 + blades_b * 0.26 + clump * 0.28 + drift * 0.20, 0, 1)
+    rgb = tint("#6d8256", "#4a6140", mask)
+    # Sun-bleached patches, kept broad and gentle. The old version thresholded a mid-frequency
+    # band hard, which produced exactly the obvious light blotches this replaces.
+    dry = np.clip((drift - 0.55) * 1.7, 0, 1) * 0.5 + np.clip((clump - 0.7) * 1.5, 0, 1) * 0.3
+    rgb += (np.array([134, 138, 100]) - rgb) * dry[:, :, None]
+    # Sparse darker flecks (soil showing through) to break any residual regularity.
+    fleck = np.clip((fbm(18, size, octaves=(24, 48), weights=(0.5, 0.5)) - 0.74) * 3.4, 0, 1)
+    rgb += (np.array([64, 78, 54]) - rgb) * fleck[:, :, None] * 0.55
     return rgb
 
 

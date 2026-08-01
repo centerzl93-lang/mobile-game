@@ -39,6 +39,8 @@ export interface Tile {
   trees: number;
   /** Units of loose stone lying on this tile, harvestable by hand (0 = none). */
   stone?: number;
+  /** Units of surface iron ore on this tile, harvestable by hand like loose stone. */
+  iron?: number;
 }
 
 export type ResourceKind =
@@ -633,6 +635,7 @@ export const PATH_BRIDGE = 6; // a built bridge — the only walkable water tile
 export const HARVEST_NONE = 0;
 export const HARVEST_WOOD = 1; // a marked forest tile (chop for wood, clear-cuts to grass)
 export const HARVEST_STONE = 2; // a marked loose-stone tile
+export const HARVEST_IRON = 3; // a marked surface iron-ore tile
 
 /** The single kind of goods a visiting merchant deals in. */
 export type MerchantCategory = 'basics' | 'seeds' | 'animals' | 'foods' | 'goods';
@@ -814,7 +817,15 @@ export const PATH_BUILD_TILES_PER_SEC = 0.6; // per free builder
 export const HARVEST_WOOD_PER_TREE = 20; // wood a full forest tile (trees=1) yields when cleared
 export const LOOSE_STONE_MIN = 8; // units on a loose-stone deposit
 export const LOOSE_STONE_MAX = 20;
-export const LOOSE_STONE_COVERAGE = 0.05; // fraction of grass tiles seeded with loose stone
+export const LOOSE_STONE_COVERAGE = 0.05; // unused: deposits are now placed in noise clusters
+// Surface deposits are seeded in clusters rather than sprinkled evenly, so prospecting for a
+// good patch of ground is a real decision instead of uniform background noise.
+export const STONE_CLUSTER_THRESHOLD = 0.60; // cluster-noise level above which loose stone appears
+export const IRON_CLUSTER_THRESHOLD = 0.72; // iron is rarer, so it needs a stronger cluster
+export const LOOSE_IRON_MIN = 6;
+export const LOOSE_IRON_MAX = 16;
+/** Radius of open ground cleared around the founding barn so a village has room to grow. */
+export const START_CLEARING_RADIUS = 9;
 
 // ---- Mountains & foothills ----
 export const FOOTHILL_RADIUS = 1; // one-tile foothill ring hugging the edge of each mountain

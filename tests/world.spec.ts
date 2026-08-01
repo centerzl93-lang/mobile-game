@@ -50,16 +50,48 @@ test.describe('world generation, placement & pathfinding', () => {
           if (near(x, y, 'stone', 1)) foothillHasStone++; else orphanFoothill++;
         }
       const barn = s.buildings.find((b: any) => b.type === 'barn');
-      return { count, orphanFoothill, foothillHasStone, startType: barn ? T[idx(barn.x, barn.y)].type : 'none' };
+      // The founding barn must sit in genuinely open ground, not be walled in by the woodland.
+      let nearBarn = 0, blockedNearBarn = 0;
+      if (barn) {
+        for (let y = barn.y - 5; y <= barn.y + 5; y++)
+          for (let x = barn.x - 5; x <= barn.x + 5; x++) {
+            if (x < 0 || y < 0 || x >= W || y >= H) continue;
+            if (Math.hypot(x - barn.x, y - barn.y) > 5) continue;
+            nearBarn++;
+            const ty = T[idx(x, y)].type;
+            if (ty === 'forest' || ty === 'stone' || ty === 'foothill') blockedNearBarn++;
+          }
+      }
+      let ironTiles = 0, stoneTiles = 0;
+      for (const t of T) { if ((t.iron ?? 0) > 0) ironTiles++; if ((t.stone ?? 0) > 0) stoneTiles++; }
+      return {
+        count, orphanFoothill, foothillHasStone, ironTiles, stoneTiles,
+        startType: barn ? T[idx(barn.x, barn.y)].type : 'none',
+        blockedPct: nearBarn ? (blockedNearBarn / nearBarn) * 100 : 100,
+      };
     }, [W, H] as const);
 
     expect(gen.count.stone, JSON.stringify(gen.count)).toBeGreaterThan(20);
     expect(gen.count.foothill).toBeGreaterThan(10);
     expect(gen.orphanFoothill).toBe(0);
     expect(gen.foothillHasStone).toBeGreaterThan(0);
-    expect(gen.count.grass).toBeGreaterThan(gen.count.stone + gen.count.foothill);
+    // The map is deliberately a wooded, rocky landscape rather than open pasture: woodland and
+    // rock together dominate, and forest is the single most common surface. (This replaces an
+    // older assertion that grass outnumbered the rock, which encoded the previous open-map
+    // design and no longer holds.)
+    const total = Object.values(gen.count).reduce((a: number, b: number) => a + b, 0);
+    const wild = gen.count.forest + gen.count.stone + gen.count.foothill;
+    expect(wild / total, JSON.stringify(gen.count)).toBeGreaterThan(0.45);
+    expect(gen.count.forest).toBeGreaterThan(gen.count.grass);
+    // ...but there must still be workable open ground to build a village on.
+    expect(gen.count.grass / total).toBeGreaterThan(0.08);
     expect(gen.count.water).toBeGreaterThan(50);
     expect(gen.startType).toBe('grass');
+    // Surface deposits of both stone and iron are seeded in clusters for hand-harvesting.
+    expect(gen.stoneTiles, 'loose stone deposits').toBeGreaterThan(5);
+    expect(gen.ironTiles, 'surface iron deposits').toBeGreaterThan(3);
+    // The start clearing keeps the founding site open.
+    expect(gen.blockedPct, 'blocked tiles near the barn').toBeLessThan(10);
   });
 
   test('mountains rise into tall peaks', async ({ page }) => {

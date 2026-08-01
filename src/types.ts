@@ -815,15 +815,15 @@ export const PATH_BUILD_TILES_PER_SEC = 0.6; // per free builder
 
 // ---- Hand harvesting (unemployed villagers gathering marked wood / loose stone) ----
 export const HARVEST_WOOD_PER_TREE = 20; // wood a full forest tile (trees=1) yields when cleared
-export const LOOSE_STONE_MIN = 8; // units on a loose-stone deposit
-export const LOOSE_STONE_MAX = 20;
+export const LOOSE_STONE_MIN = 4; // units on a loose-stone deposit — small nodes, many of them
+export const LOOSE_STONE_MAX = 10;
 export const LOOSE_STONE_COVERAGE = 0.05; // unused: deposits are now placed in noise clusters
 // Surface deposits are seeded in clusters rather than sprinkled evenly, so prospecting for a
 // good patch of ground is a real decision instead of uniform background noise.
-export const STONE_CLUSTER_THRESHOLD = 0.60; // cluster-noise level above which loose stone appears
-export const IRON_CLUSTER_THRESHOLD = 0.72; // iron is rarer, so it needs a stronger cluster
-export const LOOSE_IRON_MIN = 6;
-export const LOOSE_IRON_MAX = 16;
+export const STONE_CLUSTER_THRESHOLD = 0.46; // cluster-noise level above which loose stone appears
+export const IRON_CLUSTER_THRESHOLD = 0.58; // iron is rarer, so it needs a stronger cluster
+export const LOOSE_IRON_MIN = 3;
+export const LOOSE_IRON_MAX = 8;
 /** Radius of open ground cleared around the founding barn so a village has room to grow. */
 export const START_CLEARING_RADIUS = 9;
 

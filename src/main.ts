@@ -971,6 +971,11 @@ class Game {
     return b ? b.id : null;
   }
 
+  /** Debug/testing helper: mark a rectangle for hand-harvesting, as the drag-select does. */
+  debugHarvestRect(x0: number, y0: number, x1: number, y1: number): number {
+    return markHarvestRect(this.state, x0, y0, x1, y1);
+  }
+
   /** Debug/testing helper: push goods into the nearest storage; returns what wouldn't fit. */
   debugAddNearest(at: { x: number; y: number }, kind: ResourceKind, amount: number): number {
     return addNearest(this.state, at, kind, amount);

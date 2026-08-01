@@ -34,7 +34,7 @@ const MOUNTAIN_MAX_H = 11.0; // tallest peak
 const SNOWLINE_H = 6.0; // peaks above this get a permanent snow cap
 const TOP = LAND_H; // y of the walkable surface props sit on
 const TREE_MODEL_SIZE = 0.55; // world scale for a normalized (footprint=1) tree model — see tools/models/pine.py
-const ROCK_MODEL_SIZE = 0.9; // world scale applied to a normalized loose-stone model
+const ROCK_MODEL_SIZE = 0.5; // world scale applied to a normalized loose-stone model
 
 // The ground atlas supplies each surface's colour now, so these are near-white multipliers
 // that only carry a slight per-type bias. A flat green here would double up with the texture.
@@ -247,7 +247,7 @@ export class Renderer3D {
     // Loose-stone deposits.
     this.rockTiles = [];
     for (let i = 0; i < s.tiles.length; i++) if ((s.tiles[i].stone ?? 0) > 0) this.rockTiles.push(i);
-    const rockGeo = new THREE.DodecahedronGeometry(0.22);
+    const rockGeo = new THREE.DodecahedronGeometry(0.13);
     this.rocks = new THREE.InstancedMesh(rockGeo, matte(0x9a9ca1), Math.max(1, this.rockTiles.length));
     this.rocks.count = this.rockTiles.length;
     this.scene.add(this.rocks);
@@ -256,7 +256,7 @@ export class Renderer3D {
     // slightly craggier so a player can tell the two apart at a glance from the play camera.
     this.ironTiles = [];
     for (let i = 0; i < s.tiles.length; i++) if ((s.tiles[i].iron ?? 0) > 0) this.ironTiles.push(i);
-    const ironGeo = new THREE.OctahedronGeometry(0.26);
+    const ironGeo = new THREE.OctahedronGeometry(0.15);
     this.ironNodes = new THREE.InstancedMesh(ironGeo, matte(0x9c5f3a, 0.65), Math.max(1, this.ironTiles.length));
     this.ironNodes.count = this.ironTiles.length;
     this.ironNodes.castShadow = true;
@@ -516,7 +516,7 @@ export class Renderer3D {
     const vw = MAP_W + 1;
     const vh = MAP_H + 1;
     const raw = new Float32Array(vw * vh);
-    const flat = new Uint8Array(vw * vh); // 1 = surrounded only by ordinary ground
+    const flat = new Uint8Array(vw * vh); // 1 = pin to LAND_H (surrounded only by ordinary ground)
     const at = (x: number, y: number) => s.tiles[Math.min(MAP_H - 1, Math.max(0, y)) * MAP_W + Math.min(MAP_W - 1, Math.max(0, x))];
     for (let vy = 0; vy < vh; vy++) {
       for (let vx = 0; vx < vw; vx++) {
@@ -529,7 +529,9 @@ export class Renderer3D {
           const t = at(tx, ty);
           const idx = Math.min(MAP_H - 1, Math.max(0, ty)) * MAP_W + Math.min(MAP_W - 1, Math.max(0, tx));
           sum += this.tileHeight(t, idx);
-          if (t.type === 'stone' || t.type === 'foothill') plain = 0;
+          // Water must not be pinned to LAND_H: the water plane sits at 0.14, below that, so a
+          // pinned lake bed rises straight through it and the map renders with no water at all.
+          if (t.type === 'stone' || t.type === 'foothill' || t.type === 'water') plain = 0;
         }
         raw[vy * vw + vx] = sum / 4;
         flat[vy * vw + vx] = plain;
@@ -548,6 +550,8 @@ export class Renderer3D {
         for (let vx = 0; vx < vw; vx++) {
           const k = vy * vw + vx;
           if (flat[k]) { buf[k] = LAND_H; continue; }
+          // Anything touching water stays at the bed height so the shoreline drops away cleanly.
+          if (peak[k] < LAND_H) { buf[k] = peak[k]; continue; }
           let sum = 0;
           let n = 0;
           for (let dy = -1; dy <= 1; dy++) {
@@ -757,12 +761,21 @@ export class Renderer3D {
   }
 
   // ---- loose stone ----
+  /** A stable pseudo-random offset in -0.34..0.34 for scattering a prop within its tile. */
+  private tileJitter(i: number, salt: number): number {
+    return ((Math.imul(i ^ salt, 2654435761) >>> 8) % 1000) / 1000 * 0.68 - 0.34;
+  }
+
   /** Place the surface iron deposits; a depleted tile drops out of view like a spent rock. */
   private syncIron(s: GameState): void {
     let k = 0;
     for (const i of this.ironTiles) {
       const has = (s.tiles[i].iron ?? 0) > 0;
-      this.dummy.position.set((i % MAP_W) + 0.5, has ? TOP + 0.06 : -5, ((i / MAP_W) | 0) + 0.5);
+      this.dummy.position.set(
+        (i % MAP_W) + 0.5 + this.tileJitter(i, 0x51),
+        has ? TOP + 0.04 : -5,
+        ((i / MAP_W) | 0) + 0.5 + this.tileJitter(i, 0x9d),
+      );
       this.dummy.scale.set(1, 0.75, 1);
       this.dummy.rotation.set(0, (i % 7) * 0.9, 0);
       this.dummy.updateMatrix();
@@ -789,13 +802,21 @@ export class Renderer3D {
       const has = (s.tiles[i].stone ?? 0) > 0;
       if (this.rockInst) {
         const sc = has ? ROCK_MODEL_SIZE : 0.0001;
-        this.dummy.position.set((i % MAP_W) + 0.5, has ? TOP : -5, ((i / MAP_W) | 0) + 0.5);
+        this.dummy.position.set(
+          (i % MAP_W) + 0.5 + this.tileJitter(i, 0x2f),
+          has ? TOP : -5,
+          ((i / MAP_W) | 0) + 0.5 + this.tileJitter(i, 0xb7),
+        );
         this.dummy.scale.set(sc, sc, sc);
         this.dummy.rotation.set(0, (i % 6) * 1.05, 0);
         this.dummy.updateMatrix();
         this.rockInst.setAt(k, this.dummy.matrix);
       } else {
-        this.dummy.position.set((i % MAP_W) + 0.5, has ? TOP + 0.1 : -5, ((i / MAP_W) | 0) + 0.5);
+        this.dummy.position.set(
+          (i % MAP_W) + 0.5 + this.tileJitter(i, 0x2f),
+          has ? TOP + 0.1 : -5,
+          ((i / MAP_W) | 0) + 0.5 + this.tileJitter(i, 0xb7),
+        );
         this.dummy.scale.set(has ? 1 : 0.0001, has ? 1 : 0.0001, has ? 1 : 0.0001);
         this.dummy.rotation.set(0, i * 1.1, 0);
         this.dummy.updateMatrix();

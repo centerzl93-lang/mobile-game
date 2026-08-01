@@ -13,6 +13,7 @@ import {
   SIZABLE,
   HARVEST_WOOD,
   HARVEST_STONE,
+  HARVEST_IRON,
   isWorkplace,
   nextBuildingName,
 } from '../types';
@@ -155,12 +156,13 @@ function markFootprintHarvest(s: GameState, b: Building): void {
       if (!t) continue;
       if (t.type === 'forest' && t.trees > 0.05) s.harvest[tileIndex(tx, ty)] = HARVEST_WOOD;
       else if ((t.stone ?? 0) > 0) s.harvest[tileIndex(tx, ty)] = HARVEST_STONE;
+      else if ((t.iron ?? 0) > 0) s.harvest[tileIndex(tx, ty)] = HARVEST_IRON;
     }
   }
 }
 
 /**
- * True once a building's footprint is free of trees and loose stone. Construction is gated on
+ * True once a building's footprint is free of trees and surface deposits. Construction is gated on
  * this — resources under the site are hand-harvested first (see `markFootprintHarvest`).
  */
 export function footprintClear(s: GameState, b: Building): boolean {
@@ -172,6 +174,7 @@ export function footprintClear(s: GameState, b: Building): boolean {
       if (!t) continue;
       if (t.type === 'forest' && t.trees > 0.05) return false;
       if ((t.stone ?? 0) > 0) return false;
+      if ((t.iron ?? 0) > 0) return false;
     }
   }
   return true;

@@ -1063,7 +1063,12 @@ function runHarvest(s: GameState, c: Citizen, idx: number, dt: number): void {
     if (t.trees <= 0.05) {
       t.trees = 0;
       t.type = 'grass'; // clear-cut to open ground
-      s.harvest[idx] = HARVEST_NONE;
+      // A tile can hold trees *and* a surface deposit, but the harvest layer stores one order per
+      // tile and wood takes precedence while the trees stand. Once they are down, roll the order
+      // straight on to whatever is underneath instead of dropping it — otherwise ore in the woods
+      // is silently unharvestable and the player has to notice and re-mark it.
+      s.harvest[idx] =
+        (t.stone ?? 0) > 0 ? HARVEST_STONE : (t.iron ?? 0) > 0 ? HARVEST_IRON : HARVEST_NONE;
       s.forestVersion = (s.forestVersion ?? 0) + 1; // a forest tile is gone — refresh the render layer
     }
   } else if (s.harvest[idx] === HARVEST_STONE) {
@@ -1215,6 +1220,10 @@ function clearGroundForPath(s: GameState, tx: number, ty: number): void {
   if ((t.stone ?? 0) > 0) {
     addNearest(s, at, 'stone', t.stone!);
     delete t.stone;
+  }
+  if ((t.iron ?? 0) > 0) {
+    addNearest(s, at, 'iron', t.iron!);
+    delete t.iron;
   }
   // Any harvest order on the tile is moot now that it is paved.
   s.harvest[tileIndex(tx, ty)] = HARVEST_NONE;
@@ -2436,7 +2445,7 @@ function plantCircle(s: GameState, b: Building): void {
       const ddy = ty + 0.5 - cy;
       if (ddx * ddx + ddy * ddy > r2) continue;
       const t = getTile(s.tiles, tx, ty);
-      if (!t || t.type !== 'grass' || (t.stone ?? 0) > 0) continue;
+      if (!t || t.type !== 'grass' || (t.stone ?? 0) > 0 || (t.iron ?? 0) > 0) continue;
       if (tileUnderBuilding(s, tx, ty)) continue;
       if (hasPath(s, tx, ty)) continue; // foresters don't plant saplings in the road
       t.type = 'forest';

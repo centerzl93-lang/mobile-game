@@ -94,7 +94,11 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
         trees = 0.6 + moist[i] * 0.4;
       } else {
         type = 'grass';
-        // Surface deposits sit in noise clusters, so a patch of ground is worth prospecting.
+      }
+      // Surface deposits sit in noise clusters, on woodland as readily as on open ground —
+      // outcrops scattered through the trees look far more natural than a rock field that stops
+      // dead at the forest edge, and it means clearing woodland is worth doing for the stone too.
+      if (type === 'grass' || type === 'forest') {
         if (stoneField[i] > STONE_CLUSTER_THRESHOLD) {
           stone = Math.round(LOOSE_STONE_MIN + rand() * (LOOSE_STONE_MAX - LOOSE_STONE_MIN));
         } else if (ironField[i] > IRON_CLUSTER_THRESHOLD) {

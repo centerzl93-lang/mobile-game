@@ -88,7 +88,41 @@ def thatch(size: int) -> np.ndarray:
     return rgb
 
 
+def foliage(size: int) -> np.ndarray:
+    """Needled conifer canopy: fine directional needles over clumped tonal variation."""
+    needles = fbm(101, size, octaves=(64, 128), weights=(0.55, 0.45))
+    clump = fbm(102, size, octaves=(6, 14), weights=(0.6, 0.4))
+    mask = np.clip(needles * 0.6 + clump * 0.4, 0, 1)
+    rgb = tint("#7d9a63", "#3f5a34", mask)
+    sun = np.clip((clump - 0.66) * 3.0, 0, 1)
+    rgb += (np.array([146, 168, 112]) - rgb) * sun[:, :, None] * 0.5
+    return rgb
+
+
+def bark(size: int) -> np.ndarray:
+    """Furrowed trunk bark: strong vertical ridges with darker splits."""
+    ridges = _stripes(size, 7, 0, 0.55, 111)
+    grain = fbm(112, size, octaves=(16, 48), weights=(0.5, 0.5))
+    mask = np.clip((1 - ridges) * 0.6 + grain * 0.4, 0, 1)
+    rgb = tint("#6b513a", "#3a2a1d", mask)
+    return rgb
+
+
+def ore(size: int) -> np.ndarray:
+    """Iron-bearing rock: dark stone shot through with rusty oxide veins."""
+    base = fbm(121, size, octaves=(6, 16, 32), weights=(0.5, 0.3, 0.2))
+    rgb = tint("#7a6a5e", "#3f3730", np.clip(base * 1.1, 0, 1))
+    rust = np.clip((fbm(122, size, octaves=(8, 20), weights=(0.6, 0.4)) - 0.52) * 3.0, 0, 1)
+    rgb += (np.array([150, 78, 40]) - rgb) * rust[:, :, None] * 0.85
+    specks = np.clip((fbm(123, size, octaves=(48, 96), weights=(0.5, 0.5)) - 0.74) * 4, 0, 1)
+    rgb += (np.array([196, 122, 70]) - rgb) * specks[:, :, None] * 0.6
+    return rgb
+
+
 MATERIALS = {
+    "foliage": (foliage, 7.0),
+    "bark": (bark, 10.0),
+    "ore": (ore, 11.0),
     "timber": (timber, 9.0),
     "plaster": (plaster, 4.0),
     "shingle": (shingle, 11.0),

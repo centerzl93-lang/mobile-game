@@ -59,10 +59,11 @@ def palette() -> dict:
         "slate_light": material("SlateLight", srgb(SLATE_LIGHT), roughness=0.48, tex="shingle"),
         "window": material("Window", srgb(WINDOW), roughness=0.35),
         "thatch": material("Thatch", srgb(THATCH), roughness=0.95, tex="thatch"),
-        "foliage": material("Foliage", srgb(FOLIAGE), roughness=0.80),
-        "foliage_dark": material("FoliageDark", srgb(FOLIAGE_DARK), roughness=0.82),
-        "foliage_light": material("FoliageLight", srgb(FOLIAGE_LIGHT), roughness=0.78),
-        "bark": material("Bark", srgb(BARK), roughness=0.90),
+        "foliage": material("Foliage", srgb(FOLIAGE), roughness=0.80, tex="foliage"),
+        "foliage_dark": material("FoliageDark", srgb(FOLIAGE_DARK), roughness=0.82, tex="foliage"),
+        "foliage_light": material("FoliageLight", srgb(FOLIAGE_LIGHT), roughness=0.78, tex="foliage"),
+        "bark": material("Bark", srgb(BARK), roughness=0.90, tex="bark"),
+        "ore": material("Ore", srgb("#9C6A4A"), roughness=0.70, tex="ore"),
     }
 
 

@@ -42,7 +42,7 @@ const MOUNTAIN_MAX_H = 11.0; // tallest peak
 const SNOWLINE_H = 6.0; // peaks above this get a permanent snow cap
 const TOP = LAND_H; // y of the walkable surface props sit on
 const TREE_MODEL_SIZE = 0.55; // world scale for a normalized (footprint=1) tree model — see tools/models/pine.py
-const ROCK_MODEL_SIZE = 0.34; // world scale applied to a normalized loose-stone model
+const ROCK_MODEL_SIZE = 0.52; // world scale applied to a normalized loose-stone model
 /**
  * Props drawn per resource tile.
  *
@@ -270,7 +270,7 @@ export class Renderer3D {
     // Loose-stone deposits.
     this.rockTiles = [];
     for (let i = 0; i < s.tiles.length; i++) if ((s.tiles[i].stone ?? 0) > 0) this.rockTiles.push(i);
-    const rockGeo = new THREE.DodecahedronGeometry(0.13);
+    const rockGeo = new THREE.DodecahedronGeometry(0.20);
     this.rocks = new THREE.InstancedMesh(rockGeo, matte(0x9a9ca1), Math.max(1, this.rockTiles.length * rocksPerTile()));
     this.rocks.count = this.rockTiles.length * rocksPerTile();
     this.scene.add(this.rocks);
@@ -279,8 +279,17 @@ export class Renderer3D {
     // slightly craggier so a player can tell the two apart at a glance from the play camera.
     this.ironTiles = [];
     for (let i = 0; i < s.tiles.length; i++) if ((s.tiles[i].iron ?? 0) > 0) this.ironTiles.push(i);
-    const ironGeo = new THREE.OctahedronGeometry(0.15);
-    this.ironNodes = new THREE.InstancedMesh(ironGeo, matte(0x9c5f3a, 0.65), Math.max(1, this.ironTiles.length * ironPerTile()));
+    const ironGeo = new THREE.OctahedronGeometry(0.22);
+    const ironMat = matte(0xffffff, 0.7);
+    // Iron is drawn from a primitive rather than an authored model, so it takes the ore texture
+    // here instead of through the Blender pipeline the other props use.
+    new THREE.TextureLoader().load(
+      import.meta.env.BASE_URL + 'textures/mat_ore.png',
+      (t) => { t.colorSpace = THREE.SRGBColorSpace; ironMat.map = t; ironMat.needsUpdate = true; },
+      undefined,
+      () => { ironMat.color.set(0x9c5f3a); ironMat.needsUpdate = true; },
+    );
+    this.ironNodes = new THREE.InstancedMesh(ironGeo, ironMat, Math.max(1, this.ironTiles.length * ironPerTile()));
     this.ironNodes.count = this.ironTiles.length * ironPerTile();
     this.ironNodes.castShadow = true;
     this.scene.add(this.ironNodes);

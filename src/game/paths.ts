@@ -64,7 +64,9 @@ export function planPath(s: GameState, tx: number, ty: number, tier: PathTier): 
     markGroundHarvest(s, idx, t);
     return true;
   }
-  if (cur !== PATH_NONE) return false;
+  // Dirt goes on bare ground, and also *over* a stone road — downgrading a paved street back to
+  // a track was impossible without demolishing it tile by tile first.
+  if (cur !== PATH_NONE && cur !== PATH_STONE && cur !== PATH_STONE_PLAN) return false;
   s.paths[idx] = PATH_DIRT_PLAN;
   markGroundHarvest(s, idx, t);
   return true;
@@ -89,10 +91,16 @@ function markGroundHarvest(s: GameState, idx: number, t: Tile): void {
  * Mark a freshly planned tile as awaiting the player's confirmation. Villagers ignore pending
  * tiles (`buildPath`), so a drag can be reviewed and cancelled before it becomes work orders.
  */
-export function markPending(s: GameState, tx: number, ty: number): void {
+export function markPending(s: GameState, tx: number, ty: number, prev = PATH_NONE): void {
   const idx = tileIndex(tx, ty);
   const pending = (s.pendingPaths ??= []);
-  if (!pending.includes(idx)) pending.push(idx);
+  const prevs = (s.pendingPrev ??= []);
+  if (pending.includes(idx)) return;
+  pending.push(idx);
+  // What this tile held before the plan went on it. Cancelling a stone path drawn over an
+  // existing dirt one used to clear the tile to bare ground — the player lost a road they had
+  // already built by changing their mind about upgrading it.
+  prevs.push(prev);
 }
 
 /** How many drawn-but-unconfirmed path tiles are waiting. */
@@ -104,22 +112,28 @@ export function pendingPathCount(s: GameState): number {
 export function confirmPendingPaths(s: GameState): number {
   const n = pendingPathCount(s);
   s.pendingPaths = [];
+  s.pendingPrev = [];
   return n;
 }
 
 /** Discard the drawn tiles, clearing any that are still only planned back to bare ground. */
 export function cancelPendingPaths(s: GameState): number {
   const pending = s.pendingPaths ?? [];
+  const prevs = s.pendingPrev ?? [];
   let cleared = 0;
-  for (const idx of pending) {
+  for (let k = 0; k < pending.length; k++) {
+    const idx = pending[k];
     const v = s.paths[idx];
     // Only un-plan: a tile a villager already finished while this sat pending stays built.
     if (v === PATH_DIRT_PLAN || v === PATH_STONE_PLAN || v === PATH_BRIDGE_PLAN || v === PATH_TUNNEL_PLAN) {
-      s.paths[idx] = PATH_NONE;
+      // Put back whatever was there before, so cancelling an upgrade leaves the old road intact
+      // rather than scrubbing the tile to bare ground.
+      s.paths[idx] = prevs[k] ?? PATH_NONE;
       cleared++;
     }
   }
   s.pendingPaths = [];
+  s.pendingPrev = [];
   return cleared;
 }
 
@@ -212,6 +226,32 @@ export function clearPathsUnder(s: GameState, x: number, y: number, w: number, h
     }
   }
   return cleared;
+}
+
+/**
+ * Rip up every path tile in a rectangle. Returns how many were removed.
+ *
+ * The counterpart to the harvest marquee: taking a road out one tile at a time was tedious
+ * enough that players simply left roads they no longer wanted.
+ */
+export function demolishPathRect(s: GameState, x0: number, y0: number, x1: number, y1: number): number {
+  const lo = { x: Math.min(x0, x1), y: Math.min(y0, y1) };
+  const hi = { x: Math.max(x0, x1), y: Math.max(y0, y1) };
+  let removed = 0;
+  for (let y = lo.y; y <= hi.y; y++) {
+    for (let x = lo.x; x <= hi.x; x++) {
+      if (!inBounds(x, y)) continue;
+      const idx = tileIndex(x, y);
+      if (s.paths[idx] === PATH_NONE) continue;
+      // Bridges and tunnels are the only walkable water and mountain tiles, so pulling one
+      // changes where villagers can go.
+      const wasCrossing = s.paths[idx] === PATH_BRIDGE || s.paths[idx] === PATH_TUNNEL;
+      s.paths[idx] = PATH_NONE;
+      removed++;
+      if (wasCrossing) s.navVersion = (s.navVersion ?? 0) + 1;
+    }
+  }
+  return removed;
 }
 
 /** Movement multiplier from a built path at a world position (1 = bare ground). */

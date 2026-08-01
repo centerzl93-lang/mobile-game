@@ -420,3 +420,56 @@ test.describe('clearing build sites', () => {
     expect(res.withPath, 'a drawn path is waiting on it too').toBe(res.farIdx);
   });
 });
+
+test.describe('path editing', () => {
+  test('upgrades can be cancelled, stone can be downgraded, and a drag pulls up a run', async ({ page }) => {
+    await startSmall(page);
+    const res = await page.evaluate(([W]) => {
+      const g = (window as any).__village;
+      const s = g.state;
+      const idx = (x: number, y: number) => y * W + x;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      const P = { NONE: 0, DIRT_PLAN: 1, DIRT: 2, STONE_PLAN: 3, STONE: 4 };
+
+      // A finished dirt road running away from the barn, on cleared ground.
+      const y = barn.y + 4;
+      const xs = [barn.x, barn.x + 1, barn.x + 2, barn.x + 3];
+      for (const x of xs) {
+        const t = s.tiles[idx(x, y)];
+        t.type = 'grass';
+        t.trees = 0;
+        delete t.stone;
+        delete t.iron;
+        s.harvest[idx(x, y)] = 0;
+        s.paths[idx(x, y)] = P.DIRT;
+      }
+      s.pendingPaths = [];
+      s.pendingPrev = [];
+      const stock = s.buildings.find((b: any) => b.type === 'barn');
+      stock.store.stone = 500;
+
+      // Draw a stone upgrade over it, then change your mind.
+      for (const x of xs) g.debugPaintPath('stone', x, y);
+      const whileDrawn = xs.map((x) => s.paths[idx(x, y)]);
+      g.debugCancelPaths();
+      const afterCancel = xs.map((x) => s.paths[idx(x, y)]);
+
+      // Finish the stone, then draw dirt back over it — a downgrade, previously impossible.
+      for (const x of xs) s.paths[idx(x, y)] = P.STONE;
+      const downgraded = xs.map((x) => g.debugPlanPath('dirt', x, y));
+
+      // And pull the whole run up in one drag.
+      for (const x of xs) s.paths[idx(x, y)] = P.STONE;
+      const removed = g.debugDemolishPathRect(xs[0], y, xs[xs.length - 1], y);
+      const afterDrag = xs.map((x) => s.paths[idx(x, y)]);
+      return { whileDrawn, afterCancel, downgraded, removed, afterDrag, DIRT: P.DIRT, STONE_PLAN: P.STONE_PLAN };
+    }, [W] as const);
+
+    expect(res.whileDrawn, 'the upgrade is planned over the road').toEqual(res.whileDrawn.map(() => res.STONE_PLAN));
+    // Cancelling an upgrade puts the road back rather than scrubbing the tile to bare ground.
+    expect(res.afterCancel, 'cancelling leaves the dirt road intact').toEqual(res.afterCancel.map(() => res.DIRT));
+    expect(res.downgraded, 'dirt can be drawn over stone').toEqual(res.downgraded.map(() => true));
+    expect(res.removed, 'one drag pulls up the whole run').toBe(4);
+    expect(res.afterDrag, 'the tiles are bare afterwards').toEqual(res.afterDrag.map(() => 0));
+  });
+});

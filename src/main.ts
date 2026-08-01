@@ -67,11 +67,11 @@ import {
 } from './game/simulation';
 import { canPlace, placeBuilding, canAfford, demolishBuilding, footprintClear } from './game/buildings';
 import { findPath } from './game/pathfind';
-import { tileIndex } from './game/world';
+import { tileIndex, inBounds } from './game/world';
 import { addNearest, barnLoad, capacityOf, larderFood, larderFoodTarget, larderTarget } from './game/storage';
 import {
   planPath, markPending, pendingPathCount, confirmPendingPaths, cancelPendingPaths,
-  isSpanTier, spanLine, unplanTiles,
+  isSpanTier, spanLine, unplanTiles, demolishPathRect,
 } from './game/paths';
 import { saveGame, loadGame, hasSave, clearSave, slotInfo, lastSlot, SLOTS } from './game/save';
 import { InspectRow, InspectControls } from './ui/ui';
@@ -277,6 +277,10 @@ class Game {
       this.harvestMode = false;
       this.clearInspect();
       this.ui.hideSizeWidget();
+      // Marquee mode, like harvesting: a drag pulls up a whole run of road at once. A tap still
+      // falls through to picking a single building or path tile, so nothing is lost.
+      this.input.setMode('marquee');
+    } else {
       this.input.setMode('normal');
     }
   }
@@ -295,7 +299,7 @@ class Game {
   }
 
   private onMarqueeMove(sx0: number, sy0: number, sx1: number, sy1: number): void {
-    if (!this.harvestMode) return;
+    if (!this.harvestMode && !this.demolish) return;
     const [wx0, wy0] = this.camera.screenToTile(sx0, sy0, this.cw, this.ch);
     const [wx1, wy1] = this.camera.screenToTile(sx1, sy1, this.cw, this.ch);
     this.marquee = { x0: wx0, y0: wy0, x1: wx1, y1: wy1 };
@@ -303,7 +307,21 @@ class Game {
 
   private onMarqueeEnd(sx0: number, sy0: number, sx1: number, sy1: number): void {
     this.marquee = null;
-    if (!this.harvestMode || !this.running || this.state.gameOver) return;
+    if (!this.running || this.state.gameOver) return;
+    if (this.demolish) {
+      const [dx0, dy0] = this.camera.screenToTile(sx0, sy0, this.cw, this.ch);
+      const [dx1, dy1] = this.camera.screenToTile(sx1, sy1, this.cw, this.ch);
+      const removed = demolishPathRect(
+        this.state,
+        Math.floor(dx0), Math.floor(dy0), Math.floor(dx1), Math.floor(dy1),
+      );
+      // Ripping up road is cheap and instantly reversible by drawing it again, so unlike
+      // demolishing a building it does not need a confirmation step.
+      this.ui.flashHint(removed > 0 ? `Removed ${removed} path tile${removed > 1 ? 's' : ''}` : 'No paths there');
+      if (removed > 0) this.persist();
+      return;
+    }
+    if (!this.harvestMode) return;
     const [wx0, wy0] = this.camera.screenToTile(sx0, sy0, this.cw, this.ch);
     const [wx1, wy1] = this.camera.screenToTile(sx1, sy1, this.cw, this.ch);
     const n = markHarvestRect(
@@ -486,7 +504,8 @@ class Game {
     const ty = Math.floor(wy);
     // Drawn tiles are held pending until the player confirms, so a stray drag can be undone.
     if (!isSpanTier(this.selectedPath) || !this.spanStart) {
-      if (planPath(this.state, tx, ty, this.selectedPath)) markPending(this.state, tx, ty);
+      const prev = inBounds(tx, ty) ? this.state.paths[tileIndex(tx, ty)] : PATH_NONE;
+      if (planPath(this.state, tx, ty, this.selectedPath)) markPending(this.state, tx, ty, prev);
       return;
     }
     // A bridge or tunnel is one crossing: the player drags a straight line from bank to bank (or
@@ -497,8 +516,9 @@ class Game {
     unplanTiles(this.state, this.spanTiles);
     this.spanTiles = [];
     for (const p of spanLine(this.spanStart.x, this.spanStart.y, tx, ty)) {
+      const prev = inBounds(p.x, p.y) ? this.state.paths[tileIndex(p.x, p.y)] : PATH_NONE;
       if (!planPath(this.state, p.x, p.y, this.selectedPath)) continue;
-      markPending(this.state, p.x, p.y);
+      markPending(this.state, p.x, p.y, prev);
       this.spanTiles.push(tileIndex(p.x, p.y));
     }
   }
@@ -1029,8 +1049,11 @@ class Game {
    * exercise the real pending flow without depending on where the camera happens to be looking.
    */
   debugPaintPath(tier: PathTier, x: number, y: number): boolean {
+    // Capture what the tile held first: `markPending` needs it so a cancelled upgrade restores
+    // the road underneath instead of clearing the tile.
+    const prev = inBounds(x, y) ? this.state.paths[tileIndex(x, y)] : PATH_NONE;
     if (!planPath(this.state, x, y, tier)) return false;
-    markPending(this.state, x, y);
+    markPending(this.state, x, y, prev);
     return true;
   }
 
@@ -1055,6 +1078,16 @@ class Game {
   debugCoatedCount(): number {
     const r = this.renderer as Renderer3D;
     return typeof r.coatedCount === 'function' ? r.coatedCount() : 0;
+  }
+
+  /** Debug/testing helper: discard the drawn (unconfirmed) path tiles. */
+  debugCancelPaths(): void {
+    this.cancelPaths();
+  }
+
+  /** Debug/testing helper: rip up every path tile in a rectangle. */
+  debugDemolishPathRect(x0: number, y0: number, x1: number, y1: number): number {
+    return demolishPathRect(this.state, x0, y0, x1, y1);
   }
 
   /** Debug/testing helper: which tile a villager would go and harvest next (-1 for none). */

@@ -741,6 +741,13 @@ export interface GameState {
    * confirms — so a stray drag across the map can be cancelled instead of becoming work orders.
    */
   pendingPaths?: number[];
+  /**
+   * What each pending tile held before its plan went down, index-matched to `pendingPaths`.
+   *
+   * Cancelling restores these rather than clearing to bare ground, so drawing a stone upgrade
+   * over an existing dirt road and then changing your mind leaves the dirt road there.
+   */
+  pendingPrev?: number[];
   /** How many free adults the player wants assigned as Builders. Only Builders construct work
    * buildings; paths can be laid by any adult. Idle builders pitch in as laborers. */
   desiredBuilders: number;

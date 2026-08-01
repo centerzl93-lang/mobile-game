@@ -36,11 +36,13 @@ const TOP = LAND_H; // y of the walkable surface props sit on
 const TREE_MODEL_SIZE = 0.55; // world scale for a normalized (footprint=1) tree model — see tools/models/pine.py
 const ROCK_MODEL_SIZE = 0.9; // world scale applied to a normalized loose-stone model
 
+// The ground atlas supplies each surface's colour now, so these are near-white multipliers
+// that only carry a slight per-type bias. A flat green here would double up with the texture.
 const TILE_COLOR: Record<string, number> = {
-  grass: 0x5b8f43,
-  forest: 0x3f6f39,
-  stone: 0x8b8e95,
-  foothill: 0x8a7f68,
+  grass: 0xffffff,
+  forest: 0xe8efe4,
+  stone: 0xffffff,
+  foothill: 0xfaf6ee,
 };
 
 const BUILDING_COLORS: Record<BuildingType, number> = {
@@ -125,6 +127,8 @@ export class Renderer3D {
   // Instanced static/dynamic layers.
   private terrain!: THREE.InstancedMesh;
   private landIdx: number[] = [];
+  /** Per-terrain-instance atlas cell (x,y in cell units) and orientation code (z). */
+  private tileAtlas!: THREE.InstancedBufferAttribute;
   private trees!: THREE.InstancedMesh;
   private treeTiles: number[] = [];
   private rocks!: THREE.InstancedMesh;
@@ -221,7 +225,10 @@ export class Renderer3D {
     this.mountainH = computeMountainHeights(s);
     const terrGeo = new THREE.BoxGeometry(1, 1, 1);
     terrGeo.translate(0, 0.5, 0); // base at y=0, grows upward with Y-scale
-    this.terrain = new THREE.InstancedMesh(terrGeo, matte(), this.landIdx.length);
+    // Per-instance atlas cell (xy) plus an orientation code (z) — see makeTerrainMaterial.
+    this.tileAtlas = new THREE.InstancedBufferAttribute(new Float32Array(this.landIdx.length * 3), 3);
+    terrGeo.setAttribute('aTile', this.tileAtlas);
+    this.terrain = new THREE.InstancedMesh(terrGeo, this.makeTerrainMaterial(), this.landIdx.length);
     this.terrain.receiveShadow = true;
     this.terrain.castShadow = true;
     this.scene.add(this.terrain);
@@ -474,6 +481,53 @@ export class Renderer3D {
   }
 
   // ---- terrain ----
+  /**
+   * The terrain material: one atlas texture shared by every tile, with each instance choosing
+   * its cell through the `aTile` attribute.
+   *
+   * A single InstancedMesh can only carry one material, so the four ground surfaces live in one
+   * 2x2 atlas and the vertex shader remaps UVs into the right quadrant. `aTile.z` additionally
+   * flips the UVs per tile, which is what stops thousands of identical squares from reading as
+   * wallpaper. UVs are clamped just inside the cell so mipmapping cannot bleed a neighbouring
+   * surface in along the seams.
+   */
+  private makeTerrainMaterial(): THREE.MeshStandardMaterial {
+    const loader = new THREE.TextureLoader();
+    const base = import.meta.env.BASE_URL + 'textures/';
+    const mat = matte(0xffffff, 0.95);
+    const setup = (t: THREE.Texture, srgb: boolean) => {
+      t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+      if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = this.tier === 'high' ? 4 : 1;
+      return t;
+    };
+    // Best-effort, exactly like the models: no texture just means untextured tiles, never a crash.
+    loader.load(base + 'ground.png', (t) => { mat.map = setup(t, true); mat.needsUpdate = true; }, undefined, () => {});
+    loader.load(base + 'ground_n.png', (t) => {
+      mat.normalMap = setup(t, false);
+      mat.normalScale.set(0.8, 0.8);
+      mat.needsUpdate = true;
+    }, undefined, () => {});
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = 'attribute vec3 aTile;\n' + shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <uv_vertex>',
+        `#include <uv_vertex>
+        vec2 tileUv = uv;
+        if (aTile.z > 0.5) tileUv.x = 1.0 - tileUv.x;
+        if (aTile.z > 1.5) tileUv.y = 1.0 - tileUv.y;
+        tileUv = clamp(tileUv, 0.004, 0.996) * 0.5 + aTile.xy * 0.5;
+        #ifdef USE_MAP
+          vMapUv = tileUv;
+        #endif
+        #ifdef USE_NORMALMAP
+          vNormalMapUv = tileUv;
+        #endif`,
+      );
+    };
+    return mat;
+  }
+
   private syncTerrain(s: GameState): void {
     const snowQ = Math.round(this.snowNow * 8); // fold snow into the signature so it rebuilds
     let sig = snowQ;
@@ -492,7 +546,13 @@ export class Renderer3D {
       this.dummy.rotation.set(0, 0, 0);
       this.dummy.updateMatrix();
       this.terrain.setMatrixAt(k, this.dummy.matrix);
+      // Pick the atlas cell for this surface, and flip its UVs on a hash of the tile index so
+      // neighbouring tiles of the same type do not line up into a visible grid.
+      const cell = TERRAIN_CELL[t.type] ?? TERRAIN_CELL.grass;
+      this.tileAtlas.setXYZ(k, cell[0], cell[1], (i * 2654435761) % 3);
       this.color.set(TILE_COLOR[t.type] ?? TILE_COLOR.grass);
+      // A little brightness jitter per tile, so a large field of one surface still varies.
+      this.color.multiplyScalar(0.90 + ((i * 2246822519) % 1000) / 1000 * 0.10);
       // Peaks wear a permanent snow cap; then every tile takes the seasonal snow tint.
       if (isMountain && h > SNOWLINE_H) {
         const cap = Math.min(1, (h - SNOWLINE_H) / (MOUNTAIN_MAX_H - SNOWLINE_H));
@@ -503,6 +563,7 @@ export class Renderer3D {
       k++;
     }
     this.terrain.instanceMatrix.needsUpdate = true;
+    this.tileAtlas.needsUpdate = true;
     if (this.terrain.instanceColor) this.terrain.instanceColor.needsUpdate = true;
   }
 
@@ -953,6 +1014,20 @@ export class Renderer3D {
     this.ready = false;
   }
 }
+
+/**
+ * Atlas cell each tile type samples, in cell units, paired with tools/textures/ground.py.
+ *
+ * Note the V axis is measured from the **bottom**: textures upload with flipY, so the atlas row
+ * written first in the generator (grass, forest) is the row at v = 1 here. Getting this backwards
+ * silently renders every field as rock, which is exactly as confusing as it sounds.
+ */
+const TERRAIN_CELL: Record<string, [number, number]> = {
+  grass: [0, 1],
+  forest: [1, 1],
+  stone: [0, 0],
+  foothill: [1, 0],
+};
 
 function matte(color = 0xffffff, roughness = 0.9): THREE.MeshStandardMaterial {
   // Not fully rough: a little specular response is what separates a surface from a paper cutout.

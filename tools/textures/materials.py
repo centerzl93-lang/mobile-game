@@ -58,24 +58,80 @@ def plaster(size: int) -> np.ndarray:
 
 def shingle(size: int) -> np.ndarray:
     """Slate roof: overlapping courses, each tile its own tone, with weathered edges."""
-    courses = _stripes(size, 8, 1, 0.55, 71)
-    tiles_ = _stripes(size, 6, 0, 0.45, 72)
-    mask = np.clip(courses * 0.6 + tiles_ * 0.4, 0, 1)
+    # Staggered like real slating — each course laid to break joint with the one below.
+    mask = _brick(size, courses=9, per_course=7, seed=71)
     rgb = tint("#4a5570", "#2c3345", mask)
     weather = fbm(73, size, octaves=(6, 24), weights=(0.6, 0.4))
     rgb += (np.array([104, 112, 132]) - rgb) * np.clip((weather - 0.6) * 2.2, 0, 1)[:, :, None] * 0.55
     return rgb
 
 
+def shake(size: int) -> np.ndarray:
+    """Split-timber roof shakes: the same staggered courses as slate, but riven wood.
+
+    This has to be its own map rather than a tinted slate one — the material tint *multiplies*
+    the texture, so warming a blue slate map just yields dark blue. Working buildings need a roof
+    that actually reads as brown from across the map.
+    """
+    mask = _brick(size, courses=9, per_course=6, seed=131)
+    rgb = tint("#9a7042", "#5a3f24", mask)
+    # Riven wood splits along the grain, so run fine streaks down each shake.
+    grain = fbm(132, size, octaves=(48, 96), weights=(0.5, 0.5))
+    grain = np.repeat(grain[:, :1], size, axis=1) * 0.5 + grain * 0.5
+    rgb *= (0.84 + 0.32 * grain)[:, :, None]
+    weather = np.clip((fbm(133, size, octaves=(5, 14), weights=(0.6, 0.4)) - 0.58) * 2.4, 0, 1)
+    rgb += (np.array([146, 132, 108]) - rgb) * weather[:, :, None] * 0.45  # silvered patches
+    return rgb
+
+
 def masonry(size: int) -> np.ndarray:
-    """Coursed rubble stone for footings and chimneys: blocks with deep mortar joints."""
-    courses = _stripes(size, 6, 1, 0.4, 81)
-    blocks = _stripes(size, 5, 0, 0.5, 82)
-    mask = np.clip(courses * 0.55 + blocks * 0.45, 0, 1)
+    """Coursed rubble stone for footings, chimneys and walls.
+
+    Crossing two stripe fields gives a perfect rectangular lattice, which at the game's texel
+    density read as graph paper on every stone surface. Real coursed rubble staggers: each course
+    starts at a different offset and the blocks within it are unequal. `_brick` does that, and the
+    result tiles seamlessly because the offsets repeat with the course count.
+    """
+    mask = _brick(size, courses=6, per_course=5, seed=81)
     rgb = tint("#8f8c83", "#4f4d47", mask)
     grit = fbm(83, size, octaves=(24, 48), weights=(0.5, 0.5))
     rgb += (np.array([118, 115, 108]) - rgb) * np.clip((grit - 0.55) * 2, 0, 1)[:, :, None] * 0.45
+    # Broad mottling so whole areas of the wall differ in tone, not just individual stones.
+    patch = fbm(84, size, octaves=(3, 7), weights=(0.6, 0.4))
+    rgb *= (0.86 + 0.28 * patch)[:, :, None]
     return rgb
+
+
+def _brick(size: int, courses: int, per_course: int, seed: int) -> np.ndarray:
+    """A staggered block field: horizontal courses, each offset and subdivided differently.
+
+    Returns 1 in the face of a block and 0 in the mortar joint, so callers can `tint` between a
+    stone colour and a joint colour. Offsets are drawn per course from a seeded RNG, so the
+    pattern is irregular but reproducible, and it wraps because every coordinate is taken modulo
+    the course/block count.
+    """
+    rng = np.random.default_rng(seed)
+    ys = np.arange(size) / size * courses
+    course = np.floor(ys).astype(int) % courses
+    yfrac = ys - np.floor(ys)
+    # Mortar bed between courses.
+    bed = np.clip(np.minimum(yfrac, 1 - yfrac) * 2 * 7, 0, 1)
+
+    offsets = rng.random(courses)
+    tone = 0.72 + rng.random((courses, per_course + 2)) * 0.56
+    xs = np.arange(size) / size
+    out = np.zeros((size, size))
+    for c in range(courses):
+        rows = course == c
+        if not rows.any():
+            continue
+        u = (xs + offsets[c]) * per_course
+        block = np.floor(u).astype(int) % per_course
+        ufrac = u - np.floor(u)
+        joint = np.clip(np.minimum(ufrac, 1 - ufrac) * 2 * 6, 0, 1)
+        row = np.minimum(joint, 1.0) * tone[c][block]
+        out[rows] = row
+    return np.clip(out * bed[:, None], 0, 1)
 
 
 def thatch(size: int) -> np.ndarray:
@@ -126,6 +182,7 @@ MATERIALS = {
     "timber": (timber, 9.0),
     "plaster": (plaster, 4.0),
     "shingle": (shingle, 11.0),
+    "shake": (shake, 12.0),
     "masonry": (masonry, 12.0),
     "thatch": (thatch, 10.0),
 }

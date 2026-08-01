@@ -9,7 +9,7 @@ import random
 
 import bpy
 
-from common import reset_scene, finish, export_glb
+from common import reset_scene, finish, export_gltf
 from style import palette
 
 
@@ -39,4 +39,4 @@ def build(seed: int = 3):
 
 if __name__ == "__main__":
     build()
-    export_glb("public/models/rock.glb")
+    export_gltf("public/models/rock.gltf")

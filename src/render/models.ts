@@ -5,10 +5,12 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
  * Optional glTF models, loaded at runtime from `public/models/` and described by
  * `public/models/manifest.json`. Everything is best-effort: if the manifest is absent or a
  * file fails, the renderer keeps its placeholder geometry, so the game never regresses. Drop
- * `.glb` files in and list them in the manifest to see them in-game (see models/README.md).
+ * `.gltf` files (plus their `.bin`) in and list them in the manifest to see them in-game — see
+ * models/README.md. Textures are referenced from `public/textures/`, not packed per model, so
+ * every building shares one download of each material.
  */
 export interface ModelManifest {
-  /** buildingType -> glb filename, e.g. { "house": "house.glb" } */
+  /** buildingType -> model filename, e.g. { "house": "house.gltf" } */
   buildings?: Record<string, string>;
   /** tree model filenames (instanced on forest tiles) */
   trees?: string[];
@@ -17,10 +19,19 @@ export interface ModelManifest {
 }
 
 export class ModelLibrary {
-  private loader = new GLTFLoader();
-  private base = import.meta.env.BASE_URL + 'models/';
   /** Cache-buster so a redeployed model is not masked by the service worker's copy. */
   private v = `?v=${__ASSET_VERSION__}`;
+  /**
+   * The .gltf files reference a sibling .bin, and GLTFLoader resolves it against the model's
+   * URL with the query string stripped — so the geometry would come back from the stale cache
+   * even when the model itself did not. Stamp the version onto every /models/ request instead.
+   * Textures live in /textures/ and are precached by the service worker, so they update anyway.
+   */
+  private manager = new THREE.LoadingManager().setURLModifier((url) =>
+    url.includes('/models/') && !url.includes('?v=') ? url + this.v : url,
+  );
+  private loader = new GLTFLoader(this.manager);
+  private base = import.meta.env.BASE_URL + 'models/';
   private templates = new Map<string, THREE.Object3D>(); // filename -> normalized template
   private buildingFile = new Map<string, string>(); // buildingType -> filename
   treeFiles: string[] = [];
@@ -53,7 +64,7 @@ export class ModelLibrary {
 
   private loadFile(file: string): void {
     this.loader.load(
-      this.base + file + this.v,
+      this.base + file, // the loading manager stamps the cache-busting version on
       (gltf) => {
         this.templates.set(file, normalize(gltf.scene));
         this.loadedCount++;

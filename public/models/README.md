@@ -1,35 +1,45 @@
-# Drop-in 3D models
+# 3D models
 
-The game renders in 3D (Three.js). Buildings, trees, and rocks show **placeholder shapes**
-until you add real low-poly models here. This is entirely optional and incremental — add one
-file or all of them; anything you don't provide keeps its placeholder.
+Every building, the pine and the loose rock are modelled here. They are **built from the Python
+scripts in `tools/models/`** rather than checked in as opaque binaries — see that folder's README
+to change one. This file describes how the *game* consumes what those scripts produce.
 
-## How to add models
+## What is in here
 
-1. Get some **low-poly `.glb`** models (see *Where to get them* below). One model per file.
-2. Put the `.glb` files in **this folder** (`public/models/`).
-3. List them in **`manifest.json`** so the game loads them. Example:
+- `<name>.gltf` + `<name>.bin` — one model each. The `.gltf` is JSON (readable, diffable); the
+  `.bin` holds its vertex data.
+- `manifest.json` — what the game loads, and which building type each model belongs to.
+
+**Textures are not stored here.** Each `.gltf` references `../textures/mat_*.png`, which is
+where the terrain gets its materials too. That is deliberate: a self-contained `.glb` embeds
+every image it uses, and with two dozen buildings drawing on the same handful of materials that
+meant ~620 KB of duplicated PNG per file. Referencing the shared textures instead keeps each
+model at a few tens of KB and the whole village under about 1.5 MB, most of which is textures
+downloaded once.
+
+## Adding or replacing a model
+
+1. Put `<name>.gltf` (and its `.bin`) in this folder.
+2. List it in `manifest.json`:
 
    ```json
    {
-     "buildings": {
-       "house": "house.glb",
-       "barn": "barn.glb",
-       "chapel": "church.glb",
-       "well": "well.glb"
-     },
-     "trees": ["pine.glb", "oak.glb"],
-     "rocks": ["rock.glb"]
+     "buildings": { "house": "house.gltf", "barn": "barn.gltf" },
+     "trees": ["pine.gltf"],
+     "rocks": ["rock.gltf"]
    }
    ```
 
-4. Reload the game. That's it — the loader auto-centers each model on its footprint, drops it
-   to ground level, and scales it to the building's tile size, so exact size/orientation in
-   the source file doesn't matter much. (If something looks too big/small or turned the wrong
-   way, tell me and I'll add a per-model scale/rotation tweak.)
+3. Reload. The loader auto-centers each model on its footprint, drops it to ground level and
+   scales it to the building's plot, so exact size and origin in the source file are forgiving —
+   orientation is not (see the conventions in `tools/models/README.md`).
 
-You do **not** need to redeploy code — models are plain assets. For the installed PWA, the
-first load after adding a model must be online; after that it's cached for offline play.
+Anything absent or failing to load keeps its placeholder box, so the game never regresses on a
+missing or broken file.
+
+Models are cached by the service worker, so a returning player would otherwise keep the copy
+fetched on their first visit. Their URLs carry the build's commit as `?v=…`, which changes the
+cache key on every deploy — new art reaches existing installs without any manual cache clearing.
 
 ## Building keys
 
@@ -41,23 +51,16 @@ lumberyard  woodcutter  quarry  mine  blacksmith  tailor  trading  school  herba
 hospital  well  market  barn
 ```
 
-`trees` and `rocks` are arrays of filenames used for the forest and loose-stone props
-(instanced across the map; the game picks the first that loads).
+`farm` and `ranch` are drawn as fenced plots sized by the player, so they ignore any model
+listed for them.
 
-## Where to get CC0 models (free, no attribution required)
+`trees` and `rocks` are arrays of filenames used for the forest and loose-stone props (instanced
+across the map; the game picks the first that loads).
 
-- **KayKit** — kaylousberg.itch.io — CC0 medieval packs (Builder / Hexagon / City). Best match
-  for this village look.
-- **Kenney** — kenney.nl — CC0 (Nature Kit, Medieval Town, Castle Kit).
-- **Quaternius** — quaternius.com — CC0 (Ultimate Nature, Medieval Village).
-- **Poly Pizza** — poly.pizza — CC0 search, direct `.glb` downloads.
+## If you want to use third-party models instead
 
-You can also generate custom models with AI tools (Meshy, Luma Genie, Tripo, Rodin, Sloyd) or
-model them in Blender — export as `.glb`. If a tool's output isn't CC0, make sure its license
-allows use in your project.
-
-## Please record what you add
-
-When you add models, note each one (name, author, source URL, license) in
-[`CREDITS.md`](./CREDITS.md). CC0 needs no attribution, but keeping a record is good practice
-and required if you use any CC-BY assets.
+Nothing stops you dropping in an external `.glb` — the loader handles both formats. Use only
+assets whose license permits it (CC0 needs no attribution; CC-BY does), record them in
+[`CREDITS.md`](./CREDITS.md), and **never use assets from a commercial game** — this project is
+entirely original. Good CC0 sources: KayKit (kaylousberg.itch.io), Kenney (kenney.nl),
+Quaternius (quaternius.com), Poly Pizza (poly.pizza).

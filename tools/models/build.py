@@ -18,22 +18,50 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 OUT = os.path.join(ROOT, "public", "models")
 sys.path.insert(0, HERE)
 
-# Model name -> the module that builds it. Add new models here.
-MODELS = ["house", "pine", "rock"]
+# Model name -> "module" (its `build()`), or "module:function" when one module holds several
+# related models — the workshops share so many parts that splitting them into a file each would
+# be more scrolling than it is worth. Add new models here.
+MODELS = {
+    "house": "house",
+    "pine": "pine",
+    "rock": "rock",
+    "stonehouse": "homes:stonehouse",
+    "gatherer": "food:gatherer",
+    "fishing": "food:fishing",
+    "hunting": "food:hunting",
+    "lumberyard": "wood:lumberyard",
+    "woodcutter": "wood:woodcutter",
+    "quarry": "digging:quarry",
+    "mine": "digging:mine",
+    "blacksmith": "craft:blacksmith",
+    "tailor": "craft:tailor",
+    "trading": "craft:trading",
+    "market": "craft:market",
+    "school": "civic:school",
+    "tavern": "civic:tavern",
+    "chapel": "civic:chapel",
+    "cemetery": "civic:cemetery",
+    "herbalist": "civic:herbalist",
+    "hospital": "civic:hospital",
+    "well": "civic:well",
+    "barn": "civic:barn",
+}
 
 
 def build(name: str) -> str:
-    mod = importlib.import_module(name)
-    mod.build()
-    path = os.path.join(OUT, f"{name}.glb")
-    from common import export_glb
+    target = MODELS[name]
+    mod_name, _, fn_name = target.partition(":")
+    mod = importlib.import_module(mod_name)
+    getattr(mod, fn_name or "build")()
+    path = os.path.join(OUT, f"{name}.gltf")
+    from common import export_gltf
 
-    export_glb(path)
+    export_gltf(path)
     return path
 
 
 def main() -> None:
-    wanted = sys.argv[1:] or MODELS
+    wanted = sys.argv[1:] or list(MODELS)
     unknown = [w for w in wanted if w not in MODELS]
     if unknown:
         sys.exit(f"unknown model(s): {', '.join(unknown)}. known: {', '.join(MODELS)}")

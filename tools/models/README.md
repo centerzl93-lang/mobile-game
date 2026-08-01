@@ -1,8 +1,17 @@
 # Model sources
 
-The `.glb` files in `public/models/` are **built from the Python scripts in this folder**, so the
-models live in git as readable, diffable source instead of opaque binaries. Changing a roof pitch
-is a one-line diff and a rebuild, not a re-export from someone's laptop.
+The models in `public/models/` are **built from the Python scripts in this folder**, so the
+village lives in git as readable, diffable source instead of opaque binaries. Changing a roof
+pitch is a one-line diff and a rebuild, not a re-export from someone's laptop.
+
+Layout of this folder:
+
+- `common.py` — primitives, materials, UV projection, export.
+- `style.py` — the palette and the two signature treatments (`half_timber`, `shingled_roof`).
+- `parts.py` — the shared prop vocabulary: decking, fences, log piles, barrels, racks, lean-tos.
+- `house.py`, `homes.py`, `food.py`, `wood.py`, `digging.py`, `craft.py`, `civic.py` — the
+  buildings, grouped by trade. `pine.py` and `rock.py` are the map props.
+- `build.py` — the registry mapping each model name to the function that builds it.
 
 ## Build
 
@@ -15,8 +24,12 @@ python3 tools/models/build.py           # build everything
 python3 tools/models/build.py house     # build one model
 ```
 
-Each model is written to `public/models/<name>.glb`. Register it in
+Each model is written to `public/models/<name>.gltf` (plus a `.bin`), referencing the shared
+textures in `public/textures/` rather than packing its own copies. Register it in
 `public/models/manifest.json` for the game to load it — see `public/models/README.md`.
+
+Textures come from `tools/textures/materials.py`; rerun that if you change a material, then
+rebuild the models so they pick up the new maps.
 
 ## Editing by hand in Blender
 
@@ -27,8 +40,8 @@ These are ordinary Blender scripts. To work on one interactively:
 3. **Run Script** — the model appears in the viewport, ready to sculpt
 
 If you hand-edit a model in Blender and want to keep the result, either fold the change back into
-the script (preferred — keeps the source of truth in git) or export the `.glb` over the built one
-and note in the script that it is no longer authoritative.
+the script (preferred — keeps the source of truth in git) or export over the built file and note
+in the script that it is no longer authoritative.
 
 ## Conventions
 

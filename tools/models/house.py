@@ -4,7 +4,7 @@ Two tiles square (BUILDING_DEFS.house is w:2, h:2). The roof carries most of the
 steep, deeply-lapped roofline is what makes the style read at a distance.
 """
 
-from common import reset_scene, box, bevel, finish, export_glb
+from common import reset_scene, box, bevel, finish, export_gltf
 from style import palette, shingled_roof, half_timber
 
 W, D = 2.0, 2.0
@@ -45,4 +45,4 @@ def build():
 
 if __name__ == "__main__":
     build()
-    export_glb("public/models/house.glb")
+    export_gltf("public/models/house.gltf")

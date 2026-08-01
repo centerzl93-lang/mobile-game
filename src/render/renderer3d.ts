@@ -1082,8 +1082,11 @@ export class Renderer3D {
 
   private makeBuildingModel(type: BuildingType): THREE.Object3D {
     const def = BUILDING_DEFS[type];
-    const clone = this.models.buildingClone(type)!; // footprint normalized to 1×1
-    const k = Math.min(def.w, def.h) * 0.95; // scale up to the tile footprint, keep aspect
+    const clone = this.models.buildingClone(type)!; // longest footprint axis normalized to 1
+    // Scale by the *longer* side of the plot. Models are authored to their building's footprint
+    // aspect, so this fills the plot; using the shorter side left every non-square building
+    // (the 3×2 dock and market, the 3×6 quarry) sitting in a plot two-thirds empty.
+    const k = Math.max(def.w, def.h) * 0.95;
     clone.scale.multiplyScalar(k);
     clone.userData.model = true;
     return clone;

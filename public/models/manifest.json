@@ -1,7 +1,31 @@
 {
   "buildings": {
-    "house": "house.glb"
+    "barn": "barn.gltf",
+    "blacksmith": "blacksmith.gltf",
+    "cemetery": "cemetery.gltf",
+    "chapel": "chapel.gltf",
+    "fishing": "fishing.gltf",
+    "gatherer": "gatherer.gltf",
+    "herbalist": "herbalist.gltf",
+    "hospital": "hospital.gltf",
+    "house": "house.gltf",
+    "hunting": "hunting.gltf",
+    "lumberyard": "lumberyard.gltf",
+    "market": "market.gltf",
+    "mine": "mine.gltf",
+    "quarry": "quarry.gltf",
+    "school": "school.gltf",
+    "stonehouse": "stonehouse.gltf",
+    "tailor": "tailor.gltf",
+    "tavern": "tavern.gltf",
+    "trading": "trading.gltf",
+    "well": "well.gltf",
+    "woodcutter": "woodcutter.gltf"
   },
-  "trees": ["pine.glb"],
-  "rocks": ["rock.glb"]
+  "trees": [
+    "pine.gltf"
+  ],
+  "rocks": [
+    "rock.gltf"
+  ]
 }

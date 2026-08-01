@@ -1,6 +1,6 @@
 """Shared helpers for the model-authoring scripts in this folder.
 
-Each script builds one `.glb` for `public/models/` out of plain Blender primitives, so the
+Each script builds one `.gltf` for `public/models/` out of plain Blender primitives, so the
 models live in git as readable, diffable source rather than as opaque binaries. Run one with:
 
     python3 tools/models/build.py house
@@ -38,8 +38,8 @@ def material(name: str, color: tuple[float, float, float], roughness: float = 0.
 
     `color` still applies when a texture is given: it multiplies the map, so one source can be
     retinted per use (the same shingle serving a blue slate and a grey one). The matching `_n`
-    normal map is wired automatically when it exists. Textures are packed into the exported .glb,
-    so the game loads one self-contained file per model.
+    normal map is wired automatically when it exists. `export_gltf` points the exported model at
+    the shared PNGs in public/textures/ rather than packing a copy into every file.
     """
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
@@ -160,7 +160,7 @@ def finish(objects, name: str):
     bpy.ops.object.mode_set(mode="OBJECT")
 
     # Sit the model on the ground, centered on its footprint — the same normalization the
-    # loader applies, done here too so the .glb looks right in any other viewer.
+    # loader applies, done here too so the model looks right in any other viewer.
     bpy.context.view_layer.update()
     corners = [ob.matrix_world @ Vector(c) for c in ob.bound_box]
     lo = Vector((min(c.x for c in corners), min(c.y for c in corners), min(c.z for c in corners)))
@@ -170,12 +170,47 @@ def finish(objects, name: str):
     return ob
 
 
-def export_glb(path: str) -> None:
+def export_gltf(path: str) -> None:
+    """Export a .gltf that *references* the shared textures instead of packing them.
+
+    A GLB embeds every image it uses, and the whole village draws on the same handful of
+    materials — packing them per model meant ~620 KB of duplicated PNG in each of two dozen
+    files. Exporting separately and pointing the image URIs back at `public/textures/` (the very
+    same files the terrain already loads) leaves each model a few tens of KB of geometry, and the
+    browser fetches each texture once for the entire game.
+
+    Blender writes its own copies of the images next to the .gltf; those are rewritten away and
+    deleted here, so `public/models/` holds only `.gltf` + `.bin`.
+    """
+    import json
+    import shutil
+
+    out_dir = os.path.dirname(os.path.abspath(path))
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.export_scene.gltf(
         filepath=path,
-        export_format="GLB",
+        export_format="GLTF_SEPARATE",
         use_selection=True,
         export_apply=True,
         export_yup=True,
+        export_keep_originals=False,
     )
+    with open(path, "r", encoding="utf-8") as fh:
+        doc = json.load(fh)
+    copied = []
+    for image in doc.get("images", []):
+        uri = image.get("uri")
+        if not uri:
+            continue
+        copied.append(os.path.join(out_dir, uri))
+        # Relative to the model, which lives in public/models/.
+        image["uri"] = "../textures/" + os.path.basename(uri)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, separators=(",", ":"))
+    for dup in copied:
+        if os.path.exists(dup):
+            os.remove(dup)
+    # Blender 4.x may also drop the textures into a sibling folder.
+    stray = os.path.join(out_dir, "textures")
+    if os.path.isdir(stray):
+        shutil.rmtree(stray)

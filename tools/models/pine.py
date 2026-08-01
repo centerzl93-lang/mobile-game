@@ -9,7 +9,7 @@ import random
 
 import bpy
 
-from common import reset_scene, box, finish, export_glb
+from common import reset_scene, box, finish, export_gltf
 from style import palette
 
 TIERS = 5
@@ -58,4 +58,4 @@ def build(seed: int = 0):
 
 if __name__ == "__main__":
     build()
-    export_glb("public/models/pine.glb")
+    export_gltf("public/models/pine.gltf")

@@ -40,6 +40,11 @@ FOLIAGE = "#4C6B3C"
 FOLIAGE_DARK = "#3B5430"
 FOLIAGE_LIGHT = "#5F7F46"
 BARK = "#5A4433"
+SHAKE = "#B99A72"        # split-timber roofing on working buildings (tints the shake map)
+SHAKE_LIGHT = "#D4B78C"
+CLOTH = "#CFC3AA"        # awnings, drying racks, sails
+METAL = "#4A4B50"        # wrought iron
+SOIL = "#6B4F35"         # turned earth: quarry floors, spoil heaps, graves
 
 # Roof pitch in degrees. Steep is the single most recognisable trait of the reference.
 PITCH_DEG = 54.0
@@ -63,11 +68,23 @@ def palette() -> dict:
         "foliage_dark": material("FoliageDark", srgb(FOLIAGE_DARK), roughness=0.82, tex="foliage"),
         "foliage_light": material("FoliageLight", srgb(FOLIAGE_LIGHT), roughness=0.78, tex="foliage"),
         "bark": material("Bark", srgb(BARK), roughness=0.90, tex="bark"),
+        # Wooden shakes: the same shingle map tinted warm. Working buildings — barns, sheds,
+        # cabins, the trades — are roofed in split timber; slate is reserved for civic work. Two
+        # roofing families is what keeps two dozen buildings from reading as one repeated cottage.
+        "shake": material("Shake", srgb(SHAKE), roughness=0.86, tex="shake"),
+        "shake_light": material("ShakeLight", srgb(SHAKE_LIGHT), roughness=0.84, tex="shake"),
         "ore": material("Ore", srgb("#9C6A4A"), roughness=0.70, tex="ore"),
+        # Undyed linen/canvas: awnings, drying laundry, market stall covers. Left untextured —
+        # it reads as cloth by being the one smooth, pale surface among all the grain and grit.
+        "cloth": material("Cloth", srgb(CLOTH), roughness=0.88),
+        # Wrought iron: anvils, hinges, tools, mine rails. The only material with any metalness.
+        "metal": material("Metal", srgb(METAL), roughness=0.42),
+        "soil": material("Soil", srgb(SOIL), roughness=1.0, tex="masonry"),
     }
 
 
-def shingled_roof(width, depth, height, base_z, mats, rows=7, overhang=0.10, name="Roof"):
+def shingled_roof(width, depth, height, base_z, mats, rows=7, overhang=0.10, name="Roof",
+                  keys=("slate", "slate_light")):
     """A steep gable roof built from stacked shingle courses.
 
     Each course is a slab spanning the ridge direction, tilted to the roof pitch and lapped over
@@ -95,14 +112,14 @@ def shingled_roof(width, depth, height, base_z, mats, rows=7, overhang=0.10, nam
             # Nudge each course out along the roof normal so the laps catch a shadow line.
             nx, nz = math.sin(side * pitch), math.cos(side * pitch)
             ob.location = (cx + nx * thick * 0.5, 0, cz + nz * thick * 0.5)
-            ob.data.materials.append(mats["slate" if i % 2 == 0 else "slate_light"])
+            ob.data.materials.append(mats[keys[0] if i % 2 == 0 else keys[1]])
             parts.append(ob)
     # Ridge cap along the top.
     bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, base_z + height))
     cap = bpy.context.active_object
     cap.name = f"{name}Ridge"
     cap.scale = (0.16, depth_o, 0.10)
-    cap.data.materials.append(mats["slate"])
+    cap.data.materials.append(mats[keys[0]])
     parts.append(cap)
     return parts
 

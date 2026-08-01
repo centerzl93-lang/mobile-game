@@ -50,15 +50,15 @@ def palette() -> dict:
     return {
         # Roughness carries a lot of the material read: damp slate is glossier than dry
         # plaster, and planed timber sits between the two.
-        "plaster": material("Plaster", srgb(PLASTER), roughness=0.95),
-        "timber": material("Timber", srgb(TIMBER), roughness=0.72),
-        "timber_dark": material("TimberDark", srgb(TIMBER_DARK), roughness=0.70),
-        "stone": material("Stone", srgb(STONE), roughness=0.88),
-        "stone_dark": material("StoneDark", srgb(STONE_DARK), roughness=0.86),
-        "slate": material("Slate", srgb(SLATE), roughness=0.52),
-        "slate_light": material("SlateLight", srgb(SLATE_LIGHT), roughness=0.48),
+        "plaster": material("Plaster", srgb(PLASTER), roughness=0.95, tex="plaster"),
+        "timber": material("Timber", srgb(TIMBER), roughness=0.72, tex="timber"),
+        "timber_dark": material("TimberDark", srgb(TIMBER_DARK), roughness=0.70, tex="timber"),
+        "stone": material("Stone", srgb(STONE), roughness=0.88, tex="masonry"),
+        "stone_dark": material("StoneDark", srgb(STONE_DARK), roughness=0.86, tex="masonry"),
+        "slate": material("Slate", srgb(SLATE), roughness=0.52, tex="shingle"),
+        "slate_light": material("SlateLight", srgb(SLATE_LIGHT), roughness=0.48, tex="shingle"),
         "window": material("Window", srgb(WINDOW), roughness=0.35),
-        "thatch": material("Thatch", srgb(THATCH), roughness=0.95),
+        "thatch": material("Thatch", srgb(THATCH), roughness=0.95, tex="thatch"),
         "foliage": material("Foliage", srgb(FOLIAGE), roughness=0.80),
         "foliage_dark": material("FoliageDark", srgb(FOLIAGE_DARK), roughness=0.82),
         "foliage_light": material("FoliageLight", srgb(FOLIAGE_LIGHT), roughness=0.78),

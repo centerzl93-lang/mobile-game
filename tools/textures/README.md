@@ -25,3 +25,23 @@ Each cell is generated on a wrapped lattice so it tiles against itself seamlessl
 covers one map tile and thousands sit edge to edge, so a seam would be very visible. The renderer
 also flips UVs per tile from a hash of the tile index, and jitters per-tile brightness, so a large
 field of one surface does not read as wallpaper.
+
+# Building materials
+
+`materials.py` generates the tiling textures the models sample — timber, plaster, shingle,
+masonry and thatch, each with a matching normal map.
+
+```
+python3 tools/textures/materials.py    # -> public/textures/mat_*.png
+python3 tools/models/build.py          # rebuild the .glb files that use them
+```
+
+Models are UV'd by **cube projection at a fixed world scale** (`UV_WORLD_SCALE` in
+tools/models/common.py). The buildings are boxy, so a cube projection gives every face sensible
+texture direction with no hand-unwrapping, and one shared scale keeps texel density consistent
+across the whole village. Every texture must therefore tile seamlessly and read correctly at
+roughly one repeat per map tile.
+
+`material(..., tex="timber")` multiplies the map by the material colour, so a single source can
+serve several tints — the same shingle backs both the blue slate and the grey. Textures are
+packed into the exported `.glb`, so each model stays one self-contained file.

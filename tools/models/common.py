@@ -14,9 +14,18 @@ Authoring conventions (see public/models/README.md for how the game consumes the
     exact size and origin here are forgiving — orientation is not.
 """
 
+import os
+
 import bpy
 import bmesh
 from mathutils import Vector
+
+TEXTURE_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "public", "textures")
+)
+
+
+UV_WORLD_SCALE = 1.0  # one texture repeat per Blender unit, i.e. per map tile
 
 
 def reset_scene() -> None:
@@ -24,14 +33,52 @@ def reset_scene() -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
-def material(name: str, color: tuple[float, float, float], roughness: float = 0.85):
-    """A flat, matte Principled material. Colors are linear RGB in 0..1."""
+def material(name: str, color: tuple[float, float, float], roughness: float = 0.85, tex: str | None = None):
+    """A Principled material, optionally textured from public/textures/mat_<tex>.png.
+
+    `color` still applies when a texture is given: it multiplies the map, so one source can be
+    retinted per use (the same shingle serving a blue slate and a grey one). The matching `_n`
+    normal map is wired automatically when it exists. Textures are packed into the exported .glb,
+    so the game loads one self-contained file per model.
+    """
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
-    bsdf = mat.node_tree.nodes["Principled BSDF"]
+    nt = mat.node_tree
+    bsdf = nt.nodes["Principled BSDF"]
     bsdf.inputs["Base Color"].default_value = (*color, 1.0)
     bsdf.inputs["Roughness"].default_value = roughness
     bsdf.inputs["Metallic"].default_value = 0.0
+    if not tex:
+        return mat
+
+    col_path = os.path.join(TEXTURE_DIR, f"mat_{tex}.png")
+    if not os.path.exists(col_path):
+        return mat  # best-effort: an untextured model still builds
+    img = bpy.data.images.load(col_path, check_existing=True)
+    tex_node = nt.nodes.new("ShaderNodeTexImage")
+    tex_node.image = img
+    tex_node.location = (-600, 200)
+    # Multiply the map by the material colour so one texture can serve several tints.
+    mix = nt.nodes.new("ShaderNodeMixRGB")
+    mix.blend_type = "MULTIPLY"
+    mix.inputs["Fac"].default_value = 1.0
+    mix.inputs["Color2"].default_value = (*color, 1.0)
+    mix.location = (-300, 200)
+    nt.links.new(tex_node.outputs["Color"], mix.inputs["Color1"])
+    nt.links.new(mix.outputs["Color"], bsdf.inputs["Base Color"])
+
+    nrm_path = os.path.join(TEXTURE_DIR, f"mat_{tex}_n.png")
+    if os.path.exists(nrm_path):
+        nimg = bpy.data.images.load(nrm_path, check_existing=True)
+        nimg.colorspace_settings.name = "Non-Color"
+        ntex = nt.nodes.new("ShaderNodeTexImage")
+        ntex.image = nimg
+        ntex.location = (-600, -150)
+        nmap = nt.nodes.new("ShaderNodeNormalMap")
+        nmap.inputs["Strength"].default_value = 0.8
+        nmap.location = (-300, -150)
+        nt.links.new(ntex.outputs["Color"], nmap.inputs["Color"])
+        nt.links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
     return mat
 
 
@@ -101,6 +148,16 @@ def finish(objects, name: str):
     ob.name = name
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
     shade_flat(ob)
+
+    # Cube-project the UVs at a fixed world scale. These buildings are boxy, so a cube projection
+    # gives every face sensible texture direction with no hand-unwrapping, and one shared scale
+    # keeps texel density consistent across every model in the village.
+    if not ob.data.uv_layers:
+        ob.data.uv_layers.new(name="UVMap")
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.cube_project(cube_size=UV_WORLD_SCALE, correct_aspect=True)
+    bpy.ops.object.mode_set(mode="OBJECT")
 
     # Sit the model on the ground, centered on its footprint — the same normalization the
     # loader applies, done here too so the .glb looks right in any other viewer.

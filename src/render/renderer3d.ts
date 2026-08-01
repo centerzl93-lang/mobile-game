@@ -156,17 +156,17 @@ export class Renderer3D {
     // leaves midtones washed out, which reads as "cartoon" no matter how good the models are.
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.15;
-    // Shadows are what give buildings weight, so only the weakest devices go without.
-    if (this.tier !== 'low') {
+    if (this.tier === 'high') {
       this.renderer.shadowMap.enabled = true;
       this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      // A generated environment so PBR materials have something to reflect. Without it a
+      // MeshStandardMaterial gets zero ambient specular and every surface looks like paper.
+      // Measured at ~34% of frame time, so the low tier does without and leans on the lights.
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      this.scene.environmentIntensity = 0.35;
+      pmrem.dispose();
     }
-    // A generated environment so PBR materials have something to reflect. With no envMap a
-    // MeshStandardMaterial gets zero ambient specular and every surface looks like paper.
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.35;
-    pmrem.dispose();
     this.scene.background = this.skyColor;
     this.scene.fog = new THREE.Fog(this.fogColor, 60, 150);
 
@@ -179,9 +179,9 @@ export class Renderer3D {
     this.sun.position.set(34, 30, 20);
     this.scene.add(this.sun);
     this.scene.add(this.sun.target);
-    if (this.tier !== 'low') {
+    if (this.tier === 'high') {
       this.sun.castShadow = true;
-      this.sun.shadow.mapSize.set(this.tier === 'high' ? 2048 : 1024, this.tier === 'high' ? 2048 : 1024);
+      this.sun.shadow.mapSize.set(2048, 2048);
       const c = this.sun.shadow.camera;
       c.left = -30; c.right = 30; c.top = 30; c.bottom = -30;
       c.near = 1; c.far = 140;

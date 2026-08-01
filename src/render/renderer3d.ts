@@ -210,6 +210,7 @@ export class Renderer3D {
   /** One instanced surface per path kind, so each can carry its own texture. */
   private pathLayers: Record<PathSurface, THREE.InstancedMesh> = {} as Record<PathSurface, THREE.InstancedMesh>;
   private portals!: THREE.InstancedMesh;
+  private bores!: THREE.InstancedMesh;
   private citizens!: THREE.InstancedMesh;
   private hair!: THREE.InstancedMesh | null;
   /** Left and right leg, instanced separately so each can swing on its own transform. */
@@ -225,6 +226,8 @@ export class Renderer3D {
   private ghostKey = '';
   /** Hash of which tiles carry a finished tunnel — a change means the terrain must be recut. */
   private tunnelSig = 0;
+  /** Per tile: how many tunnel tiles in from the nearest mouth, or -1 if not a finished tunnel. */
+  private tunnelDepth: Int16Array | null = null;
   private selRing!: THREE.Mesh;
   private workRing!: THREE.Group; // ground circle (fill + outline) for a selected building's work radius
   private marquee!: THREE.Mesh;
@@ -381,11 +384,23 @@ export class Renderer3D {
     }
     // Tunnel portals: the timbered mouth where a tunnel meets open air. Drawn separately because
     // it is a standing structure, not a surface, and only the end tiles get one.
-    this.portals = new THREE.InstancedMesh(portalGeometry(), matte(0x6a5236, 0.9), 256);
+    const portalMat = matte(0x8a6a45, 0.9);
+    new THREE.TextureLoader().load(
+      import.meta.env.BASE_URL + 'textures/mat_timber.png',
+      (t) => { t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; portalMat.map = t; portalMat.needsUpdate = true; },
+      undefined,
+      () => { /* untextured timber still reads as timber by its colour */ },
+    );
+    this.portals = new THREE.InstancedMesh(portalGeometry(), portalMat, 256);
     this.portals.count = 0;
     this.portals.frustumCulled = false;
     this.portals.castShadow = this.tier === 'high';
     this.scene.add(this.portals);
+    // Near-black and unlit-looking, so the opening reads as depth rather than as a dark wall.
+    this.bores = new THREE.InstancedMesh(boreGeometry(), matte(0x0b0c0f, 1), 256);
+    this.bores.count = 0;
+    this.bores.frustumCulled = false;
+    this.scene.add(this.bores);
     const flat2 = new THREE.BoxGeometry(1, 0.04, 1);
     const markMat = matte(0xffffff);
     markMat.transparent = true;
@@ -653,12 +668,15 @@ export class Renderer3D {
   private tileHeight(t: Tile, i: number, s?: GameState): number {
     if (t.type === 'water') return WATER_BED_H;
     if (t.type === 'stone') {
-      // A driven tunnel brings the rock down to a pass. Mountains here are a smooth heightfield
-      // rather than cliffs at tile boundaries, so there is no vertical face to hang a portal on —
-      // a bore would be completely invisible from the play camera, and its mouth ends up buried in
-      // the flank. Cutting the height instead makes the route through the range obvious at a
-      // glance, and the stone-lined floor drawn on top reads as the road it is.
-      if (s && s.paths[i] === PATH_TUNNEL) return FOOTHILL_H;
+      // A tunnel is a bore, not a cutting: the rock over it stays. Only the first two tiles at
+      // each end are excavated, which carves the approach the portal stands in — the mountain
+      // itself then rises straight off the back of that recess, so the road visibly runs into the
+      // hillside and stops. (Mountains here are a smooth heightfield with no vertical faces, so
+      // without this recess there is nowhere for a mouth to be; with it, there is.)
+      if (s && s.paths[i] === PATH_TUNNEL && this.tunnelDepth && this.tunnelDepth[i] >= 0 &&
+          this.tunnelDepth[i] < TUNNEL_MOUTH_TILES) {
+        return FOOTHILL_H;
+      }
       return this.mountainH ? this.mountainH[i] : MOUNTAIN_BASE_H;
     }
     if (t.type === 'foothill') return FOOTHILL_H;
@@ -680,6 +698,7 @@ export class Renderer3D {
    * that slopes into the water.
    */
   private makeTerrainGeometry(s: GameState): THREE.BufferGeometry {
+    this.tunnelDepth = tunnelMouthDepth(s); // the heights below depend on it
     const R = TERRAIN_RES;
     const vw = MAP_W * R + 1;
     const vh = MAP_H * R + 1;
@@ -1084,6 +1103,9 @@ export class Renderer3D {
         // the mountain surface. A finished one is a floor at ground level, inside the hill — which
         // is exactly where a villager walking through it should be.
         y = v === PATH_TUNNEL ? FOOTHILL_H + 0.03 : this.groundAt(x + 0.5, z + 0.5) + 0.05;
+        // Deep tiles are inside solid rock — their roadway would never be seen, and drawing it
+        // only risks poking through the mountain on a steep slope.
+        if (v === PATH_TUNNEL && this.tunnelDepth && this.tunnelDepth[i] >= TUNNEL_MOUTH_TILES) continue;
       } else {
         surf = v === PATH_STONE || v === PATH_STONE_PLAN ? 'stone' : 'dirt';
         y = TOP + 0.03;
@@ -1095,29 +1117,51 @@ export class Renderer3D {
       this.dummy.rotation.set(0, 0, 0);
       this.dummy.updateMatrix();
       layer.setMatrixAt(k, this.dummy.matrix);
-      // Unbuilt tiles are dimmed rather than differently coloured, so a plan reads as the same
-      // road not yet laid.
-      layer.setColorAt(k, this.color.set(0xffffff).multiplyScalar(built(v) ? 1 : 0.55));
+      // Planned-but-unlaid tiles go green — the same "this is going here" signal the placement
+      // ghost uses, and far easier to pick out against dirt and rock than a dimmed version of the
+      // finished surface was.
+      // A wash rather than a flat fill: the surface's own texture still shows through, so a
+      // planned road reads as "this road, not yet laid" instead of as a green tile.
+      layer.setColorAt(k, built(v) ? this.color.set(0xffffff) : this.color.set(PLAN_TINT));
 
       // A finished tunnel gets a timbered portal wherever it opens onto something that is not
       // more tunnel — the only part of it visible from outside the mountain.
       if (v === PATH_TUNNEL && portals < 256) {
+        // Rotating by yaw about Y sends local +Z to world (sin yaw, cos yaw), and the geometry is
+        // built with +Z pointing out of the hillside — so yaw must map +Z onto (dx, dz), the
+        // direction of the open ground. The table was previously off by a half turn, which built
+        // every portal back to front: the gallery ran into the rock and the dark bore hung out in
+        // the open air. Symmetrical arches hid it; a mineshaft adit does not.
         for (const [dx, dz, yaw] of [[1, 0, Math.PI / 2], [-1, 0, -Math.PI / 2], [0, 1, 0], [0, -1, Math.PI]] as const) {
           if (portals >= 256) break;
           const nx = x + dx;
           const nz = z + dz;
           if (!inBounds(nx, nz)) continue;
-          const ni = tileIndex(nx, nz);
-          // A mouth is where the bore meets something that is not mountain. Any mountain
-          // neighbour is either more tunnel or unbroken rock; neither is an opening.
-          if (s.tiles[ni].type === 'stone') continue;
-          // The cut floor sits at foothill height, so the frame stands on the tunnel's own
-          // roadway at the point where it opens out of the rock.
-          this.dummy.position.set(x + 0.5 + dx * 0.48, FOOTHILL_H, z + 0.5 + dz * 0.48);
-          this.dummy.scale.set(1.15, 1.15, 1.15);
+          // A mouth is the *end of the bore*, facing along it: open ground ahead, and the tunnel
+          // itself continuing behind. The axis has to come from the tunnel tiles, not from the
+          // rock — testing "rock behind" put a portal on every exposed flank, so a tunnel through
+          // a narrow or diagonal range grew a row of them along its side instead of one at each
+          // end. A single-tile bore has nothing behind it, so it is a mouth both ways.
+          if (s.tiles[tileIndex(nx, nz)].type === 'stone') continue;
+          const bx = x - dx;
+          const bz = z - dz;
+          const behindIsTunnel = inBounds(bx, bz) && s.paths[tileIndex(bx, bz)] === PATH_TUNNEL;
+          if (!behindIsTunnel && !isLoneTunnel(s, x, z)) continue;
+          // Anchored on the outer edge of the tile and turned to face out of the hillside, so the
+          // approach walls run back along the excavated tiles behind it.
+          // Sit it on the lower of the recess floor and the ground just outside, so a mouth that
+          // opens onto a riverbank or a falling slope does not leave the portal hanging in air.
+          const outside = Math.min(FOOTHILL_H, this.groundAt(nx + 0.5, nz + 0.5));
+          // Anchored on the rock face — the edge of the mouth tile that meets open ground. The
+          // gallery then stands a tile proud of it and the timbering runs back through the
+          // excavated approach behind.
+          this.dummy.position.set(x + 0.5 + dx * 0.5, outside, z + 0.5 + dz * 0.5);
+          this.dummy.scale.set(1, 1, 1);
           this.dummy.rotation.set(0, yaw, 0);
           this.dummy.updateMatrix();
-          this.portals.setMatrixAt(portals++, this.dummy.matrix);
+          this.portals.setMatrixAt(portals, this.dummy.matrix);
+          this.bores.setMatrixAt(portals, this.dummy.matrix);
+          portals++;
         }
       }
     }
@@ -1129,6 +1173,8 @@ export class Renderer3D {
     }
     this.portals.count = portals;
     this.portals.instanceMatrix.needsUpdate = true;
+    this.bores.count = portals;
+    this.bores.instanceMatrix.needsUpdate = true;
   }
 
   // ---- harvest marks ----
@@ -1573,7 +1619,7 @@ export class Renderer3D {
     // have to be released here or a new map leaks the old map's meshes.
     const villagerMeshes = [this.citizens, this.heads, this.hair, this.coats, ...(this.legs ?? [])]
       .filter((m): m is THREE.InstancedMesh => !!m);
-    for (const m of [this.terrain, this.trees, this.rocks, ...pathMeshes, this.portals, this.marks, ...villagerMeshes]) {
+    for (const m of [this.terrain, this.trees, this.rocks, ...pathMeshes, this.portals, this.bores, this.marks, ...villagerMeshes]) {
       this.scene.remove(m);
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
@@ -1620,6 +1666,63 @@ type PathSurface = 'dirt' | 'stone' | 'bridge' | 'tunnel';
  */
 const GHOST_OPACITY = 0.42;
 
+/** Tint for a path, bridge or tunnel tile that is drawn but not yet built. */
+const PLAN_TINT = 0x7fe08c;
+
+/**
+ * How deep each finished-tunnel tile sits, counted in tiles from the nearest mouth.
+ *
+ * A breadth-first walk outward from every tunnel tile that touches open ground. The first
+ * `TUNNEL_MOUTH_TILES` of each end are excavated into an approach; everything deeper keeps the
+ * mountain over it, which is what makes the road read as running *into* the hill rather than
+ * through a notch cut across it. -1 marks a tile that is not a finished tunnel.
+ */
+function tunnelMouthDepth(s: GameState): Int16Array {
+  const depth = new Int16Array(MAP_W * MAP_H).fill(-1);
+  const queue: number[] = [];
+  for (let i = 0; i < s.paths.length; i++) {
+    if (s.paths[i] !== PATH_TUNNEL) continue;
+    const x = i % MAP_W;
+    const y = (i / MAP_W) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      if (!inBounds(x + dx, y + dy)) continue;
+      // Open ground next door means this tile is a mouth.
+      if (s.tiles[tileIndex(x + dx, y + dy)].type !== 'stone') {
+        depth[i] = 0;
+        queue.push(i);
+        break;
+      }
+    }
+  }
+  for (let head = 0; head < queue.length; head++) {
+    const i = queue[head];
+    const x = i % MAP_W;
+    const y = (i / MAP_W) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!inBounds(nx, ny)) continue;
+      const j = tileIndex(nx, ny);
+      if (s.paths[j] !== PATH_TUNNEL || depth[j] !== -1) continue;
+      depth[j] = depth[i] + 1;
+      queue.push(j);
+    }
+  }
+  // A tunnel with no mouth at all (fully enclosed) is still a tunnel; treat it as deep rock.
+  for (let i = 0; i < s.paths.length; i++) {
+    if (s.paths[i] === PATH_TUNNEL && depth[i] === -1) depth[i] = TUNNEL_MOUTH_TILES;
+  }
+  return depth;
+}
+
+/** A tunnel tile with no tunnel neighbours — a bore one tile long, open at both ends. */
+function isLoneTunnel(s: GameState, x: number, z: number): boolean {
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+    if (inBounds(x + dx, z + dz) && s.paths[tileIndex(x + dx, z + dz)] === PATH_TUNNEL) return false;
+  }
+  return true;
+}
+
 /** Rolling hash of the finished-tunnel tiles, to notice when the mountain needs recutting. */
 function tunnelSignature(s: GameState): number {
   let sig = 0;
@@ -1642,28 +1745,82 @@ function disposeTree(root: THREE.Object3D): void {
 }
 
 /**
- * The timbered mouth of a tunnel: two posts and a lintel, set into the rock face.
+ * Tiles excavated at each end of a tunnel to form its approach. Two is the useful minimum: one
+ * gives the portal nowhere to stand, and three starts to read as a cutting again.
+ */
+const TUNNEL_MOUTH_TILES = 2;
+
+/** How far the timbered adit stands proud of the hillside, in tiles. */
+const TUNNEL_PORTAL_OUT = 1;
+
+/**
+ * The mouth of a tunnel: a timbered adit, like a mineshaft head.
  *
- * Built facing -Z so an instance's yaw points it out of the hillside. This is the only part of a
- * tunnel visible from outside — the bore itself is inside the terrain mesh, which is also why a
- * villager crossing one correctly disappears from view partway through.
+ * Built facing -Z (into the hillside) and anchored on the rock face, so an instance's yaw points
+ * it out of the mountain. It runs `TUNNEL_PORTAL_OUT` of a tile *outward* onto the open ground —
+ * a covered gallery of props standing proud of the slope, which is what makes the entrance
+ * readable from the play camera — and `TUNNEL_MOUTH_TILES` back the other way into the excavated
+ * approach, so the timbering visibly continues into the dark rather than stopping at a facade.
+ *
+ * Timber rather than dressed stone: this is a working bore driven by the same people who prop a
+ * mine, not a piece of civic architecture.
  */
 function portalGeometry(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
-  const post = (x: number) => {
-    const g = new THREE.BoxGeometry(0.13, 0.62, 0.16);
-    g.translate(x, 0.31, 0);
-    return g;
-  };
-  parts.push(post(-0.3), post(0.3));
-  const lintel = new THREE.BoxGeometry(0.86, 0.15, 0.2);
-  lintel.translate(0, 0.68, 0);
-  parts.push(lintel);
-  // The dark opening between them, pushed back into the rock.
-  const mouth = new THREE.BoxGeometry(0.5, 0.6, 0.06);
-  mouth.translate(0, 0.3, -0.1);
-  parts.push(mouth);
+  const outer = TUNNEL_PORTAL_OUT;
+  // Runs past the excavated approach and on into the rock, so the timbering does not stop at a
+  // facade — it continues into the dark, and the terrain hides the rest.
+  const inner = -(TUNNEL_MOUTH_TILES + 0.6);
+  const len = outer - inner;
+  const midZ = (outer + inner) / 2;
+  const H = 0.92;   // clear height inside
+  const HW = 0.42;  // half the clear width
+  const T = 0.16;   // timber thickness
+
+  // Solid boarded sides and roof: one continuous box, not a run of separate ribs. Gaps between
+  // ribs let daylight through the tunnel from above, which read as a slatted fence rather than
+  // as something you could walk into.
+  for (const sx of [-1, 1]) {
+    const wall = new THREE.BoxGeometry(T, H, len);
+    wall.translate(sx * (HW + T / 2), H / 2, midZ);
+    parts.push(wall);
+  }
+  const roof = new THREE.BoxGeometry(HW * 2 + T * 2 + 0.06, T, len);
+  roof.translate(0, H + T / 2, midZ);
+  parts.push(roof);
+
+  // A header board over the opening, standing a little proud of the roof — the one piece of
+  // silhouette that says "entrance" from directly above.
+  const head = new THREE.BoxGeometry(HW * 2 + T * 2 + 0.24, 0.3, 0.2);
+  head.translate(0, H + 0.28, outer - 0.02);
+  parts.push(head);
+  // Corner posts at the mouth, so the end of the box reads as framed rather than sawn off.
+  for (const sx of [-1, 1]) {
+    const post = new THREE.BoxGeometry(T + 0.06, H + 0.16, 0.2);
+    post.translate(sx * (HW + T / 2), (H + 0.16) / 2, outer - 0.02);
+    parts.push(post);
+  }
   return mergeGeometries(parts, false)!;
+}
+
+/**
+ * The dark bore behind a portal, drawn as its own layer so it can be black while the portal is
+ * dressed stone. Shares the portal's transform exactly.
+ */
+function boreGeometry(): THREE.BufferGeometry {
+  // Placement here is exact, and it was wrong twice. The first TUNNEL_MOUTH_TILES of the bore are
+  // *excavated* — open air inside the approach — so a box anywhere in that span is in plain sight
+  // from the side. It has to begin past the recess, where the rock actually resumes, plus a margin
+  // for the fact that the terrain ramps back up to full mountain height over a sub-tile slope
+  // rather than a vertical wall. Then it is invisible from every angle except straight down the
+  // tunnel, which is exactly when the player should see it.
+  //
+  // Kept shallow for the opposite reason: a deep box punches out the far side of any range only
+  // two or three tiles thick, which is most of them.
+  const D = 0.4;
+  const g = new THREE.BoxGeometry(0.78, 0.86, D);
+  g.translate(0, 0.43, -(TUNNEL_MOUTH_TILES + 0.35 + D / 2));
+  return g;
 }
 
 function matte(color = 0xffffff, roughness = 0.9): THREE.MeshStandardMaterial {

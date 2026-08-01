@@ -1,5 +1,7 @@
 {
-  "buildings": {},
+  "buildings": {
+    "house": "house.glb"
+  },
   "trees": [],
   "rocks": []
 }

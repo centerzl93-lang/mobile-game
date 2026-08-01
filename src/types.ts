@@ -1006,7 +1006,6 @@ export const START_RESOURCES: Resources = {
   chickens: 0,
   medicine: 40,
 };
-export const START_CITIZENS = 4;
 
 /**
  * Opening stockpile per difficulty. Easy is the full `START_RESOURCES` (and also grants
@@ -1104,7 +1103,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   farm: {
     type: 'farm', name: 'Field', emoji: '🌱', category: 'food', w: 4, h: 4,
     cost: { wood: 6 }, jobs: 2, buildTime: 5,
-    desc: 'A fenced field for a chosen crop. Drag its size (4×4 up to 8×8) before building — a bigger field yields a bigger harvest. Grows through spring/summer and is reaped each autumn.',
+    desc: 'A fenced field for a chosen crop — you must own that crop\'s seed to plant it. Drag its size (4×4 up to 8×8) before building; a bigger field yields a bigger harvest, reaped each autumn.',
   },
   fishing: {
     type: 'fishing', name: 'Fishing Hut', emoji: '🎣', category: 'food', w: 2, h: 2,

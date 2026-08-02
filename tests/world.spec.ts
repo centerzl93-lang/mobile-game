@@ -482,9 +482,13 @@ test.describe('path editing', () => {
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       const P = { NONE: 0, DIRT_PLAN: 1, DIRT: 2, STONE_PLAN: 3, STONE: 4 };
 
-      // A finished dirt road running away from the barn, on cleared ground.
-      const y = barn.y + 4;
-      const xs = [barn.x, barn.x + 1, barn.x + 2, barn.x + 3];
+      // A finished dirt road running away from the barn, on cleared ground. The row and the run
+      // are both clamped into the map: `barn.y + 4` assumed four rows of headroom below the
+      // founding site that nothing guarantees, and on a map whose best plains sit near the
+      // border it indexed straight off the end of the tile array.
+      const y = Math.min(barn.y + 4, s.h - 1);
+      const x0 = Math.min(barn.x, s.w - 4);
+      const xs = [x0, x0 + 1, x0 + 2, x0 + 3];
       for (const x of xs) {
         const t = s.tiles[idx(x, y)];
         t.type = 'grass';

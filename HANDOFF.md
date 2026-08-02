@@ -1,7 +1,7 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-08-02 (landscape play, and building footprints; see Current State)
+> Last updated: 2026-08-02 (lakes, landscape play, building footprints; see Current State)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -20,10 +20,50 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **landscape play** and, before it, **building footprints** — both this session.
+Latest work: **lakes**, **landscape play** and **building footprints** — all this session.
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Lakes (this session)
+The player asked for more lakes now that the maps are bigger, and for one in the middle that the
+river runs into and out of. `generateWorld` (`src/game/world.ts`) now builds three kinds of water:
+
+- **The river's own lake**, centred on `riverCx(midY)` — the meander line, not the map's centre.
+  That is what makes the channel meet it head-on: the river narrows in at the top, opens into the
+  lake, and narrows out at the bottom. Its radii are fractions of the map, so it stays the same
+  feature at every size.
+- **The two edge lakes**, unchanged, centred just off the map so they read as a larger body.
+- **A scatter of inland lakes**, `0.55` per thousand tiles — linear in area on purpose. What a
+  player notices is how *often* they meet water, which is a density, so a fixed count would make
+  a large map read as a drought. Small gets 3, medium 11, large 20.
+
+Shores are wobbled by two harmonics per lake. A bare ellipse reads as a stamped hole from the
+game camera and a dozen identical ones is the first thing the eye picks up.
+
+Measured across four worlds per size: water **18-24%** of a small map, **11-15%** medium,
+**12-14%** large, with 3-5 separate bodies on small and 14-17 on large. Small stays proportionally
+wettest because the river and the edge lakes are a fixed number of tiles wide against a smaller
+map — **the river does not scale with map size**, which is a deliberate non-change: its width is
+tuned against bridge cost and dock placement, so widening it on large maps is a gameplay decision
+for the player rather than a knock-on of adding lakes.
+
+**The founding site now keeps 8 tiles of clearance from the map edge** (`START_EDGE_MARGIN`).
+This fell out of the lake work: more water displaced the start, and on 2 of 12 small worlds the
+village was founded **two tiles from the border** — no room for the buildings that need it, and
+the biggest is an 8x8 quarry. Two things made the first two attempts at this fail, both worth
+knowing:
+
+- The margin has to apply to **both** tiers of the search, not just the top one. An all-grass core
+  is genuinely scarce on a small map (the founding clearing is carved *after* this runs, so it is
+  choosing from raw terrain that is ~19% open), so the decision often falls through to the plains
+  score — and guarding only the first tier left that path unguarded.
+- Elbow room has to **outrank** a perfect core. `clearStartArea` carves the clearing to grass
+  anyway and can fix woodland, rock and deposits; the one thing it skips is water. So the real
+  requirement is "no water in the core" (`coreIsDry`), and all-grass is a preference on top.
+  Ordering the perfect core first kept picking the site two tiles from the edge.
+
+After: every world in a 12-world sample founds at least 8 tiles in, on all three map sizes.
 
 ### Landscape (this session)
 The player asked to play on a phone held sideways, and reported that rotating distorted the

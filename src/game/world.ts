@@ -77,13 +77,61 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
   // decision rather than a formality.
   const riverHalf = (y: number): number => 2.7 + (wobble[tileIndex(MAP_W - 1, y)] - 0.5) * 2.03;
 
-  // Two lakes centred just past the left and right edges so they continue off-map.
-  const lakes = [
-    { cx: -2 + rand() * 3, cy: MAP_H * (0.25 + rand() * 0.15), rx: 8 + rand() * 3, ry: 6 + rand() * 3 },
-    { cx: MAP_W + 1 - rand() * 3, cy: MAP_H * (0.6 + rand() * 0.15), rx: 8 + rand() * 3, ry: 6 + rand() * 3 },
+  // ---- Lakes -------------------------------------------------------------------------------
+  // Water is most of what makes a map read as somewhere rather than as a field, and the maps got
+  // half again bigger without gaining any. Three kinds now:
+  //
+  //  * one **central lake straddling the river**, so the river runs *into* it at the top and out
+  //    of it at the bottom instead of crossing the whole map as one uniform ribbon. It sits on
+  //    the meander line rather than at the map's centre, which is what makes the channel meet it
+  //    head-on at both ends;
+  //  * the two **edge lakes**, centred just off the map so they read as a larger body carrying on
+  //    past the border;
+  //  * a scatter of **inland lakes**, counted from the map's area — a large map gets a lake
+  //    district, a small one keeps a pond or two.
+  //
+  // Every shore is wobbled. A bare ellipse reads as a stamped hole from the game camera, and with
+  // a dozen of them on screen the repetition is the first thing you notice.
+  interface Lake { cx: number; cy: number; rx: number; ry: number; wob: number; phase: number }
+  const lake = (cx: number, cy: number, rx: number, ry: number): Lake => ({
+    cx, cy, rx, ry, wob: 0.10 + rand() * 0.12, phase: rand() * Math.PI * 2,
+  });
+
+  const midY = MAP_H / 2;
+  const lakes: Lake[] = [
+    lake(riverCx(midY), midY, MAP_W * (0.11 + rand() * 0.04), MAP_H * (0.085 + rand() * 0.03)),
+    lake(-2 + rand() * 3, MAP_H * (0.25 + rand() * 0.15), 8 + rand() * 3, 6 + rand() * 3),
+    lake(MAP_W + 1 - rand() * 3, MAP_H * (0.6 + rand() * 0.15), 8 + rand() * 3, 6 + rand() * 3),
   ];
+  // Sized in tiles, not as a fraction of the map, so a pond is the same pond on every map size
+  // and a bigger world simply holds more of them. The count is linear in area for that reason —
+  // what a player notices walking about is how *often* they meet water, which is a density, so
+  // the number has to grow with the map or a large one reads as a drought. The ceiling is only a
+  // guard against a pathological map size; at 192 tiles a side it is not reached.
+  const inlandLakes = Math.max(2, Math.min(24, Math.round(((MAP_W * MAP_H) / 1000) * 0.55)));
+  for (let n = 0; n < inlandLakes; n++) {
+    const rx = 3 + rand() * 7;
+    lakes.push(lake(
+      MAP_W * (0.06 + rand() * 0.88),
+      MAP_H * (0.06 + rand() * 0.88),
+      rx,
+      rx * (0.55 + rand() * 0.5),
+    ));
+  }
+
   const inLake = (x: number, y: number): boolean =>
-    lakes.some((l) => ((x - l.cx) / l.rx) ** 2 + ((y - l.cy) / l.ry) ** 2 < 1);
+    lakes.some((l) => {
+      const dx = (x + 0.5 - l.cx) / l.rx;
+      const dy = (y + 0.5 - l.cy) / l.ry;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > 2.2) return false; // cheap reject, so the trig below runs only near a shore
+      if (d2 === 0) return true;
+      // Two harmonics: enough to break the outline into bays and headlands, few enough that the
+      // shore stays a shore rather than becoming a starfish.
+      const a = Math.atan2(dy, dx);
+      const r = 1 + Math.sin(a * 3 + l.phase) * l.wob + Math.sin(a * 2 - l.phase * 1.7) * l.wob * 0.6;
+      return d2 < r * r;
+    });
 
   const tiles: Tile[] = new Array(MAP_W * MAP_H);
   for (let y = 0; y < MAP_H; y++) {
@@ -145,6 +193,15 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
 
 /** Radius (Euclidean) of the plains patch we score candidate start tiles by. */
 const START_PLAINS_RADIUS = 3;
+/**
+ * Tiles of clearance the founding site keeps from the map edge, when a site that far in exists.
+ *
+ * Without it the village can be founded two tiles from the border — measured on 2 of 12 small
+ * worlds — which leaves nowhere to put the buildings that need room, and the biggest of them is
+ * an 8x8 quarry. It is a preference rather than a rule: a map with no qualifying site still gets
+ * a village rather than an exception.
+ */
+const START_EDGE_MARGIN = 8;
 
 /**
  * Find a genuinely grassy spot to start the village on — one whose *core* (the barn footprint
@@ -185,30 +242,61 @@ export function findStartTile(tiles: Tile[]): { x: number; y: number } {
     return n;
   };
 
-  let best: { x: number; y: number } | null = null;
-  let bestClearScore = -1;
-  let bestClearDist = Infinity;
-  let fallback: { x: number; y: number } = { x: Math.floor(cx), y: Math.floor(cy) };
-  let fallbackScore = -1;
+  /**
+   * Four running candidates, in descending order of what we would rather have: an all-grass core
+   * with elbow room from the border, an all-grass core anywhere, the roomiest plains with elbow
+   * room, the roomiest plains anywhere.
+   *
+   * Both tiers need the margin, not just the first. An all-grass core is genuinely scarce on a
+   * small map — the founding clearing is carved *after* this runs, so it is choosing from raw
+   * terrain that is only about a fifth open ground — and when none exists the whole decision
+   * falls through to the plains score. Guarding only the top tier left that path unguarded,
+   * which is why the village still landed two tiles from the border after the first attempt at
+   * this.
+   */
+  // `clearStartArea` carves the founding clearing to grass afterwards and can fix woodland, rock
+  // and loose deposits — the one thing it skips is water. So "no water in the core" is the real
+  // requirement, and an all-grass core is only a preference on top of it.
+  const coreIsDry = (x: number, y: number): boolean => {
+    for (let dy = -2; dy <= 3; dy++) {
+      for (let dx = -2; dx <= 3; dx++) {
+        if (dx * dx + dy * dy > 8) continue;
+        const t = getTile(tiles, x + dx, y + dy);
+        if (!t || t.type === 'water') return false;
+      }
+    }
+    return true;
+  };
+
+  type Pick = { x: number; y: number; score: number; dist: number } | null;
+  let coreInset: Pick = null;
+  let coreAny: Pick = null;
+  let openInset: Pick = null;
+  let openAny: Pick = null;
+  // Roomier plains win; ties break toward the centre of the map.
+  const better = (a: Pick, score: number, dist: number): boolean =>
+    !a || score > a.score || (score === a.score && dist < a.dist);
 
   for (let y = 0; y < MAP_H; y++) {
     for (let x = 0; x < MAP_W; x++) {
       const score = plainsScore(x, y);
-      if (score > fallbackScore) {
-        fallbackScore = score;
-        fallback = { x, y };
+      const dist = (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2;
+      const roomy =
+        x >= START_EDGE_MARGIN && y >= START_EDGE_MARGIN &&
+        x < MAP_W - START_EDGE_MARGIN && y < MAP_H - START_EDGE_MARGIN;
+      if (coreIsDry(x, y)) {
+        if (better(openAny, score, dist)) openAny = { x, y, score, dist };
+        if (roomy && better(openInset, score, dist)) openInset = { x, y, score, dist };
       }
       if (!coreIsGrass(x, y)) continue;
-      const dist = (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2;
-      // Prefer the roomiest plains; tie-break toward the centre of the map.
-      if (score > bestClearScore || (score === bestClearScore && dist < bestClearDist)) {
-        bestClearScore = score;
-        bestClearDist = dist;
-        best = { x, y };
-      }
+      if (better(coreAny, score, dist)) coreAny = { x, y, score, dist };
+      if (roomy && better(coreInset, score, dist)) coreInset = { x, y, score, dist };
     }
   }
-  return best ?? fallback;
+  // Elbow room outranks a perfect core, because the clearing makes the core anyway and no amount
+  // of clearing moves the map's edge. Water is the only disqualifier either way.
+  const pick = coreInset ?? openInset ?? coreAny ?? openAny ?? { x: Math.floor(cx), y: Math.floor(cy) };
+  return { x: pick.x, y: pick.y };
 }
 
 // ---- noise helpers ----

@@ -1,17 +1,94 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-07-27 (volume storage, job board, named workplaces, HUD trim, difficulty)
+> Last updated: 2026-08-02 (building footprints — in flight, see the next section)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
 Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 
 - **Repo:** `centerzl93-lang/mobile-game`
-- **Working branch:** `claude/game-opportunities-impl-8qxrqc` (only push here; don't open PRs unless
-  asked). Earlier sessions used `claude/banished-ios-app-b4zott` /
-  `claude/hud-workers-building-updates-32npee`; all three share the same history.
+- **Working branch:** `claude/banished-ios-app-b4zott` (only push here; don't open PRs unless
+  asked). Earlier sessions used `claude/game-opportunities-impl-8qxrqc` /
+  `claude/hud-workers-building-updates-32npee`; all share the same history.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
+
+## IN FLIGHT — building footprints (start here)
+
+The player asked for varied building sizes so the village stops reading as one repeated cottage,
+**plus** larger maps so the density stays similar. Step 1 of 3 is done and pushed; steps 2 and 3
+are the work.
+
+### Done (commit `26a0f11`)
+Small maps 48 → **72** tiles a side, medium 96 → **144**. Large stays 192 (already at the tile
+count where per-tick work, not space, is the limit). `MAP_SIZES` in `src/types.ts`; the size
+assertions in `tests/menus.spec.ts` and the `W`/`H` constants at the top of `tests/world.spec.ts`
+were updated with it. Verified 19/20 (only the known pause-menu flake).
+
+### The target footprints
+From the player's table. Heights are in tiles and only matter where they differ from the current
+value.
+
+| Building | Footprint | Height | | Building | Footprint | Height |
+|---|---|---|---|---|---|---|
+| House | 2x2 | 2 | | Herbalist | 3x3 | 2 |
+| Storage Barn | 3x3 | 2 | | Blacksmith | 3x3 | 2 |
+| Market | 4x4 | 2 | | Tailor | 3x3 | 2 |
+| Trading Post | 5x9 | 2 | | Tavern | 4x4 | 2 |
+| Well | 1x1 | 1 | | Mine | 6x6 | 3 |
+| School | 3x4 | 2 | | Quarry | 8x8 | 2 |
+| Hospital | 4x5 | 2 | | Chapel | 4x5 | **5** |
+| Fishing Dock | 3x5 | 2 | | Hunting Cabin | 3x3 | 2 |
+| Gatherer's Hut | 3x3 | 2 | | Wood Cutter | 3x3 | 2 |
+| Forester Lodge | 3x3 | 2 | | | | |
+
+### Why this is not a table edit — read before starting
+`normalize()` (`src/render/models.ts:138`) scales each loaded model so its **longest footprint
+axis equals 1**, and `makeBuildingModel` (`src/render/renderer3d.ts:1423`) then multiplies by
+`Math.max(def.w, def.h)`. That only produces a correctly-fitted building because **every model is
+authored in Blender at its building's exact aspect ratio**. Change `school` from 2x2 to 3x4 without
+re-authoring and the 2x2 model is scaled by 4: a 4x4 building overhanging a 3x4 plot, with all its
+brick and shingle detail 2x too large.
+
+So the footprint change and the model re-authoring have to land together, or the intermediate
+state ships visibly broken buildings.
+
+### Step 2 — footprints + models (the bulk)
+1. **`BUILDING_DEFS` in `src/types.ts`** — `w`/`h` per the table above, plus the heights.
+2. **Re-author each model** in `tools/models/{homes,food,wood,digging,craft,civic}.py`. Each module
+   has hard-coded `W, D` constants with every part position derived from them, so a 3x3 hunting
+   cabin is a *different arrangement* of walls, roof rows and props — not the 2x2 scaled up. Rescale
+   UVs in the same pass so brick/shingle density stays constant as buildings grow; that is the
+   "restructure the textures so they still work" half of the request.
+3. Rebuild: `cd tools/models && python3 build.py` (all), or `python3 build.py house school ...` for
+   a subset. `bpy` 4.5.12 LTS is installed as a pip module — no Blender GUI needed.
+4. Re-check `normalize()` / `makeBuildingModel` still fit once aspect ratios change.
+
+Suggested order: do the 3x3 group first (nine buildings, one shared shape family, biggest win per
+unit of effort), then the 4x4/4x5/3x4 civic set, then the three awkward ones below.
+
+### Step 3 — fallout to expect
+- **Placement tests bake in the current sizes.** `tests/world.spec.ts` — the rotation/door tests lay
+  out a 2x2 house cluster at fixed offsets, and the mine/quarry test hunts for a 3x6 clear site.
+  `tests/newgame.spec.ts` — `houseCapacityForTest`, and several site-finding helpers.
+- **The trading post at 5x9 still has to sit 1/3 over water** (`requiresWaterFraction`), and the
+  river is now 3.4–7.4 tiles wide. This is the most likely thing to need a second look — dock
+  placement may be fiddly even on a 72-tile map. Watch it specifically.
+- **The mine needs a foothill under it** (`requiresTileAny`) at 6x6, a much larger area to satisfy.
+- **Door rules.** Every building now has an entrance tile that must stay clear (`entranceAt`,
+  `canPlace`) — bigger footprints mean a longer wall for someone else's door to fall against.
+- **Costs are unchanged by design** unless the player asks; an 8x8 quarry at the old price is a
+  balance question worth raising rather than silently fixing.
+
+### Verify
+```
+npx tsc --noEmit && npm run build
+PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers npx playwright test
+```
+Expect the pause-menu flake at `tests/menus.spec.ts:94` to fail — it fails on the committed
+baseline too (a SwiftShader stability-check timeout), so it is not a regression. Everything else
+should pass. Screenshot a village at `?gfx=high` before calling it done: the buildings have to sit
+*inside* their plots with texture detail at the same density as the houses next to them.
 
 ## Current State
 Latest work: **confirm-before-apply, live rehousing, implicit inspect** (this session) — see just

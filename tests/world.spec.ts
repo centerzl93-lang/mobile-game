@@ -201,15 +201,27 @@ test.describe('world generation, placement & pathfinding', () => {
       let T = g.state.tiles;
       const idx = (x: number, y: number) => y * W + x;
       const is = (x: number, y: number, t: string) => x >= 0 && y >= 0 && x < W && y < H && T[idx(x, y)].type === t;
-      const buildable2x2 = (x: number, y: number) => {
+      // A mine is 6x6 now, so its whole footprint has to be clear of rock and water *and* still
+      // catch a foothill — a much narrower band of ground than the old 2x2 needed.
+      const MINE = 6;
+      const buildableMine = (x: number, y: number) => {
         let footTiles = 0;
-        for (let dy = 0; dy < 2; dy++)
-          for (let dx = 0; dx < 2; dx++) {
+        for (let dy = 0; dy < MINE; dy++)
+          for (let dx = 0; dx < MINE; dx++) {
             const ty = T[idx(x + dx, y + dy)].type;
             if (ty === 'water' || ty === 'stone') return false;
             if (ty === 'foothill') footTiles++;
           }
         return footTiles > 0;
+      };
+      /** A `MINE`-square patch with no foothill anywhere in it — where a mine must be refused. */
+      const openNoFoothill = (x: number, y: number) => {
+        for (let dy = 0; dy < MINE; dy++)
+          for (let dx = 0; dx < MINE; dx++) {
+            const ty = T[idx(x + dx, y + dy)].type;
+            if (ty !== 'grass' && ty !== 'forest') return false;
+          }
+        return true;
       };
       let foot: number[] | null = null, grassAway: number[] | null = null, mountain: number[] | null = null;
       let quarryOpen: number[] | null = null;
@@ -229,24 +241,26 @@ test.describe('world generation, placement & pathfinding', () => {
       };
       const clearRect = (x: number, y: number, w: number, h: number) => {
         for (let dy = 0; dy < h; dy++)
-          for (let dx = 0; dx < w; dx++) if (!is(x + dx, y + dy, 'grass')) return false;
+          for (let dx = 0; dx < w; dx++) if (!is(x + dx, y + dy, 'grass') && !is(x + dx, y + dy, 'forest')) return false;
         return true;
       };
-      // Most of the map is woodland and rock now, so a 3x6 all-grass pit site well clear of any
-      // stone is scarce and some seeds simply have none. Try a few worlds rather than assert on
-      // one lucky map — the claim under test is that such a site is *placeable*, not that every
-      // generated world contains one.
+      // Most of the map is woodland and rock, and the pit is 8x8 now, so an open site well clear
+      // of any stone is scarce and some seeds simply have none. Try a few worlds rather than
+      // assert on one lucky map — the claim under test is that such a site is *placeable*, not
+      // that every generated world contains one. "Clear" means clear of rock and water, not
+      // treeless: a build site fells whatever is standing on it.
+      const QUARRY = 8;
       for (worldsTried = 1; worldsTried <= 8; worldsTried++) {
         T = g.state.tiles;
         foot = null; grassAway = null; mountain = null; quarryOpen = null;
-        for (let y = 1; y < H - 2 && !foot; y++) for (let x = 1; x < W - 2; x++) if (buildable2x2(x, y)) { foot = [x, y]; break; }
-        for (let y = 1; y < H - 2 && !grassAway; y++) for (let x = 1; x < W - 2; x++) if (is(x, y, 'grass') && is(x + 1, y, 'grass') && is(x, y + 1, 'grass') && is(x + 1, y + 1, 'grass') && !nearStone(x, y, 4)) { grassAway = [x, y]; break; }
+        for (let y = 1; y < H - MINE - 1 && !foot; y++) for (let x = 1; x < W - MINE - 1; x++) if (buildableMine(x, y)) { foot = [x, y]; break; }
+        for (let y = 1; y < H - MINE - 1 && !grassAway; y++) for (let x = 1; x < W - MINE - 1; x++) if (openNoFoothill(x, y) && !nearStone(x, y, 4)) { grassAway = [x, y]; break; }
         for (let y = 0; y < H && !mountain; y++) for (let x = 0; x < W; x++) if (is(x, y, 'stone')) { mountain = [x, y]; break; }
-        // `debugCanPlace` is the final authority: all-grass tiles can still be occupied by the
+        // `debugCanPlace` is the final authority: open tiles can still be occupied by the
         // starter buildings, and the quarry costs wood, so terrain alone doesn't decide it.
-        for (let y = 1; y < H - 7 && !quarryOpen; y++)
-          for (let x = 1; x < W - 4; x++)
-            if (clearRect(x, y, 3, 6) && !nearStone(x, y, 6) && cp('quarry', [x, y]).ok) {
+        for (let y = 1; y < H - QUARRY - 1 && !quarryOpen; y++)
+          for (let x = 1; x < W - QUARRY - 1; x++)
+            if (clearRect(x, y, QUARRY, QUARRY) && !nearStone(x, y, 4) && cp('quarry', [x, y]).ok) {
               quarryOpen = [x, y];
               break;
             }
@@ -266,9 +280,12 @@ test.describe('world generation, placement & pathfinding', () => {
       };
     }, [W, H] as const);
 
-    expect(place.foot).not.toBeNull();
+    expect(place.foot, `no 6x6 foothill site in ${place.worldsTried} worlds`).not.toBeNull();
     expect(place.mineOnFoot.ok).toBe(true);
+    expect(place.grassAway, `no open 6x6 away from the hills in ${place.worldsTried} worlds`).not.toBeNull();
     expect(place.mineOnGrass.ok).toBe(false);
+    // …and refused for the *foothill* rule specifically, not incidentally for water or overlap.
+    expect(place.mineOnGrass.reason).toContain('foothills');
     expect(place.mineOnMountain.ok).toBe(false);
     expect(place.houseOnFoot.ok).toBe(true);
     // A quarry sinks its own pit: open ground far from any rock is fine now.
@@ -522,15 +539,16 @@ test.describe('rotation, doors and walls', () => {
     const out = await page.evaluate((clearSrc) => {
       const g = (window as any).__village;
       const s = g.state;
-      // A quarry is 3 wide by 6 deep — the asymmetry is the point.
+      // A school is 3 wide by 4 deep — the asymmetry is the point. (The quarry used to play this
+      // part; it is square at 8x8 now and so proves nothing about which way round a plot goes.)
       const [x, y] = eval(clearSrc)(g, 8, 8);
-      const upright = g.debugPlace('quarry', x, y, 0);
+      const upright = g.debugPlace('school', x, y, 0);
       const a = s.buildings.find((b: any) => b.id === upright);
       const [x2, y2] = eval(clearSrc)(g, 8, 8);
-      const turned = g.debugPlace('quarry', x2, y2, 1);
+      const turned = g.debugPlace('school', x2, y2, 1);
       const b = s.buildings.find((o: any) => o.id === turned);
       const foot = (o: any) => {
-        const d = { quarry: [3, 6] } as any;
+        const d = { school: [3, 4] } as any;
         const [dw, dh] = d[o.type];
         return (o.rot ?? 0) % 2 === 1 ? [dh, dw] : [dw, dh];
       };
@@ -540,14 +558,14 @@ test.describe('rotation, doors and walls', () => {
         uprightFoot: foot(a),
         turnedFoot: foot(b),
         // Door of the upright one is below it; the turned one's is off its west side.
-        uprightDoor: [a.x + 1, a.y + 6],
+        uprightDoor: [a.x + 1, a.y + 4],
         turnedDoor: [b.x - 1, b.y + 1],
       };
     }, clearArea);
     expect(out.uprightRot).toBe(0);
     expect(out.turnedRot).toBe(1);
-    expect(out.uprightFoot).toEqual([3, 6]);
-    expect(out.turnedFoot).toEqual([6, 3]); // a quarter turn swaps width and depth
+    expect(out.uprightFoot).toEqual([3, 4]);
+    expect(out.turnedFoot).toEqual([4, 3]); // a quarter turn swaps width and depth
   });
 
   test('villagers walk around a finished building, never through it', async ({ page }) => {

@@ -86,9 +86,11 @@ def lean_to(name, width, depth, base_z, mats, rise=0.42, toward=1):
         parts.append(box(f"{name}Post", (0.1, 0.1, high - 0.1), (sx * (hw - 0.06), toward * (hd - 0.06), (high - 0.1) / 2), mats["timber"]))
         parts.append(box(f"{name}Post", (0.1, 0.1, high + rise - 0.1), (sx * (hw - 0.06), -toward * (hd - 0.06), (high + rise - 0.1) / 2), mats["timber"]))
     # The sloping roof itself, in shingle courses like the gable roofs.
+    from style import courses
+
     pitch = math.atan2(rise, depth)
-    rows = 4
     slope = math.hypot(depth, rise)
+    rows = courses(slope)
     for i in range(rows):
         t = (i + 0.5) / rows
         y = -toward * hd + toward * depth * t
@@ -208,9 +210,20 @@ def door(name, y_face, base_z, mats, width=0.44, height=0.74, x=0.0, depth=0.10)
     return parts
 
 
-def window(name, x, y_face, z, mats, width=0.30, height=0.28):
-    """A shuttered window: dark glass panel with a timber surround standing slightly proud."""
+def window(name, x, y_face, z, mats, width=0.30, height=0.28, axis="y"):
+    """A shuttered window: dark glass panel with a timber surround standing slightly proud.
+
+    Set in the wall at +Y by default (pass a negative face for -Y). `axis="x"` sets it into an
+    east/west wall instead, with `x` then reading as the position *along* that wall and `y_face`
+    as the wall's own X — which is what the long-sided buildings (the school hall, the hospital's
+    main range) need to get daylight down their flanks.
+    """
     inset = 0.04 * (1 if y_face > 0 else -1)
+    if axis == "x":
+        return [
+            box(f"{name}Glass", (0.08, width, height), (y_face - inset, x, z), mats["window"]),
+            box(f"{name}Frame", (0.06, width * 1.26, height * 1.28), (y_face - inset * 0.5, x, z), mats["timber"]),
+        ]
     return [
         box(f"{name}Glass", (width, 0.08, height), (x, y_face - inset, z), mats["window"]),
         box(f"{name}Frame", (width * 1.26, 0.06, height * 1.28), (x, y_face - inset * 0.5, z), mats["timber"]),

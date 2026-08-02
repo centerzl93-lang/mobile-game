@@ -987,10 +987,11 @@ test.describe('clearing land before building', () => {
       g.startNewGame('small', 'easy', true); // full wood stockpile in the barn
       const s = g.state;
       const [px, py] = eval(findSpotSrc)(g);
-      // Plant trees across the whole 2×2 footprint before placing. Trees and loose stone are
+      const { w: fw, h: fh } = g.debugFootprint('barn');
+      // Plant trees across the whole footprint before placing. Trees and loose stone are
       // mutually exclusive per tile in the real map, so clear any seeded stone as we do it.
-      for (let dy = 0; dy < 2; dy++)
-        for (let dx = 0; dx < 2; dx++) {
+      for (let dy = 0; dy < fh; dy++)
+        for (let dx = 0; dx < fw; dx++) {
           const t = s.tiles[(py + dy) * s.w + (px + dx)];
           t.type = 'forest';
           t.trees = 0.3;
@@ -1000,12 +1001,12 @@ test.describe('clearing land before building', () => {
       const b = s.buildings.find((x: any) => x.id === id);
       // Placement marks every treed footprint tile for harvesting.
       let marked = 0;
-      for (let dy = 0; dy < 2; dy++)
-        for (let dx = 0; dx < 2; dx++)
+      for (let dy = 0; dy < fh; dy++)
+        for (let dx = 0; dx < fw; dx++)
           if (s.harvest[(py + dy) * s.w + (px + dx)] === HARVEST_WOOD) marked++;
       const treesLeft = () => {
-        for (let dy = 0; dy < 2; dy++)
-          for (let dx = 0; dx < 2; dx++) {
+        for (let dy = 0; dy < fh; dy++)
+          for (let dx = 0; dx < fw; dx++) {
             const t = s.tiles[(py + dy) * s.w + (px + dx)];
             if (t.type === 'forest' && t.trees > 0.05) return true;
           }
@@ -1018,10 +1019,10 @@ test.describe('clearing land before building', () => {
         g.debugAdvance(5);
         if (treesLeft() && b.progress > 0) violated = true;
       }
-      return { placed: id != null, marked, violated, cleared: !treesLeft(), built: b.built };
+      return { placed: id != null, marked, footprint: fw * fh, violated, cleared: !treesLeft(), built: b.built };
     }, findSpot);
     expect(out.placed).toBe(true);
-    expect(out.marked).toBe(4);
+    expect(out.marked).toBe(out.footprint);
     expect(out.violated).toBe(false);
     expect(out.cleared).toBe(true);
     expect(out.built).toBe(true);
@@ -1035,18 +1036,19 @@ test.describe('clearing land before building', () => {
       g.startNewGame('small', 'easy', true);
       const s = g.state;
       const [px, py] = eval(findSpotSrc)(g);
+      const { w: fw, h: fh } = g.debugFootprint('barn');
       // Scatter loose stone on the footprint (the tiles stay grass — stone is a surface deposit).
-      for (let dy = 0; dy < 2; dy++)
-        for (let dx = 0; dx < 2; dx++) s.tiles[(py + dy) * s.w + (px + dx)].stone = 10;
+      for (let dy = 0; dy < fh; dy++)
+        for (let dx = 0; dx < fw; dx++) s.tiles[(py + dy) * s.w + (px + dx)].stone = 10;
       const id = g.debugPlace('barn', px, py);
       let marked = 0;
-      for (let dy = 0; dy < 2; dy++)
-        for (let dx = 0; dx < 2; dx++)
+      for (let dy = 0; dy < fh; dy++)
+        for (let dx = 0; dx < fw; dx++)
           if (s.harvest[(py + dy) * s.w + (px + dx)] === HARVEST_STONE) marked++;
-      return { placed: id != null, marked };
+      return { placed: id != null, marked, footprint: fw * fh };
     }, findSpot);
     expect(out.placed).toBe(true);
-    expect(out.marked).toBe(4);
+    expect(out.marked).toBe(out.footprint);
   });
 });
 
@@ -1911,8 +1913,10 @@ test.describe('quarry', () => {
       g.startNewGame('small', 'easy', false);
       let s = g.state;
       const idx = (x: number, y: number) => y * s.w + x;
-      const isGrass = (x: number, y: number) =>
-        x >= 0 && y >= 0 && x < s.w && y < s.h && s.tiles[idx(x, y)].type === 'grass';
+      // "Open" means clear of rock and water, not treeless — a build site fells what stands on it.
+      const isOpen = (x: number, y: number) =>
+        x >= 0 && y >= 0 && x < s.w && y < s.h &&
+        (s.tiles[idx(x, y)].type === 'grass' || s.tiles[idx(x, y)].type === 'forest');
       const nearRock = (x: number, y: number, r: number) => {
         for (let dy = -r; dy <= r; dy++)
           for (let dx = -r; dx <= r; dx++) {
@@ -1922,28 +1926,28 @@ test.describe('quarry', () => {
           }
         return false;
       };
-      // Open grass with no rock within 6 tiles — the placement the old mountainside rule refused.
+      // Open ground with no rock within 6 tiles — the placement the old mountainside rule refused.
       // Searched outward from the barn so the pit lands within walking distance of the workforce;
       // scanning from the map origin instead can strand it half a map away and nothing gets mined.
-      // A 3x6 stone-free clearing near the barn is genuinely scarce: surface deposits clear the
-      // trees off their own tile, so the map has plenty of grass but little of it contiguous and
-      // clear of rock. Try a few worlds rather than assert on one lucky seed — the claim under
-      // test is the quarry's *rate* on open ground, not that every world offers a site.
+      // An 8x8 rock-free clearing near the barn is genuinely scarce. Try a few worlds rather than
+      // assert on one lucky seed — the claim under test is the quarry's *rate* on open ground, not
+      // that every world offers a site.
+      const { w: qw, h: qh } = g.debugFootprint('quarry');
       let barn = s.buildings.find((b: any) => b.type === 'barn');
       let spot: number[] | null = null;
       for (let world = 0; world < 8 && !spot; world++) {
         if (world > 0) {
           g.startNewGame('small', 'easy', false);
-          s = g.state; // isGrass/nearRock close over `s`, so it must follow the new world
+          s = g.state; // isOpen/nearRock close over `s`, so it must follow the new world
           barn = s.buildings.find((b: any) => b.type === 'barn');
         }
-        for (let r = 3; r < 22 && !spot; r++)
+        for (let r = 3; r < 26 && !spot; r++)
           for (let dy = -r; dy <= r && !spot; dy++)
             for (let dx = -r; dx <= r; dx++) {
               const x = barn.x + dx, y = barn.y + dy;
               let clear = true;
-              for (let cy = 0; cy < 6 && clear; cy++)
-                for (let cx = 0; cx < 3; cx++) if (!isGrass(x + cx, y + cy)) { clear = false; break; }
+              for (let cy = 0; cy < qh && clear; cy++)
+                for (let cx = 0; cx < qw; cx++) if (!isOpen(x + cx, y + cy)) { clear = false; break; }
               if (clear && !nearRock(x, y, 6) && g.debugCanPlace('quarry', x, y).ok) { spot = [x, y]; break; }
             }
       }
@@ -1966,8 +1970,8 @@ test.describe('quarry', () => {
       // Stand the workers in the pit. This test is about the *yield rule* inland, not pathfinding:
       // the nearest qualifying site can sit across a river, and then nobody ever arrives and the
       // test fails for a reason it isn't testing.
-      const cx = q.x + 1.5;
-      const cy = q.y + 3;
+      const cx = q.x + qw / 2;
+      const cy = q.y + qh / 2;
       for (const wid of q.workers) {
         const w = s.citizens.find((c: any) => c.id === wid);
         if (w) { w.x = cx; w.y = cy; w.tx = cx; w.ty = cy; w.route = undefined; }

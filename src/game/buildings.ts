@@ -313,7 +313,16 @@ export function nearbyWater(s: GameState, b: Building, radius = 3): number {
   return total;
 }
 
-/** Count of rock tiles surrounding a footprint (drives quarry/mine yields). */
+/**
+ * Count of rock tiles surrounding a footprint (drives quarry/mine yields).
+ *
+ * `radius` is measured out from the footprint's **edge**, not from its centre. It used to be a
+ * fixed box around the centre, which was the same thing while every workplace was 2x2 — but an
+ * 8x8 quarry's centre is four tiles from its own wall, so a centre-anchored radius of 4 scanned
+ * nothing but the pit itself. No tile under a building can be rock (`canPlace` refuses it), so
+ * that would have read zero rock everywhere: the mountainside bonus unreachable, and the mine —
+ * which multiplies its yield by this — pinned at its floor no matter where it was dug.
+ */
 export function nearbyStone(
   s: GameState,
   def: { w: number; h: number },
@@ -321,12 +330,10 @@ export function nearbyStone(
   y: number,
   radius = 4,
 ): number {
-  const cx = Math.floor(x + def.w / 2);
-  const cy = Math.floor(y + def.h / 2);
   let total = 0;
-  for (let dy = -radius; dy <= radius; dy++) {
-    for (let dx = -radius; dx <= radius; dx++) {
-      const t = getTile(s.tiles, cx + dx, cy + dy);
+  for (let ty = y - radius; ty < y + def.h + radius; ty++) {
+    for (let tx = x - radius; tx < x + def.w + radius; tx++) {
+      const t = getTile(s.tiles, tx, ty);
       if (t && t.type === 'stone') total += 1;
     }
   }

@@ -1085,6 +1085,17 @@ class Game {
     }
   }
 
+  /**
+   * Debug/testing helper: the footprint a placement would use, in tiles.
+   *
+   * Tests that lay out a site need the size, and hard-coding it in the spec means every
+   * footprint change breaks a test for a reason that has nothing to do with what it asserts.
+   * Ask the game instead.
+   */
+  debugFootprint(type: BuildingType): { w: number; h: number } {
+    return this.placeSize(type);
+  }
+
   /** Debug/testing helper: check a placement at a tile (uses the current ranch size). */
   debugCanPlace(type: BuildingType, x: number, y: number, rot: 0 | 1 | 2 | 3 = 0): { ok: boolean; reason?: string } {
     const { w, h } = this.placeSize(type);

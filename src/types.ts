@@ -1363,7 +1363,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     desc: 'A warm, sturdy home for up to 5 — burns far less fuel, and stone walls resist fire.',
   },
   gatherer: {
-    type: 'gatherer', name: 'Gatherer', emoji: '🧺', category: 'food', w: 2, h: 2,
+    type: 'gatherer', name: 'Gatherer', emoji: '🧺', category: 'food', w: 3, h: 3,
     cost: { wood: 10 }, jobs: 2, buildTime: 6, workRadius: 6,
     desc: 'Collects food from forest in its work circle — more trees, more food.',
   },
@@ -1373,12 +1373,12 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     desc: 'A fenced field for a chosen crop — you must own that crop\'s seed to plant it. Drag its size (4×4 up to 8×8) before building; a bigger field yields a bigger harvest, reaped each autumn.',
   },
   fishing: {
-    type: 'fishing', name: 'Fishing Hut', emoji: '🎣', category: 'food', w: 2, h: 2,
+    type: 'fishing', name: 'Fishing Hut', emoji: '🎣', category: 'food', w: 3, h: 5,
     cost: { wood: 12 }, jobs: 2, buildTime: 6, requiresAdjacent: ['water'], workRadius: 4,
     desc: 'Catches fish from water in its work circle — more water and more workers, more fish. Must be built on the shoreline.',
   },
   hunting: {
-    type: 'hunting', name: 'Hunting Cabin', emoji: '🏹', category: 'food', w: 2, h: 2,
+    type: 'hunting', name: 'Hunting Cabin', emoji: '🏹', category: 'food', w: 3, h: 3,
     cost: { wood: 12 }, jobs: 2, buildTime: 6, workRadius: 6,
     desc: 'Hunts game in its work circle for food and leather — needs forest.',
   },
@@ -1388,55 +1388,55 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     desc: 'A fenced pen for cattle, pigs, or chickens. Drag its size (4×4 up to 8×8) before building — a bigger pen holds a bigger herd. Buy livestock from traders; they breed here.',
   },
   lumberyard: {
-    type: 'lumberyard', name: 'Forester', emoji: '🌲', category: 'resources', w: 2, h: 2,
+    type: 'lumberyard', name: 'Forester', emoji: '🌲', category: 'resources', w: 3, h: 3,
     cost: { wood: 12 }, jobs: 3, buildTime: 6, workRadius: 4,
     desc: 'Foresters fell trees for wood in their work circle — the circle grows with each worker (up to 3). Toggle replanting to sow and grow a renewable forest.',
   },
   woodcutter: {
-    type: 'woodcutter', name: 'Woodcutter', emoji: '🪓', category: 'resources', w: 2, h: 2,
+    type: 'woodcutter', name: 'Woodcutter', emoji: '🪓', category: 'resources', w: 3, h: 3,
     cost: { wood: 10 }, jobs: 2, buildTime: 6,
     desc: 'Splits stockpiled wood into firewood to heat homes in winter.',
   },
   quarry: {
     // A quarry digs its own pit, so it goes anywhere on buildable ground rather than having to
-    // hug a mountainside. It is a big fixed 3×6 works — not player-sizable — and its cost and
-    // build time are scaled up from the old 2×2 version to match the footprint.
-    type: 'quarry', name: 'Quarry', emoji: '⛏️', category: 'resources', w: 3, h: 6,
+    // hug a mountainside. It is the largest works in the village — a fixed 8×8, not
+    // player-sizable — and finding eight clear tiles a side is most of what placing one costs.
+    type: 'quarry', name: 'Quarry', emoji: '⛏️', category: 'resources', w: 8, h: 8,
     cost: { wood: 30 }, jobs: 4, buildTime: 14,
     desc: 'Cuts stone. A large pit that can be dug anywhere — but yields more against a rocky mountainside.',
   },
   mine: {
-    type: 'mine', name: 'Mine', emoji: '🕳️', category: 'resources', w: 2, h: 2,
+    type: 'mine', name: 'Mine', emoji: '🕳️', category: 'resources', w: 6, h: 6,
     cost: { wood: 14, stone: 10 }, jobs: 2, buildTime: 8, requiresTileAny: ['foothill'],
     desc: 'Digs coal or iron. Must be dug into a mountain\'s foothills (toggle coal/iron in the job board).',
   },
   blacksmith: {
-    type: 'blacksmith', name: 'Blacksmith', emoji: '⚒️', category: 'resources', w: 2, h: 2,
+    type: 'blacksmith', name: 'Blacksmith', emoji: '⚒️', category: 'resources', w: 3, h: 3,
     cost: { wood: 14, stone: 8 }, jobs: 2, buildTime: 7,
     desc: 'Forges tools from iron, or steel tools from iron + coal (lasts longer).',
   },
   tailor: {
-    type: 'tailor', name: 'Tailor', emoji: '🧵', category: 'resources', w: 2, h: 2,
+    type: 'tailor', name: 'Tailor', emoji: '🧵', category: 'resources', w: 3, h: 3,
     cost: { wood: 12 }, jobs: 2, buildTime: 6,
     desc: 'Sews warm clothing from leather to keep villagers healthy in winter.',
   },
   trading: {
-    type: 'trading', name: 'Trading Post', emoji: '🚢', category: 'trade', w: 3, h: 2,
+    type: 'trading', name: 'Trading Post', emoji: '🚢', category: 'trade', w: 5, h: 9,
     cost: { wood: 20, stone: 10 }, jobs: 1, buildTime: 8, requiresWaterFraction: 1 / 3,
     desc: 'A dock for traders arriving by boat — part of it must reach out over the water. Staff it to move goods in and out; boats call either way.',
   },
   school: {
-    type: 'school', name: 'School', emoji: '🏫', category: 'civic', w: 2, h: 2,
+    type: 'school', name: 'School', emoji: '🏫', category: 'civic', w: 3, h: 4,
     cost: { wood: 16, stone: 10 }, jobs: 1, buildTime: 7,
     desc: 'A teacher educates the children; kids who grow up here become skilled, more productive adults.',
   },
   tavern: {
-    type: 'tavern', name: 'Tavern', emoji: '🍺', category: 'civic', w: 2, h: 2,
+    type: 'tavern', name: 'Tavern', emoji: '🍺', category: 'civic', w: 4, h: 4,
     cost: { wood: 16, stone: 6 }, jobs: 1, buildTime: 7,
     desc: 'A staffed alehouse brews grain into ale each season, keeping the village merry.',
   },
   chapel: {
-    type: 'chapel', name: 'Chapel', emoji: '⛪', category: 'civic', w: 2, h: 2,
+    type: 'chapel', name: 'Chapel', emoji: '⛪', category: 'civic', w: 4, h: 5,
     cost: { wood: 14, stone: 14 }, jobs: 0, buildTime: 8,
     desc: 'A place of worship and gathering that lifts the spirits of the whole village.',
   },
@@ -1446,12 +1446,12 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     desc: 'A dignified resting place — villagers grieve less when the dead are honoured.',
   },
   herbalist: {
-    type: 'herbalist', name: 'Herbalist', emoji: '🌿', category: 'civic', w: 2, h: 2,
+    type: 'herbalist', name: 'Herbalist', emoji: '🌿', category: 'civic', w: 3, h: 3,
     cost: { wood: 12 }, jobs: 2, buildTime: 6, workRadius: 6,
     desc: 'Gathers wild herbs from the forest to brew medicine for the sick.',
   },
   hospital: {
-    type: 'hospital', name: 'Hospital', emoji: '🏥', category: 'civic', w: 2, h: 2,
+    type: 'hospital', name: 'Hospital', emoji: '🏥', category: 'civic', w: 4, h: 5,
     cost: { wood: 16, stone: 12 }, jobs: 2, buildTime: 8,
     desc: 'Doctors treat the sick during outbreaks — the ill recover faster and die less.',
   },
@@ -1461,12 +1461,12 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     desc: 'Provides water to fight fires. Buildings nearby rarely burn down.',
   },
   market: {
-    type: 'market', name: 'Market', emoji: '🛒', category: 'resources', w: 3, h: 2,
+    type: 'market', name: 'Market', emoji: '🛒', category: 'resources', w: 4, h: 4,
     cost: { wood: 22, stone: 10 }, jobs: 2, buildTime: 8,
     desc: 'Vendors keep a bit of every good in stock here, so nearby homes and workshops fetch and deliver locally instead of hiking to a distant barn.',
   },
   barn: {
-    type: 'barn', name: 'Barn', emoji: '🛖', category: 'resources', w: 2, h: 2,
+    type: 'barn', name: 'Barn', emoji: '🛖', category: 'resources', w: 3, h: 3,
     cost: { wood: 16 }, jobs: 0, buildTime: 6, fireproof: true,
     desc: 'Stores up to 5000 goods, safe from fire. Tap it to see what is inside.',
   },

@@ -49,6 +49,20 @@ SOIL = "#6B4F35"         # turned earth: quarry floors, spoil heaps, graves
 # Roof pitch in degrees. Steep is the single most recognisable trait of the reference.
 PITCH_DEG = 54.0
 
+# How far apart shingle courses sit, in Blender units (= map tiles). A course is a physical
+# object — a split shake is the same size on a cottage and on a barn — so roofs count their rows
+# from their own slope length rather than taking a fixed number. Hard-coding `rows` was fine
+# while every building was 2x2; the moment a workshop grew to 3x3 the same eight courses spread
+# out into eight *bigger* shakes, and the roof read as a doll's-house version of itself next to
+# its neighbours. `COURSE_PITCH` is what keeps that from happening as footprints change.
+COURSE_PITCH = 0.21
+THATCH_PITCH = 0.19  # reed is laid in fatter courses than split timber
+
+
+def courses(slope_len: float, pitch: float = COURSE_PITCH) -> int:
+    """How many shingle rows a roof of this slope length needs to keep its texel density."""
+    return max(3, round(slope_len / pitch))
+
 
 def palette() -> dict:
     """Build every shared material once, keyed by name."""
@@ -83,19 +97,24 @@ def palette() -> dict:
     }
 
 
-def shingled_roof(width, depth, height, base_z, mats, rows=7, overhang=0.10, name="Roof",
+def shingled_roof(width, depth, height, base_z, mats, rows=None, overhang=0.10, name="Roof",
                   keys=("slate", "slate_light")):
     """A steep gable roof built from stacked shingle courses.
 
     Each course is a slab spanning the ridge direction, tilted to the roof pitch and lapped over
     the one below, so the roof reads as rows of shingles in silhouette instead of a bare plane —
     the detail that most sells the reference style. The ridge runs along Y (the building's depth).
+
+    `rows` defaults to however many courses this slope needs at `COURSE_PITCH`, so a wider roof
+    gets *more* shingles rather than bigger ones. Pass a number only to override that.
     """
     parts = []
     hw = width / 2 + overhang
     depth_o = depth + overhang * 2
     pitch = math.atan2(height, hw)
     slope_len = math.hypot(hw, height)
+    if rows is None:
+        rows = courses(slope_len)
     for side in (-1, 1):
         for i in range(rows):
             t = (i + 0.5) / rows

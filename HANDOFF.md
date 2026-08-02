@@ -20,11 +20,58 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: a **renderer teardown leak**, **lakes**, **landscape play** and **building
-footprints** — all this session.
+Latest work: **render optimisation**, a **renderer teardown leak**, **lakes**, **landscape
+play** and **building footprints** — all this session.
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Render optimisation (this session)
+The player reported lag on medium. Profiling first, guessing never: the scene was drawing
+**2.16 million triangles a frame** on a 144x144 map, in only 72 draw calls, so it was geometry
+volume and not batching. Now **1.03M**, a 52% cut, with no visible change.
+
+Where it went, and what each was worth:
+
+| | before | after |
+|---|---|---|
+| trees (144-tri pine each) | 1,222,416 | ~700k, and only what is near the camera |
+| loose stone | 712,500 | 82,440 |
+| water plane | 41,472 | 10,368 |
+| `animate` (JS, per frame) | 4.95 ms | 1.26 ms |
+| `syncIron` (JS, per frame) | 0.64 ms | 0.05 ms |
+
+Three changes:
+
+- **`rocksPerTile` claimed 5 but `syncRocks` wrote one matrix per tile.** Four fifths of the
+  instances kept the zero matrix — degenerate, invisible, and still submitted every frame. The
+  constant now says what is drawn. Raising it again means writing the extra matrices *with* it
+  (nest the loop the way `syncIron` does); raising it alone is what produced the waste.
+- **The water plane had a vertex per tile.** The swell is two sine waves about ten tiles long
+  with an amplitude of 0.03 — `WATER_SEG = 2` samples that five times a wave and cut the plane,
+  the per-frame ripple, and its per-frame `computeVertexNormals` by four.
+- **Scatter props are culled to a radius around the camera target** (`updateViewRegion` /
+  `inView`, applied to trees, stone and ore). `InstancedMesh` cannot cull per instance, so this
+  is by hand. A *radius*, not a frustum, deliberately: it is rotation-invariant, so turning the
+  view costs nothing and panning only rebuilds once the camera crosses a 6-tile cell. `syncIron`
+  also gained the signature gate the other two already had — it had been rewriting every ore
+  matrix and re-uploading the buffer on every frame.
+
+**The radius is measured, not guessed, and that matters.** Sweeping the ground plane at every
+zoom and yaw, the furthest on-screen point sits at almost exactly **1.7x the camera distance**
+(8 tiles out at distance 7, 144 at distance 85). A first attempt at `1.5x + 12` fitted the middle
+of the range and silently cut 33 on-screen tiles at full zoom-out; a "tightened" `1.2x + 10` cut
+284. The check that catches this is in the handoff's spirit: project every forest tile at
+tree-top height through the live camera at 8 zooms x 5 yaws x 3 map sizes and count any that are
+on screen but outside the radius. It must be **zero**, and it is, over three separate world sets.
+Re-run that before changing the formula — a radius that is 10% too small does not look like a
+bug, it looks like trees appearing as you pan.
+
+**Still on the table, in rough order of value:** the pine is 144 triangles and trees are still
+~70% of the scene, so a lower-poly pine would be the next big cut (it changes how every tree
+looks, so it is the player's call); `syncTerrain` costs ~1.3 ms a frame and has not been looked
+at; and the signature scans walk every tile of their layer every frame (`syncPaths` walks all
+20,736 on medium) which is cheap per tile but adds up.
 
 ### The renderer leaked the old map into the new one (this session)
 The player reported iron deposits floating in the middle of a lake. The cause was not generation:

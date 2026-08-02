@@ -35,6 +35,8 @@ import { bodyGeometry, skinGeometry, hairGeometry, legGeometry, coatGeometry, HE
 
 const LAND_H = 0.3; // height of a normal land tile block
 const WATER_BED_H = 0.02; // lake/river floor, kept below the water plane at y = 0.14
+/** Tiles per water-plane segment. The swell's wavelength is ~10 tiles; this only has to sample it. */
+const WATER_SEG = 2;
 /** Terrain vertices per tile edge. See makeTerrainGeometry — 1 breaks narrow rivers apart. */
 const TERRAIN_RES = 2;
 /** Wetness at which the ground has dropped to the waterline, and at which it reaches full depth. */
@@ -62,7 +64,18 @@ const ROCK_MODEL_SIZE = 0.52; // world scale applied to a normalized loose-stone
  * overlapping trees. Trees are the expensive one, so a large map keeps a single tree per tile:
  * at ~18k forest tiles a second pass would cost millions of triangles.
  */
-const rocksPerTile = () => 5;
+/**
+ * Loose stone draws **one** rock per tile.
+ *
+ * This used to claim 5, but `syncRocks` only ever wrote one matrix per tile — so four fifths of
+ * the instances kept the zero matrix, drew as degenerate triangles, and cost 570k triangles a
+ * frame on a medium map for nothing anyone could see. The count now matches what is written.
+ *
+ * If loose stone should read denser, the fix is to write the extra matrices (nest the loop the
+ * way `syncIron` does, scattering within the tile) and raise this together with it — not to raise
+ * this alone, which is the state that produced the waste.
+ */
+const rocksPerTile = () => 1;
 const ironPerTile = () => 4;
 // Trees are much heavier than the ore chunks, and their count scales with map area, so the
 // largest map keeps one per tile. Medium is unchanged: a stability-check timeout in the headless
@@ -299,7 +312,24 @@ export class Renderer3D {
   private boatModelled = false;
 
   // Cached signatures so we only rebuild a layer when its data changes.
-  private sig = { land: -1, tree: -1, rock: -1, path: -1, mark: -1, bld: '' };
+  private sig = { land: -1, tree: -1, rock: -1, iron: -1, path: -1, mark: -1, bld: '' };
+  /**
+   * The scatter props (trees, loose stone, ore) are drawn only near the camera.
+   *
+   * Measured on a medium map: at the default zoom **27%** of forest tiles are on screen, and 9%
+   * when zoomed in — the rest were being submitted every frame for a camera that could not see
+   * them. `InstancedMesh` cannot cull per instance (its bounding volume covers the whole map, so
+   * `frustumCulled` is off), which is why this is done by hand.
+   *
+   * A radius around the camera *target* rather than the view frustum, deliberately: it is
+   * rotation-invariant, so turning the view costs nothing, and panning only rebuilds once the
+   * camera has moved a whole cell. Sized to comfortably contain what the frustum can reach at a
+   * given zoom — over-drawing a margin of trees is free, popping one in is not.
+   */
+  private viewCx = 0;
+  private viewCz = 0;
+  private viewR = 1e9;
+  private viewKey = -1;
   private forestVer = -1; // last-seen GameState.forestVersion (rebuild trees when it changes)
   private lastState: GameState | null = null;
 
@@ -524,7 +554,13 @@ export class Renderer3D {
     const waterMat = new THREE.MeshStandardMaterial({
       color: 0x2f6f9a, transparent: true, opacity: 0.85, roughness: 0.25, metalness: 0.1,
     });
-    const waterGeo = new THREE.PlaneGeometry(MAP_W, MAP_H, MAP_W, MAP_H);
+    // One vertex per WATER_SEG tiles, not per tile. The swell is two sine waves about ten tiles
+    // long with an amplitude of 0.03, so a vertex every other tile still gives five samples per
+    // wave — while a per-tile grid cost 41k triangles on a medium map and re-ran the ripple and
+    // `computeVertexNormals` over 21k vertices on every single frame.
+    const wsegX = Math.max(1, Math.round(MAP_W / WATER_SEG));
+    const wsegY = Math.max(1, Math.round(MAP_H / WATER_SEG));
+    const waterGeo = new THREE.PlaneGeometry(MAP_W, MAP_H, wsegX, wsegY);
     this.water = new THREE.Mesh(waterGeo, waterMat);
     this.water.rotation.x = -Math.PI / 2;
     this.water.position.set(MAP_W / 2, 0.14, MAP_H / 2);
@@ -588,7 +624,7 @@ export class Renderer3D {
     this.boat.visible = false;
     this.scene.add(this.boat);
 
-    this.sig = { land: -1, tree: -1, rock: -1, path: -1, mark: -1, bld: '' };
+    this.sig = { land: -1, tree: -1, rock: -1, iron: -1, path: -1, mark: -1, bld: '' };
     this.tunnelSig = tunnelSignature(s);
     this.ready = true;
   }
@@ -605,6 +641,7 @@ export class Renderer3D {
     this.lastTime = now;
 
     cam.apply();
+    this.updateViewRegion(cam);
     this.applySeason(s, dt);
     this.trackSun(cam);
     // A finished tunnel lowers the rock it runs through, so the terrain mesh has to be rebuilt
@@ -628,6 +665,37 @@ export class Renderer3D {
     this.syncOverlays(s, placement);
     this.animate(dt, now);
     this.renderer.render(this.scene, cam.cam);
+  }
+
+  /**
+   * Recompute which patch of map the scatter props are drawn over.
+   *
+   * Both the centre and the radius are quantised, so drifting the camera a few tiles or nudging
+   * the zoom does not rebuild anything; `viewKey` changes only when the region really moves, and
+   * the sync passes fold it into their signatures to know when to redraw.
+   */
+  private updateViewRegion(cam: Camera3D): void {
+    const CELL = 6; // tiles of camera movement before the region is recut
+    const cx = Math.round(cam.target.x / CELL) * CELL;
+    const cz = Math.round(cam.target.z / CELL) * CELL;
+    // How far the frustum reaches across the ground, measured rather than guessed: sweeping the
+    // ground plane at every zoom and yaw, the furthest on-screen point sits at almost exactly
+    // 1.7x the camera distance (8 tiles out at distance 7, 144 at distance 85). The +8 covers
+    // the centre's own quantisation, and the radius rounds *up* to the cell so that rounding can
+    // only ever add margin. An earlier 1.5x guess fitted the middle of the range and cut 33
+    // on-screen tiles at full zoom-out.
+    const r = Math.ceil((cam.distance * 1.7 + 8) / CELL) * CELL;
+    this.viewCx = cx;
+    this.viewCz = cz;
+    this.viewR = r;
+    this.viewKey = (cx * 73856093) ^ (cz * 19349663) ^ (r * 83492791);
+  }
+
+  /** Is this tile inside the patch the scatter props are drawn over? */
+  private inView(tx: number, tz: number): boolean {
+    const dx = tx - this.viewCx;
+    const dz = tz - this.viewCz;
+    return dx * dx + dz * dz <= this.viewR * this.viewR;
   }
 
   /** Keep the shadow-casting sun near the camera target so shadows stay crisp in view. */
@@ -1046,13 +1114,14 @@ export class Renderer3D {
       this.trees.count = 0;
       this.sig.tree = -3;
     }
-    let sig = 0;
+    let sig = this.viewKey;
     for (const i of this.treeTiles) sig = (sig + (s.tiles[i].type === 'forest' ? Math.round(s.tiles[i].trees * 8) + 1 : 0) * (i + 1)) % 2147483647;
     if (sig === this.sig.tree) return;
     this.sig.tree = sig;
     let k = 0;
     for (const i of this.treeTiles) {
       const t = s.tiles[i];
+      if (!this.inView(i % MAP_W, (i / MAP_W) | 0)) continue;
       const live = t.type === 'forest' && t.trees > 0.05;
       // A stand of trees per tile, spread across the whole cell at mixed sizes, so canopies
       // overlap between neighbours instead of each tile showing one spire on a lattice.
@@ -1082,9 +1151,10 @@ export class Renderer3D {
       }
     }
     if (this.treeInst) {
-      this.treeInst.setCount(this.treeTiles.length * treesPerTile());
+      this.treeInst.setCount(k); // only what was written — the rest is out of view
       this.treeInst.update();
     } else {
+      this.trees.count = k;
       this.trees.instanceMatrix.needsUpdate = true;
     }
   }
@@ -1119,8 +1189,16 @@ export class Renderer3D {
 
   /** Place the surface iron deposits; a depleted tile drops out of view like a spent rock. */
   private syncIron(s: GameState): void {
+    // Gated like the trees and the stone. This used to rewrite every ore matrix and re-upload the
+    // whole instance buffer on every frame, for a layer that only changes when a deposit is dug
+    // out or the camera moves.
+    let sig = this.viewKey;
+    for (const i of this.ironTiles) sig = (sig + ((s.tiles[i].iron ?? 0) > 0 ? 1 : 0) * (i + 1)) % 2147483647;
+    if (sig === this.sig.iron) return;
+    this.sig.iron = sig;
     let k = 0;
     for (const i of this.ironTiles) {
+      if (!this.inView(i % MAP_W, (i / MAP_W) | 0)) continue;
       const has = (s.tiles[i].iron ?? 0) > 0;
       // Seed a tight cluster: the whole group sits somewhere in the tile, and the chunks huddle
       // around that point rather than spreading evenly, so it reads as one seam of ore.
@@ -1139,6 +1217,7 @@ export class Renderer3D {
         k++;
       }
     }
+    this.ironNodes.count = k;
     this.ironNodes.instanceMatrix.needsUpdate = true;
   }
 
@@ -1150,12 +1229,13 @@ export class Renderer3D {
       this.rocks.count = 0;
       this.sig.rock = -3;
     }
-    let sig = 0;
+    let sig = this.viewKey;
     for (const i of this.rockTiles) sig = (sig + ((s.tiles[i].stone ?? 0) > 0 ? 1 : 0) * (i + 1)) % 2147483647;
     if (sig === this.sig.rock) return;
     this.sig.rock = sig;
     let k = 0;
     for (const i of this.rockTiles) {
+      if (!this.inView(i % MAP_W, (i / MAP_W) | 0)) continue;
       const has = (s.tiles[i].stone ?? 0) > 0;
       if (this.rockInst) {
         // Vary the size as well as the position: identical props on a lattice is what reads as
@@ -1180,9 +1260,10 @@ export class Renderer3D {
       k++;
     }
     if (this.rockInst) {
-      this.rockInst.setCount(this.rockTiles.length * rocksPerTile());
+      this.rockInst.setCount(k);
       this.rockInst.update();
     } else {
+      this.rocks.count = k;
       this.rocks.instanceMatrix.needsUpdate = true;
     }
   }
@@ -1816,7 +1897,7 @@ export class Renderer3D {
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
     });
-    this.sig = { land: -1, tree: -1, rock: -1, path: -1, mark: -1, bld: '' };
+    this.sig = { land: -1, tree: -1, rock: -1, iron: -1, path: -1, mark: -1, bld: '' };
     this.ready = false;
   }
 }

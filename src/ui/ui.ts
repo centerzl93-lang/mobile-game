@@ -104,6 +104,8 @@ export interface UICallbacks {
   onSizeChange: (dim: 'w' | 'h', delta: number) => void;
   /** Turn the building being placed a quarter turn clockwise. */
   onRotateBuild: () => void;
+  /** Build the pending building where the ghost is standing. */
+  onPlaceBuild: () => void;
   onSetRanchMax: (buildingId: number, delta: number) => void;
   onCullRanch: (buildingId: number) => void;
   onSplitRanch: (fromId: number, toId: number) => void;
@@ -464,7 +466,8 @@ export class UI {
     this.cb.onCloseInspect();
     this.renderPopout();
     this.refreshToolbar();
-    if (this.selectedBuild) this.showHint(`Line up the outline and tap to place the ${BUILDING_DEFS[type].name}. ${BUILDING_DEFS[type].desc}`);
+    // What the building is for — not how to place it. The Build button under the ghost says that.
+    if (this.selectedBuild) this.showHint(BUILDING_DEFS[type].desc);
     else this.hideHint();
   }
 
@@ -830,15 +833,19 @@ export class UI {
   // ---- Placement widget: turn the building, and size it if it is a field or a pen ----
   private sizeEl: HTMLElement | null = null;
   /**
-   * Shown for the whole time a building is selected for placement. Rotation applies to every
-   * building — it decides which face the door ends up on, which is what the placement check cares
-   * about — while the width/height steppers only appear for the sizable ones.
+   * Shown for the whole time a building is selected for placement, sitting just under the ghost
+   * at the centre of the screen rather than off in a corner where it covered the build bar.
+   *
+   * Two buttons and nothing else: build it where the ghost is, or turn it a quarter. The width and
+   * height steppers appear above them only for the sizable buildings, which genuinely need them.
    */
   showPlaceWidget(
     label: string,
     rot: 0 | 1 | 2 | 3,
     size: { w: number; h: number; min: number; max: number } | null,
   ): void {
+    void label;
+    void rot;
     if (!this.sizeEl) {
       const el = document.createElement('div');
       el.className = 'ranch-size';
@@ -854,11 +861,12 @@ export class UI {
     const sizeRows = size
       ? row('w', size.w, size.min, size.max) + row('h', size.h, size.min, size.max)
       : '';
-    const facing = ['South', 'West', 'North', 'East'][rot];
     el.innerHTML =
-      `<div class="rs-title">${label}</div>${sizeRows}` +
-      `<div class="rs-row"><span>Door</span><button class="rs-rot" data-rot="1">⟳ ${facing}</button></div>` +
-      `<div class="rs-hint">Tap the map to place</div>`;
+      sizeRows +
+      `<div class="rs-actions">` +
+      `<button class="rs-build" data-place="1">🔨 Build</button>` +
+      `<button class="rs-rot" data-rot="1">⟳ Rotate</button>` +
+      `</div>`;
     el.querySelectorAll('[data-rs]').forEach((btn) =>
       btn.addEventListener('click', () => {
         const v = (btn as HTMLElement).dataset.rs!;
@@ -866,6 +874,7 @@ export class UI {
       }),
     );
     el.querySelector('[data-rot]')?.addEventListener('click', () => this.cb.onRotateBuild());
+    el.querySelector('[data-place]')?.addEventListener('click', () => this.cb.onPlaceBuild());
   }
   hideSizeWidget(): void {
     this.sizeEl?.classList.add('hidden');

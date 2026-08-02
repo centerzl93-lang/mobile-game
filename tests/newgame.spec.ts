@@ -2682,3 +2682,65 @@ test.describe('birth rate', () => {
     expect(perCoupleYear, `${out.births} births over ${out.coupleSeasons} couple-seasons`).toBeGreaterThanOrEqual(1);
   });
 });
+
+test.describe('placement controls', () => {
+  test('Build and Rotate sit under the ghost, and Build places at the reticle', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+    await page.click('#toolbar [data-tool="housing"]');
+    await page.click('#popout button >> nth=0');
+
+    const build = page.locator('.ranch-size .rs-build');
+    const rotate = page.locator('.ranch-size .rs-rot');
+    await expect(build).toBeVisible();
+    await expect(rotate).toBeVisible();
+
+    // Clear of the build bar at the foot of the screen — the whole point of moving them.
+    const bar = await page.locator('#toolbar').boundingBox();
+    const box = await build.boundingBox();
+    expect(box!.y + box!.height).toBeLessThan(bar!.y);
+
+    // Rotate turns the pending building a quarter at a time, all the way round.
+    const rot = () => page.evaluate(() => (window as any).__village.buildRot);
+    expect(await rot()).toBe(0);
+    await rotate.click();
+    expect(await rot()).toBe(1);
+    await rotate.click();
+    await rotate.click();
+    await rotate.click();
+    expect(await rot()).toBe(0);
+
+    // And Build puts a site down without the player having to tap the map. Clear the ground the
+    // ghost happens to be standing on first — this is about the button, not about the map having
+    // dealt a buildable tile under the crosshair.
+    const before = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const s = g.state;
+      const { tx, ty } = g.debugReticleTile('house');
+      for (let dy = -1; dy <= 2; dy++)
+        for (let dx = -1; dx <= 2; dx++) {
+          const x = tx + dx, y = ty + dy;
+          if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue;
+          const t = s.tiles[y * s.w + x];
+          t.type = 'grass';
+          t.trees = 0;
+          delete t.stone;
+          delete t.iron;
+        }
+      // The village starts centred under the crosshair, so shift it out of the way — the barn
+      // stays (its stock is what pays for the house) but moves to a corner.
+      s.buildings = s.buildings.filter((b: any) => b.type === 'barn');
+      s.buildings[0].x = 2;
+      s.buildings[0].y = 2;
+      s.navVersion = (s.navVersion ?? 0) + 1;
+      return s.buildings.length;
+    });
+    await build.click();
+    const after = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const { tx, ty } = g.debugReticleTile('house');
+      return { n: g.state.buildings.length, why: g.debugCanPlace('house', tx, ty, g.buildRot), tx, ty };
+    });
+    expect(after.n, JSON.stringify(after)).toBe(before + 1);
+  });
+});

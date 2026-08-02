@@ -778,41 +778,64 @@ body {
 }
 
 /* ---- Ranch: placement size widget ---- */
+/* Placement controls. Centred just under the ghost rather than parked in a corner, where they
+   sat on top of the build bar and a long way from the thing being placed. */
 .ranch-size {
   position: fixed;
-  right: 12px;
-  bottom: 96px;
+  left: 50%;
+  top: 58%;
+  transform: translateX(-50%);
   z-index: 24;
-  background: var(--panel-solid);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px 12px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  box-shadow: none;
 }
 .ranch-size.hidden {
   display: none;
 }
-.ranch-size .rs-title {
-  font-size: 12px;
-  font-weight: 700;
-  margin-bottom: 6px;
-}
+/* The size steppers, for the sizable buildings only — they keep the panel backing so the
+   numbers stay readable over whatever terrain is under them. */
 .ranch-size .rs-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 4px 0;
   font-size: 13px;
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
 .ranch-size .rs-row > span {
   width: 14px;
   color: var(--muted);
 }
-.ranch-size .rs-hint {
-  font-size: 10.5px;
-  color: var(--muted);
-  margin-top: 6px;
-  text-align: center;
+.ranch-size .rs-actions {
+  display: flex;
+  gap: 10px;
+}
+.ranch-size .rs-actions button {
+  padding: 10px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel-solid);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.ranch-size .rs-actions button:active {
+  transform: scale(0.94);
+}
+.ranch-size .rs-build {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* ---- Ranch: inspect actions + destination picker ---- */

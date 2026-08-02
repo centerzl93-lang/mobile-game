@@ -166,6 +166,7 @@ class Game {
       onSetAnimal: (id, animal) => this.setAnimal(id, animal),
       onSizeChange: (dim, delta) => this.onSizeChange(dim, delta),
       onRotateBuild: () => this.onRotateBuild(),
+      onPlaceBuild: () => this.placeAtReticle(),
       onSetRanchMax: (id, delta) => this.setRanchMax(id, delta),
       onCullRanch: (id) => this.cullRanch(id),
       onSplitRanch: (from, to) => this.splitRanch(from, to),
@@ -1059,6 +1060,11 @@ class Game {
   debugIgnite(id: number): void {
     const b = this.state.buildings.find((x) => x.id === id);
     if (b) igniteBuilding(this.state, b, this.log);
+  }
+
+  /** Debug/testing helper: the tile the placement ghost is standing on right now. */
+  debugReticleTile(type: BuildingType): { tx: number; ty: number } {
+    return this.reticleTile(type);
   }
 
   /** Debug/testing helper: open the trading post sheet without tapping the building. */

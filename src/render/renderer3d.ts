@@ -9,6 +9,7 @@ import {
   workRadiusOf,
   footprintW,
   footprintH,
+  entranceAt,
   MAP_W,
   MAP_H,
   ADULT_AGE,
@@ -95,6 +96,44 @@ const BUILDING_COLORS: Record<BuildingType, number> = {
  * The quarter turns are negative because a rotation about Y sends local −Z to (−sin θ, −cos θ),
  * and rot 1 has to land that on −x (west).
  */
+/**
+ * The "this is the front" arrow: a flat shaft and head lying on the ground, built pointing along
+ * local +Z so a yaw of `-rot * π/2` aims it out of whichever face the door is on.
+ *
+ * Basic (unlit) materials on purpose — it is a marker, not scenery, and it has to stay legible
+ * against grass, snow and shadow alike.
+ */
+function makeFaceArrow(): THREE.Group {
+  const g = new THREE.Group();
+  // Drawn twice: a dark shape first, then a bright one a hair above and slightly smaller. Grass,
+  // snow and shadow are all in play under this thing, and a single flat colour disappears into
+  // one of them whichever colour you pick.
+  const layer = (color: number, scale: number, y: number): THREE.Group => {
+    const l = new THREE.Group();
+    // Drawn over everything: at an oblique camera a door on the far side of the building would
+    // otherwise be hidden by the building itself, which is exactly when you most want to see it.
+    const mat = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+    });
+    const shaft = new THREE.Mesh(new THREE.BoxGeometry(0.24 * scale, 0.02, 0.6 * scale), mat);
+    shaft.position.set(0, y, 0.02);
+    l.add(shaft);
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.3 * scale, 0.5 * scale, 3), mat);
+    head.rotation.x = Math.PI / 2; // lay the cone flat, tip along +Z
+    head.position.set(0, y, 0.58 * scale);
+    l.add(head);
+    return l;
+  };
+  g.add(layer(0x14301a, 1.25, 0));
+  g.add(layer(0xa8ffb4, 1, 0.012));
+  g.renderOrder = 20;
+  g.traverse((o) => { o.renderOrder = 20; });
+  return g;
+}
+
 function buildingYaw(rot: number): number {
   return Math.PI - rot * (Math.PI / 2);
 }
@@ -239,6 +278,8 @@ export class Renderer3D {
   // Per-building objects (box mesh or cloned model) + reused overlays.
   private buildingMeshes = new Map<number, THREE.Object3D>();
   private ghost!: THREE.Group;
+  /** Ground arrow on the door tile of the pending building, pointing out from its front. */
+  private faceArrow!: THREE.Group;
   /** Which building type (and footprint) the ghost currently holds a silhouette for. */
   private ghostKey = '';
   /** Hash of which tiles carry a finished tunnel — a change means the terrain must be recut. */
@@ -498,6 +539,12 @@ export class Renderer3D {
     this.ghost = new THREE.Group();
     this.ghost.visible = false;
     this.scene.add(this.ghost);
+    // Which way is the front. Positioned in *world* space on the tile `entranceAt` picks, rather
+    // than parented to the turned ghost — that way it can only ever point where villagers will
+    // actually walk in, whatever convention the model happens to have been authored with.
+    this.faceArrow = makeFaceArrow();
+    this.faceArrow.visible = false;
+    this.scene.add(this.faceArrow);
     this.selRing = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.06, 6, 20), new THREE.MeshBasicMaterial({ color: 0xffd76b }));
     this.selRing.rotation.x = -Math.PI / 2;
     this.selRing.visible = false;
@@ -1544,6 +1591,12 @@ export class Renderer3D {
       const fw = rot % 2 === 1 ? ph : pw;
       const fh = rot % 2 === 1 ? pw : ph;
       this.ghost.position.set(pv.tx + fw / 2, TOP, pv.ty + fh / 2);
+      // The arrow sits on the door tile and points away from the building, so the silhouette
+      // reads as having a front rather than being a symmetrical lump.
+      const door = entranceAt(pv.tx, pv.ty, fw, fh, rot);
+      this.faceArrow.visible = true;
+      this.faceArrow.position.set(door.x + 0.5, TOP + 0.05, door.y + 0.5);
+      this.faceArrow.rotation.y = -rot * (Math.PI / 2);
       // Green means it will go here, red means it will not. The tint is applied over the
       // silhouette rather than replacing it, so the building stays recognisable either way.
       this.ghost.traverse((o) => {
@@ -1552,6 +1605,7 @@ export class Renderer3D {
       });
     } else {
       this.ghost.visible = false;
+      this.faceArrow.visible = false;
     }
 
     let selPos: { x: number; y: number; r: number } | null = null;

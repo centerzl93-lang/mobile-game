@@ -398,7 +398,26 @@ test.describe('clearing build sites', () => {
       const barn = s.buildings.find((b: any) => b.type === 'barn');
 
       // Two marked trees: one right next to a villager, one far away where a house will go.
-      const near = { x: barn.x + 2, y: barn.y + 2 };
+      // The near tile has to be *outside* every building — `pickHarvest` only ever returns a
+      // reachable tile, and nothing under a finished building is reachable. It used to be
+      // `barn.x + 2`, which sat one tile clear of a 2x2 barn and is inside a 3x3 one.
+      const covered = (x: number, y: number) =>
+        s.buildings.some((b: any) => {
+          const f = g.debugFootprint(b.type);
+          return x >= b.x && x < b.x + (b.w ?? f.w) && y >= b.y && y < b.y + (b.h ?? f.h);
+        });
+      let near: { x: number; y: number } | null = null;
+      for (let r = 1; r < 8 && !near; r++)
+        for (let dy = -r; dy <= r && !near; dy++)
+          for (let dx = -r; dx <= r && !near; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; // only the new ring
+            const p = { x: barn.x + dx, y: barn.y + dy };
+            if (p.x < 2 || p.y < 2 || p.x >= W - 3 || p.y >= H - 3) continue;
+            const t = s.tiles[idx(p.x, p.y)];
+            if (t.type === 'water' || t.type === 'stone' || covered(p.x, p.y)) continue;
+            near = p;
+          }
+      if (!near) return { skip: true } as any;
       // Pick a far tile the villager can actually walk to. `pickHarvest` skips anything in a
       // different walkable component, so a tile chosen blind can land across the river and be
       // rejected before priority is ever consulted.

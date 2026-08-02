@@ -744,13 +744,20 @@ test.describe('jobs & builders', () => {
       // Plan a free dirt path on a walkable grass tile near a villager.
       const c = s.citizens[0];
       const cx = Math.floor(c.x), cy = Math.floor(c.y);
+      // `b.w` is set only on the ranch and the field; everything else takes its size from the
+      // def, so ask the game rather than assuming 2 — the barn alone is 3x3, and a path planned
+      // under it is one no laborer can ever lay.
+      const covers = (b: any, x: number, y: number) => {
+        const f = g.debugFootprint(b.type);
+        return x >= b.x && x < b.x + (b.w ?? f.w) && y >= b.y && y < b.y + (b.h ?? f.h);
+      };
       let idx = -1;
       for (let r = 1; r < 8 && idx < 0; r++)
         for (let dy = -r; dy <= r && idx < 0; dy++)
           for (let dx = -r; dx <= r && idx < 0; dx++) {
             const x = cx + dx, y = cy + dy;
             if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue;
-            const occupied = s.buildings.some((b: any) => x >= b.x && x < b.x + (b.w ?? 2) && y >= b.y && y < b.y + (b.h ?? 2));
+            const occupied = s.buildings.some((b: any) => covers(b, x, y));
             if (s.tiles[y * s.w + x].type === 'grass' && !occupied && s.paths[y * s.w + x] === 0) idx = y * s.w + x;
           }
       s.paths[idx] = PATH_DIRT_PLAN;
@@ -1502,6 +1509,15 @@ test.describe('villager breeding', () => {
   const houseCapacityForTest = 8;
 
   /**
+   * How long a `growUnderIdealConditions` test is given. These run sixteen full season turnovers
+   * on a whole village, and how long that takes depends on the map: measured between **1.2 and
+   * 4.1 minutes** for the same test on different seeds, on both sides of the building-footprint
+   * change. At the 240s they used to allow, whichever seed came up decided whether the suite was
+   * green — so the budget is the flake, not the simulation. Trim `seasons` before trimming this.
+   */
+  const GROWTH_TIMEOUT = 480_000;
+
+  /**
    * Run `seasons` season turnovers under deliberately generous conditions — spare housing, barns
    * kept full, disasters off — so what the run measures is the breeding rules and not famine,
    * fire or plague.
@@ -1630,7 +1646,7 @@ test.describe('villager breeding', () => {
     // Simulating whole years tick-by-tick is not quick, and these runs are deliberately the
     // fastest-growing villages the game can produce — a household now averages about a child a
     // year, so by the last season there are far more villagers to step than there used to be.
-    test.setTimeout(240_000);
+    test.setTimeout(GROWTH_TIMEOUT);
     await open(page);
     const out = await growUnderIdealConditions(page, 12); // 3 years
     expect(out.addedHouses).toBe(10);
@@ -1641,7 +1657,7 @@ test.describe('villager breeding', () => {
   });
 
   test('households settle into one couple with room for their children', async ({ page }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(GROWTH_TIMEOUT);
     await open(page);
     const out = await growUnderIdealConditions(page, 12);
 
@@ -1665,7 +1681,7 @@ test.describe('villager breeding', () => {
   });
 
   test('every child lives with an adult, and children are spread across households', async ({ page }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(GROWTH_TIMEOUT);
     await open(page);
     const out = await growUnderIdealConditions(page, 12);
 
@@ -1681,7 +1697,7 @@ test.describe('villager breeding', () => {
   });
 
   test('children still live with an adult when housing is tight', async ({ page }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(GROWTH_TIMEOUT);
     await open(page);
     const out = await growUnderIdealConditions(page, 16, 0); // only the starter houses
     expect(out.allChildren).toBeGreaterThan(0);
@@ -1690,7 +1706,7 @@ test.describe('villager breeding', () => {
   });
 
   test('with no spare housing adults still pair up, silently', async ({ page }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(GROWTH_TIMEOUT);
     await open(page);
     // Same generous conditions, but *no* extra houses: the only limit is somewhere to live.
     const out = await growUnderIdealConditions(page, 12, 0);
@@ -1790,8 +1806,10 @@ test.describe('paths and placement', () => {
           for (let dx = -r; dx <= r && !free; dx++) {
             const x = barn.x + dx, y = barn.y + dy;
             const t = s.tiles[y * s.w + x];
-            const covered = s.buildings.some((b: any) =>
-              x >= b.x && x < b.x + (b.w ?? 2) && y >= b.y && y < b.y + (b.h ?? 2));
+            const covered = s.buildings.some((b: any) => {
+              const f = g.debugFootprint(b.type); // only the ranch and the field carry their own w/h
+              return x >= b.x && x < b.x + (b.w ?? f.w) && y >= b.y && y < b.y + (b.h ?? f.h);
+            });
             if (t && t.type === 'grass' && !covered) free = { x, y };
           }
       const onFree = free ? g.debugPlanPath('dirt', free.x, free.y) : null;

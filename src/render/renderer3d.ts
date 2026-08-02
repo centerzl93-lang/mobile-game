@@ -932,6 +932,15 @@ export class Renderer3D {
           texture2D(uSand, gUv) * w.w;
         diffuseColor *= blended;`,
       );
+      // One normal map serves the whole ground, and it is derived from the *grass* texture. On
+      // flat fields that is fine; on a mountainside it stamps grass-shaped relief over stone and
+      // lights it from every angle at once, which is most of what makes a peak look busy. Fade
+      // the perturbation out as rock takes over and let the mesh's own shape do the work.
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <normal_fragment_maps>',
+        `#include <normal_fragment_maps>
+        normal = normalize(mix(normal, nonPerturbedNormal, clamp(w.z, 0.0, 1.0) * 0.85));`,
+      );
     };
     return mat;
   }

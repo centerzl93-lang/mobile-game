@@ -95,11 +95,20 @@ def forest_floor(size: int) -> np.ndarray:
 
 
 def rock(size: int) -> np.ndarray:
-    """Fractured grey stone: broad slabs with darker cracks."""
-    base = fbm(31, size, octaves=(4, 8, 16, 32), weights=(0.45, 0.3, 0.15, 0.1))
-    rgb = tint("#8a8a86", "#5c5c5a", np.clip(base * 1.15, 0, 1))
-    cracks = np.clip(1 - np.abs(fbm(32, size, octaves=(6, 12), weights=(0.7, 0.3)) - 0.5) * 7, 0, 1)
-    rgb += (np.array([64, 65, 70]) - rgb) * cracks[:, :, None] * 0.5
+    """
+    Weathered grey stone: broad slabs with soft seams.
+
+    Deliberately the quietest of the four surfaces. Rock is the only one that covers whole
+    hillsides at a stretch, so detail that looks like pleasant texture on a 512px swatch becomes
+    a field of hard speckle across a mountain. The high octaves are therefore weighted right down,
+    the light-to-dark range is narrow, and the seams are wide and shallow rather than the sharp
+    black cracks they used to be — at the distance a mountain is actually viewed from, sharp
+    cracks read as noise, not as fractures.
+    """
+    base = fbm(31, size, octaves=(4, 8, 16, 32), weights=(0.6, 0.26, 0.1, 0.04))
+    rgb = tint("#8d8d89", "#6b6b68", np.clip(base, 0, 1))
+    seams = np.clip(1 - np.abs(fbm(32, size, octaves=(5, 10), weights=(0.75, 0.25)) - 0.5) * 3.2, 0, 1)
+    rgb += (np.array([92, 93, 97]) - rgb) * seams[:, :, None] * 0.28
     return rgb
 
 

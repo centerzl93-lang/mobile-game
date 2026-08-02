@@ -638,13 +638,17 @@ body {
 .tp-row {
   display: flex;
   align-items: center;
+  /* The quantity control is wide. Rather than crush the good's name to an ellipsis on a phone,
+     let the control drop to a second line when the row runs out of width. */
+  flex-wrap: wrap;
   gap: 6px;
   padding: 4px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   font-size: 12px;
 }
 .tp-good {
-  flex: 1 1 auto;
+  flex: 1 1 110px;
+  min-width: 96px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -662,6 +666,51 @@ body {
 }
 .tp-have small {
   color: var(--muted);
+}
+
+/* Quantity control: coarse and fine steps around a field you can type into. Sized to fit a
+   phone-width column with the good's name still legible beside it. */
+.qty {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+}
+.qty button {
+  min-width: 26px;
+  height: 28px;
+  padding: 0 3px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1;
+}
+.qty button:active {
+  transform: scale(0.92);
+}
+.qty .qty-all {
+  color: var(--accent);
+}
+.qty .qty-in {
+  width: 46px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-size: 13px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  /* Native spinners waste the width this field needs for three digits. */
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.qty .qty-in::-webkit-outer-spin-button,
+.qty .qty-in::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
 }
 .tp-wait {
   font-size: 12px;

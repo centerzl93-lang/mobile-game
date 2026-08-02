@@ -1,6 +1,6 @@
 import {
   GameState, MAP_W, MAP_H, MapSize, setMapSize, CROPS, RANCH_MIN, ranchCapacity, EVENT_LOG_MAX,
-  isWorkplace, nextBuildingName,
+  isWorkplace, nextBuildingName, SEASON_LENGTH,
 } from '../types';
 import { randomName } from './names';
 
@@ -111,6 +111,17 @@ export function loadGame(slot = 0): GameState | null {
       if (!m.stock || typeof m.stock !== 'object') m.stock = {};
       m.seedStock = [];
       m.boat = null;
+    }
+    // Merchant timing moved off the season boundary: the stay and the post-departure gap are now
+    // counted in seconds, so a boat can arrive and leave part-way through a season. Convert the
+    // old per-season counters rather than dropping a docked merchant on the floor.
+    if (typeof m.stayTimer !== 'number') {
+      m.stayTimer = ((m.seasonsLeft as number) ?? 0) * SEASON_LENGTH;
+      delete m.seasonsLeft;
+    }
+    if (typeof m.cooldownTimer !== 'number') {
+      m.cooldownTimer = m.cooldown === true ? SEASON_LENGTH : 0;
+      delete m.cooldown;
     }
     if (!Array.isArray(s.merchant.seedStock)) s.merchant.seedStock = [];
     // Trading posts gained a player-set stock-order table.

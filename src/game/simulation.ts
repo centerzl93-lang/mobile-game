@@ -66,6 +66,7 @@ import {
   TRADE_VALUE,
   MERCHANT_MARGIN,
   MERCHANT_STAY_SEASONS,
+  MERCHANT_COOLDOWN_SEASONS,
   MERCHANT_ARRIVAL_CHANCE,
   MERCHANT_CATEGORIES,
   MERCHANT_CATEGORY_STOCK,
@@ -209,6 +210,7 @@ export function update(s: GameState, dt: number, log: LogFn): void {
   for (const c of s.citizens) runCitizen(s, c, dt, toolFactor);
   processFires(s, dt, log);
   regrowForest(s, dt);
+  updateMerchant(s, dt, log);
   updateMerchantBoat(s, dt, log);
 
   // Settle households on a short cadence, not just at season turnover: a couple with nowhere to
@@ -1636,8 +1638,6 @@ function endSeason(s: GameState, log: LogFn): void {
   // Well-being drifts toward conditions (food/variety -> health; space/goods/amenities -> happiness).
   updateWellbeing(s, shortFood > 0, deaths, tavernActive);
 
-  updateMerchant(s, log);
-
   if (s.citizens.length === 0) {
     s.gameOver = true;
     log('Your village has died out.', 'bad');
@@ -1688,17 +1688,25 @@ export function tradingPost(s: GameState): Building | null {
 const BOAT_SPEED = 5; // tiles per second the merchant boat travels along the river
 
 /**
- * Seasonal merchant bookkeeping (called once per season from endSeason). Handles departure
- * after the allotted stay and rolls for a new arrival. Arrivals are probabilistic and never
- * back-to-back: the season immediately after a departure is a guaranteed gap.
+ * Merchant bookkeeping, every tick. Counts down a docked merchant's stay and rolls for new
+ * arrivals; visits are never back to back, since a departure sets a cooldown.
+ *
+ * This used to run once per season from `endSeason`, which meant every boat in the game appeared
+ * at the stroke of a turnover and never a moment else. Rolling a slice of the chance each tick
+ * keeps the same expected rate — MERCHANT_ARRIVAL_CHANCE arrivals per season — while letting a
+ * trader turn up early, mid or late.
+ *
+ * A built trading post is all it takes. The worker on the post moves goods in and out of it; they
+ * are not what brings the boat, so an unstaffed post still gets visits and the player can trade
+ * whatever stock is already sitting there.
  */
-function updateMerchant(s: GameState, log: LogFn): void {
+function updateMerchant(s: GameState, dt: number, log: LogFn): void {
   const m = s.merchant;
 
   // A docked merchant counts down its stay, then casts off.
   if (m.phase === 'docked') {
-    m.seasonsLeft -= 1;
-    if (m.seasonsLeft <= 0) {
+    m.stayTimer -= dt;
+    if (m.stayTimer <= 0) {
       m.phase = 'leaving';
       m.present = false;
     }
@@ -1708,14 +1716,13 @@ function updateMerchant(s: GameState, log: LogFn): void {
   // Only roll for a fresh arrival when fully away (never while a boat is still sailing).
   if (m.phase !== 'away') return;
 
-  // The season after a departure is always merchant-free — no back-to-back visits.
-  if (m.cooldown) {
-    m.cooldown = false;
+  if (m.cooldownTimer > 0) {
+    m.cooldownTimer = Math.max(0, m.cooldownTimer - dt);
     return;
   }
 
-  const hasPost = s.buildings.some((b) => b.built && b.type === 'trading' && b.workers.length > 0);
-  if (hasPost && Math.random() < MERCHANT_ARRIVAL_CHANCE) spawnMerchant(s, log);
+  if (!s.buildings.some((b) => b.built && b.type === 'trading')) return;
+  if (Math.random() < MERCHANT_ARRIVAL_CHANCE * (dt / SEASON_LENGTH)) spawnMerchant(s, log);
 }
 
 /** Roll a merchant category, stock its goods, and launch its boat from the top of the river. */
@@ -1760,7 +1767,7 @@ function updateMerchantBoat(s: GameState, dt: number, log: LogFn): void {
     if (moveBoatTo(s, m.boat, dockY, dt)) {
       m.phase = 'docked';
       m.present = true;
-      m.seasonsLeft = MERCHANT_STAY_SEASONS;
+      m.stayTimer = MERCHANT_STAY_SEASONS * SEASON_LENGTH;
       const meta = m.category ? MERCHANT_CATEGORY_META[m.category] : { emoji: '⚓', label: 'merchant' };
       log(`${meta.emoji} A ${meta.label.toLowerCase()} has docked — trade at the post`, 'good');
     }
@@ -1779,7 +1786,7 @@ function updateMerchantBoat(s: GameState, dt: number, log: LogFn): void {
       m.stock = {};
       m.seedStock = [];
       m.category = null;
-      m.cooldown = true; // guarantees next season has no merchant
+      m.cooldownTimer = MERCHANT_COOLDOWN_SEASONS * SEASON_LENGTH; // no back-to-back visits
       log('⛵ The merchant sailed away', 'info');
     }
   }

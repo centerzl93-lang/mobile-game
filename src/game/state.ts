@@ -114,7 +114,7 @@ export function newGame(
     nextId: 1,
     gameOver: false,
     everLived: true,
-    merchant: { phase: 'away', present: false, seasonsLeft: 0, cooldown: false, category: null, stock: {}, seedStock: [], boat: null },
+    merchant: { phase: 'away', present: false, stayTimer: 0, cooldownTimer: 0, category: null, stock: {}, seedStock: [], boat: null },
     pendingNomads: null,
     harvest: emptyHarvest(),
     events: [], // the village chronicle starts blank and fills as things happen

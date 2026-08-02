@@ -672,10 +672,13 @@ export interface Merchant {
   phase: 'away' | 'arriving' | 'docked' | 'leaving';
   /** Convenience mirror of `phase === 'docked'` — trading is only possible while docked. */
   present: boolean;
-  /** Seasons of moorage left before the boat departs on its own (set on docking). */
-  seasonsLeft: number;
-  /** True the season after a merchant leaves — blocks a back-to-back arrival. */
-  cooldown: boolean;
+  /**
+   * Seconds of moorage left before the boat departs on its own (set on docking). A timer rather
+   * than a count of seasons, so a merchant that sails in mid-season still gets a full stay.
+   */
+  stayTimer: number;
+  /** Seconds before another merchant may arrive — set on departure, so visits never run back to back. */
+  cooldownTimer: number;
   /** What this merchant deals in (null while away). */
   category: MerchantCategory | null;
   /** Goods for sale this visit: resource -> units remaining. */
@@ -1216,7 +1219,17 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
  */
 export const MERCHANT_MARGIN = 1;
 export const MERCHANT_STAY_SEASONS = 1; // how many seasons a docked merchant lingers before sailing off
-export const MERCHANT_ARRIVAL_CHANCE = 0.5; // per-season chance a merchant appears (staffed post, not just departed)
+/** Seasons of quiet water after a merchant leaves, before another may sail in. */
+export const MERCHANT_COOLDOWN_SEASONS = 1;
+/**
+ * Expected merchant arrivals per season, rolled a slice at a time every tick so a boat can appear
+ * early, mid or late in a season rather than only at a turnover.
+ *
+ * A built trading post is the only requirement. Staffing it is what moves goods in and out of the
+ * post, not what summons a trader — a merchant sailing past has no way of knowing whether the
+ * village has someone rostered on the dock today.
+ */
+export const MERCHANT_ARRIVAL_CHANCE = 0.5;
 
 /**
  * What each kind of merchant carries, and roughly how much. A visiting merchant rolls one
@@ -1313,7 +1326,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   trading: {
     type: 'trading', name: 'Trading Post', emoji: '🚢', category: 'trade', w: 3, h: 2,
     cost: { wood: 20, stone: 10 }, jobs: 1, buildTime: 8, requiresWaterFraction: 1 / 3,
-    desc: 'A dock for traders arriving by boat — part of it must reach out over the water.',
+    desc: 'A dock for traders arriving by boat — part of it must reach out over the water. Staff it to move goods in and out; boats call either way.',
   },
   school: {
     type: 'school', name: 'School', emoji: '🏫', category: 'civic', w: 2, h: 2,

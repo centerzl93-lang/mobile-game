@@ -222,7 +222,7 @@ test.describe('trading post & merchant', () => {
 
   test('a value-matched basket settles through the post inventory', async ({ page }) => {
     await open(page);
-    const res = await page.evaluate(`(${setup})({ wood: 100 }, {}, { phase: 'docked', present: true, seasonsLeft: 1, category: 'basics', stock: { iron: 10 }, seedStock: [], boat: { x: 0, y: 0 } })`) as any;
+    const res = await page.evaluate(`(${setup})({ wood: 100 }, {}, { phase: 'docked', present: true, stayTimer: 600, category: 'basics', stock: { iron: 10 }, seedStock: [], boat: { x: 0, y: 0 } })`) as any;
     void res;
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -242,7 +242,7 @@ test.describe('trading post & merchant', () => {
 
   test('a seed merchant unlocks a crop when its value is matched', async ({ page }) => {
     await open(page);
-    await page.evaluate(`(${setup})({ grain: 200 }, {}, { phase: 'docked', present: true, seasonsLeft: 1, category: 'seeds', stock: {}, seedStock: ['corn'], boat: { x: 0, y: 0 } })`);
+    await page.evaluate(`(${setup})({ grain: 200 }, {}, { phase: 'docked', present: true, stayTimer: 600, category: 'seeds', stock: {}, seedStock: ['corn'], boat: { x: 0, y: 0 } })`);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
       const s = g.state;
@@ -261,7 +261,7 @@ test.describe('trading post & merchant', () => {
 
   test('dismissing sends the docked merchant away', async ({ page }) => {
     await open(page);
-    await page.evaluate(`(${setup})({}, {}, { phase: 'docked', present: true, seasonsLeft: 1, category: 'foods', stock: { grain: 50 }, seedStock: [], boat: { x: 1, y: 1 } })`);
+    await page.evaluate(`(${setup})({}, {}, { phase: 'docked', present: true, stayTimer: 600, category: 'foods', stock: { grain: 50 }, seedStock: [], boat: { x: 1, y: 1 } })`);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
       g.dismissMerchant();
@@ -271,22 +271,123 @@ test.describe('trading post & merchant', () => {
     expect(out.present).toBe(false);
   });
 
-  test('no back-to-back visits: a cooldown season never spawns a merchant', async ({ page }) => {
+  test('the cart takes ten at a time, fills to All, and accepts a typed quantity', async ({ page }) => {
+    await open(page);
+    await page.evaluate(
+      `(${setup})({ wood: 100 }, {}, { phase: 'docked', present: true, stayTimer: 600, category: 'basics', stock: { iron: 40 }, seedStock: [], boat: { x: 0, y: 0 } })`,
+    );
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.debugOpenTradingPost(g.state.buildings.find((b: any) => b.type === 'trading').id);
+    });
+    const buy = page.locator('#tp-merchant input[data-buyset="iron"]');
+    const give = page.locator('#tp-merchant input[data-giveset="wood"]');
+    await expect(buy).toHaveValue('0');
+    await expect(page.locator('#tp-merchant button[data-buy="10"][data-k="iron"]')).toBeVisible();
+
+    // Dispatched rather than clicked: every basket change rebuilds the pane, and headless only
+    // produces animation frames in fits, so the actionability check races the rebuild. The button
+    // being on screen is asserted above; what these steps exercise is the arithmetic behind it.
+    const tap = (attr: string, step: string, k: string) =>
+      page.locator(`#tp-merchant button[data-${attr}="${step}"][data-k="${k}"]`).dispatchEvent('click');
+    const cartGet = async () =>
+      JSON.parse(await page.evaluate(() => JSON.stringify((window as any).__village.ui.basketGet)));
+
+    // Coarse steps: three taps of +10 where the old panel needed thirty of [+].
+    for (let i = 0; i < 3; i++) await tap('buy', '10', 'iron');
+    expect(await cartGet()).toEqual({ iron: 30 });
+    await tap('buy', '-1', 'iron');
+    expect(await cartGet()).toEqual({ iron: 29 });
+    // All fills to the merchant's whole stock, and cannot go past it.
+    await tap('buy', 'max', 'iron');
+    expect(await cartGet()).toEqual({ iron: 40 });
+    await tap('buy', '10', 'iron');
+    expect(await cartGet()).toEqual({ iron: 40 });
+    // −10 from a full cart, to show the fine and coarse steps share one figure.
+    await tap('buy', '-10', 'iron');
+    expect(await cartGet()).toEqual({ iron: 30 });
+
+    // Typed entry on the give side, committed when the field is left. Asserted against the cart
+    // itself rather than the redrawn panel: the panel only repaints on an animation frame, and
+    // headless throttles those hard when nothing is moving.
+    const cart = () =>
+      page.evaluate(() => JSON.stringify((window as any).__village.ui.basketGive));
+    await give.fill('55');
+    await give.blur();
+    expect(JSON.parse(await cart())).toEqual({ wood: 55 });
+
+    // A figure past what the post actually holds is clamped to the shelf, not accepted. Typed by
+    // hand rather than filled: `fill` refuses a value outside the field's max, but a player at a
+    // keyboard can enter one, and that is the case the clamp exists for.
+    await page.evaluate(() => {
+      const el = document.querySelector('#tp-merchant input[data-giveset="wood"]') as HTMLInputElement;
+      el.value = '900';
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(JSON.parse(await cart())).toEqual({ wood: 100 });
+  });
+
+  test('a typed standing order sets the post to that exact figure', async ({ page }) => {
+    await open(page);
+    await page.evaluate(`(${setup})({}, {}, { phase: 'away', present: false, stayTimer: 0, category: null, stock: {}, seedStock: [], boat: null })`);
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.debugOpenTradingPost(g.state.buildings.find((b: any) => b.type === 'trading').id);
+    });
+    const ord = page.locator('#tp-orders input[data-ordset="stone"]');
+    await ord.fill('250');
+    await ord.blur();
+    const stored = await page.evaluate(
+      () => (window as any).__village.state.buildings.find((b: any) => b.type === 'trading').orders.stone,
+    );
+    expect(stored).toBe(250);
+  });
+
+  test('no back-to-back visits: the cooldown after a departure keeps the water quiet', async ({ page }) => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
       g.startNewGame('small', 'normal', true);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
-      // A staffed trading post so arrivals are *possible*, plus an active cooldown.
+      // A trading post so arrivals are *possible*, plus a cooldown still running.
       s.buildings.push({ id: s.nextId++, type: 'trading', x: barn.x, y: barn.y, built: true, progress: 99,
         workers: [s.citizens[0].id], desiredWorkers: 1, growth: 0, output: 'coal', recipe: 'iron', store: {}, orders: {} });
-      Object.assign(s.merchant, { phase: 'away', present: false, cooldown: true, category: null, stock: {}, seedStock: [], boat: null });
-      g.debugAdvance(630); // just past one full season (nudge clear of the exact float boundary)
-      return { phase: s.merchant.phase, cooldown: s.merchant.cooldown };
+      Object.assign(s.merchant, { phase: 'away', present: false, cooldownTimer: 600, category: null, stock: {}, seedStock: [], boat: null });
+      g.debugAdvance(590); // most of the cooldown, but not all of it
+      const midPhase = s.merchant.phase;
+      g.debugAdvance(20); // and now it has run out
+      return { midPhase, cooldownTimer: s.merchant.cooldownTimer };
     });
-    expect(out.phase).toBe('away'); // cooldown blocked the arrival this season
-    expect(out.cooldown).toBe(false); // and the cooldown is now cleared for next season
+    expect(out.midPhase).toBe('away'); // nothing sailed in while the cooldown was running
+    expect(out.cooldownTimer).toBe(0); // and it has since expired, so visits are possible again
+  });
+
+  test('a merchant can sail in mid-season, and an unstaffed post still gets visits', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // Deliberately unstaffed: the worker moves goods in and out of the post, they don't summon
+      // the boat. Under the old rule this post would never have seen a trader at all.
+      s.buildings.push({ id: s.nextId++, type: 'trading', x: barn.x, y: barn.y, built: true, progress: 99,
+        workers: [], desiredWorkers: 0, growth: 0, output: 'coal', recipe: 'iron', store: {}, orders: {} });
+      Object.assign(s.merchant, { phase: 'away', present: false, cooldownTimer: 0, category: null, stock: {}, seedStock: [], boat: null });
+      s.seasonTimer = 0;
+      // Half a season, nowhere near a turnover. Arrivals are a roll per tick, so run until one
+      // lands rather than asserting on a single unlucky season.
+      let seasons = 0;
+      while (s.merchant.phase === 'away' && seasons < 40) {
+        g.debugAdvance(300);
+        seasons += 0.5;
+      }
+      return { phase: s.merchant.phase, seasonTimer: s.seasonTimer, workers: 0 };
+    });
+    expect(out.phase).not.toBe('away'); // a boat came for an unstaffed post
+    // And it arrived somewhere inside a season, not at the stroke of a turnover.
+    expect(out.seasonTimer).toBeGreaterThan(0);
   });
 
   test('an arriving boat sails to the dock and moors for one season', async ({ page }) => {
@@ -302,11 +403,13 @@ test.describe('trading post & merchant', () => {
       Object.assign(s.merchant, { phase: 'arriving', present: false, category: 'basics',
         stock: { wood: 100 }, seedStock: [], boat: { x: s.w / 2, y: 0 } });
       g.debugAdvance(30); // a few seconds of travel
-      return { phase: s.merchant.phase, present: s.merchant.present, seasonsLeft: s.merchant.seasonsLeft, boat: !!s.merchant.boat };
+      return { phase: s.merchant.phase, present: s.merchant.present, stayTimer: s.merchant.stayTimer, boat: !!s.merchant.boat };
     });
     expect(out.phase).toBe('docked');
     expect(out.present).toBe(true);
-    expect(out.seasonsLeft).toBe(1); // MERCHANT_STAY_SEASONS
+    // A full season of moorage, less whatever the boat has already spent tied up.
+    expect(out.stayTimer).toBeGreaterThan(560); // MERCHANT_STAY_SEASONS × SEASON_LENGTH
+    expect(out.stayTimer).toBeLessThanOrEqual(600);
     expect(out.boat).toBe(true); // the boat stays moored at the dock
   });
 

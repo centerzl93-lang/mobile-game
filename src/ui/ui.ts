@@ -106,6 +106,8 @@ export interface UICallbacks {
   onSplitRanch: (fromId: number, toId: number) => void;
   onTransferRanch: (fromId: number, toId: number) => void;
   onSetTradeOrder: (buildingId: number, kind: ResourceKind, delta: number) => void;
+  /** Set a standing order to an exact figure — what the typed field commits. */
+  onSetTradeOrderTo: (buildingId: number, kind: ResourceKind, value: number) => void;
   onBasketTrade: (basket: TradeBasket) => TradeResult;
   onDismissMerchant: () => void;
   onAcceptNomads: () => void;
@@ -792,7 +794,8 @@ export class UI {
   }
 
   // ---- Trading post: inventory orders + value-matching merchant basket ----
-  private openTradingPost(id: number): void {
+  /** Open the trading post sheet for a building id (also the entry point debug hooks use). */
+  openTradingPost(id: number): void {
     this.tradingPostId = id;
     this.resetBasket();
     this.el.trade.classList.remove('hidden');
@@ -890,12 +893,66 @@ export class UI {
     return { give: this.basketGive, get: this.basketGet, buySeeds: this.basketSeeds };
   }
 
+  /**
+   * The quantity control on a trade row: coarse and fine steps either side of a field the player
+   * can just type into.
+   *
+   * Stepping one at a time is fine for a handful of tools and hopeless for a hundred stone, so
+   * every row carries ±1, ±10 and (where there is a ceiling) an All button, with the field itself
+   * accepting a typed figure. `attr` names the data attribute the click handlers read, which is
+   * also what keeps the three lists — orders, buy, give — from picking up each other's buttons.
+   */
+  private qtyControl(attr: string, k: string, value: number, max: number): string {
+    const cap = max >= 0 ? ` max="${max}"` : '';
+    const all = max >= 0 ? `<button class="qty-all" data-${attr}="max" data-k="${k}">All</button>` : '';
+    return `<span class="qty">
+        <button data-${attr}="-10" data-k="${k}">−10</button>
+        <button data-${attr}="-1" data-k="${k}">−</button>
+        <input class="qty-in" data-${attr}set="${k}" type="number" inputmode="numeric" min="0"${cap} value="${value}" />
+        <button data-${attr}="1" data-k="${k}">+</button>
+        <button data-${attr}="10" data-k="${k}">+10</button>${all}
+      </span>`;
+  }
+
+  /**
+   * Wire one list of quantity controls. `step` takes the signed amount (or `max` for All) and
+   * `set` an absolute typed figure; the caller decides what those mean for its own list.
+   */
+  private wireQty(
+    root: HTMLElement,
+    attr: string,
+    step: (k: string, delta: number | 'max') => void,
+    set: (k: string, value: number) => void,
+  ): void {
+    root.querySelectorAll(`button[data-${attr}]`).forEach((btn) => {
+      const el = btn as HTMLElement;
+      const raw = el.dataset[attr]!;
+      el.addEventListener('click', () => step(el.dataset.k!, raw === 'max' ? 'max' : Number(raw)));
+    });
+    root.querySelectorAll(`input[data-${attr}set]`).forEach((el) => {
+      const input = el as HTMLInputElement;
+      const k = input.dataset[`${attr}set`]!;
+      // Commit on change and on Enter, never on keystroke: the panel rebuilds whenever the post's
+      // stock ticks over, and committing per character would replace the field mid-word.
+      const commit = () => set(k, Math.floor(Number(input.value)));
+      input.addEventListener('change', commit);
+      input.addEventListener('keydown', (e) => {
+        if ((e as KeyboardEvent).key === 'Enter') input.blur();
+      });
+      input.addEventListener('blur', commit);
+    });
+  }
+
   private refreshTradingPost(s: GameState): void {
     const post = this.tradingPostId === null ? null : s.buildings.find((b) => b.id === this.tradingPostId && b.built);
     if (!post) {
       this.closeTradingPost();
       return;
     }
+    // Never rebuild under a field the player is typing in — the frame loop calls this constantly
+    // and the post's stock changes as haulers arrive, which would otherwise wipe the entry.
+    const active = document.activeElement;
+    if (active instanceof HTMLInputElement && this.el.trade.contains(active)) return;
     const m = s.merchant;
     const store = post.store ?? {};
     const orders = post.orders ?? {};
@@ -917,22 +974,20 @@ export class UI {
     // Inventory & orders: every resource with its unit value, current stock, and an order stepper.
     byId('tp-orders').innerHTML = RESOURCE_KINDS.map((k) => {
       const have = Math.floor(store[k] ?? 0);
-      const ord = orders[k] ?? 0;
       return `<div class="tp-row">
           <span class="tp-good">${RESOURCE_ICON[k]} ${k}</span>
           <span class="tp-val" title="Trade value per unit">◈${TRADE_VALUE[k]}</span>
-          <span class="tp-have">${have}<small>/${ord}</small></span>
-          <span class="stepper"><button data-ord="-1" data-k="${k}">−</button><button data-ord="1" data-k="${k}">+</button></span>
+          <span class="tp-have" title="In the post now">${have}</span>
+          ${this.qtyControl('ord', k, orders[k] ?? 0, -1)}
         </div>`;
     }).join('');
-    byId('tp-orders')
-      .querySelectorAll('button[data-ord]')
-      .forEach((btn) =>
-        btn.addEventListener('click', () => {
-          const el = btn as HTMLElement;
-          this.cb.onSetTradeOrder(post.id, el.dataset.k as ResourceKind, Number(el.dataset.ord) * 10);
-        }),
-      );
+    // An order is a standing target, not a basket, so there is no ceiling and no All button.
+    this.wireQty(
+      byId('tp-orders'),
+      'ord',
+      (k, d) => this.cb.onSetTradeOrder(post.id, k as ResourceKind, d === 'max' ? 0 : d),
+      (k, v) => this.cb.onSetTradeOrderTo(post.id, k as ResourceKind, v),
+    );
 
     this.renderMerchantPane(s, post.store ?? {});
   }
@@ -942,7 +997,7 @@ export class UI {
     const pane = byId('tp-merchant');
     const m = s.merchant;
     if (!m.present || !m.category) {
-      pane.innerHTML = `<h3>Merchant</h3><div class="tp-wait">No merchant docked. One may sail in at the turn of a season.</div>`;
+      pane.innerHTML = `<h3>Merchant</h3><div class="tp-wait">No merchant docked. One may sail in at any time — the post does not need to be staffed for a boat to call.</div>`;
       return;
     }
     const meta = MERCHANT_CATEGORY_META[m.category];
@@ -957,12 +1012,11 @@ export class UI {
       .filter((k) => (m.stock[k] ?? 0) > 0)
       .map((k) => {
         const stock = Math.floor(m.stock[k] ?? 0);
-        const picked = this.basketGet[k] ?? 0;
         return `<div class="tp-row">
             <span class="tp-good">${RESOURCE_ICON[k]} ${k}</span>
             <span class="tp-val">◈${TRADE_VALUE[k]}</span>
-            <span class="tp-have">${picked}<small>/${stock}</small></span>
-            <span class="stepper"><button data-buy="-1" data-k="${k}">−</button><button data-buy="1" data-k="${k}">+</button></span>
+            <span class="tp-have"><small>of ${stock}</small></span>
+            ${this.qtyControl('buy', k, this.basketGet[k] ?? 0, stock)}
           </div>`;
       })
       .join('');
@@ -983,12 +1037,11 @@ export class UI {
       ? giveKinds
           .map((k) => {
             const have = Math.floor(store[k] ?? 0);
-            const picked = this.basketGive[k] ?? 0;
             return `<div class="tp-row">
                 <span class="tp-good">${RESOURCE_ICON[k]} ${k}</span>
                 <span class="tp-val">◈${TRADE_VALUE[k]}</span>
-                <span class="tp-have">${picked}<small>/${have}</small></span>
-                <span class="stepper"><button data-give="-1" data-k="${k}">−</button><button data-give="1" data-k="${k}">+</button></span>
+                <span class="tp-have"><small>of ${have}</small></span>
+                ${this.qtyControl('give', k, this.basketGive[k] ?? 0, have)}
               </div>`;
           })
           .join('')
@@ -1003,25 +1056,38 @@ export class UI {
         <button class="tp-dismiss" id="tp-dismiss">⛵ Dismiss</button>
       </div>`;
 
-    pane.querySelectorAll('button[data-buy]').forEach((btn) =>
-      btn.addEventListener('click', () => {
-        const el = btn as HTMLElement;
-        const k = el.dataset.k as ResourceKind;
+    // Both baskets clamp to what is actually available: the merchant's stock on the buy side, the
+    // post's own inventory on the give side. All fills the row to that ceiling in one tap.
+    const setBasket = (
+      basket: Partial<Record<ResourceKind, number>>,
+      k: ResourceKind,
+      value: number,
+      max: number,
+    ): void => {
+      const v = clampInt(value, 0, max);
+      if (v > 0) basket[k] = v;
+      else delete basket[k];
+      this.tradeSig = '';
+    };
+    this.wireQty(
+      pane,
+      'buy',
+      (key, d) => {
+        const k = key as ResourceKind;
         const max = Math.floor(m.stock[k] ?? 0);
-        this.basketGet[k] = clampInt((this.basketGet[k] ?? 0) + Number(el.dataset.buy), 0, max);
-        if (!this.basketGet[k]) delete this.basketGet[k];
-        this.tradeSig = '';
-      }),
+        setBasket(this.basketGet, k, d === 'max' ? max : (this.basketGet[k] ?? 0) + d, max);
+      },
+      (key, v) => setBasket(this.basketGet, key as ResourceKind, v, Math.floor(m.stock[key as ResourceKind] ?? 0)),
     );
-    pane.querySelectorAll('button[data-give]').forEach((btn) =>
-      btn.addEventListener('click', () => {
-        const el = btn as HTMLElement;
-        const k = el.dataset.k as ResourceKind;
+    this.wireQty(
+      pane,
+      'give',
+      (key, d) => {
+        const k = key as ResourceKind;
         const max = Math.floor(store[k] ?? 0);
-        this.basketGive[k] = clampInt((this.basketGive[k] ?? 0) + Number(el.dataset.give), 0, max);
-        if (!this.basketGive[k]) delete this.basketGive[k];
-        this.tradeSig = '';
-      }),
+        setBasket(this.basketGive, k, d === 'max' ? max : (this.basketGive[k] ?? 0) + d, max);
+      },
+      (key, v) => setBasket(this.basketGive, key as ResourceKind, v, Math.floor(store[key as ResourceKind] ?? 0)),
     );
     pane.querySelectorAll('button[data-seed]').forEach((btn) =>
       btn.addEventListener('click', () => {

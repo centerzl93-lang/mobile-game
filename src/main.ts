@@ -165,6 +165,7 @@ class Game {
       onSplitRanch: (from, to) => this.splitRanch(from, to),
       onTransferRanch: (from, to) => this.transferRanch(from, to),
       onSetTradeOrder: (id, kind, delta) => this.setTradeOrder(id, kind, delta),
+      onSetTradeOrderTo: (id, kind, value) => this.setTradeOrder(id, kind, value, true),
       onBasketTrade: (basket) => this.trade(basket),
       onDismissMerchant: () => this.dismissMerchant(),
       onAcceptNomads: () => this.acceptNomads(),
@@ -469,12 +470,13 @@ class Game {
     this.persist();
   }
 
-  /** Adjust a trading post's stock order for a good (clamped at zero). */
-  private setTradeOrder(buildingId: number, kind: ResourceKind, delta: number): void {
+  /** Adjust a trading post's standing order — by `amount`, or to it when `absolute` is set. Clamped at zero. */
+  private setTradeOrder(buildingId: number, kind: ResourceKind, amount: number, absolute = false): void {
     const b = this.state.buildings.find((x) => x.id === buildingId);
     if (!b) return;
     b.orders = b.orders ?? {};
-    const next = Math.max(0, (b.orders[kind] ?? 0) + delta);
+    if (!Number.isFinite(amount)) return; // a typed field can hand us NaN
+    const next = Math.max(0, absolute ? Math.floor(amount) : (b.orders[kind] ?? 0) + amount);
     if (next === 0) delete b.orders[kind];
     else b.orders[kind] = next;
     this.persist();
@@ -1026,6 +1028,11 @@ class Game {
   debugIgnite(id: number): void {
     const b = this.state.buildings.find((x) => x.id === id);
     if (b) igniteBuilding(this.state, b, this.log);
+  }
+
+  /** Debug/testing helper: open the trading post sheet without tapping the building. */
+  debugOpenTradingPost(id: number): void {
+    this.ui.openTradingPost(id);
   }
 
   /** Debug/testing helper: run the once-per-season fire roll without waiting for a season. */

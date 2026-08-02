@@ -1773,7 +1773,12 @@ export class Renderer3D {
     // have to be released here or a new map leaks the old map's meshes.
     const villagerMeshes = [this.citizens, this.heads, this.hair, this.coats, ...(this.legs ?? [])]
       .filter((m): m is THREE.InstancedMesh => !!m);
-    for (const m of [this.terrain, this.trees, this.rocks, ...pathMeshes, this.portals, this.bores, this.marks, ...villagerMeshes]) {
+    // `ironNodes` belongs in this list as much as `rocks` does. Leaving it out left every old
+    // map's ore chunks in the scene, still at the positions they were given for *that* terrain —
+    // so a new game drew its own deposits plus every previous game's, scattered over ground that
+    // had since become forest, mountain or lake. It surfaced as ore floating on open water,
+    // because water is the one surface where a stray chunk is unmistakable.
+    for (const m of [this.terrain, this.trees, this.rocks, this.ironNodes, ...pathMeshes, this.portals, this.bores, this.marks, ...villagerMeshes]) {
       this.scene.remove(m);
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
@@ -1801,6 +1806,16 @@ export class Renderer3D {
     for (const [, obj] of this.buildingMeshes) this.disposeBuilding(obj);
     this.buildingMeshes.clear();
     for (const o of [this.ghost, this.selRing, this.workRing, this.marquee, this.boat]) this.scene.remove(o);
+    // The facing arrow is rebuilt by `init`, so the old one has to go with the rest of the map.
+    // It draws with `depthTest: false` — a leaked one is not merely still there, it is still
+    // there *through the terrain*, pointing at a door on a map that no longer exists.
+    this.scene.remove(this.faceArrow);
+    this.faceArrow.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    });
     this.sig = { land: -1, tree: -1, rock: -1, path: -1, mark: -1, bld: '' };
     this.ready = false;
   }

@@ -20,10 +20,50 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **lakes**, **landscape play** and **building footprints** — all this session.
+Latest work: a **renderer teardown leak**, **lakes**, **landscape play** and **building
+footprints** — all this session.
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### The renderer leaked the old map into the new one (this session)
+The player reported iron deposits floating in the middle of a lake. The cause was not generation:
+`clearWaterMargin` strips deposits from every tile within `DEPOSIT_WATER_MARGIN` of water, and a
+direct count over 18 worlds found **zero** deposits on or adjacent to a water tile, on any map
+size. The ore in the lake belonged to a *previous* map.
+
+`teardown()` (`src/render/renderer3d.ts`) releases the map's meshes before `init()` rebuilds
+them, and two were missing from the list:
+
+- **`ironNodes`** — so every new game left the last one's ore chunks in the scene, still at the
+  positions they were given for terrain that had since become forest, mountain or lake. Water is
+  simply where a stray chunk is unmistakable.
+- **`faceArrow`** — rebuilt by `init` every game, and it draws with `depthTest: false`, so a
+  leaked one is not just still there, it is still there *through the terrain*.
+
+A census of scene geometry after four consecutive new games told the whole story and is the way
+to check this class of bug:
+
+| | game 1 | 2 | 3 | 4 |
+|---|---|---|---|---|
+| Octahedron (iron) | 2 | 3 | 4 | 5 |
+| Cone + Box (arrow) | +2/+2 each game | | | |
+| after the fix | identical counts on every game |
+
+**How to find the next one:** count meshes by `geometry.type` across `scene.traverse` after
+repeated `startNewGame`. Anything that grows is leaking. Do *not* check a single fresh world —
+the first four probes I wrote all did, and all reported "clean", because the bug needs two games
+to exist. One of them also sampled instance matrices before `syncIron` had run and measured
+unwritten zeros, which reads exactly like "nothing over water". Await several frames *and* start
+a second game before believing a negative result here.
+
+**Known and not fixed — `syncRocks` writes one matrix per tile but sets the count to
+`rockTiles.length * rocksPerTile()` (5).** Four fifths of the loose-stone instances are therefore
+never written and stay at the zero matrix: degenerate, invisible, but drawn. So loose stone
+renders one rock per tile where the code intends five, and the instance buffer is 5x the size it
+needs. Fixing it is a two-line change (nest the write loop the way `syncIron` does) but it makes
+visible stone deposits five times denser, which is a look change the player should agree to
+rather than find in a bug fix.
 
 ### Lakes (this session)
 The player asked for more lakes now that the maps are bigger, and for one in the middle that the

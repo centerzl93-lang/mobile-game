@@ -46,7 +46,11 @@ const FOOTHILL_H = 0.5; // low rocky band at a mountain's base
 const MOUNTAIN_BASE_H = 1.8; // shortest mountain (edge) height
 const MOUNTAIN_STEP_H = 2.2; // extra height per tile of depth into the mountain
 const MOUNTAIN_MAX_H = 11.0; // tallest peak
-const SNOWLINE_H = 6.0; // peaks above this get a permanent snow cap
+// Where the permanent snow starts, and where it is fully white. Both are set against the heights
+// the generator actually produces — peaks come out around 6.7 to 8.9 — rather than the theoretical
+// MOUNTAIN_MAX_H ceiling, which nothing ever reaches.
+const SNOWLINE_H = 4.6;
+const SNOWCAP_FULL_H = 7.6;
 const TOP = LAND_H; // y of the walkable surface props sit on
 const TREE_MODEL_SIZE = 0.55; // world scale for a normalized (footprint=1) tree model — see tools/models/pine.py
 const ROCK_MODEL_SIZE = 0.52; // world scale applied to a normalized loose-stone model
@@ -154,7 +158,6 @@ const SMOKE_BUILDINGS = new Set<BuildingType>([
   'house', 'stonehouse', 'tavern', 'blacksmith', 'tailor', 'woodcutter', 'hospital', 'herbalist',
 ]);
 
-const SNOW_COLOR = new THREE.Color(0xeef3f7);
 
 // Instanced-mesh capacity for villagers — sized for a busy Large map's population.
 const CITIZEN_CAP = 1200;
@@ -254,6 +257,8 @@ export class Renderer3D {
   private landIdx: number[] = [];
   /** Per-vertex surface weights (grass, dirt, rock) driving the terrain texture blend. */
   private terrSurf!: THREE.BufferAttribute;
+  /** Per-vertex snow cover, 0..1 — a permanent cap on the peaks plus whatever winter adds. */
+  private terrSnow!: THREE.BufferAttribute;
   /** Per-vertex ground height, indexed by vertex row-major over the (w+1)x(h+1) grid. */
   private terrHeight: Float32Array = new Float32Array(0);
   private trees!: THREE.InstancedMesh;
@@ -861,6 +866,12 @@ export class Renderer3D {
     }
     this.terrSurf = new THREE.BufferAttribute(surf, 4);
     geo.setAttribute('aSurf', this.terrSurf);
+    // Snow is its own attribute rather than part of the vertex colour: vertex colour *multiplies*
+    // the surface texture, so it can only ever darken it — lerping white toward white did nothing,
+    // which is why capped peaks never actually looked capped. This rides through to the fragment
+    // and replaces the sampled colour instead.
+    this.terrSnow = new THREE.BufferAttribute(new Float32Array(pos.count), 1);
+    geo.setAttribute('aSnow', this.terrSnow);
     pos.needsUpdate = true;
     geo.computeVertexNormals();
     return geo;
@@ -902,15 +913,18 @@ export class Renderer3D {
 
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
-      shader.vertexShader = `attribute vec4 aSurf;\nvarying vec4 vSurf;\nvarying vec2 vGroundUv;\n` + shader.vertexShader;
+      shader.vertexShader =
+        `attribute vec4 aSurf;\nattribute float aSnow;\nvarying vec4 vSurf;\nvarying float vSnow;\nvarying vec2 vGroundUv;\n` +
+        shader.vertexShader;
       shader.vertexShader = shader.vertexShader.replace(
         '#include <uv_vertex>',
         `#include <uv_vertex>
         vSurf = aSurf;
+        vSnow = aSnow;
         vGroundUv = position.xz;`,
       );
       shader.fragmentShader =
-        `uniform sampler2D uGrass;\nuniform sampler2D uDirt;\nuniform sampler2D uRock;\nuniform sampler2D uSand;\nuniform float uTexScale;\nvarying vec4 vSurf;\nvarying vec2 vGroundUv;\n` +
+        `uniform sampler2D uGrass;\nuniform sampler2D uDirt;\nuniform sampler2D uRock;\nuniform sampler2D uSand;\nuniform float uTexScale;\nvarying vec4 vSurf;\nvarying float vSnow;\nvarying vec2 vGroundUv;\n` +
         shader.fragmentShader;
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <map_fragment>',
@@ -930,7 +944,11 @@ export class Renderer3D {
           texture2D(uDirt, gUv) * w.y +
           rock * w.z +
           texture2D(uSand, gUv) * w.w;
-        diffuseColor *= blended;`,
+        diffuseColor *= blended;
+        // Snow lies *over* the surface rather than tinting it, with a little of the rock's own
+        // shading showing through so a cap still reads as lying on rough ground.
+        vec3 snowRgb = vec3(0.95, 0.965, 0.99) * (0.88 + 0.12 * blended.r);
+        diffuseColor.rgb = mix(diffuseColor.rgb, snowRgb, clamp(vSnow, 0.0, 1.0));`,
       );
       // One normal map serves the whole ground, and it is derived from the *grass* texture. On
       // flat fields that is fine; on a mountainside it stamps grass-shaped relief over stone and
@@ -960,23 +978,32 @@ export class Renderer3D {
     const snow = this.snowNow;
     const vw = MAP_W * TERRAIN_RES + 1;
     const colors = new Float32Array(this.terrHeight.length * 3);
+    const snowAmt = this.terrSnow.array as Float32Array;
     for (let k = 0; k < this.terrHeight.length; k++) {
       const h = this.terrHeight[k];
-      this.color.setRGB(1, 1, 1);
-      if (h > SNOWLINE_H) {
-        const cap = Math.min(1, (h - SNOWLINE_H) / (MOUNTAIN_MAX_H - SNOWLINE_H));
-        this.color.lerp(SNOW_COLOR, cap * 0.85);
-      }
-      if (snow > 0.001) this.color.lerp(SNOW_COLOR, snow * (h > FOOTHILL_H ? 0.35 : 0.85));
-      // A touch of per-vertex brightness variation so broad fields are not one flat value.
       const vx = k % vw;
       const vy = (k / vw) | 0;
-      this.color.multiplyScalar(0.93 + (((vx * 73856093) ^ (vy * 19349663)) % 100) / 100 * 0.07);
+      // Cheap per-vertex hash, used twice below: to ripple the snowline and to vary brightness.
+      const jitter = (((vx * 73856093) ^ (vy * 19349663)) % 100) / 100;
+      this.color.setRGB(1, 1, 1);
+      // Permanent snow cap. The line wanders by a third of a tile of height from vertex to vertex
+      // so the cap has a ragged edge rather than sitting on a perfect contour ring, and it reaches
+      // full white by SNOWCAP_FULL_H — which is where real peaks top out, not the theoretical
+      // ceiling. Ramping to a ceiling the terrain never reaches was why big mountains came out
+      // grey with a faint pale tip instead of capped.
+      const line = SNOWLINE_H + (jitter - 0.5) * 0.7;
+      const cap = h > line ? Math.min(1, (h - line) / Math.max(0.5, SNOWCAP_FULL_H - line)) : 0;
+      // Winter lies on everything; the cap is what survives the rest of the year.
+      const winter = snow > 0.001 ? snow * (h > FOOTHILL_H ? 0.55 : 0.85) : 0;
+      snowAmt[k] = Math.max(cap, winter);
+      // A touch of per-vertex brightness variation so broad fields are not one flat value.
+      this.color.multiplyScalar(0.93 + jitter * 0.07);
       colors[k * 3] = this.color.r;
       colors[k * 3 + 1] = this.color.g;
       colors[k * 3 + 2] = this.color.b;
     }
     this.terrain.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    this.terrSnow.needsUpdate = true;
     (this.terrain.material as THREE.MeshStandardMaterial).vertexColors = true;
     (this.terrain.material as THREE.MeshStandardMaterial).needsUpdate = true;
   }

@@ -1,7 +1,7 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-08-02 (building footprints — finished; see Current State)
+> Last updated: 2026-08-02 (landscape play, and building footprints; see Current State)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -20,10 +20,48 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **building footprints** (this session) — see just below. Before it,
-**confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
+Latest work: **landscape play** and, before it, **building footprints** — both this session.
+Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Landscape (this session)
+The player asked to play on a phone held sideways, and reported that rotating distorted the
+picture and that rotating back left it distorted.
+
+**The distortion was a stale resize, and the fix is to stop listening for one.** `resize()` ran
+only from the `window.resize` event. On iOS a rotation fires that event *before* the layout has
+settled, so the handler read the pre-rotation width and height, sized the drawing buffer to a
+portrait shape, and no second event ever arrived to correct it — the buffer then stretched to
+fill a landscape canvas. Rotating back was no better, because that event is stale too. `resize()`
+is now called at the top of every frame and returns immediately unless the canvas box actually
+moved, so it needs no event and nothing can arrive too early.
+
+Measured with a probe that compares the buffer's aspect to the CSS box's — their ratio *is* the
+stretch. Before: **0.214** in landscape (a 390x844 buffer in an 844x390 box, so nearly 5x). After:
+**1.000** at every step of portrait → landscape → portrait → landscape.
+
+A warning for whoever tests this next: Playwright's `setViewportSize` fires a clean, correctly
+sized resize event, so it does **not** reproduce the bug — the first version of that probe passed
+against the broken code and proved nothing. Reshape the canvas *without* a resize event (set
+`#app`'s width/height directly) to get the real failure.
+
+**Layout.** The manifest asks for `orientation: 'landscape'` (installed app only; a browser tab
+still follows the phone's rotation lock, so the CSS is an adaptation and not an assumption). A
+`@media (orientation: landscape) and (max-height: 540px)` block spends width, which is now
+plentiful, to buy back height: tighter HUD chips and toolbar, and two changes worth knowing about
+because both were bugs the first time round —
+
+- **The inspect sheet becomes a right-hand column.** At `42vh` of a 390px screen it was a 160px
+  slot still covering the middle of the map. It is inset to `right: 60px` so it clears the
+  control stack, which keeps its own column down that edge — at `8px` it sat straight on top of it.
+- **The hint moves to the top, under the HUD.** Portrait lifts it above the build pop-out; doing
+  the same in landscape put it in the middle of the screen, which is exactly where the placement
+  controls sit while you site a building. `elementFromPoint` at the hint's centre returned
+  `.rs-actions`, not the hint. At the top there is nothing to collide with and `raised` is a no-op.
+
+**The Playwright viewport is now landscape** (844x390), because that is how the game is played and
+it is the shape where the chrome crowds the map. All 24 UI-layout tests pass on it, plus menus.
 
 ### Building footprints (this session)
 The player asked for varied building sizes so the village stops reading as one repeated cottage,

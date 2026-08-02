@@ -20,7 +20,10 @@ export default defineConfig({
   reporter: process.env.CI ? 'github' : 'list',
   use: {
     baseURL: BASE,
-    viewport: { width: 390, height: 844 },
+    // Landscape, because that is how the game is played — the manifest asks the installed app
+    // for it. A phone on its side is the short-height case the layout has to survive, and it is
+    // where the chrome crowds the map, so it is the shape worth testing against.
+    viewport: { width: 844, height: 390 },
     deviceScaleFactor: 2,
     launchOptions: { args: GL_ARGS },
   },

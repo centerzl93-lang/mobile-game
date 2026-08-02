@@ -208,16 +208,36 @@ class Game {
     requestAnimationFrame((t) => this.frame(t));
   }
 
+  /**
+   * Match the drawing buffer to the canvas's real box, if it has changed.
+   *
+   * Called every frame rather than only from a `resize` event, because on iOS a rotation fires
+   * `resize` *before* the layout has settled: the handler reads the old width and height, sizes
+   * the buffer to a portrait shape, and no further event ever arrives to correct it. The buffer
+   * then stretches to fill a landscape canvas — which is the distortion — and rotating back
+   * leaves it just as wrong, because that event is stale too. Measuring on the frame we are about
+   * to draw needs no event at all, so there is nothing to arrive too early.
+   *
+   * Cheap enough to do unconditionally: two layout reads, and everything below is skipped unless
+   * the box actually moved.
+   */
   private resize(): void {
-    this.cw = this.canvas.clientWidth;
-    this.ch = this.canvas.clientHeight;
+    const cw = this.canvas.clientWidth;
+    const ch = this.canvas.clientHeight;
+    // A hidden canvas (tab switch, iOS rotation mid-flight) reports 0; keep the last good size
+    // rather than baking a degenerate 0-aspect projection we would have to recover from.
+    if (cw <= 0 || ch <= 0) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    if (cw === this.cw && ch === this.ch && dpr === this.dpr) return;
+    this.cw = cw;
+    this.ch = ch;
+    this.dpr = dpr;
     if (this.use2d) {
-      this.dpr = Math.min(window.devicePixelRatio || 1, 2);
-      this.canvas.width = Math.round(this.cw * this.dpr);
-      this.canvas.height = Math.round(this.ch * this.dpr);
+      this.canvas.width = Math.round(cw * dpr);
+      this.canvas.height = Math.round(ch * dpr);
     } else {
-      (this.renderer as Renderer3D).setSize(this.cw, this.ch);
-      (this.camera as Camera3D).setAspect(this.cw, this.ch);
+      (this.renderer as Renderer3D).setSize(cw, ch);
+      (this.camera as Camera3D).setAspect(cw, ch);
     }
   }
 
@@ -1247,6 +1267,11 @@ class Game {
   };
 
   private frame(t: number): void {
+    // Before anything is drawn: the canvas may have changed shape since the last frame (a phone
+    // rotating is the case that matters) and no event we could have listened for reports that
+    // reliably. `resize` returns immediately when nothing moved.
+    this.resize();
+
     const dtMs = this.lastTime ? t - this.lastTime : 16;
     this.lastTime = t;
     let dt = Math.min(dtMs / 1000, 0.1); // clamp to avoid huge catch-up steps

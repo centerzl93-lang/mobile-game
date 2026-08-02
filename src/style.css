@@ -1229,3 +1229,87 @@ body {
   border-color: var(--danger);
   color: #2a0f0b;
 }
+
+/* ---------- Landscape ---------- */
+/*
+ * The game is meant to be played on its side (the manifest asks the installed app for it), and
+ * turning a phone flips which axis is scarce: ~390px of height against ~850 of width, where
+ * portrait had the opposite. Everything here spends width — now plentiful — to buy back height,
+ * so the map keeps as much of a short viewport as it can.
+ *
+ * Gated on height rather than on `orientation: landscape` alone, so a tablet or a desktop window
+ * in landscape (where height is not scarce) keeps the roomier portrait proportions.
+ */
+@media (orientation: landscape) and (max-height: 540px) {
+  /* Chrome at the top and bottom is what squeezes the map, so both get tighter. */
+  .stat {
+    padding: 2px 7px;
+    font-size: 12px;
+  }
+  .stat.mini {
+    padding: 1px 5px;
+    font-size: 10.5px;
+  }
+  #hud-top {
+    gap: 3px;
+  }
+
+  .tool-btn {
+    min-width: 54px;
+    padding: 4px 6px 3px;
+  }
+  .tool-btn .emoji {
+    font-size: 17px;
+  }
+  .tool-btn .tname {
+    font-size: 9px;
+  }
+  #toolbar {
+    gap: 5px;
+    padding-top: 4px;
+    padding-bottom: calc(var(--safe-bottom) + 4px);
+  }
+  #popout {
+    bottom: calc(var(--safe-bottom) + 58px);
+  }
+
+  /*
+   * The inspect sheet stops being a bottom sheet. At 42vh of a 390px viewport it was a 160px
+   * slot that still covered the middle of the map; as a column down the right it takes the axis
+   * there is plenty of and leaves the village visible while you read about a building.
+   */
+  #inspect {
+    left: auto;
+    /* Clear of the control stack, which keeps its own column down the right edge (44px wide
+       plus its 8px margin) — at `right: 8px` the sheet sat straight on top of it. */
+    right: calc(var(--safe-right) + 60px);
+    top: calc(var(--safe-top) + 84px);
+    bottom: calc(var(--safe-bottom) + 62px);
+    width: min(340px, 42vw);
+    max-height: none;
+  }
+
+  /*
+   * The hint moves to the top, under the HUD. Lifting it clear of the build pop-out the way
+   * portrait does would push it into the middle of a 390px-tall screen, which is exactly where
+   * the placement controls sit while you are siting a building — so the one message telling you
+   * what to do next would be buried under the buttons that do it. There is nothing else along
+   * the top, so it never has to move again and `raised` becomes a no-op for it.
+   */
+  #hint {
+    top: calc(var(--safe-top) + 52px);
+    bottom: auto;
+  }
+  #hint.raised {
+    bottom: auto;
+  }
+
+  /* The log stays bottom-left, above a shorter toolbar; it is well clear of the centre. */
+  #log {
+    bottom: calc(var(--safe-bottom) + 78px);
+    max-width: 46%;
+  }
+  #log.raised {
+    bottom: calc(var(--safe-bottom) + 148px);
+  }
+}

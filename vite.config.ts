@@ -73,7 +73,12 @@ export default defineConfig({
         theme_color: '#3b7d4f',
         background_color: '#20361f',
         display: 'standalone',
-        orientation: 'any',
+        // The village is played on its side: the map is the point, and a phone held landscape
+        // gives it a far wider field of view than a portrait strip between the HUD and the
+        // toolbar. This only binds the *installed* app — a browser tab still follows the phone's
+        // rotation lock, which is why the landscape CSS below is written as an adaptation rather
+        // than an assumption.
+        orientation: 'landscape',
         start_url: BASE,
         scope: BASE,
         icons: [

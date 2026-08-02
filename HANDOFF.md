@@ -8,10 +8,15 @@
 Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 
 - **Repo:** `centerzl93-lang/mobile-game`
-- **Working branch:** `claude/banished-ios-handoff-ejj6dh` (only push here; don't open PRs unless
-  asked). Earlier sessions used `claude/banished-ios-app-b4zott` /
-  `claude/game-opportunities-impl-8qxrqc` / `claude/hud-workers-building-updates-32npee`; all
-  share the same history, and each session's branch continues from the last one's head.
+- **Working branch:** `claude/banished-ios-app-b4zott` (only push here; don't open PRs unless
+  asked). Earlier sessions used `claude/game-opportunities-impl-8qxrqc` /
+  `claude/hud-workers-building-updates-32npee`; all share the same history.
+  **Push here specifically, whatever branch a session is told to develop on** — this is the only
+  non-`main` branch in the `branches:` trigger of *both* `.github/workflows/deploy.yml` and
+  `test.yml`, so it is the only one where a push actually deploys to Pages and runs CI. Work
+  pushed to a session-named branch is safe but invisible: no site update, no test run, no signal.
+  The footprint session was told to develop on `claude/banished-ios-handoff-ejj6dh` and the player
+  chose to publish from here instead of widening the triggers.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
@@ -22,7 +27,8 @@ overhaul** — further down.
 
 ### Building footprints (this session)
 The player asked for varied building sizes so the village stops reading as one repeated cottage,
-plus larger maps so the density stays similar. All three steps are done.
+plus larger maps so the density stays similar. Done: the maps, the footprints, the models that had
+to be redrawn to fit them, and the fallout.
 
 **Maps.** Small 48 -> **72** tiles a side, medium 96 -> **144**; large stays 192. `MAP_SIZES` in
 `src/types.ts`.
@@ -81,6 +87,16 @@ rendered height in tiles: the house is the reference at **2.46**, and the player
 reads against that — everything marked "2" lands 2.2-2.9, the mine ("3") at 3.73, the chapel
 ("5") at 5.93.
 
+Every building was also **looked at** at `?gfx=high`, in rows of five on flat ground and then one
+at a time beside a house for scale. Two things that only a screenshot catches, both worth knowing
+before writing the next driver: `canPlace` charges for materials, so clearing `s.buildings` to
+tidy the shot removes the barn and every placement then fails on cost — keep the barn and stock
+it. And models stream in *after* the first frame, so a building placed too early keeps the flat
+fallback box permanently; wait on `renderer.models.loadedCount` before placing or the shot lies
+to you. The overview camera sits 54° above the horizon, which foreshortens height so badly that
+the chapel spire and the quarry's benches are unreadable — drop `camera.pitch` to ~0.4 to judge
+anything vertical.
+
 **`nearbyStone` was silently broken by this and is fixed** (`src/game/buildings.ts`). It counted
 rock in a fixed box around a building's *centre*, which was the same as "around its edge" while
 every workplace was 2x2 — but an 8x8 quarry's centre is four tiles from its own wall, so a
@@ -98,6 +114,24 @@ test now ask the game for the footprint via a new **`debugFootprint(type)`** hoo
 hard-coding it — use that in any new test that lays out a site. Both specs' site scans were relaxed
 from "all grass" to "grass or forest", which is what the rule under test actually needs (a build
 site fells what stands on it) and which matters far more now that a clearing has to be 64 tiles.
+
+The two failures that were *not* obvious both came from the same buried assumption — **a tile the
+test believed was outside a building was inside the 3x3 barn**. `s.buildings.some(b => x < b.x +
+(b.w ?? 2) …)` appeared twice in `newgame.spec.ts`: `b.w` is only ever set on the ranch and the
+field, so the `?? 2` fallback silently claimed every other building was 2x2, and a path planned
+under the barn is one no laborer can ever lay. `world.spec.ts` picked its "near" harvest tile as
+`barn.x + 2, barn.y + 2`, one clear tile past a 2x2 barn and the corner of a 3x3 one; `pickHarvest`
+only returns reachable tiles, so it silently answered with the far tile instead. Both now derive
+the footprint from the game. **Grep for `?? 2` before changing a footprint again** — it is the
+shape this bug takes.
+
+**Placement was measured, not assumed** — the previous handoff flagged the 5x9 trading post as the
+thing most likely to become unplaceable, since a third of its 45 tiles must be water and its door
+must still land on walkable ground. Counting every legal site at every rotation across three
+generated worlds per map size: on a **small** (72-tile) map the trading post has **585-776** sites,
+the 8x8 quarry 1458-2140, the 6x6 mine 261-304 (foothills are the constraint, as intended), the 3x5
+fishing dock 290-330. Nothing is scarce. The larger maps are what bought that, and it is why
+`MAP_SIZES` and the footprints belong to the same piece of work.
 
 **Costs are unchanged, by design.** An 8x8 quarry still costs 30 wood and a 3x3 barn still costs
 16. Whether that is right is a balance question for the player, not something to fix silently —
@@ -597,10 +631,16 @@ Never put the model ID in commits/PRs/code/comments — chat replies only.
   renamed, update the repo name in lockstep or GitHub Pages breaks: `vite.config.ts` `BASE`,
   `playwright.config.ts` `BASE`, the two `.../mobile-game/` URLs in `README.md`, and the **Repo** line
   above. (Package name is already `little-village`.)
-- **Branch names:** the two older branches still carry the "banished" string in git infra and in the
-  two `.github/workflows/*.yml` triggers. Renaming needs the user's go-ahead plus a workflow-trigger
-  update; note the current working branch (`claude/game-opportunities-impl-8qxrqc`) is not in those
-  triggers, so CI does not run on it as configured.
+- **Deploying from a session-named branch.** Each session is handed a fresh
+  `claude/…` branch to develop on, and none of them is in the workflow triggers — so a push there
+  deploys nothing and tests nothing. Today the answer is "push to
+  `claude/banished-ios-app-b4zott` regardless" (see Project above), which works but quietly makes
+  the branch instruction a formality. The durable fixes, in rising order of commitment: add each
+  session branch to the two `branches:` lists as it is created; switch the triggers to a wildcard
+  (`claude/**`); or merge to `main` at the end of a session and let `main` be the thing that
+  deploys. Worth asking the player which they want rather than carrying the workaround forever.
+  Renaming the branches away from the "banished" string needs the same trigger edit, so the two
+  jobs are best done together.
 - **Per-crop designs:** `CROP_DESIGN` (color + reserved `model` slot) and the render hook in
   `drawFarm`/`makeFencedPlot` exist, but fields draw generically. Next step is real per-crop art at the
   hook, or a cheap first pass tinting the field by `cropDesign(crop).color` (~a couple of lines).
@@ -608,6 +648,27 @@ Never put the model ID in commits/PRs/code/comments — chat replies only.
   tune `MERCHANT_ARRIVAL_CHANCE`/category stock; optional HUD cue for an arriving boat (top-bar button
   was removed).
 - **Minor:** the 3D ranch pen shows no live animal glyphs/count (the 2D renderer does).
+- **The villager-breeding tests get slower the later they run — this is unsolved and worth an
+  hour.** All five drive `growUnderIdealConditions`, sixteen season turnovers on a whole village.
+  Timings for the *identical* test:
+
+  | when it ran | time |
+  |---|---|
+  | first in a 3-test run, idle machine | **1.6m** ✓ |
+  | second in that same run, still idle | **6.8m** ✗ |
+  | 59th in the full suite | **8.1m** ✗ (hit the cap) |
+
+  Not the map seed, and not this session's change: the commit *before* the footprints shows the
+  same pattern, and there the first breeding test passed while the later one timed out. What
+  predicts the time is **position in the browser session**, which points at something accumulating
+  across page loads — leaked WebGL contexts under SwiftShader is the obvious suspect, since each
+  `open()` builds a fresh Three.js renderer. Chasing that is the real fix; a `page.close()` /
+  fresh-context per test in the breeding describe is the cheap experiment to try first.
+
+  They share a named `GROWTH_TIMEOUT` (480s), which is a plaster, not a cure — it was 240s and
+  raising it did not make the full-suite run green. **Do not raise it again**; it is already at
+  eight minutes for one test. Until the leak is found, expect the last two or three breeding
+  tests to fail in a full run and pass in isolation.
 - **Suite flakiness.** Several latent map-seed flakes were hunted down; the recurring pattern is a
   test that depends on villagers *walking* somewhere within a step budget, which an unlucky map
   (target across a river, or simply far) breaks. The fix that works is to stand the villagers where

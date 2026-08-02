@@ -45,6 +45,7 @@ MODELS = {
     "hospital": "civic:hospital",
     "well": "civic:well",
     "barn": "civic:barn",
+    "boat": "boat:boat",
 }
 
 

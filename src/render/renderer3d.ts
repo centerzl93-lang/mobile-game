@@ -295,6 +295,8 @@ export class Renderer3D {
   private workRing!: THREE.Group; // ground circle (fill + outline) for a selected building's work radius
   private marquee!: THREE.Mesh;
   private boat!: THREE.Group; // merchant boat, shown while sailing to/from the dock
+  /** True once the authored boat model has replaced the placeholder hull. */
+  private boatModelled = false;
 
   // Cached signatures so we only rebuild a layer when its data changes.
   private sig = { land: -1, tree: -1, rock: -1, path: -1, mark: -1, bld: '' };
@@ -1739,8 +1741,29 @@ export class Renderer3D {
       this.boat.visible = false;
       return;
     }
+    // Swap the placeholder for the real vessel the first time the model turns up. Models load
+    // asynchronously, so this cannot be done once at startup.
+    if (!this.boatModelled) {
+      const model = this.models.propClone('boat');
+      if (model) {
+        this.boatModelled = true;
+        for (const child of [...this.boat.children]) {
+          this.boat.remove(child);
+          disposeTree(child);
+        }
+        // Authored bow-along-+Y like every building, so it needs the same half turn to face the
+        // way it sails — always downstream, toward +z.
+        model.rotation.y = buildingYaw(0);
+        this.boat.add(model);
+        this.enableShadows(this.boat);
+      }
+    }
     this.boat.visible = true;
     this.boat.position.set(b.x, 0.16, b.y);
+    // A little roll and pitch on the same swell the water is riding, so a moored boat is not a
+    // static prop sitting on a moving surface.
+    const t = this.waterTime;
+    this.boat.rotation.set(Math.sin(t * 1.5) * 0.035, 0, Math.sin(t * 2.1 + 1) * 0.05);
   }
 
   private teardown(): void {

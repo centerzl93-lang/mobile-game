@@ -27,5 +27,8 @@
   ],
   "rocks": [
     "rock.gltf"
-  ]
+  ],
+  "props": {
+    "boat": "boat.gltf"
+  }
 }

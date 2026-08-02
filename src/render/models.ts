@@ -16,6 +16,8 @@ export interface ModelManifest {
   trees?: string[];
   /** loose-stone model filenames (instanced where tiles carry stone) */
   rocks?: string[];
+  /** one-off props that are not buildings, e.g. { "boat": "boat.gltf" } */
+  props?: Record<string, string>;
 }
 
 export class ModelLibrary {
@@ -34,6 +36,7 @@ export class ModelLibrary {
   private base = import.meta.env.BASE_URL + 'models/';
   private templates = new Map<string, THREE.Object3D>(); // filename -> normalized template
   private buildingFile = new Map<string, string>(); // buildingType -> filename
+  private propFile = new Map<string, string>(); // prop name -> filename
   treeFiles: string[] = [];
   rockFiles: string[] = [];
   loadedCount = 0;
@@ -54,6 +57,12 @@ export class ModelLibrary {
     for (const [bt, file] of Object.entries(manifest.buildings ?? {})) {
       if (file) {
         this.buildingFile.set(bt, file);
+        files.add(file);
+      }
+    }
+    for (const [name, file] of Object.entries(manifest.props ?? {})) {
+      if (file) {
+        this.propFile.set(name, file);
         files.add(file);
       }
     }
@@ -84,6 +93,12 @@ export class ModelLibrary {
   /** A fresh, normalized clone of the model mapped to a building type, or null. */
   buildingClone(buildingType: string): THREE.Object3D | null {
     const tpl = this.template(this.buildingFile.get(buildingType));
+    return tpl ? tpl.clone(true) : null;
+  }
+
+  /** A fresh, normalized clone of a named one-off prop (the merchant's boat), or null. */
+  propClone(name: string): THREE.Object3D | null {
+    const tpl = this.template(this.propFile.get(name));
     return tpl ? tpl.clone(true) : null;
   }
 

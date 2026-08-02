@@ -86,6 +86,9 @@ import {
 import { saveGame, loadGame, hasSave, clearSave, slotInfo, lastSlot, SLOTS } from './game/save';
 import { InspectRow, InspectControls } from './ui/ui';
 
+/** Where the tips preference lives. Kept out of the save so it follows the player, not a village. */
+const TIPS_KEY = 'village-tips';
+
 const SPEEDS = [1, 2, 3];
 /**
  * Yaw speed (radians/sec) while a corner rotate button is held — 45°/s, so a full turn takes
@@ -114,6 +117,8 @@ class Game {
   /** Player-chosen footprint (tiles) while a sizable building (ranch/field) is selected. */
   sizeW = 4;
   sizeH = 4;
+  /** Quarter turns clockwise the pending building will be placed at (see `Building.rot`). */
+  buildRot: 0 | 1 | 2 | 3 = 0;
   selectedPath: PathTier | null = null;
   demolish = false;
   harvestMode = false;
@@ -160,6 +165,7 @@ class Game {
       onSetCrop: (id, crop) => this.setCrop(id, crop),
       onSetAnimal: (id, animal) => this.setAnimal(id, animal),
       onSizeChange: (dim, delta) => this.onSizeChange(dim, delta),
+      onRotateBuild: () => this.onRotateBuild(),
       onSetRanchMax: (id, delta) => this.setRanchMax(id, delta),
       onCullRanch: (id) => this.cullRanch(id),
       onSplitRanch: (from, to) => this.splitRanch(from, to),
@@ -176,6 +182,8 @@ class Game {
     });
     // Rotation only applies to the 3D view; hide the buttons in the flat 2D fallback.
     if (this.use2d) this.ui.hideRotateButtons();
+    // Tips default on for a first-time player and stay off once turned off, across villages.
+    this.ui.setTips(localStorage.getItem(TIPS_KEY) !== 'off');
     this.input = new InputManager(this.canvas, this.camera);
     this.input.onTap = (sx, sy) => this.onTap(sx, sy);
     this.input.onPaint = (sx, sy) => this.onPaint(sx, sy);
@@ -253,10 +261,28 @@ class Game {
     if (t && sz) {
       this.sizeW = sz.min;
       this.sizeH = sz.min;
-      this.ui.showSizeWidget(BUILDING_DEFS[t].name, this.sizeW, this.sizeH, sz.min, sz.max);
-    } else {
-      this.ui.hideSizeWidget();
     }
+    this.buildRot = 0; // every new selection starts facing south
+    if (t) this.showPlaceWidget(t);
+    else this.ui.hideSizeWidget();
+  }
+
+  /** The placement widget for the currently selected building: rotation, and size when sizable. */
+  private showPlaceWidget(type: BuildingType): void {
+    const sz = SIZABLE[type];
+    this.ui.showPlaceWidget(
+      BUILDING_DEFS[type].name,
+      this.buildRot,
+      sz ? { w: this.sizeW, h: this.sizeH, min: sz.min, max: sz.max } : null,
+    );
+  }
+
+  /** Turn the pending building a quarter turn clockwise, moving its door to the next face. */
+  private onRotateBuild(): void {
+    const type = this.selectedBuild;
+    if (!type) return;
+    this.buildRot = ((this.buildRot + 1) % 4) as 0 | 1 | 2 | 3;
+    this.showPlaceWidget(type);
   }
 
   /** Resize the pending footprint of the selected sizable building (clamped to its bounds). */
@@ -267,7 +293,7 @@ class Game {
     const clamp = (v: number) => Math.max(sz.min, Math.min(sz.max, v));
     if (dim === 'w') this.sizeW = clamp(this.sizeW + delta);
     else this.sizeH = clamp(this.sizeH + delta);
-    this.ui.showSizeWidget(BUILDING_DEFS[type].name, this.sizeW, this.sizeH, sz.min, sz.max);
+    this.showPlaceWidget(type);
   }
 
   private onSelectPath(tier: PathTier | null): void {
@@ -672,9 +698,14 @@ class Game {
   private openSettings(back: () => void): void {
     this.ui.showSettings({
       gfx: (localStorage.getItem('village-gfx') as 'low' | 'high' | null) ?? 'auto',
+      tips: this.ui.tipsEnabled(),
       onSetGfx: (g) => {
         if (g === 'auto') localStorage.removeItem('village-gfx');
         else localStorage.setItem('village-gfx', g);
+      },
+      onSetTips: (on) => {
+        this.ui.setTips(on);
+        localStorage.setItem(TIPS_KEY, on ? 'on' : 'off');
       },
       onClearSaves: () => {
         clearSave();
@@ -740,12 +771,12 @@ class Game {
     if (!this.selectedBuild) return;
     const { tx, ty } = this.reticleTile(this.selectedBuild);
     const { w, h } = this.placeSize(this.selectedBuild);
-    const check = canPlace(this.state, this.selectedBuild, tx, ty, w, h);
+    const check = canPlace(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot);
     if (!check.ok) {
       this.ui.flashHint(check.reason ?? 'Cannot build here');
       return;
     }
-    const placed = placeBuilding(this.state, this.selectedBuild, tx, ty, w, h);
+    const placed = placeBuilding(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot);
     const name = BUILDING_DEFS[this.selectedBuild].name;
     const needsClearing = placed !== null && !footprintClear(this.state, placed);
     this.ui.log(
@@ -1049,15 +1080,15 @@ class Game {
   }
 
   /** Debug/testing helper: check a placement at a tile (uses the current ranch size). */
-  debugCanPlace(type: BuildingType, x: number, y: number): { ok: boolean; reason?: string } {
+  debugCanPlace(type: BuildingType, x: number, y: number, rot: 0 | 1 | 2 | 3 = 0): { ok: boolean; reason?: string } {
     const { w, h } = this.placeSize(type);
-    return canPlace(this.state, type, x, y, w, h);
+    return canPlace(this.state, type, x, y, w, h, rot);
   }
 
   /** Debug/testing helper: place a building (as a construction site) at a tile. */
-  debugPlace(type: BuildingType, x: number, y: number): number | null {
+  debugPlace(type: BuildingType, x: number, y: number, rot: 0 | 1 | 2 | 3 = 0): number | null {
     const { w, h } = this.placeSize(type);
-    const b = placeBuilding(this.state, type, x, y, w, h);
+    const b = placeBuilding(this.state, type, x, y, w, h, rot);
     return b ? b.id : null;
   }
 
@@ -1143,10 +1174,14 @@ class Game {
 
   private reticleTile(type: BuildingType): { tx: number; ty: number } {
     const { w, h } = this.placeSize(type);
+    // Centre the *turned* footprint under the reticle, or a rotated 3x2 would sit off to one side
+    // of the crosshair the player is aiming with.
+    const fw = this.buildRot % 2 === 1 ? h : w;
+    const fh = this.buildRot % 2 === 1 ? w : h;
     const [cx, cy] = this.camera.centerTile();
     return {
-      tx: Math.round(cx - w / 2),
-      ty: Math.round(cy - h / 2),
+      tx: Math.round(cx - fw / 2),
+      ty: Math.round(cy - fh / 2),
     };
   }
 
@@ -1237,7 +1272,8 @@ class Game {
       placement.ty = ty;
       placement.pw = w;
       placement.ph = h;
-      placement.valid = canPlace(this.state, this.selectedBuild, tx, ty, w, h).ok;
+      placement.prot = this.buildRot;
+      placement.valid = canPlace(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot).ok;
     }
 
     if (this.use2d) {

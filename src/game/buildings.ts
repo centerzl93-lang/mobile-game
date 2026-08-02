@@ -16,8 +16,12 @@ import {
   HARVEST_IRON,
   isWorkplace,
   nextBuildingName,
+  entranceAt,
+  entranceTile,
+  hasDoor,
 } from '../types';
 import { getTile, inBounds, tileIndex } from './world';
+import { isWalkable } from './pathfind';
 import { totalStored, addNearest } from './storage';
 import { clearPathsUnder } from './paths';
 
@@ -30,10 +34,21 @@ export interface PlaceResult {
  * Can a building of `type` be placed with its top-left corner at (x,y)? `w`/`h` override the
  * def footprint (used for the player-sized ranch); they default to the def size.
  */
-export function canPlace(s: GameState, type: BuildingType, x: number, y: number, w?: number, h?: number): PlaceResult {
+export function canPlace(
+  s: GameState,
+  type: BuildingType,
+  x: number,
+  y: number,
+  w?: number,
+  h?: number,
+  rot: number = 0,
+): PlaceResult {
   const def = BUILDING_DEFS[type];
-  const fw = w ?? def.w;
-  const fh = h ?? def.h;
+  const baseW = w ?? def.w;
+  const baseH = h ?? def.h;
+  // A quarter turn swaps the footprint, so everything below works in map space.
+  const fw = rot % 2 === 1 ? baseH : baseW;
+  const fh = rot % 2 === 1 ? baseW : baseH;
   const allowsWater = def.requiresWaterFraction !== undefined; // a dock may sit partly on water
   let waterTiles = 0;
   let landTiles = 0;
@@ -84,6 +99,23 @@ export function canPlace(s: GameState, type: BuildingType, x: number, y: number,
       return { ok: false, reason: foot ? "Must be placed in a mountain's foothills" : 'Wrong ground here' };
     }
   }
+  // Doors, both ways. Villagers walk around a finished building and in through its door, so a
+  // door opening onto water, rock or another building's wall is a building nobody can reach —
+  // and a site dropped across someone else's door strands them just as surely. Turning the
+  // building is the fix for both, which is what the rotate control is for.
+  if (hasDoor(type)) {
+    const door = entranceAt(x, y, fw, fh, rot);
+    if (!isWalkable(s, door.x, door.y)) {
+      return { ok: false, reason: 'Its door would be blocked — turn it to face open ground' };
+    }
+  }
+  for (const b of s.buildings) {
+    if (!hasDoor(b.type)) continue;
+    const e = entranceTile(b);
+    if (e.x >= x && e.x < x + fw && e.y >= y && e.y < y + fh) {
+      return { ok: false, reason: `Would block the ${BUILDING_DEFS[b.type].name}'s door` };
+    }
+  }
   // Materials must exist in storage (consumed later, on delivery — not now).
   for (const [kind, amount] of Object.entries(def.cost) as [ResourceKind, number][]) {
     if (totalStored(s, kind) < amount) {
@@ -100,8 +132,9 @@ export function placeBuilding(
   y: number,
   w?: number,
   h?: number,
+  rot: 0 | 1 | 2 | 3 = 0,
 ): Building | null {
-  const check = canPlace(s, type, x, y, w, h);
+  const check = canPlace(s, type, x, y, w, h, rot);
   if (!check.ok) return null;
   // No deduction — builders haul the materials to the site during construction.
   const b: Building = {
@@ -121,6 +154,7 @@ export function placeBuilding(
     animal: 'cattle',
     store: {},
   };
+  if (rot) b.rot = rot; // left undefined when unturned, so saves and signatures stay quiet
   // Workplaces get a numbered name so the job board and inspect sheet can tell them apart.
   if (isWorkplace(type)) b.name = nextBuildingName(s.buildings, type);
   // Player-sizable buildings (ranch, field) carry their chosen footprint.
@@ -211,6 +245,7 @@ export function demolishBuilding(s: GameState, b: Building): void {
     if (c.jobId === b.id) c.jobId = null;
     if (c.homeId === b.id) c.homeId = null;
   }
+  s.navVersion = (s.navVersion ?? 0) + 1; // its walls are gone; routes through it open up
 }
 
 function rectsOverlap(

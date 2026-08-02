@@ -1,14 +1,76 @@
-import { GameState, MAP_W, MAP_H, PATH_BRIDGE, PATH_TUNNEL } from '../types';
+import {
+  GameState,
+  MAP_W,
+  MAP_H,
+  PATH_BRIDGE,
+  PATH_TUNNEL,
+  blocksMovement,
+  footprintW,
+  footprintH,
+} from '../types';
 import { tileIndex, inBounds } from './world';
+
+/**
+ * Which tiles a finished building stands on, rebuilt only when the village changes.
+ *
+ * Walls are checked on every neighbour expansion of every A* run, so this cannot be a scan of the
+ * building list. `s.navVersion` already ticks whenever the walkable world changes — paths, and now
+ * buildings going up or coming down — so it doubles as the cache key.
+ */
+let solidGrid: Uint8Array | null = null;
+let solidFor: GameState | null = null;
+let solidVersion = -1;
+let solidCount = -1;
+let solidSize = -1;
+
+function solids(s: GameState): Uint8Array {
+  const n = MAP_W * MAP_H;
+  const version = s.navVersion ?? 0;
+  // Keyed on the state object as well as the version: a new village starts its version at zero
+  // again, and keying on the number alone would hand it the previous map's walls. The building
+  // count catches anything that appends without touching the version.
+  if (
+    solidGrid &&
+    solidFor === s &&
+    solidVersion === version &&
+    solidCount === s.buildings.length &&
+    solidSize === n
+  ) {
+    return solidGrid;
+  }
+  const grid = solidGrid && solidSize === n ? solidGrid : new Uint8Array(n);
+  grid.fill(0);
+  for (const b of s.buildings) {
+    if (!blocksMovement(b)) continue;
+    const w = footprintW(b);
+    const h = footprintH(b);
+    for (let dy = 0; dy < h; dy++) {
+      for (let dx = 0; dx < w; dx++) {
+        if (inBounds(b.x + dx, b.y + dy)) grid[tileIndex(b.x + dx, b.y + dy)] = 1;
+      }
+    }
+  }
+  solidGrid = grid;
+  solidFor = s;
+  solidVersion = version;
+  solidCount = s.buildings.length;
+  solidSize = n;
+  return grid;
+}
 
 /**
  * A tile can be walked if it is on the map and passable. Water and mountains (`stone`) block
  * movement on their own: water is crossed only over a built bridge, mountain only through a
  * driven tunnel. Foothills, grass and forest are walkable.
+ *
+ * A finished building's footprint is a wall: villagers go round it and in through its door. Fields
+ * and pens are the exception (see `blocksMovement`), and so are sites still under construction —
+ * a builder has to be able to walk onto one to raise it.
  */
 export function isWalkable(s: GameState, tx: number, ty: number): boolean {
   if (!inBounds(tx, ty)) return false;
   const idx = tileIndex(tx, ty);
+  if (solids(s)[idx]) return false;
   const type = s.tiles[idx].type;
   if (type === 'stone') return s.paths[idx] === PATH_TUNNEL;
   if (type !== 'water') return true;

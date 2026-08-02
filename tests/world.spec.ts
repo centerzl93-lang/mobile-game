@@ -215,7 +215,18 @@ test.describe('world generation, placement & pathfinding', () => {
       let quarryOpen: number[] | null = null;
       let worldsTried = 0;
       const nearStone = (x: number, y: number, r: number) => { for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (is(x + dx, y + dy, 'stone')) return true; return false; };
-      const cp = (t: string, xy: number[] | null) => (xy ? g.debugCanPlace(t, xy[0], xy[1]) : { ok: null });
+      // "Placeable here" now means placeable at *some* rotation: a building's door has to face
+      // open ground, and against a mountain or a shoreline only some faces will do — which is
+      // what the rotate control on the placement widget is for.
+      const cp = (t: string, xy: number[] | null) => {
+        if (!xy) return { ok: null };
+        let last: any = { ok: false };
+        for (const rot of [0, 1, 2, 3]) {
+          last = g.debugCanPlace(t, xy[0], xy[1], rot);
+          if (last.ok) return last;
+        }
+        return last;
+      };
       const clearRect = (x: number, y: number, w: number, h: number) => {
         for (let dy = 0; dy < h; dy++)
           for (let dx = 0; dx < w; dx++) if (!is(x + dx, y + dy, 'grass')) return false;
@@ -475,5 +486,127 @@ test.describe('path editing', () => {
     expect(res.downgraded, 'dirt can be drawn over stone').toEqual(res.downgraded.map(() => true));
     expect(res.removed, 'one drag pulls up the whole run').toBe(4);
     expect(res.afterDrag, 'the tiles are bare afterwards').toEqual(res.afterDrag.map(() => 0));
+  });
+});
+
+test.describe('rotation, doors and walls', () => {
+  // A patch of open grass big enough to lay out a test village on, well clear of the founders'.
+  const clearArea = `(g, w, h) => {
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    for (let ty = 2; ty < s.h - h - 2; ty++)
+      for (let tx = 2; tx < s.w - w - 2; tx++) {
+        let far = true;
+        for (const b of s.buildings) {
+          if (Math.abs(b.x - tx) < 12 && Math.abs(b.y - ty) < 12) { far = false; break; }
+        }
+        if (!far) continue;
+        // Flatten it: these tests are about buildings, not terrain.
+        for (let dy = -1; dy <= h; dy++)
+          for (let dx = -1; dx <= w; dx++) {
+            const t = s.tiles[(ty + dy) * s.w + (tx + dx)];
+            t.type = 'grass';
+            t.trees = 0;
+            delete t.stone;
+            delete t.iron;
+            s.harvest[(ty + dy) * s.w + (tx + dx)] = 0;
+          }
+        void barn;
+        return [tx, ty];
+      }
+    throw new Error('no clear area on this map');
+  }`;
+
+  test('a quarter turn swaps the footprint and moves the door round', async ({ page }) => {
+    await startSmall(page);
+    const out = await page.evaluate((clearSrc) => {
+      const g = (window as any).__village;
+      const s = g.state;
+      // A quarry is 3 wide by 6 deep — the asymmetry is the point.
+      const [x, y] = eval(clearSrc)(g, 8, 8);
+      const upright = g.debugPlace('quarry', x, y, 0);
+      const a = s.buildings.find((b: any) => b.id === upright);
+      const [x2, y2] = eval(clearSrc)(g, 8, 8);
+      const turned = g.debugPlace('quarry', x2, y2, 1);
+      const b = s.buildings.find((o: any) => o.id === turned);
+      const foot = (o: any) => {
+        const d = { quarry: [3, 6] } as any;
+        const [dw, dh] = d[o.type];
+        return (o.rot ?? 0) % 2 === 1 ? [dh, dw] : [dw, dh];
+      };
+      return {
+        uprightRot: a.rot ?? 0,
+        turnedRot: b.rot,
+        uprightFoot: foot(a),
+        turnedFoot: foot(b),
+        // Door of the upright one is below it; the turned one's is off its west side.
+        uprightDoor: [a.x + 1, a.y + 6],
+        turnedDoor: [b.x - 1, b.y + 1],
+      };
+    }, clearArea);
+    expect(out.uprightRot).toBe(0);
+    expect(out.turnedRot).toBe(1);
+    expect(out.uprightFoot).toEqual([3, 6]);
+    expect(out.turnedFoot).toEqual([6, 3]); // a quarter turn swaps width and depth
+  });
+
+  test('villagers walk around a finished building, never through it', async ({ page }) => {
+    await startSmall(page);
+    const out = await page.evaluate((clearSrc) => {
+      const g = (window as any).__village;
+      const s = g.state;
+      const [x, y] = eval(clearSrc)(g, 6, 6);
+      // A house squarely between the two ends of the route.
+      const id = g.debugPlace('house', x + 2, y + 2, 0);
+      const b = s.buildings.find((o: any) => o.id === id);
+      const throughSite = g.debugPath(x + 3, y, x + 3, y + 5); // straight over an unbuilt site
+      b.built = true;
+      b.progress = 9999;
+      s.navVersion = (s.navVersion ?? 0) + 1;
+      const around = g.debugPath(x + 3, y, x + 3, y + 5);
+      const inside = (p: any) =>
+        Math.floor(p.x) >= b.x && Math.floor(p.x) < b.x + 2 && Math.floor(p.y) >= b.y && Math.floor(p.y) < b.y + 2;
+      return {
+        siteCrossings: throughSite ? throughSite.filter(inside).length : -1,
+        builtCrossings: around ? around.filter(inside).length : -1,
+        stillReaches: !!around && around.length > 0,
+        detourNotShorter: !!around && !!throughSite && around.length >= throughSite.length,
+      };
+    }, clearArea);
+    // A site under construction is open ground — builders have to be able to stand on it.
+    expect(out.siteCrossings).toBeGreaterThan(0);
+    // Once it is finished the route still exists, but goes around rather than through.
+    expect(out.stillReaches).toBe(true);
+    expect(out.builtCrossings).toBe(0);
+    // Not necessarily a *longer* route in waypoints: movement is 8-neighbour, so stepping
+    // diagonally round a two-tile building and back costs the same number of steps. That the
+    // route no longer passes through the footprint is the claim that matters.
+    expect(out.detourNotShorter).toBe(true);
+  });
+
+  test('a building whose door would be walled in is refused', async ({ page }) => {
+    await startSmall(page);
+    const out = await page.evaluate((clearSrc) => {
+      const g = (window as any).__village;
+      const s = g.state;
+      const [x, y] = eval(clearSrc)(g, 8, 8);
+      // Wall off the tile below (x+2, y+2) — that is where a south-facing 2×2 house's door lands.
+      const blockerId = g.debugPlace('house', x + 2, y + 4, 0);
+      const blocker = s.buildings.find((o: any) => o.id === blockerId);
+      blocker.built = true;
+      blocker.progress = 9999;
+      s.navVersion = (s.navVersion ?? 0) + 1;
+      return {
+        facingTheWall: g.debugCanPlace('house', x + 2, y + 2, 0),
+        turnedAway: g.debugCanPlace('house', x + 2, y + 2, 2),
+        // And a site dropped across the blocker's own door is refused too.
+        overItsDoor: g.debugCanPlace('house', blocker.x, blocker.y + 2, 2),
+      };
+    }, clearArea);
+    expect(out.facingTheWall.ok).toBe(false);
+    expect(out.facingTheWall.reason).toContain('door');
+    expect(out.turnedAway.ok).toBe(true); // turning it round opens the door onto clear ground
+    expect(out.overItsDoor.ok).toBe(false);
+    expect(out.overItsDoor.reason).toContain('door');
   });
 });

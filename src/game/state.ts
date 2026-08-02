@@ -7,6 +7,9 @@ import {
   BUILDING_DEFS,
   footprintW,
   footprintH,
+  entranceAt,
+  entranceTile,
+  hasDoor,
   ranchCapacity,
   SIZABLE,
   isHouse,
@@ -186,6 +189,19 @@ function placeStartHouses(s: GameState, start: { x: number; y: number }, count: 
     }
     for (const b of s.buildings) {
       if (x < b.x + footprintW(b) && x + 2 > b.x && y < b.y + footprintH(b) && y + 2 > b.y) return false;
+    }
+    // Doors, the same rule the player's own placements follow: villagers walk around a house and
+    // in through its door, so the founding village must not wall its own front steps in.
+    const door = entranceAt(x, y, 2, 2, 0);
+    const doorTile = getTile(s.tiles, door.x, door.y);
+    if (!doorTile || doorTile.type === 'water' || doorTile.type === 'stone') return false;
+    for (const b of s.buildings) {
+      if (door.x >= b.x && door.x < b.x + footprintW(b) && door.y >= b.y && door.y < b.y + footprintH(b)) {
+        return false;
+      }
+      if (!hasDoor(b.type)) continue;
+      const e = entranceTile(b);
+      if (e.x >= x && e.x < x + 2 && e.y >= y && e.y < y + 2) return false;
     }
     return true;
   };

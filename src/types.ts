@@ -488,6 +488,12 @@ export interface Building {
    */
   w?: number;
   h?: number;
+  /**
+   * Quarter turns clockwise, 0..3, chosen at placement. A quarter turn swaps the footprint's
+   * width and height and moves the door to the next face round — see `footprintW` and
+   * `entranceTile`. Undefined means "as built", facing south.
+   */
+  rot?: 0 | 1 | 2 | 3;
   /** Ranch: head of livestock currently penned here. */
   animals?: number;
   /** Ranch: player-set cap on the herd (0..ranchCapacity). */
@@ -597,6 +603,20 @@ export function isAdult(c: { age: number }): boolean {
   return c.age >= ADULT_AGE;
 }
 
+/**
+ * A child old enough for school but not yet of working age. Students are still children in every
+ * mechanical sense — they can't work and they eat a child's ration — the distinction exists so the
+ * player can see who is close to joining the workforce and size their schooling accordingly.
+ */
+export function isStudent(c: { age: number }): boolean {
+  return c.age >= SCHOOL_AGE && c.age < ADULT_AGE;
+}
+
+/** A child too young for school. */
+export function isInfant(c: { age: number }): boolean {
+  return c.age < SCHOOL_AGE;
+}
+
 /** Whether a villager is inside the fertile age window and can father/bear a child. */
 export function isFertile(c: { age: number }): boolean {
   return c.age >= FERTILE_MIN_AGE && c.age <= FERTILE_MAX_AGE;
@@ -632,13 +652,65 @@ export function workRadiusOf(b: Building): number | undefined {
   return def.workRadius + (workers - 1) * WORK_RADIUS_PER_WORKER;
 }
 
-/** A building's footprint width. Ranches carry a custom `w`; everything else uses its def size. */
+/**
+ * A building's footprint width *as it stands on the map*. Ranches carry a custom `w`; everything
+ * else uses its def size — and a quarter turn (rot 1 or 3) swaps the two, so `b.x, b.y` is always
+ * the top-left corner of the tiles actually occupied.
+ */
 export function footprintW(b: Building): number {
-  return b.w ?? BUILDING_DEFS[b.type].w;
+  const d = BUILDING_DEFS[b.type];
+  return (b.rot ?? 0) % 2 === 1 ? (b.h ?? d.h) : (b.w ?? d.w);
 }
 /** A building's footprint height (see `footprintW`). */
 export function footprintH(b: Building): number {
-  return b.h ?? BUILDING_DEFS[b.type].h;
+  const d = BUILDING_DEFS[b.type];
+  return (b.rot ?? 0) % 2 === 1 ? (b.w ?? d.w) : (b.h ?? d.h);
+}
+
+/**
+ * The tile a villager stands on to go in: the door, one tile *outside* the footprint, centred on
+ * whichever face the building has been turned to present. Unrotated, every building faces south.
+ *
+ * This is a tile the world has to keep clear — see `canPlace`, which refuses both a site whose own
+ * door would be blocked and a site that would block someone else's. A building whose door is
+ * walled off is a building nobody can work in or live in.
+ */
+export function entranceTile(b: Building): { x: number; y: number } {
+  return entranceAt(b.x, b.y, footprintW(b), footprintH(b), b.rot ?? 0);
+}
+
+/** `entranceTile` for a footprint that isn't a building yet — what placement checks against. */
+export function entranceAt(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  rot: number,
+): { x: number; y: number } {
+  const midX = x + ((w - 1) >> 1);
+  const midY = y + ((h - 1) >> 1);
+  switch (rot) {
+    case 1: return { x: x - 1, y: midY }; // turned a quarter: door on the west face
+    case 2: return { x: midX, y: y - 1 }; // half turn: door on the north face
+    case 3: return { x: x + w, y: midY }; // three quarters: door on the east face
+    default: return { x: midX, y: y + h }; // as built: door on the south face
+  }
+}
+
+/** Does this building have a door that has to stay reachable? Fields and pens do not. */
+export function hasDoor(type: BuildingType): boolean {
+  return !OPEN_FOOTPRINT.includes(type);
+}
+
+/**
+ * Buildings villagers walk *through* rather than around: a field and a pen are open ground with a
+ * fence, not a wall. Everything else is a solid structure once it is finished — an unfinished site
+ * is still a patch of dirt with materials stacked on it, and blocking those would strand the
+ * builders carrying to them.
+ */
+export const OPEN_FOOTPRINT: BuildingType[] = ['farm', 'ranch'];
+export function blocksMovement(b: Building): boolean {
+  return b.built && !OPEN_FOOTPRINT.includes(b.type);
 }
 
 // Path layer values (per tile).
@@ -1015,6 +1087,12 @@ export const LARDER_CARRY_VOLUME = CARRY_VOLUME * 3;
 
 // ---- Demographics ----
 export const ADULT_AGE = 4; // children become working adults at this age (years)
+/**
+ * Age at which a child becomes a student. Purely a reporting distinction — a student is still a
+ * child to the simulation — but it tells the player how much of the next generation is nearly
+ * ready to work, which is what a school is an investment in.
+ */
+export const SCHOOL_AGE = 2;
 export const START_ADULTS = 8; // founding adult villagers
 export const START_CHILDREN = 4; // founding children
 export const ADULT_MIN_AGE = 20; // founding adults' age range
@@ -1030,8 +1108,18 @@ export const CHILD_FOOD_FACTOR = 0.5; // children eat this fraction of an adult 
 /**
  * Base chance a fertile household bears a child in a season, before the food-surplus and wellbeing
  * modifiers below. A household needs a fertile couple *and* room for the child.
+ *
+ * Sized against a year, which is four seasons: a household that merely *qualifies* — a season of
+ * food banked and middling health and happiness — should still average about one child a year, and
+ * a thriving one roughly two. The modifiers are therefore shallow (see BIRTH_SURPLUS_FLOOR and
+ * BIRTH_WELLBEING_FLOOR): they are the difference between a growing village and a booming one, not
+ * between growth and none. Falling under a season of food is what stops births outright.
  */
-export const BIRTH_CHANCE = 0.55;
+export const BIRTH_CHANCE = 0.5;
+/** Share of the birth chance a household keeps with no food surplus beyond the one-season gate. */
+export const BIRTH_SURPLUS_FLOOR = 0.7;
+/** Share of the birth chance a household keeps at rock-bottom health and happiness. */
+export const BIRTH_WELLBEING_FLOOR = 0.8;
 /**
  * The fertile years. Villagers come of age at ADULT_AGE and can work, but only bear children inside
  * this window — below it they are too young, above it they stop (just before old age sets in).

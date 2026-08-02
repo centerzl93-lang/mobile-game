@@ -82,6 +82,23 @@ const BUILDING_COLORS: Record<BuildingType, number> = {
   well: 0x5f7fa0, market: 0xa07a3f, barn: 0x6f6a4a,
 };
 
+/**
+ * Yaw for a building turned `rot` quarter turns clockwise, so its modelled door ends up on the
+ * face villagers actually walk to.
+ *
+ * Two conversions stack here. The models put their door on Blender's +Y face (`door(...)` in
+ * tools/models), and the glTF export maps Blender (x, y, z) to (x, z, −y) — so in the loaded model
+ * the door faces −Z. Tile +y is world +z, which makes −Z *north*, while `entranceTile` at rot 0
+ * puts the door tile to the south. Hence the half turn on top of the quarter turns: without it
+ * every building would be drawn with its door on the opposite side from the one being walked to.
+ *
+ * The quarter turns are negative because a rotation about Y sends local −Z to (−sin θ, −cos θ),
+ * and rot 1 has to land that on −x (west).
+ */
+function buildingYaw(rot: number): number {
+  return Math.PI - rot * (Math.PI / 2);
+}
+
 function buildingHeight(t: BuildingType): number {
   switch (t) {
     case 'well': return 0.7;
@@ -1203,7 +1220,9 @@ export class Renderer3D {
   // ---- buildings ----
   private syncBuildings(s: GameState): void {
     let sig = '';
-    for (const b of s.buildings) sig += b.id + ':' + (b.built ? 1 : 0) + ':' + (b.fireTimer ? 1 : 0) + ';';
+    for (const b of s.buildings) {
+      sig += b.id + ':' + (b.built ? 1 : 0) + ':' + (b.fireTimer ? 1 : 0) + ':' + (b.rot ?? 0) + ';';
+    }
     if (sig === this.sig.bld) return;
     this.sig.bld = sig;
 
@@ -1227,6 +1246,10 @@ export class Renderer3D {
         }
         obj = wantModel ? this.makeBuildingModel(b.type) : this.makeBuildingBox(b);
         obj.position.set(b.x + footprintW(b) / 2, TOP, b.y + footprintH(b) / 2);
+        // A model is authored facing south; turning it is what puts its door on the face the
+        // simulation is routing villagers to. The box fallback is built at the rotated size
+        // already, so only models turn.
+        if (wantModel) obj.rotation.y = buildingYaw(b.rot ?? 0);
         this.enableShadows(obj);
         this.buildingMeshes.set(b.id, obj);
         this.scene.add(obj);
@@ -1504,6 +1527,7 @@ export class Renderer3D {
       const def = BUILDING_DEFS[pv.type];
       const pw = pv.pw ?? def.w;
       const ph = pv.ph ?? def.h;
+      const rot = pv.prot ?? 0;
       const key = `${pv.type}:${pw}x${ph}`;
       if (key !== this.ghostKey) {
         this.ghostKey = key;
@@ -1514,7 +1538,12 @@ export class Renderer3D {
         this.ghost.add(this.makeGhostShape(pv.type, pw, ph));
       }
       this.ghost.visible = true;
-      this.ghost.position.set(pv.tx + pw / 2, TOP, pv.ty + ph / 2);
+      // The silhouette is built unturned, so turning the group is what makes its extent match the
+      // rotated footprint the placement check is using.
+      this.ghost.rotation.y = buildingYaw(rot);
+      const fw = rot % 2 === 1 ? ph : pw;
+      const fh = rot % 2 === 1 ? pw : ph;
+      this.ghost.position.set(pv.tx + fw / 2, TOP, pv.ty + fh / 2);
       // Green means it will go here, red means it will not. The tint is applied over the
       // silhouette rather than replacing it, so the building stays recognisable either way.
       this.ghost.traverse((o) => {
@@ -1531,7 +1560,10 @@ export class Renderer3D {
       const b = s.buildings.find((x) => x.id === pv.selBuildingId);
       if (b) {
         const d = BUILDING_DEFS[b.type];
-        selPos = { x: b.x + d.w / 2, y: b.y + d.h / 2, r: Math.max(d.w, d.h) * 0.6 };
+        void d;
+        const bw = footprintW(b);
+        const bh = footprintH(b);
+        selPos = { x: b.x + bw / 2, y: b.y + bh / 2, r: Math.max(bw, bh) * 0.6 };
         const wr = workRadiusOf(b);
         if (wr && b.built) workCircle = { x: b.x + d.w / 2, y: b.y + d.h / 2, r: wr };
       }

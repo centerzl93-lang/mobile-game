@@ -33,6 +33,8 @@ export interface PlacementView {
   /** Footprint of the ghost being placed (for the sized ranch); defaults to the def size. */
   pw?: number;
   ph?: number;
+  /** Quarter turns clockwise the ghost is being placed at (see `Building.rot`). */
+  prot?: 0 | 1 | 2 | 3;
   valid: boolean;
   /** True while in path-drawing mode (shows a hint reticle at screen centre). */
   pathTier?: 'dirt' | 'stone' | 'bridge' | 'tunnel' | null;
@@ -166,7 +168,7 @@ export class Renderer {
     for (const b of s.buildings) {
       const def = BUILDING_DEFS[b.type];
       if (!def.workRadius || !b.built) continue;
-      const [sx, sy] = this.camera.worldToScreen(b.x + def.w / 2, b.y + def.h / 2, w, h);
+      const [sx, sy] = this.camera.worldToScreen(b.x + footprintW(b) / 2, b.y + footprintH(b) / 2, w, h);
       ctx.beginPath();
       ctx.arc(sx, sy, def.workRadius * p, 0, Math.PI * 2);
       ctx.strokeStyle = 'rgba(255,255,255,0.13)';
@@ -350,8 +352,12 @@ export class Renderer {
     // Placement preview.
     if (placement.type) {
       const def = BUILDING_DEFS[placement.type];
-      const pw = placement.pw ?? def.w;
-      const ph = placement.ph ?? def.h;
+      // The ghost is drawn at its turned size, matching the tiles the placement check tested.
+      const rot = placement.prot ?? 0;
+      const bw = placement.pw ?? def.w;
+      const bh = placement.ph ?? def.h;
+      const pw = rot % 2 === 1 ? bh : bw;
+      const ph = rot % 2 === 1 ? bw : bh;
       const [sx, sy] = this.camera.worldToScreen(placement.tx, placement.ty, w, h);
       ctx.save();
       // Bright work-radius ring while positioning a forest-worked building.

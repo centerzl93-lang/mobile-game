@@ -35,7 +35,8 @@ import {
   HEAT_PER_CITIZEN_WINTER,
   CLOTHING_PER_CITIZEN_WINTER,
   ADULT_AGE,
-  OLD_AGE_START,
+  isInfant,
+  isStudent,
   isAdult,
 } from '../types';
 import { footprintClear } from '../game/buildings';
@@ -101,6 +102,8 @@ export interface UICallbacks {
   onSetCrop: (buildingId: number, crop: Crop) => void;
   onSetAnimal: (buildingId: number, animal: RanchAnimal) => void;
   onSizeChange: (dim: 'w' | 'h', delta: number) => void;
+  /** Turn the building being placed a quarter turn clockwise. */
+  onRotateBuild: () => void;
   onSetRanchMax: (buildingId: number, delta: number) => void;
   onCullRanch: (buildingId: number) => void;
   onSplitRanch: (fromId: number, toId: number) => void;
@@ -236,14 +239,18 @@ export class UI {
   updateHud(s: GameState, speed: number, paused: boolean): void {
     const totals = totalStoredAll(s);
     const pop = s.citizens.length;
+    // Children, students, adults. Old age used to have its own tally, but it told the player
+    // nothing they could act on — an elder needs nothing special and leaves on their own schedule.
+    // Splitting the *children* is the useful cut: it says how much of the next workforce is nearly
+    // ready, and how much schooling the village should be paying for.
     let childCount = 0;
-    let elderCount = 0;
+    let studentCount = 0;
     for (const c of s.citizens) {
-      if (c.age < ADULT_AGE) childCount++;
-      else if (c.age >= OLD_AGE_START) elderCount++;
+      if (isInfant(c)) childCount++;
+      else if (isStudent(c)) studentCount++;
     }
-    const adultCount = pop - childCount - elderCount;
-    this.el.ages.querySelector('.val')!.textContent = `🧒${childCount} 🧑${adultCount} 👴${elderCount}`;
+    const adultCount = pop - childCount - studentCount;
+    this.el.ages.querySelector('.val')!.textContent = `🧒${childCount} 🎓${studentCount} 🧑${adultCount}`;
     this.el.health.querySelector('.val')!.textContent = `${Math.round(avgHealth(s))}`;
     this.el.happy.querySelector('.val')!.textContent = `${Math.round(avgHappiness(s))}`;
     this.el.health.classList.toggle('low', avgHealth(s) < 45);
@@ -820,9 +827,18 @@ export class UI {
     this.el.trade.onclick = null;
   }
 
-  // ---- Placement size widget (shared by sizable buildings: ranch, field) ----
+  // ---- Placement widget: turn the building, and size it if it is a field or a pen ----
   private sizeEl: HTMLElement | null = null;
-  showSizeWidget(label: string, w: number, h: number, min: number, max: number): void {
+  /**
+   * Shown for the whole time a building is selected for placement. Rotation applies to every
+   * building — it decides which face the door ends up on, which is what the placement check cares
+   * about — while the width/height steppers only appear for the sizable ones.
+   */
+  showPlaceWidget(
+    label: string,
+    rot: 0 | 1 | 2 | 3,
+    size: { w: number; h: number; min: number; max: number } | null,
+  ): void {
     if (!this.sizeEl) {
       const el = document.createElement('div');
       el.className = 'ranch-size';
@@ -831,18 +847,25 @@ export class UI {
     }
     const el = this.sizeEl;
     el.classList.remove('hidden');
-    const row = (dim: 'w' | 'h', v: number) =>
+    const row = (dim: 'w' | 'h', v: number, min: number, max: number) =>
       `<div class="rs-row"><span>${dim.toUpperCase()}</span><div class="stepper">
         <button data-rs="${dim}-1"${v <= min ? ' disabled' : ''}>−</button><span class="count">${v}</span>
         <button data-rs="${dim}1"${v >= max ? ' disabled' : ''}>+</button></div></div>`;
-    el.innerHTML = `<div class="rs-title">${label} size</div>${row('w', w)}${row('h', h)}
-      <div class="rs-hint">Tap the map to place</div>`;
+    const sizeRows = size
+      ? row('w', size.w, size.min, size.max) + row('h', size.h, size.min, size.max)
+      : '';
+    const facing = ['South', 'West', 'North', 'East'][rot];
+    el.innerHTML =
+      `<div class="rs-title">${label}</div>${sizeRows}` +
+      `<div class="rs-row"><span>Door</span><button class="rs-rot" data-rot="1">⟳ ${facing}</button></div>` +
+      `<div class="rs-hint">Tap the map to place</div>`;
     el.querySelectorAll('[data-rs]').forEach((btn) =>
       btn.addEventListener('click', () => {
         const v = (btn as HTMLElement).dataset.rs!;
         this.cb.onSizeChange(v[0] as 'w' | 'h', Number(v.slice(1)));
       }),
     );
+    el.querySelector('[data-rot]')?.addEventListener('click', () => this.cb.onRotateBuild());
   }
   hideSizeWidget(): void {
     this.sizeEl?.classList.add('hidden');
@@ -1132,18 +1155,41 @@ export class UI {
   }
 
   // ---- Hints / log ----
+  /**
+   * Whether the instructional hint bar is shown. Off hides the "here is how this tool works"
+   * prompts a player stops needing after their first village; it does *not* silence `flashHint`,
+   * which reports the outcome of something the player just did and is never noise.
+   */
+  private tipsOn = true;
+  setTips(on: boolean): void {
+    this.tipsOn = on;
+    if (!on && this.hintIsTip) this.hideHint();
+  }
+  tipsEnabled(): boolean {
+    return this.tipsOn;
+  }
+  private hintIsTip = false;
+
+  /** An instructional tip, suppressed when the player has turned tips off. */
   showHint(text: string): void {
-    this.el.hint.textContent = text;
-    this.el.hint.classList.remove('hidden');
+    this.hintIsTip = true;
+    if (!this.tipsOn) return;
+    this.setHintText(text);
   }
   hideHint(): void {
     this.el.hint.classList.add('hidden');
   }
+  /** Transient feedback on an action just taken — shown whether or not tips are on. */
   flashHint(text: string): void {
-    this.showHint(text);
+    this.hintIsTip = false;
+    this.setHintText(text);
     window.setTimeout(() => {
       if (this.mode === 'inspect') this.hideHint();
     }, 1600);
+  }
+  private setHintText(text: string): void {
+    this.el.hint.textContent = text;
+    this.el.hint.classList.remove('hidden');
   }
 
   log(msg: string, kind: LogKind = 'info'): void {
@@ -1312,19 +1358,26 @@ export class UI {
   /** Settings: graphics tier (applies on reload) and clear-all-saves. */
   showSettings(opts: {
     gfx: 'auto' | 'low' | 'high';
+    tips: boolean;
     onSetGfx: (g: 'auto' | 'low' | 'high') => void;
+    onSetTips: (on: boolean) => void;
     onClearSaves: () => void;
     onReload: () => void;
     onBack: () => void;
   }): void {
     const gfxBtn = (g: 'auto' | 'low' | 'high', label: string) =>
       `<button class="seg${opts.gfx === g ? ' on' : ''}" id="set-gfx-${g}">${label}</button>`;
+    const tipBtn = (on: boolean, label: string) =>
+      `<button class="seg${opts.tips === on ? ' on' : ''}" id="set-tips-${on ? 'on' : 'off'}">${label}</button>`;
     this.overlayCard(
       `<h2>Settings</h2>` +
         `<div class="menu-list">` +
         `<div class="set-label">Graphics</div>` +
         `<div class="seg-row">${gfxBtn('auto', 'Auto')}${gfxBtn('low', 'Low')}${gfxBtn('high', 'High')}</div>` +
         `<div class="set-note">Graphics changes apply after reloading.</div>` +
+        `<div class="set-label">Tips</div>` +
+        `<div class="seg-row">${tipBtn(true, 'On')}${tipBtn(false, 'Off')}</div>` +
+        `<div class="set-note">The hint bar explaining each tool. Warnings and the event log are unaffected.</div>` +
         `<button id="set-reload">Reload now</button>` +
         `<button class="ghost" id="set-clear">Clear all saves</button>` +
         `<button class="ghost" id="set-back">Back</button>` +
@@ -1336,6 +1389,12 @@ export class UI {
         opts.onSetGfx(g);
         // Re-render the panel so the selected segment updates.
         this.showSettings({ ...opts, gfx: g });
+      }),
+    );
+    ([true, false] as const).forEach((on) =>
+      byId(`set-tips-${on ? 'on' : 'off'}`).addEventListener('click', () => {
+        opts.onSetTips(on);
+        this.showSettings({ ...opts, tips: on });
       }),
     );
     byId('set-reload').addEventListener('click', () => opts.onReload());

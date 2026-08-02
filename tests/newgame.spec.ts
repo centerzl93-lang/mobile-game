@@ -1625,7 +1625,10 @@ test.describe('villager breeding', () => {
   }
 
   test('the village grows when it has housing, food and good spirits', async ({ page }) => {
-    test.setTimeout(120_000); // simulating whole years tick-by-tick is not quick
+    // Simulating whole years tick-by-tick is not quick, and these runs are deliberately the
+    // fastest-growing villages the game can produce — a household now averages about a child a
+    // year, so by the last season there are far more villagers to step than there used to be.
+    test.setTimeout(240_000);
     await open(page);
     const out = await growUnderIdealConditions(page, 12); // 3 years
     expect(out.addedHouses).toBe(10);
@@ -1636,7 +1639,7 @@ test.describe('villager breeding', () => {
   });
 
   test('households settle into one couple with room for their children', async ({ page }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(240_000);
     await open(page);
     const out = await growUnderIdealConditions(page, 12);
 
@@ -1660,7 +1663,7 @@ test.describe('villager breeding', () => {
   });
 
   test('every child lives with an adult, and children are spread across households', async ({ page }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(240_000);
     await open(page);
     const out = await growUnderIdealConditions(page, 12);
 
@@ -1676,7 +1679,7 @@ test.describe('villager breeding', () => {
   });
 
   test('children still live with an adult when housing is tight', async ({ page }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(240_000);
     await open(page);
     const out = await growUnderIdealConditions(page, 16, 0); // only the starter houses
     expect(out.allChildren).toBeGreaterThan(0);
@@ -1685,7 +1688,7 @@ test.describe('villager breeding', () => {
   });
 
   test('with no spare housing adults still pair up, silently', async ({ page }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(240_000);
     await open(page);
     // Same generous conditions, but *no* extra houses: the only limit is somewhere to live.
     const out = await growUnderIdealConditions(page, 12, 0);
@@ -1716,17 +1719,30 @@ test.describe('villager breeding', () => {
       const s = g.state;
       for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
       const startPop = s.citizens.length;
+      const startIds = new Set(s.citizens.map((c: any) => c.id));
       for (let n = 0; n < 8; n++) {
-        // Just enough to eat, never a surplus — plus fuel and clothing so nobody dies either.
+        // Exactly one season's rations spread over the households — enough that nobody starves,
+        // never a *banked* surplus. (Handing every house a flat 400 looked like short commons but
+        // came to nearly two seasons across the village once the larders were counted, so the
+        // food gate this test is about was never actually engaged.)
         for (const b of s.buildings) {
           if (b.type !== 'barn' && b.type !== 'market') continue;
           b.store = { clothing: 1e5, firewood: 1e5, tools: 1e5 };
         }
-        for (const h of s.buildings) if (h.type === 'house') h.store = { grain: 400, firewood: 1e4 };
+        for (const h of s.buildings) {
+          if (h.type !== 'house') continue;
+          const residents = s.citizens.filter((c: any) => c.homeId === h.id).length;
+          h.store = { grain: residents * 60, firewood: 1e4 }; // FOOD_PER_CITIZEN_PER_SEASON
+        }
         g.debugAdvance(610);
         if (s.gameOver) break;
       }
-      return { startPop, endPop: s.citizens.length, born: s.citizens.filter((c: any) => c.age < 1).length };
+      // Anyone whose id is new is newly born: nomads only ever arrive by the player accepting them.
+      return {
+        startPop,
+        endPop: s.citizens.length,
+        born: s.citizens.filter((c: any) => !startIds.has(c.id)).length,
+      };
     });
     expect(out.born).toBe(0);
     expect(out.endPop).toBeLessThanOrEqual(out.startPop);
@@ -1976,7 +1992,7 @@ test.describe('quarry', () => {
 
 test.describe('volume-based hauling', () => {
   test('a load is 12 logs but 48 of a crop, and a full field is brought in within a season', async ({ page }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(240_000);
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -2548,5 +2564,121 @@ test.describe('food consumption', () => {
     // still time to react instead of arriving all at once when the season turns over.
     expect(out.pop).toBeGreaterThan(0);
     expect(out.mid, 'food is consumed during the season').toBeLessThan(out.start);
+  });
+});
+
+test.describe('tips toggle', () => {
+  test('turning tips off silences the hint bar but not action feedback', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const hint = document.getElementById('hint')!;
+      const shown = () => !hint.classList.contains('hidden');
+      g.ui.setTips(true);
+      g.ui.showHint('a tip about a tool');
+      const tipWithTipsOn = shown();
+      g.ui.setTips(false);
+      // Turning them off clears the one already up, and refuses the next.
+      const clearedImmediately = !shown();
+      g.ui.showHint('another tip');
+      const tipWithTipsOff = shown();
+      // Feedback on something the player just did is not a tip and still shows.
+      g.ui.flashHint('Trade complete');
+      const feedbackWithTipsOff = shown();
+      g.ui.setTips(true);
+      return { tipWithTipsOn, clearedImmediately, tipWithTipsOff, feedbackWithTipsOff };
+    });
+    expect(out.tipWithTipsOn).toBe(true);
+    expect(out.clearedImmediately).toBe(true);
+    expect(out.tipWithTipsOff).toBe(false);
+    expect(out.feedbackWithTipsOff).toBe(true);
+  });
+
+  test('the setting is in Settings and survives a reload', async ({ page }) => {
+    await open(page);
+    await page.click('#mm-settings');
+    await expect(page.locator('#set-tips-off')).toBeVisible();
+    await page.click('#set-tips-off');
+    await expect(page.locator('#set-tips-off')).toHaveClass(/on/);
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
+    expect(await page.evaluate(() => (window as any).__village.ui.tipsEnabled())).toBe(false);
+  });
+});
+
+test.describe('age groups', () => {
+  test('the HUD counts children, students and adults — elders are not tracked apart', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      // One of each: an infant, a student, a working adult, and someone well past old age.
+      s.citizens = s.citizens.slice(0, 4);
+      [1, 3, 20, 40].forEach((age, i) => { s.citizens[i].age = age; });
+      g.ui.updateHud(s, 1, false);
+      return document.querySelector('#stat-ages .val')!.textContent;
+    });
+    // SCHOOL_AGE 2, ADULT_AGE 4: one infant, one student, two adults (the elder counts as one).
+    expect(out).toBe('🧒1 🎓1 🧑2');
+  });
+});
+
+test.describe('birth rate', () => {
+  test('a household that meets the conditions averages about a child a year', async ({ page }) => {
+    test.setTimeout(180_000);
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
+      // Room to grow into, so housing is never the thing capping births.
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      let added = 0;
+      for (let r = 3; r < 25 && added < 30; r++)
+        for (let dy = -r; dy <= r && added < 30; dy++)
+          for (let dx = -r; dx <= r && added < 30; dx++) {
+            const id = g.debugCanPlace('house', barn.x + dx, barn.y + dy).ok
+              ? g.debugPlace('house', barn.x + dx, barn.y + dy)
+              : null;
+            if (id != null) {
+              const h = s.buildings.find((b: any) => b.id === id);
+              h.built = true;
+              h.progress = 9999;
+              added++;
+            }
+          }
+      const fertileCouples = () => {
+        let n = 0;
+        for (const h of s.buildings) {
+          if (!h.built || (h.type !== 'house' && h.type !== 'stonehouse')) continue;
+          const adults = s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 4);
+          if (adults.some((a: any) => a.partnerId != null && adults.some((o: any) => o.id === a.partnerId))) n++;
+        }
+        return n;
+      };
+      // Eight seasons — two years — with the larder and the barns kept full so the food gate is
+      // met but the surplus stays modest, i.e. a village that merely qualifies.
+      let births = 0;
+      let coupleSeasons = 0;
+      for (let n = 0; n < 8; n++) {
+        for (const b of s.buildings) {
+          if (b.type !== 'barn') continue;
+          for (const k of ['grain', 'fruit', 'meat', 'fish', 'eggs']) b.store[k] = 4000;
+          for (const k of ['clothing', 'firewood', 'medicine', 'tools']) b.store[k] = 4000;
+        }
+        const before = s.citizens.length;
+        coupleSeasons += fertileCouples();
+        g.debugAdvance(610);
+        births += Math.max(0, s.citizens.length - before);
+      }
+      return { births, coupleSeasons, pop: s.citizens.length, added };
+    });
+    expect(out.coupleSeasons).toBeGreaterThan(0);
+    // Four seasons to a year, so "a child a year per household" is 0.25 births per couple-season.
+    const perCoupleYear = (out.births / out.coupleSeasons) * 4;
+    expect(perCoupleYear, `${out.births} births over ${out.coupleSeasons} couple-seasons`).toBeGreaterThanOrEqual(1);
   });
 });

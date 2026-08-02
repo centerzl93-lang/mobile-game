@@ -10,7 +10,16 @@ export let MAP_H = 48;
 
 export type MapSize = 'small' | 'medium' | 'large';
 /** Side length (tiles) for each selectable map size. Medium/Large double each side. */
-export const MAP_SIZES: Record<MapSize, number> = { small: 48, medium: 96, large: 192 };
+/**
+ * Map edge length in tiles per size.
+ *
+ * Small and medium are scaled up by half against the sizes that shipped before the buildings were
+ * resized: the new footprints are roughly 2.25x the area of the old ones (a 2x2 hut becomes 3x3,
+ * a 3x6 quarry becomes 8x8), so keeping the old edge lengths would have left a village crowding
+ * itself out of a map it used to sit comfortably in. Large is unchanged — it is already at the
+ * tile count where per-tick work, not space, is the limit.
+ */
+export const MAP_SIZES: Record<MapSize, number> = { small: 72, medium: 144, large: 192 };
 
 /** Starting difficulty chosen at New Game — governs the opening stockpile and starter houses. */
 export type Difficulty = 'easy' | 'normal' | 'hard';

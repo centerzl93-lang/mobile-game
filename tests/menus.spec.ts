@@ -22,10 +22,10 @@ test.describe('map sizes', () => {
       }
       return out;
     });
-    expect(dims.small.w).toBe(48);
-    expect(dims.small.tiles).toBe(48 * 48);
-    expect(dims.medium.w).toBe(96);
-    expect(dims.medium.tiles).toBe(96 * 96);
+    expect(dims.small.w).toBe(72);
+    expect(dims.small.tiles).toBe(72 * 72);
+    expect(dims.medium.w).toBe(144);
+    expect(dims.medium.tiles).toBe(144 * 144);
     expect(dims.large.w).toBe(192);
     expect(dims.large.tiles).toBe(192 * 192);
     expect(dims.large.paths).toBe(192 * 192);
@@ -68,7 +68,7 @@ test.describe('save slots', () => {
     await page.click('#mm-continue');
     await page.waitForTimeout(150);
     const loaded = await page.evaluate(() => ({ w: (window as any).__village.state.w, slot: (window as any).__village.currentSlot, running: (window as any).__village.running }));
-    expect(loaded.w).toBe(96);
+    expect(loaded.w).toBe(144);
     expect(loaded.slot).toBe(1);
     expect(loaded.running).toBe(true);
   });
@@ -125,7 +125,7 @@ test.describe('pause menu', () => {
     await page.click('#sz-medium');
     await page.click('#diff-easy');
     await page.waitForTimeout(120);
-    expect(await page.evaluate(() => (window as any).__village.state.w)).toBe(96);
+    expect(await page.evaluate(() => (window as any).__village.state.w)).toBe(144);
 
     // Main Menu returns to the title, idle.
     await page.click('#btn-menu');

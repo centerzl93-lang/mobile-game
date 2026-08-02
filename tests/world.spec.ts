@@ -2,10 +2,10 @@ import { test, expect, Page } from '@playwright/test';
 
 // These tests drive the real game via its `window.__village` debug hook — the same hook the
 // scratchpad drivers use. `?gfx=low` keeps the WebGL scene cheap enough for headless CI.
-const W = 48;
-const H = 48;
+const W = 72;
+const H = 72;
 
-/** Load the app and start a fresh Small (48×48) game. */
+/** Load the app and start a fresh Small (72×72) game. */
 async function startSmall(page: Page): Promise<void> {
   const errors: string[] = [];
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));

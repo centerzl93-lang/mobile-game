@@ -1257,14 +1257,15 @@ test.describe('household larders', () => {
 
 test.describe('seasonal firewood and clothing burn', () => {
   /**
-   * Firewood drawn by one household over a single season turnover. `endSeason` advances the season
-   * and *then* bills for it, so `fromSeason` is the season before the one being measured.
-   * The household holds all the food and fuel and the barns hold none, so the figure is purely
-   * this household's heating and nothing can refill mid-measurement.
+   * Firewood drawn by one household over a fixed window *inside* the given season. Heating is
+   * billed continuously, so the measurement no longer straddles a turnover: it crosses one
+   * boundary (which is what issues clothing for the season under test) and then measures well
+   * clear of the next one. The household holds all the food and fuel and the barns hold none, so
+   * the figure is purely this household's heating and nothing can refill mid-measurement.
    */
-  async function burnEntering(page: Page, fromSeason: number, dressed: boolean) {
+  async function burnDuring(page: Page, season: number, dressed: boolean, stone = false) {
     return page.evaluate(
-      ({ fromSeason, dressed }) => {
+      ({ season, dressed, stone }) => {
         const g = (window as any).__village;
         g.startNewGame('small', 'easy', false);
         const s = g.state;
@@ -1289,39 +1290,57 @@ test.describe('seasonal firewood and clothing burn', () => {
           if (b.type === 'barn' || b.type === 'market') b.store = dressed ? { clothing: 1e6 } : {};
         }
         picked.b.store = { firewood: 1e6, grain: 1e6 };
-        s.season = fromSeason;
-        s.seasonTimer = 0;
+        // Rebuild the same household in masonry when asked. Only the type matters to heating, and
+        // reusing the identical house keeps the two runs comparable resident for resident.
+        if (stone) picked.b.type = 'stonehouse';
+        // Step over the boundary into the season under test: that turnover is what issues the
+        // clothing ration, which heating then reads all season.
+        s.season = (season + 3) % 4;
+        s.seasonTimer = 600 - 0.5; // SEASON_LENGTH
+        g.debugAdvance(1);
+        const issued = s.citizens.filter((c: any) => c.clothed).length;
+        // Pin the clothing flag across the window. A baby born at that turnover arrives *after*
+        // the ration is handed out, so it starts unclothed and burns a third more than its
+        // housemates — enough to make two runs of the same season disagree. What these runs
+        // measure is the effect of the flag on fuel, not who got issued a coat; `issued` above
+        // still records that the ration happened at all.
+        for (const c of s.citizens) c.clothed = dressed;
+        picked.b.store.firewood = 1e6; // top back up — the crossing itself burned a little
         const fw0 = picked.b.store.firewood;
-        // Captured *before* the turnover: consumption bills whoever lives here at that moment, and
-        // `rehouseVillagers` then moves surplus adults out to the houses this setup just emptied.
-        // Counting residents afterwards undercounts the denominator and inflates the per-head figure.
+        // Captured before the window: `rehouseVillagers` runs on a timer and can move a surplus
+        // adult out. Counting residents afterwards would undercount the denominator.
         const residents = s.citizens.filter((c: any) => c.homeId === picked.b.id);
-        g.debugAdvance(610);
+        g.debugAdvance(500); // well inside the season — no second turnover in the figure
         const burned = fw0 - (picked.b.store.firewood ?? 0);
         return {
           adults: residents.filter((c: any) => c.age >= 4).length,
           children: residents.filter((c: any) => c.age < 4).length,
-          clothed: residents.filter((c: any) => c.clothed).length,
+          issued, // villagers who drew a clothing ration at the turnover, before the flag was pinned
+          season: s.season, // must still be the season asked for, or the figure is a blend
+          // Anyone rehoused mid-window would stop drawing on this larder and quietly deflate the
+          // figure — a stone house shelters fewer, so this is the trap the masonry run can spring.
+          stayed: s.citizens.filter((c: any) => c.homeId === picked.b.id).length === residents.length,
           burned,
           // Normalised per head: each measurement run regenerates the map, so the chosen household
           // can differ in size between runs and the raw totals are not directly comparable.
           perResident: residents.length > 0 ? burned / residents.length : 0,
         };
       },
-      { fromSeason, dressed },
+      { season, dressed, stone },
     );
   }
 
   test('firewood burns year-round: winter heaviest, summer lightest', async ({ page }) => {
     await open(page);
-    // Seasons index Spring0 Summer1 Autumn2 Winter3; pass the season *before* the one measured.
-    const winter = await burnEntering(page, 2, true);
-    const spring = await burnEntering(page, 3, true);
-    const summer = await burnEntering(page, 0, true);
-    const autumn = await burnEntering(page, 1, true);
+    // Seasons index Spring0 Summer1 Autumn2 Winter3.
+    const winter = await burnDuring(page, 3, true);
+    const spring = await burnDuring(page, 0, true);
+    const summer = await burnDuring(page, 1, true);
+    const autumn = await burnDuring(page, 2, true);
 
     // Used in every season, never zero — the old model only charged for winter.
     for (const r of [winter, spring, summer, autumn]) expect(r.burned).toBeGreaterThan(0);
+    expect([winter.season, spring.season, summer.season, autumn.season]).toEqual([3, 0, 1, 2]);
     // Winter > spring/autumn > summer, with the shoulder seasons matched. Compared per head, since
     // each run regenerates the map and the household picked can differ in size.
     expect(winter.perResident).toBeGreaterThan(spring.perResident);
@@ -1331,12 +1350,45 @@ test.describe('seasonal firewood and clothing burn', () => {
 
   test('a clothed villager burns less firewood than an unclothed one', async ({ page }) => {
     await open(page);
-    const dressed = await burnEntering(page, 3, true);
-    const undressed = await burnEntering(page, 3, false);
-    expect(dressed.clothed).toBe(dressed.adults + dressed.children);
-    expect(undressed.clothed).toBe(0);
+    const dressed = await burnDuring(page, 0, true);
+    const undressed = await burnDuring(page, 0, false);
+    // Clothing was actually issued from the barns in one run and not the other.
+    expect(dressed.issued).toBeGreaterThan(0);
+    expect(undressed.issued).toBe(0);
     // CLOTHED_HEAT_FACTOR = 0.75, compared per head for the reason above.
     expect(dressed.perResident).toBeCloseTo(undressed.perResident * 0.75, 5);
+  });
+
+  test('stone walls hold their heat: a stone house burns less than a timber one', async ({ page }) => {
+    await open(page);
+    const timber = await burnDuring(page, 3, true); // winter, when heating actually bites
+    const stone = await burnDuring(page, 3, true, true);
+    expect([timber.stayed, stone.stayed], 'both households held their residents').toEqual([true, true]);
+    expect(stone.perResident).toBeLessThan(timber.perResident);
+    // STONE_HOUSE_HEAT_FACTOR = 0.6.
+    expect(stone.perResident).toBeCloseTo(timber.perResident * 0.6, 5);
+  });
+
+  test('firewood is burned through the season, not in one lump at the turnover', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
+      const fuel = () => s.buildings.reduce((n: number, b: any) => n + (b.store.firewood ?? 0), 0);
+      s.season = 3; // winter, the heaviest draw
+      s.seasonTimer = 0;
+      for (const b of s.buildings) if (b.type === 'barn') b.store.firewood = 500;
+      const start = fuel();
+      // A fifth of a season, nowhere near a boundary. The old model burned nothing until the
+      // season turned over, so this window showed no change at all.
+      for (let i = 0; i < 1200; i++) g.debugAdvance(0.1);
+      return { start, mid: fuel(), season: s.season, pop: s.citizens.length };
+    });
+    expect(out.pop).toBeGreaterThan(0);
+    expect(out.season, 'still mid-season — no turnover in the window').toBe(3);
+    expect(out.mid, 'fuel is drawn down during the season').toBeLessThan(out.start);
   });
 });
 

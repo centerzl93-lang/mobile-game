@@ -11,6 +11,8 @@ import {
   SEASON_LENGTH,
   STARVE_SECONDS,
   STARVE_RECOVERY,
+  FREEZE_SECONDS,
+  FREEZE_RECOVERY,
   SEASONS,
   Season,
   BASE_WALK_SPEED,
@@ -219,6 +221,7 @@ export function update(s: GameState, dt: number, log: LogFn): void {
   }
 
   eat(s, dt, log);
+  heat(s, dt, log);
 
   s.seasonTimer += dt;
   if (s.seasonTimer >= SEASON_LENGTH) {
@@ -264,6 +267,63 @@ function eat(s: GameState, dt: number, log: LogFn): void {
   if (starved.length > 0) {
     killFrom(s, starved, starved.length);
     log(`${starved.length} villager${starved.length > 1 ? 's' : ''} starved`, 'bad');
+  }
+}
+
+/**
+ * Households burn fuel, a little every tick, at the rate the current season calls for.
+ *
+ * Same reasoning as `eat`: a season's heating taken in one lump at the boundary meant a larder
+ * that looked comfortable all season lost a third of itself in a single frame, and the drop
+ * landed under whichever season had just *begun* rather than the one that had been lived through.
+ * Charging it continuously means summer really is cheap hour by hour, winter really is expensive,
+ * and the household hauler tops the woodpile up as it runs down instead of chasing a cliff.
+ *
+ * Three things cut a villager's fuel bill: the season (SEASON_BURN), a warm coat
+ * (CLOTHED_HEAT_FACTOR, decided at the season boundary and read here all season), and living
+ * behind stone walls (STONE_HOUSE_HEAT_FACTOR) — masonry holds its heat, so a stone house both
+ * burns less and keeps a smaller woodpile.
+ */
+function heat(s: GameState, dt: number, log: LogFn): void {
+  if (s.citizens.length === 0) return;
+  const season = SEASONS[s.season];
+  const rate = (dt / SEASON_LENGTH) * SEASON_BURN[season]; // fraction of a winter's heating owed
+  const homeById = new Map<number, Building>();
+  for (const b of s.buildings) if (b.built && isHouse(b.type)) homeById.set(b.id, b);
+
+  const froze: Citizen[] = [];
+  for (const c of s.citizens) {
+    const home = c.homeId !== null ? homeById.get(c.homeId) : undefined;
+    const stoneFactor = home?.type === 'stonehouse' ? STONE_HOUSE_HEAT_FACTOR : 1;
+    const clothFactor = c.clothed ? CLOTHED_HEAT_FACTOR : 1;
+    let need = HEAT_PER_CITIZEN_WINTER * rate * stoneFactor * clothFactor; // heat units
+    if (home) {
+      const fromLarder = Math.min(need / FIREWOOD_HEAT, home.store['firewood'] ?? 0);
+      if (fromLarder > 0) {
+        takeFromLarder(home, 'firewood', fromLarder);
+        need -= fromLarder * FIREWOOD_HEAT;
+      }
+    }
+    if (need > 0.000001) {
+      // Fall back to the village fuel pile for whatever the household woodpile didn't cover, so
+      // going cold depends on this villager's own larder plus what is left in the barns — not on
+      // a village-wide average.
+      need = consume(s, 'firewood', need / FIREWOOD_HEAT) * FIREWOOD_HEAT;
+      if (need > 0.000001) need = consume(s, 'coal', need / COAL_HEAT) * COAL_HEAT;
+    }
+    // Only winter kills. Going short of fuel in summer is uncomfortable, not fatal, and an
+    // unheated villager has to stay unheated for FREEZE_SECONDS before they die — a gap while a
+    // hauler is walking is survivable, a genuine fuel crisis is not.
+    if (need > 0.000001 && season === 'Winter') {
+      c.chill = (c.chill ?? 0) + dt;
+      if (c.chill >= FREEZE_SECONDS) froze.push(c);
+    } else if (c.chill) {
+      c.chill = Math.max(0, c.chill - dt * FREEZE_RECOVERY);
+    }
+  }
+  if (froze.length > 0) {
+    killFrom(s, froze, froze.length);
+    log(`${froze.length} villager${froze.length > 1 ? 's' : ''} froze in the cold`, 'bad');
   }
 }
 
@@ -1470,15 +1530,15 @@ function endSeason(s: GameState, log: LogFn): void {
   const homeOf = (c: Citizen): Building | undefined =>
     c.homeId !== null ? homeById.get(c.homeId) : undefined;
 
-  // Food is *not* taken here. Villagers eat continuously (`eat`, called every tick) rather than
-  // in one lump at the boundary — a season's worth vanishing from the stores in a single frame
-  // is what made a village look comfortable all season and then starve someone the instant it
-  // turned over, with no chance to react.
+  // Neither food nor fuel is taken here. Villagers eat and heat continuously (`eat` and `heat`,
+  // called every tick) rather than in one lump at the boundary — a season's worth vanishing from
+  // the stores in a single frame is what made a village look comfortable all season and then
+  // starve or freeze someone the instant it turned over, with no chance to react.
   const shortFood = totalFoodAvailable(s) <= 0 ? 1 : 0;
 
-  // Clothing and firewood are used every season, at a seasonal rate (winter heaviest, summer
-  // lightest). Clothing is issued first because being warmly dressed cuts the fuel a villager
-  // needs — `c.clothed` is transient, recomputed here each season and never saved.
+  // Clothing *is* a seasonal issue: a garment wears out over a season rather than being burned
+  // by the hour, and the ration is what `heat` then reads all season long — a warmly dressed
+  // villager needs less fuel. `c.clothed` is transient, recomputed here each season, never saved.
   const burn = SEASON_BURN[season];
   if (s.citizens.length > 0) {
     const clothEach = CLOTHING_PER_CITIZEN_WINTER * burn;
@@ -1501,40 +1561,10 @@ function endSeason(s: GameState, log: LogFn): void {
       if (!c.clothed) unclothed.push(c);
     }
 
-    // Heat: firewood from the villager's own larder first, then firewood and coal from the barns.
-    let heatShort = 0;
-    const cold: Citizen[] = [];
-    for (const c of s.citizens) {
-      const home = homeOf(c);
-      const stoneFactor = home?.type === 'stonehouse' ? STONE_HOUSE_HEAT_FACTOR : 1;
-      const clothFactor = c.clothed ? CLOTHED_HEAT_FACTOR : 1;
-      const want = HEAT_PER_CITIZEN_WINTER * burn * stoneFactor * clothFactor; // heat units
-      let need = want;
-      if (home) {
-        const fromLarder = Math.min(need / FIREWOOD_HEAT, home.store['firewood'] ?? 0);
-        if (fromLarder > 0) {
-          takeFromLarder(home, 'firewood', fromLarder);
-          need -= fromLarder * FIREWOOD_HEAT;
-        }
-      }
-      if (need > 0) {
-        // Fall back to the village fuel pile for this villager's remaining need, so whether they
-        // end up cold depends on their own larder plus what is left in the barns — not on a
-        // village-wide average.
-        need = consume(s, 'firewood', need / FIREWOOD_HEAT) * FIREWOOD_HEAT;
-        if (need > 0) need = consume(s, 'coal', need / COAL_HEAT) * COAL_HEAT;
-      }
-      if (need > 0.001) cold.push(c);
-      heatShort += need;
-    }
-
-    // Only a winter shortfall is lethal — going short of fuel in summer is uncomfortable, not fatal.
+    // Heat is billed by `heat` every tick, not here — see the note at the top of this block.
+    // Freezing to death is likewise continuous, so only the clothing risk is settled at the
+    // boundary.
     if (season === 'Winter') {
-      if (heatShort > 0.001) {
-        const froze = Math.min(cold.length, Math.ceil(heatShort / HEAT_PER_CITIZEN_WINTER));
-        killFrom(s, cold, froze);
-        if (froze > 0) log(`${froze} villager${froze > 1 ? 's' : ''} froze in the cold`, 'bad');
-      }
       // Only the villagers who actually went without warm clothing are at risk.
       const sickChance = Math.min(1, SICKNESS_CHANCE * (1 + (1 - avgHealth(s) / 100)));
       const fallen: Citizen[] = [];

@@ -576,6 +576,11 @@ export interface Citizen {
    * hauler restocks the larder is survivable. Transient — not saved.
    */
   starve?: number;
+  /**
+   * Seconds this villager has gone unheated in winter. Death comes at FREEZE_SECONDS, the same
+   * grace the starvation clock gives. Only winter accumulates it. Transient — not saved.
+   */
+  chill?: number;
   /** Assigned to the Builders job this tick (recomputed every tick, not persisted). A builder has
    * jobId === null but constructs work buildings; a plain laborer (jobId null, builder false) does
    * not. */
@@ -912,6 +917,15 @@ export const STARVE_SECONDS = SEASON_LENGTH / 3;
 /** How fast the starvation clock unwinds once a villager is eating again, per second. */
 export const STARVE_RECOVERY = 2;
 
+/**
+ * How long a villager can go without heating *in winter* before they freeze, in seconds. The same
+ * grace the starvation clock gives, for the same reason: a household waiting on a hauler should
+ * not lose anyone, a village out of fuel should.
+ */
+export const FREEZE_SECONDS = SEASON_LENGTH / 3;
+/** How fast the cold clock unwinds once a villager's hearth is lit again, per second. */
+export const FREEZE_RECOVERY = 2;
+
 export const FOOD_PER_CITIZEN_PER_SEASON = 60;
 export const HEAT_PER_CITIZEN_WINTER = 40; // heat units; firewood = 1, coal = 2
 export const FIREWOOD_HEAT = 1;
@@ -925,6 +939,10 @@ export const SICKNESS_CHANCE = 0.5; // chance an unclothed villager sickens in w
  * Seasonal draw on firewood and clothing. Both are used *year-round*, not only over winter:
  * villagers still cook and still wear through clothes in summer. Winter is the anchor at 1.0 (so
  * winter costs exactly what it always did), spring and autumn are moderate, and summer is light.
+ *
+ * Firewood is billed against this rate every tick (`heat`), so the woodpile drains slowly in
+ * summer and fast in winter rather than dropping in one lump at the turn of a season. Clothing is
+ * still issued once a season — a garment wears out over months, not by the hour.
  *
  * Note this raises the *annual* firewood and clothing bill — previously only winter drew on them.
  */
@@ -1232,7 +1250,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   stonehouse: {
     type: 'stonehouse', name: 'Stone House', emoji: '🏡', category: 'housing', w: 2, h: 2,
     cost: { wood: 8, stone: 16 }, jobs: 0, buildTime: 8,
-    desc: 'A warm, sturdy home for up to 5 — residents burn much less fuel in winter.',
+    desc: 'A warm, sturdy home for up to 5 — burns far less fuel, and stone walls resist fire.',
   },
   gatherer: {
     type: 'gatherer', name: 'Gatherer', emoji: '🧺', category: 'food', w: 2, h: 2,

@@ -17,6 +17,11 @@ import {
   HOUSE_MEDICINE_PER_RESIDENT,
   CHILD_FOOD_FACTOR,
   STONE_HOUSE_HEAT_FACTOR,
+  CLOTHED_HEAT_FACTOR,
+  HEAT_PER_CITIZEN_WINTER,
+  FIREWOOD_HEAT,
+  SEASON_BURN,
+  SEASONS,
   isAdult,
   isHouse,
 } from '../types';
@@ -223,6 +228,23 @@ export function houseNodes(s: GameState): Building[] {
 /** Who lives in this house. */
 export function residentsOf(s: GameState, house: Building): Citizen[] {
   return s.citizens.filter((c) => c.homeId === house.id);
+}
+
+/**
+ * Firewood this household will burn over the season it is currently in, at today's rates.
+ *
+ * Drawn continuously by `heat`, so this is a rate rather than a bill that lands somewhere: it is
+ * what the inspect sheet shows so the player can see why a woodpile empties fast in winter and
+ * barely moves in summer, and what stone walls and warm coats are saving them.
+ */
+export function houseFuelPerSeason(s: GameState, house: Building): number {
+  const walls = house.type === 'stonehouse' ? STONE_HOUSE_HEAT_FACTOR : 1;
+  const burn = SEASON_BURN[SEASONS[s.season]];
+  let units = 0;
+  for (const c of residentsOf(s, house)) {
+    units += HEAT_PER_CITIZEN_WINTER * burn * walls * (c.clothed ? CLOTHED_HEAT_FACTOR : 1);
+  }
+  return units / FIREWOOD_HEAT;
 }
 
 /** Total food (all kinds combined) a household wants on hand — children keep a smaller ration. */

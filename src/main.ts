@@ -23,6 +23,7 @@ import {
   buildingName,
   nextBuildingName,
   houseCapacityOf,
+  STONE_HOUSE_HEAT_FACTOR,
   Crop,
   RanchAnimal,
   CROP_META,
@@ -69,7 +70,15 @@ import {
 import { canPlace, placeBuilding, canAfford, demolishBuilding, footprintClear } from './game/buildings';
 import { findPath } from './game/pathfind';
 import { tileIndex, inBounds } from './game/world';
-import { addNearest, barnLoad, capacityOf, larderFood, larderFoodTarget, larderTarget } from './game/storage';
+import {
+  addNearest,
+  barnLoad,
+  capacityOf,
+  houseFuelPerSeason,
+  larderFood,
+  larderFoodTarget,
+  larderTarget,
+} from './game/storage';
 import {
   planPath, markPending, pendingPathCount, confirmPendingPaths, cancelPendingPaths,
   isSpanTier, spanLine, unplanTiles, demolishPathRect,
@@ -859,6 +868,17 @@ class Game {
                 value: `${Math.floor(b.store[kind] ?? 0)} / ${Math.round(target)}`,
               });
             }
+            // What the hearth actually costs at this time of year. Heating is drawn continuously,
+            // so this is the season's total burn rate — heaviest in winter, barely anything in
+            // summer, and lower again behind stone walls.
+            rows.push({
+              label: '🔥 Heating',
+              value:
+                `${(Math.round(houseFuelPerSeason(this.state, b) * 10) / 10)} wood/season` +
+                (b.type === 'stonehouse'
+                  ? ` (insulated −${Math.round((1 - STONE_HOUSE_HEAT_FACTOR) * 100)}%)`
+                  : ''),
+            });
           }
         }
         if (b.type === 'mine') rows.push({ label: 'Digging', value: b.output });

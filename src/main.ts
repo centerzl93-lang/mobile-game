@@ -59,6 +59,7 @@ import {
   transferRanch,
   eligibleRanchTargets,
   igniteBuilding,
+  fireSeason,
   acceptNomads,
   rejectNomads,
   markHarvestRect,
@@ -1005,6 +1006,11 @@ class Game {
   debugIgnite(id: number): void {
     const b = this.state.buildings.find((x) => x.id === id);
     if (b) igniteBuilding(this.state, b, this.log);
+  }
+
+  /** Debug/testing helper: run the once-per-season fire roll without waiting for a season. */
+  debugFireSeason(): void {
+    fireSeason(this.state, this.log);
   }
 
   /** Debug/testing helper: run the simulation forward by `seconds` in fixed steps. */

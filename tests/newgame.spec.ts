@@ -726,6 +726,139 @@ test.describe('fireproof buildings', () => {
   });
 });
 
+test.describe('fire spread', () => {
+  /**
+   * Build a test cluster around a source house: a wooden neighbour touching it, a stone
+   * neighbour touching it, a wooden house one clear tile away, and a wooden house two tiles
+   * away as the "never catches" control. Offsets are tiles from the source; houses are 2×2, so
+   * dy 3 leaves exactly one clear row and dy -4 leaves two.
+   *
+   * The site has to be well clear of the starting village, or a stray barn neighbour would make
+   * "only these buildings caught" impossible to assert.
+   */
+  const buildCluster = `(g) => {
+    const s = g.state;
+    const offs = [[0, 0], [2, 0], [-2, 0], [0, 3], [0, -4]];
+    for (let y = 6; y < s.h - 6; y++)
+      for (let x = 6; x < s.w - 6; x++) {
+        if (!offs.every(([dx, dy]) => g.debugCanPlace('house', x + dx, y + dy).ok)) continue;
+        // Cluster spans x-2..x+3 by y-4..y+4; nothing else may start within 8 tiles of that,
+        // which clears even the largest footprint by more than fire can jump.
+        const busy = s.buildings.some(
+          (b) => b.x > x - 10 && b.x < x + 11 && b.y > y - 12 && b.y < y + 12,
+        );
+        if (busy) continue;
+        const built = offs.map(([dx, dy], i) => {
+          const id = g.debugPlace(i === 2 ? 'stonehouse' : 'house', x + dx, y + dy);
+          const b = s.buildings.find((o) => o.id === id);
+          b.built = true;
+          b.progress = 1;
+          return b;
+        });
+        return built; // [source, touching wood, touching stone, one tile away, two tiles away]
+      }
+    throw new Error('no clear five-house site anywhere on this map');
+  }`;
+
+  // Burn the source down with Math.random pinned, so each neighbour's roll has a known outcome.
+  const collapse = `(g, source, fixed) => {
+    const real = Math.random;
+    Math.random = () => fixed;
+    try {
+      source.fireTimer = 0.05;
+      g.debugAdvance(0.1);
+    } finally {
+      Math.random = real;
+    }
+  }`;
+
+  test('fire jumps to touching buildings but not to ones a tile away', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(
+      ([clusterSrc, collapseSrc]) => {
+        const g = (window as any).__village;
+        g.startNewGame('small', 'easy', true);
+        const [source, wood, stone, near, far] = eval(clusterSrc)(g);
+        // 0.2 clears the touching-wood odds (0.25) but not one-tile-away (0.03) and not
+        // touching stone (0.25 × 0.5 = 0.125).
+        eval(collapseSrc)(g, source, 0.2);
+        return {
+          gone: !g.state.buildings.includes(source),
+          wood: !!wood.fireTimer,
+          stone: !!stone.fireTimer,
+          near: !!near.fireTimer,
+          far: !!far.fireTimer,
+        };
+      },
+      [buildCluster, collapse],
+    );
+    expect(out.gone).toBe(true);
+    expect(out.wood).toBe(true);
+    expect(out.stone).toBe(false);
+    expect(out.near).toBe(false);
+    expect(out.far).toBe(false);
+  });
+
+  test('a long-odds roll reaches one tile away, never two', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(
+      ([clusterSrc, collapseSrc]) => {
+        const g = (window as any).__village;
+        g.startNewGame('small', 'easy', true);
+        const [source, wood, stone, near, far] = eval(clusterSrc)(g);
+        // 0.02 clears every spread chance in play, so anything that stays unlit is out of range
+        // rather than lucky.
+        eval(collapseSrc)(g, source, 0.02);
+        return {
+          wood: !!wood.fireTimer,
+          stone: !!stone.fireTimer,
+          near: !!near.fireTimer,
+          far: !!far.fireTimer,
+        };
+      },
+      [buildCluster, collapse],
+    );
+    expect(out.wood).toBe(true);
+    expect(out.stone).toBe(true);
+    expect(out.near).toBe(true);
+    expect(out.far).toBe(false);
+  });
+
+  test('stone walls halve the chance of catching in the first place', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      // fireSeason rolls: (1) does a fire start, (2) which building, (3) stone resistance —
+      // only for masonry. Pinning the sequence makes the third roll's effect the only variable.
+      const run = (type: string, resist: number) => {
+        g.startNewGame('small', 'easy', true);
+        const s = g.state;
+        const target = s.buildings.filter((b: any) => b.built && b.type === 'house')[0];
+        target.type = type; // flammable[0] either way — the barn ahead of it is fireproof
+        const seq = [0.01, 0, resist];
+        let i = 0;
+        const real = Math.random;
+        Math.random = () => seq[i++] ?? 0.5;
+        try {
+          g.debugFireSeason();
+        } finally {
+          Math.random = real;
+        }
+        return !!target.fireTimer;
+      };
+      return {
+        wood: run('house', 0.9),
+        stoneUnlucky: run('stonehouse', 0.1),
+        stoneSpared: run('stonehouse', 0.9),
+      };
+    });
+    // Wood never consults the resistance roll, so the same 0.9 that spares stone burns it.
+    expect(out.wood).toBe(true);
+    expect(out.stoneUnlucky).toBe(true);
+    expect(out.stoneSpared).toBe(false);
+  });
+});
+
 test.describe('clearing land before building', () => {
   // Find a spot near the barn where a fresh barn can be placed; returns [x,y] or [-1,-1].
   // Searches the whole map and fails loudly. Returning a sentinel [-1,-1] when no site was found

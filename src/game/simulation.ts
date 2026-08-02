@@ -99,7 +99,10 @@ import {
   FIRE_CHANCE,
   WELL_RADIUS,
   WELL_DOUSE_CHANCE,
-  FIRE_SPREAD_CHANCE,
+  FIRE_SPREAD_ADJACENT,
+  FIRE_SPREAD_NEAR,
+  STONE_FIRE_FACTOR,
+  isStoneBuilt,
   FIRE_BURN_SECONDS,
   MARKET_STOCK_TARGET,
   RESOURCE_KINDS,
@@ -2444,11 +2447,18 @@ function diseaseSeason(s: GameState, log: LogFn): void {
   if (died > 0) log(`${died} villager${died > 1 ? 's' : ''} died of illness`, 'bad');
 }
 
-function fireSeason(s: GameState, log: LogFn): void {
+export function fireSeason(s: GameState, log: LogFn): void {
   if (!s.disasters) return; // disasters toggled off — no fires ignite
   const flammable = s.buildings.filter((b) => b.built && !isFireproof(b.type) && !b.fireTimer);
   if (flammable.length === 0) return;
-  if (Math.random() < FIRE_CHANCE) tryIgnite(s, flammable[(Math.random() * flammable.length) | 0], log, true);
+  if (Math.random() >= FIRE_CHANCE) return;
+  const b = flammable[(Math.random() * flammable.length) | 0];
+  // Masonry is half as likely to be the building that goes up. Picking the candidate first and
+  // then rolling its resistance keeps the village-wide fire rate unchanged while shifting which
+  // buildings bear it — a village that rebuilds in stone sees fewer fires, not differently
+  // distributed ones.
+  if (isStoneBuilt(b.type) && Math.random() >= STONE_FIRE_FACTOR) return;
+  tryIgnite(s, b, log, true);
 }
 
 /** Testing/debug: attempt to set a building alight (respecting well protection). */
@@ -2479,18 +2489,34 @@ function processFires(s: GameState, dt: number, log: LogFn): void {
       const neighbours = adjacentBuildings(s, b);
       removeBuilding(s, b);
       log(`The ${name} burned down`, 'bad');
-      for (const n of neighbours) if (Math.random() < FIRE_SPREAD_CHANCE) tryIgnite(s, n, log, false);
+      for (const { building: n, gap } of neighbours) {
+        let chance = gap === 0 ? FIRE_SPREAD_ADJACENT : FIRE_SPREAD_NEAR;
+        if (isStoneBuilt(n.type)) chance *= STONE_FIRE_FACTOR;
+        if (Math.random() < chance) tryIgnite(s, n, log, false);
+      }
     }
   }
 }
 
-function adjacentBuildings(s: GameState, b: Building): Building[] {
+/**
+ * Buildings close enough for fire to jump to, with the clear gap between the two footprints.
+ *
+ * `gap` is 0 for footprints that touch or overlap and 1 for a single clear tile between them;
+ * anything further is not returned. The two carry very different odds, so the distance has to
+ * come back with the building rather than being flattened into one "adjacent" bucket.
+ */
+function adjacentBuildings(s: GameState, b: Building): { building: Building; gap: number }[] {
   const bw = footprintW(b);
   const bh = footprintH(b);
-  const out: Building[] = [];
+  const out: { building: Building; gap: number }[] = [];
   for (const o of s.buildings) {
     if (o === b || !o.built || isFireproof(o.type) || o.fireTimer) continue;
-    if (b.x - 1 < o.x + footprintW(o) && b.x + bw + 1 > o.x && b.y - 1 < o.y + footprintH(o) && b.y + bh + 1 > o.y) out.push(o);
+    // Separation along each axis: 0 when the spans touch or overlap, otherwise the clear tiles
+    // between them. The gap between two rectangles is the larger of the two.
+    const dx = Math.max(0, Math.max(b.x - (o.x + footprintW(o)), o.x - (b.x + bw)));
+    const dy = Math.max(0, Math.max(b.y - (o.y + footprintH(o)), o.y - (b.y + bh)));
+    const gap = Math.max(dx, dy);
+    if (gap <= 1) out.push({ building: o, gap });
   }
   return out;
 }

@@ -1055,7 +1055,28 @@ export const MED_LOAD = 5; // medicine produced per herbalist work cycle (× for
 export const FIRE_CHANCE = 0.05; // base chance per season a building ignites
 export const WELL_RADIUS = 6; // wells protect buildings within this radius
 export const WELL_DOUSE_CHANCE = 0.85; // chance a nearby well stops a fire
-export const FIRE_SPREAD_CHANCE = 0.3; // chance fire jumps to an adjacent building
+/**
+ * Chance a collapsing building sets a neighbour alight, by how far away the neighbour is.
+ *
+ * Rolled once per neighbour when a fire finishes burning, so a blaze in a tight row of houses can
+ * chain — which is the point. `NEAR` covers buildings with one clear tile between them: a real
+ * but slim risk, and the reason leaving gaps in a street is worth doing.
+ */
+export const FIRE_SPREAD_ADJACENT = 0.25;
+export const FIRE_SPREAD_NEAR = 0.03;
+/**
+ * Multiplier on both catching fire and being caught, for buildings built of masonry.
+ *
+ * Stone houses previously burned exactly as readily as timber ones, which made the upgrade look
+ * like a pure fuel saving. Halving both odds is what makes rebuilding a street in stone a
+ * decision about fire as well as warmth.
+ */
+export const STONE_FIRE_FACTOR = 0.5;
+/** Buildings whose walls are masonry — see STONE_FIRE_FACTOR. */
+export const STONE_BUILT: BuildingType[] = ['stonehouse', 'chapel'];
+export function isStoneBuilt(type: BuildingType): boolean {
+  return STONE_BUILT.includes(type);
+}
 export const FIRE_BURN_SECONDS = 8; // how long a building burns before collapsing
 
 // ---- Production (per assigned worker, per season, before local factors) ----

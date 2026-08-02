@@ -352,7 +352,11 @@ test.describe('tunnels', () => {
     // the straight eight-tile line through it.
     expect(res.afterLen, 'route once the tunnel is open').toBeGreaterThan(0);
     expect(res.throughWall, 'the route goes through the mountain, not around it').toBe(3);
-    expect(res.beforeLen === -1 || res.afterLen < res.beforeLen).toBe(true);
+    // A tunnel can never make routing worse. Not strictly shorter, though: movement is
+    // 8-neighbour, so stepping diagonally around a one-tile-thick wall and back costs no extra
+    // steps, and on maps where the tiles flanking the wall are open the two routes tie. Whether
+    // the route uses the bore is what throughWall above settles.
+    expect(res.beforeLen === -1 || res.afterLen <= res.beforeLen).toBe(true);
   });
 });
 

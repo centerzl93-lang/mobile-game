@@ -15,7 +15,7 @@ import math
 import bpy
 
 from common import reset_scene, box, bevel, finish
-from parts import door, firewood, lean_to, log_pile, posts, window
+from parts import door, firewood, lean_to, log_pile, window
 from style import palette, shingled_roof, half_timber
 
 

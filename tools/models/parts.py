@@ -81,7 +81,7 @@ def lean_to(name, width, depth, base_z, mats, rise=0.42, toward=1):
     """
     parts = []
     hw, hd = width / 2, depth / 2
-    high, low = base_z + rise, base_z
+    high = base_z + rise
     for sx in (-1, 1):
         parts.append(box(f"{name}Post", (0.1, 0.1, high - 0.1), (sx * (hw - 0.06), toward * (hd - 0.06), (high - 0.1) / 2), mats["timber"]))
         parts.append(box(f"{name}Post", (0.1, 0.1, high + rise - 0.1), (sx * (hw - 0.06), -toward * (hd - 0.06), (high + rise - 0.1) / 2), mats["timber"]))

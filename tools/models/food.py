@@ -14,8 +14,7 @@ import math
 import bpy
 
 from common import reset_scene, box, bevel, finish
-from parts import (barrel, crate_cluster, deck, door, drying_rack, lean_to, log_pile, posts,
-                   rail_fence, window)
+from parts import barrel, deck, door, drying_rack, lean_to, log_pile, posts, window
 from style import THATCH_PITCH, courses, palette, shingled_roof, half_timber
 
 

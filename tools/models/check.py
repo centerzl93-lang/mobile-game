@@ -17,7 +17,6 @@ Height is reported as it renders in tiles, so the table in HANDOFF.md can be rea
 import json
 import os
 import re
-import struct
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))

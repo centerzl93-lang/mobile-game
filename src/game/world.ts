@@ -72,7 +72,10 @@ export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
     const n = wobble[tileIndex(0, y)] - 0.5; // -0.5..0.5
     return MAP_W / 2 + Math.sin(y / 7) * 4 + n * 8;
   };
-  const riverHalf = (y: number): number => 1.8 + (wobble[tileIndex(MAP_W - 1, y)] - 0.5) * 1.35; // ~1.1..2.5 (≈50% wider)
+  // Half-width, so the river runs about 3.4 tiles across at its narrowest and 7.4 at its widest.
+  // Wide enough to read as a real river from the camera — and wide enough that a bridge is a
+  // decision rather than a formality.
+  const riverHalf = (y: number): number => 2.7 + (wobble[tileIndex(MAP_W - 1, y)] - 0.5) * 2.03;
 
   // Two lakes centred just past the left and right edges so they continue off-map.
   const lakes = [

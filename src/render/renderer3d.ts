@@ -916,10 +916,19 @@ export class Renderer3D {
         '#include <map_fragment>',
         `vec2 gUv = vGroundUv * uTexScale;
         vec4 w = vSurf / max(0.001, vSurf.x + vSurf.y + vSurf.z + vSurf.w);
+        // Rock covers whole mountain ranges at a stretch, so a single tiling sample reads as a
+        // grid the moment you look at a peak. Sample it twice — once at the base scale, once
+        // larger and turned off-axis — and cross-fade between them on a slow, non-repeating
+        // wave. Choosing mostly one or the other (rather than averaging the two) keeps the
+        // contrast that makes it look like rock instead of grey mush.
+        vec2 rockA = gUv;
+        vec2 rockB = mat2(0.8, -0.6, 0.6, 0.8) * gUv * 0.41;
+        float rockMix = 0.5 + 0.5 * sin(gUv.x * 0.21 + sin(gUv.y * 0.17) * 2.3);
+        vec4 rock = mix(texture2D(uRock, rockA), texture2D(uRock, rockB), rockMix);
         vec4 blended =
           texture2D(uGrass, gUv) * w.x +
           texture2D(uDirt, gUv) * w.y +
-          texture2D(uRock, gUv) * w.z +
+          rock * w.z +
           texture2D(uSand, gUv) * w.w;
         diffuseColor *= blended;`,
       );

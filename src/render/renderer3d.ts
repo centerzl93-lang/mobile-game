@@ -244,7 +244,12 @@ export class Renderer3D {
   private renderer: THREE.WebGLRenderer;
   private dummy = new THREE.Object3D();
   private color = new THREE.Color();
-  private treeInst: InstancedModel | null = null;
+  /**
+   * One instanced layer per tree species, in manifest order. A tree picks its species from a hash
+   * of its tile and index, so a wood mixes without anything being stored per tile — and because
+   * the hash is stable, the same tree is the same species every frame and across a save.
+   */
+  private treeInsts: InstancedModel[] = [];
   private rockInst: InstancedModel | null = null;
 
   // Lighting + season atmosphere.
@@ -1097,27 +1102,41 @@ export class Renderer3D {
     const geo = this.trees.geometry;
     (this.trees.material as THREE.Material).dispose();
     this.trees = new THREE.InstancedMesh(geo, matte(0x2f5a2a), cap);
-    this.trees.count = this.treeInst ? 0 : this.treeTiles.length * treesPerTile();
+    this.trees.count = this.treeInsts.length > 0 ? 0 : this.treeTiles.length * treesPerTile();
     this.trees.castShadow = true;
     this.scene.add(this.trees);
-    // Rebuild the model instances at the new capacity if models are in use.
-    if (this.treeInst) {
-      const tpl = this.models.firstTree();
-      this.treeInst.dispose(this.scene);
-      this.treeInst = tpl ? new InstancedModel(tpl, cap) : null;
-      this.treeInst?.addTo(this.scene);
-    }
+    // Rebuild the model instances at the new capacity if models are in use. Each species is sized
+    // for the whole forest: the mix is by hash, so any one of them could in principle draw most of
+    // it, and an under-sized layer would silently drop trees.
+    if (this.treeInsts.length > 0) this.buildTreeInstances(cap);
     this.forestVer = s.forestVersion ?? 0;
     this.sig.tree = -4; // force a redraw of the new tile set
   }
 
+  /**
+   * (Re)build one instanced layer per tree species at the given capacity.
+   *
+   * Every species is sized for the whole forest rather than its expected share: the mix is by
+   * hash, and on a small wood it could easily deal one species most of the tiles. An under-sized
+   * layer would silently stop drawing past its capacity, which reads as trees flickering out.
+   */
+  private buildTreeInstances(cap: number): void {
+    for (const t of this.treeInsts) t.dispose(this.scene);
+    this.treeInsts = [];
+    for (const tpl of this.models.allTrees()) {
+      const inst = new InstancedModel(tpl, cap);
+      inst.addTo(this.scene);
+      this.treeInsts.push(inst);
+    }
+  }
+
   private syncTrees(s: GameState): void {
     if ((s.forestVersion ?? 0) !== this.forestVer) this.rebuildTreeLayer(s);
-    // Upgrade to a model the first frame one is available (hide the cone fallback).
-    const tpl = this.models.firstTree();
-    if (tpl && !this.treeInst) {
-      this.treeInst = new InstancedModel(tpl, this.treeTiles.length * treesPerTile() || 1);
-      this.treeInst.addTo(this.scene);
+    // Upgrade to models the first frame every species is available, so the mix is built in a
+    // stable order and a late arrival cannot reshuffle a forest mid-game. Until then the cone
+    // fallback stands in.
+    if (this.treeInsts.length === 0 && this.models.treesReady()) {
+      this.buildTreeInstances(this.treeTiles.length * treesPerTile() || 1);
       this.trees.count = 0;
       this.sig.tree = -3;
     }
@@ -1126,6 +1145,8 @@ export class Renderer3D {
     if (sig === this.sig.tree) return;
     this.sig.tree = sig;
     let k = 0;
+    // Each species layer packs its own instances from 0, so they need a write cursor apiece.
+    const spCount = new Array(this.treeInsts.length).fill(0) as number[];
     for (const i of this.treeTiles) {
       const t = s.tiles[i];
       if (!this.inView(i % MAP_W, (i / MAP_W) | 0)) continue;
@@ -1139,13 +1160,16 @@ export class Renderer3D {
         const tz = ((i / MAP_W) | 0) + 0.5 + (this.tileRand(i, salt + 0x1d) - 0.5) * 0.92;
         const vary = 0.7 + this.tileRand(i, salt + 0x2f) * 0.6;
         const gy = live ? this.groundAt(tx, tz) : -5;
-        if (this.treeInst) {
+        if (this.treeInsts.length > 0) {
           const sc = live ? (0.7 + t.trees * 0.8) * TREE_MODEL_SIZE * vary : 0.0001;
           this.dummy.position.set(tx, gy, tz);
           this.dummy.scale.set(sc, sc, sc);
           this.dummy.rotation.set(0, this.tileRand(i, salt + 0x43) * 6.283, 0);
           this.dummy.updateMatrix();
-          this.treeInst.setAt(k, this.dummy.matrix);
+          // Which species this tree is. A separate salt from the position jitter, so moving a
+          // tree within its tile never changes what kind of tree it is.
+          const sp = Math.floor(this.tileRand(i, salt + 0x77) * this.treeInsts.length) % this.treeInsts.length;
+          this.treeInsts[sp].setAt(spCount[sp]++, this.dummy.matrix);
         } else {
           const sc = live ? (0.5 + t.trees * 0.9) * vary : 0;
           this.dummy.position.set(tx, gy, tz);
@@ -1157,9 +1181,11 @@ export class Renderer3D {
         k++;
       }
     }
-    if (this.treeInst) {
-      this.treeInst.setCount(k); // only what was written — the rest is out of view
-      this.treeInst.update();
+    if (this.treeInsts.length > 0) {
+      for (let sp = 0; sp < this.treeInsts.length; sp++) {
+        this.treeInsts[sp].setCount(spCount[sp]); // only what was written — the rest is out of view
+        this.treeInsts[sp].update();
+      }
     } else {
       this.trees.count = k;
       this.trees.instanceMatrix.needsUpdate = true;
@@ -2037,8 +2063,8 @@ export class Renderer3D {
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
     }
-    this.treeInst?.dispose(this.scene);
-    this.treeInst = null;
+    for (const t of this.treeInsts) t.dispose(this.scene);
+    this.treeInsts = [];
     this.rockInst?.dispose(this.scene);
     this.rockInst = null;
     if (this.heads) {

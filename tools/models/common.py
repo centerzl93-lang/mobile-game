@@ -66,6 +66,11 @@ def material(name: str, color: tuple[float, float, float], roughness: float = 0.
     mix.location = (-300, 200)
     nt.links.new(tex_node.outputs["Color"], mix.inputs["Color1"])
     nt.links.new(mix.outputs["Color"], bsdf.inputs["Base Color"])
+    # The glTF exporter cannot represent a Mix node between the image and Base Color: it writes the
+    # texture and drops the tint, so every "retint" of a shared map came out identical — five tree
+    # species in one green, stone and stone_dark the same grey. The colour is stashed here and
+    # written back as `baseColorFactor` by `export_gltf`, which is exactly what that factor means.
+    mat["tint"] = list(color)
 
     nrm_path = os.path.join(TEXTURE_DIR, f"mat_{tex}_n.png")
     if os.path.exists(nrm_path):
@@ -197,6 +202,16 @@ def export_gltf(path: str) -> None:
     )
     with open(path, "r", encoding="utf-8") as fh:
         doc = json.load(fh)
+    # Re-attach the tints the exporter dropped (see `material`). Untextured materials already
+    # carry their colour as the factor, so only the textured ones need this.
+    tints = {m.name: list(m["tint"]) for m in bpy.data.materials if m.get("tint") is not None}
+    for mat_doc in doc.get("materials", []):
+        tint = tints.get(mat_doc.get("name"))
+        if tint is None:
+            continue
+        pbr = mat_doc.setdefault("pbrMetallicRoughness", {})
+        if "baseColorTexture" in pbr:
+            pbr["baseColorFactor"] = [*tint, 1.0]
     copied = []
     for image in doc.get("images", []):
         uri = image.get("uri")

@@ -23,7 +23,12 @@
     "woodcutter": "woodcutter.gltf"
   },
   "trees": [
-    "pine.gltf"
+    "pine.gltf",
+    "spruce.gltf",
+    "birch.gltf",
+    "oak.gltf",
+    "maple.gltf",
+    "willow.gltf"
   ],
   "rocks": [
     "rock.gltf"

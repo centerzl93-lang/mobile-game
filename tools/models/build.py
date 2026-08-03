@@ -24,6 +24,11 @@ sys.path.insert(0, HERE)
 MODELS = {
     "house": "house",
     "pine": "pine",
+    "spruce": "trees:spruce",
+    "birch": "trees:birch",
+    "oak": "trees:oak",
+    "maple": "trees:maple",
+    "willow": "trees:willow",
     "rock": "rock",
     "stonehouse": "homes:stonehouse",
     "gatherer": "food:gatherer",

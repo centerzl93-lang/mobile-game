@@ -106,6 +106,25 @@ export class ModelLibrary {
     for (const f of this.treeFiles) { const t = this.templates.get(f); if (t) return t; }
     return null;
   }
+
+  /**
+   * Every tree species that has finished loading, in manifest order.
+   *
+   * The renderer keeps one instanced layer per species and picks between them by a hash of the
+   * tile, so a wood mixes without anything being stored per tile. Order matters: it is what that
+   * hash indexes into, so a species arriving late would reshuffle a forest mid-game. They are
+   * only read once *all* of them are loaded (see `treesReady`).
+   */
+  allTrees(): THREE.Object3D[] {
+    const out: THREE.Object3D[] = [];
+    for (const f of this.treeFiles) { const t = this.templates.get(f); if (t) out.push(t); }
+    return out;
+  }
+
+  /** True once every species in the manifest is loaded, so the mix can be built in a stable order. */
+  treesReady(): boolean {
+    return this.treeFiles.length > 0 && this.treeFiles.every((f) => this.templates.has(f));
+  }
   firstRock(): THREE.Object3D | null {
     for (const f of this.rockFiles) { const t = this.templates.get(f); if (t) return t; }
     return null;

@@ -40,6 +40,25 @@ FOLIAGE = "#4C6B3C"
 FOLIAGE_DARK = "#3B5430"
 FOLIAGE_LIGHT = "#5F7F46"
 BARK = "#5A4433"
+# Species tints. A wood of one colour reads as wallpaper however good the silhouette is, so each
+# tree carries its own greens and its own bark, close enough to sit together and far enough apart
+# to tell at a glance: the pine's blue-grey, the birch's pale trunk and yellow-green, the oak's
+# deep summer green, the maple's rust, the willow's grey-green.
+SPRUCE = "#3E5F44"
+SPRUCE_DARK = "#2F4A36"
+SPRUCE_LIGHT = "#4E7350"
+BIRCH_LEAF = "#7A9A4A"
+BIRCH_LEAF_LIGHT = "#93B25C"
+BIRCH_BARK = "#D9D6CB"
+OAK_LEAF = "#456B34"
+OAK_LEAF_DARK = "#35542A"
+OAK_BARK = "#4E3B2C"
+# Warm gold rather than full rust: at a sixth of the wood, a properly autumnal maple made spring
+# look like October. This still reads clearly warm against the greens without taking the season over.
+MAPLE_LEAF = "#8A7A38"
+MAPLE_LEAF_LIGHT = "#A39445"
+WILLOW_LEAF = "#6E8B52"
+WILLOW_LEAF_LIGHT = "#87A265"
 SHAKE = "#B99A72"        # split-timber roofing on working buildings (tints the shake map)
 SHAKE_LIGHT = "#D4B78C"
 CLOTH = "#CFC3AA"        # awnings, drying racks, sails
@@ -82,6 +101,20 @@ def palette() -> dict:
         "foliage_dark": material("FoliageDark", srgb(FOLIAGE_DARK), roughness=0.82, tex="foliage"),
         "foliage_light": material("FoliageLight", srgb(FOLIAGE_LIGHT), roughness=0.78, tex="foliage"),
         "bark": material("Bark", srgb(BARK), roughness=0.90, tex="bark"),
+        # Per-species tree materials — see the colour block at the top of this file.
+        "spruce": material("Spruce", srgb(SPRUCE), roughness=0.80, tex="foliage"),
+        "spruce_dark": material("SpruceDark", srgb(SPRUCE_DARK), roughness=0.82, tex="foliage"),
+        "spruce_light": material("SpruceLight", srgb(SPRUCE_LIGHT), roughness=0.78, tex="foliage"),
+        "birch_leaf": material("BirchLeaf", srgb(BIRCH_LEAF), roughness=0.80, tex="foliage"),
+        "birch_leaf_light": material("BirchLeafLight", srgb(BIRCH_LEAF_LIGHT), roughness=0.78, tex="foliage"),
+        "birch_bark": material("BirchBark", srgb(BIRCH_BARK), roughness=0.86, tex="bark"),
+        "oak_leaf": material("OakLeaf", srgb(OAK_LEAF), roughness=0.80, tex="foliage"),
+        "oak_leaf_dark": material("OakLeafDark", srgb(OAK_LEAF_DARK), roughness=0.82, tex="foliage"),
+        "oak_bark": material("OakBark", srgb(OAK_BARK), roughness=0.92, tex="bark"),
+        "maple_leaf": material("MapleLeaf", srgb(MAPLE_LEAF), roughness=0.80, tex="foliage"),
+        "maple_leaf_light": material("MapleLeafLight", srgb(MAPLE_LEAF_LIGHT), roughness=0.78, tex="foliage"),
+        "willow_leaf": material("WillowLeaf", srgb(WILLOW_LEAF), roughness=0.80, tex="foliage"),
+        "willow_leaf_light": material("WillowLeafLight", srgb(WILLOW_LEAF_LIGHT), roughness=0.78, tex="foliage"),
         # Wooden shakes: the same shingle map tinted warm. Working buildings — barns, sheds,
         # cabins, the trades — are roofed in split timber; slate is reserved for civic work. Two
         # roofing families is what keeps two dozen buildings from reading as one repeated cottage.

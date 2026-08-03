@@ -21,7 +21,8 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **named/deletable save slots**, **lives on ticks (ageing/births)**,
+Latest work: **five more tree species**, **named/deletable save slots**,
+**lives on ticks (ageing/births)**,
 **opening stock + tool/coat economy**,
 **consumption tuning + hearth-only fuel**,
 **self-filling jobs**, a **seven-item gameplay pass**, **staged construction**,
@@ -30,6 +31,32 @@ Latest work: **named/deletable save slots**, **lives on ticks (ageing/births)**,
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Five more tree species, and the tint bug that hid them (this session)
+The wood was all pine. There are six species now — `pine` plus `spruce`, `birch`, `oak`, `maple`
+and `willow` in `tools/models/trees.py` — mixing conifer spires with broadleaf domes and a
+drooping willow, each with its own greens and bark.
+
+**No per-tile state.** The renderer keeps one `InstancedModel` per species and picks between them
+from a hash of the tile and the tree's index within it, salted separately from the position jitter
+so moving a tree never changes what kind it is. Nothing is stored on the tile and nothing changes
+across a save. Two consequences to respect: the species layers are only built once **every**
+species has loaded (`ModelLibrary.treesReady`), because manifest order is what the hash indexes and
+a late arrival would reshuffle a live forest; and each layer is sized for the *whole* forest, since
+the hash could deal one species most of a small wood and an under-sized layer drops trees silently.
+
+**The tints had never worked.** `material()` multiplies a texture by the material colour through a
+Mix node, and the glTF exporter cannot represent that — it wrote the texture and dropped the
+colour, so `baseColorFactor` was absent on every material in every model. Every "retint" of a
+shared map was identical: five new tree species came out in one flat green, and `stone` /
+`stone_dark`, `foliage` / `foliage_light` and so on have always been the same. `material()` now
+stashes the colour on the Blender material and `export_gltf` writes it back as `baseColorFactor`.
+
+**Only the trees have been rebuilt with the fix.** Every other model still carries its old
+untinted materials, so the village looks exactly as it did. Running `python3 tools/models/build.py`
+would rebuild them all *and apply tints that have never been visible* — the buildings would change
+appearance in one go. That is the authored intent finally working, and it may well look better, but
+it is a deliberate visual decision rather than a no-op rebuild. Decide it on purpose.
 
 ### Named and deletable save slots (this session)
 Each occupied slot in the Load/Save picker now carries a rename field and a delete button; empty

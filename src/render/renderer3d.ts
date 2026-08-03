@@ -1509,6 +1509,19 @@ export class Renderer3D {
     // (the 3×2 dock and market, the 3×6 quarry) sitting in a plot two-thirds empty.
     const k = Math.max(def.w, def.h) * 0.95;
     clone.scale.multiplyScalar(k);
+    // `Object3D.clone()` copies the tree but *shares* materials with the template, and
+    // `styleBuilding` writes to them: it sets `transparent`/`opacity`/`depthWrite` per building
+    // to tell a finished one from a site. Shared, that means the last building of a type styled
+    // in the loop decides how every one of them looks — so a single house under construction
+    // rendered every finished house as glass too. Each building gets its own materials.
+    // Geometry stays shared: nothing writes to it, and it is the expensive half.
+    clone.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
+      m.material = Array.isArray(m.material)
+        ? m.material.map((x) => x.clone())
+        : (m.material as THREE.Material).clone();
+    });
     clone.userData.model = true;
     return clone;
   }
@@ -1543,10 +1556,15 @@ export class Renderer3D {
 
   private disposeBuilding(obj: THREE.Object3D): void {
     this.scene.remove(obj);
+    // A model building shares its geometry with the loader's template — releasing that on
+    // demolition would pull the mesh out from under every other building of the same type, and
+    // out of the template every future one is cloned from. Its materials are its own (see
+    // `makeBuildingModel`) and do need releasing. A box or a fenced plot owns both.
+    const sharedGeometry = !!obj.userData.model;
     obj.traverse((o) => {
       const m = o as THREE.Mesh;
       if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
-      m.geometry?.dispose();
+      if (!sharedGeometry) m.geometry?.dispose();
       const mat = m.material;
       if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
       else mat?.dispose();

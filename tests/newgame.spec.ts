@@ -1493,6 +1493,24 @@ test.describe('seasonal firewood and clothing burn', () => {
         // Captured before the window: `rehouseVillagers` runs on a timer and can move a surplus
         // adult out. Counting residents afterwards would undercount the denominator.
         const residents = s.citizens.filter((c: any) => c.homeId === picked.b.id);
+        // Freeze the household's demographics for the window. Lives run on ticks now, so over 500
+        // seconds this household could bear a child, see one of its children come of age and move
+        // out, or lose an elder — each of which changes the head count the figure is divided by,
+        // and the first two also change the numerator. Spring and autumn came out 12% apart on a
+        // rate that is equal by definition.
+        //
+        // Each resident is moved clear of every threshold they could cross in 500s — which is
+        // 0.21 of a year — while the household keeps its shape. Children go to 1, well below
+        // SCHOOL_AGE and ADULT_AGE (4). Adults go to 34.5: past the fertile window
+        // (FERTILE_MAX_AGE 34) so the house cannot bear a child, and still short of
+        // OLD_AGE_START (35) at the end of the window, so nobody is rolling for old age either.
+        //
+        // Ages rather than partnerships, because `rehouseVillagers` runs every couple of seconds
+        // and pairs singles off again — clearing `partnerId` buys about two seconds. Turning the
+        // children into adults instead would leave the house full of surplus adults and rehousing
+        // would move one out, which is exactly what `stayed` is watching for. Heating is charged
+        // per head regardless of age, so none of this touches what is being measured.
+        for (const c of residents) c.age = c.age < 4 ? 1 : 34.5;
         g.debugAdvance(500); // well inside the season — no second turnover in the figure
         const burned = fw0 - (picked.b.store.firewood ?? 0);
         return {
@@ -1806,6 +1824,7 @@ test.describe('villager breeding', () => {
   });
 
   test('no births while the village has under a season of food banked', async ({ page }) => {
+    test.setTimeout(GROWTH_TIMEOUT); // eight seasons of a whole village, stepped a tick at a time
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -3279,5 +3298,117 @@ test.describe('roads get laid', () => {
     expect(out.asked, 'the road asks for a builder').toBeGreaterThan(0);
     expect(out.builders, 'a hand was freed to lay it').toBeGreaterThan(0);
     expect(out.laid, 'and the road actually gets laid').toBeGreaterThan(0);
+  });
+});
+
+test.describe('lives run on ticks, not seasons', () => {
+  /**
+   * Two of these walk a year or two of village time a tenth of a season at a time, which is well
+   * past the default 30s budget — they are simulating, not waiting on anything.
+   */
+  const WALK_YEARS_TIMEOUT = 240_000;
+
+  test('villagers age continuously rather than all having a birthday at once', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const before = s.citizens.slice(0, 5).map((c: any) => c.age);
+      // Three-eighths of a year — deliberately not a whole number of seasons, so a village that
+      // still aged in yearly lumps would show no change at all here.
+      g.debugAdvance(900);
+      const after = s.citizens.slice(0, 5).map((c: any) => c.age);
+      return { before, after, year: 600 * 4 };
+    });
+    for (let i = 0; i < out.before.length; i++) {
+      expect(out.after[i] - out.before[i], `villager ${i} aged`).toBeCloseTo(900 / out.year, 3);
+    }
+    // And the ages really are fractional now, not rounded back to whole years.
+    expect(out.after.some((a: number) => a % 1 !== 0)).toBe(true);
+  });
+
+  test('children are born through the year, not only at the turn of a season', async ({ page }) => {
+    test.setTimeout(WALK_YEARS_TIMEOUT);
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      barn.store.wood = 9e4;
+      // Room to grow into, and enough of everything that births are never gated on supply.
+      let added = 0;
+      for (let r = 10; r < 30 && added < 8; r++)
+        for (let dy = -r; dy <= r && added < 8; dy++)
+          for (let dx = -r; dx <= r && added < 8; dx++) {
+            const id = g.debugCanPlace('house', barn.x + dx, barn.y + dy).ok
+              ? g.debugPlace('house', barn.x + dx, barn.y + dy) : null;
+            if (id == null) continue;
+            const h = s.buildings.find((b: any) => b.id === id);
+            h.built = true; h.progress = 9999; added++;
+          }
+      const stock = () => {
+        for (const k of ['grain', 'fruit', 'meat', 'fish', 'firewood', 'clothing', 'medicine', 'tools']) {
+          barn.store[k] = 1e5;
+        }
+        for (const h of s.buildings) if (h.type === 'house' || h.type === 'stonehouse') h.store.firewood = 500;
+      };
+
+      // Walk two years in tenths of a season and note when the population moves. A season is ten
+      // steps, so step 9 of each ten is the one that crosses the turnover.
+      let prev = s.citizens.length;
+      let mid = 0;
+      let atTurnover = 0;
+      for (let i = 0; i < 80; i++) {
+        stock();
+        g.debugAdvance(60);
+        const pop = s.citizens.length;
+        if (pop > prev) (i % 10 === 9 ? (atTurnover += 1) : (mid += 1));
+        prev = pop;
+      }
+      return { mid, atTurnover, endPop: s.citizens.length, houses: added };
+    });
+    expect(out.houses, 'the village had room to grow').toBeGreaterThan(0);
+    expect(out.endPop, 'and it grew').toBeGreaterThan(12);
+    // The point of the change: births land whenever they land. Almost all of them should fall
+    // away from the season boundary, where every single one used to be.
+    expect(out.mid, 'births away from a season turnover').toBeGreaterThan(out.atTurnover);
+  });
+
+  test('a full year still carries about the same growth as the yearly roll it replaced', async ({ page }) => {
+    test.setTimeout(WALK_YEARS_TIMEOUT);
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      barn.store.wood = 9e4;
+      let added = 0;
+      for (let r = 10; r < 30 && added < 10; r++)
+        for (let dy = -r; dy <= r && added < 10; dy++)
+          for (let dx = -r; dx <= r && added < 10; dx++) {
+            const id = g.debugCanPlace('house', barn.x + dx, barn.y + dy).ok
+              ? g.debugPlace('house', barn.x + dx, barn.y + dy) : null;
+            if (id == null) continue;
+            const h = s.buildings.find((b: any) => b.id === id);
+            h.built = true; h.progress = 9999; added++;
+          }
+      const startPop = s.citizens.length;
+      for (let n = 0; n < 4; n++) {
+        for (const k of ['grain', 'fruit', 'meat', 'fish', 'firewood', 'clothing', 'medicine', 'tools']) {
+          barn.store[k] = 1e5;
+        }
+        for (const h of s.buildings) if (h.type === 'house' || h.type === 'stonehouse') h.store.firewood = 500;
+        g.debugAdvance(610);
+      }
+      return { startPop, endPop: s.citizens.length };
+    });
+    // `chanceOver` restates each roll for the shorter span rather than re-tuning it, so a
+    // well-housed, well-fed village should still put on a healthy year's growth — not stall
+    // (odds lost in the conversion) and not explode (odds applied per tick).
+    expect(out.endPop).toBeGreaterThan(out.startPop);
+    expect(out.endPop).toBeLessThan(out.startPop * 3);
   });
 });

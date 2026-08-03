@@ -84,6 +84,8 @@ import {
   hasDoor,
   ADULT_AGE,
   SCHOOL_AGE,
+  SCHOOL_ATTENDANCE,
+  YEAR_LENGTH,
   OLD_AGE_START,
   MAX_AGE,
   EDUCATED_BONUS,
@@ -233,6 +235,7 @@ export function update(s: GameState, dt: number, log: LogFn): void {
 
   eat(s, dt, log);
   heat(s, dt, log);
+  lives(s, dt, log);
 
   s.seasonTimer += dt;
   if (s.seasonTimer >= SEASON_LENGTH) {
@@ -346,6 +349,131 @@ function heat(s: GameState, dt: number, log: LogFn): void {
     killFrom(s, froze, froze.length);
     log(`${froze.length} villager${froze.length > 1 ? 's' : ''} froze in the cold`, 'bad');
   }
+}
+
+// ---- lives (ageing, schooling, old age, births) ----
+
+/** How often births are considered, in seconds. See `GameState.birthTimer`. */
+const BIRTH_INTERVAL = 5;
+
+/**
+ * Convert a probability quoted over one span of time into the equivalent over another.
+ *
+ * A 40% chance per year is *not* four 40% chances per season, and it is certainly not 0.4 × dt.
+ * `1 - (1 - p) ^ (part / whole)` is the figure that leaves the odds over the original span exactly
+ * as they were, which is what lets these rolls move from the season boundary to a tick without
+ * quietly retuning the game.
+ */
+function chanceOver(p: number, part: number, whole: number): number {
+  if (p <= 0) return 0;
+  if (p >= 1) return 1;
+  return 1 - Math.pow(1 - p, part / whole);
+}
+
+/**
+ * Villagers get older, go to school, come of age, grow old and are born — a little every tick.
+ *
+ * All of this used to land in one lump at the turn of the year: the whole village had a birthday
+ * together, every child who was going to grow up did so in the same frame, every elder who was
+ * going to die died in that frame, and every household that was going to bear a child bore it
+ * then. A village therefore stood completely still for four seasons and lurched once. Spreading it
+ * over the ticks costs nothing and means a birthday, a child or a funeral can fall on any day.
+ *
+ * The odds are preserved rather than re-tuned: `chanceOver` restates each roll's probability for
+ * the shorter span, so a year of play still carries the same expected number of births and deaths
+ * as the single yearly roll it replaces.
+ */
+function lives(s: GameState, dt: number, log: LogFn): void {
+  if (s.citizens.length === 0) return;
+  const schoolStaffed = s.buildings.some((b) => b.built && b.type === 'school' && b.workers.length > 0);
+  const years = dt / YEAR_LENGTH;
+
+  const cameOfAge: Citizen[] = [];
+  const dying: Citizen[] = [];
+  for (const c of s.citizens) {
+    const wasChild = c.age < ADULT_AGE;
+    c.age += years;
+    if (wasChild) {
+      // School is the last year of childhood, and only where there is a staffed school to attend.
+      c.student = schoolStaffed && c.age >= SCHOOL_AGE && c.age < ADULT_AGE;
+      if (c.student) c.schooling = (c.schooling ?? 0) + dt;
+      if (c.age >= ADULT_AGE) {
+        c.educated = (c.schooling ?? 0) >= YEAR_LENGTH * SCHOOL_ATTENDANCE;
+        c.student = false;
+        cameOfAge.push(c);
+      }
+      continue;
+    }
+    // Old age: past OLD_AGE_START the yearly odds of dying climb toward certain at MAX_AGE, and
+    // climb faster for the unwell.
+    if (c.age < OLD_AGE_START) continue;
+    const base = clamp((c.age - OLD_AGE_START) / (MAX_AGE - OLD_AGE_START), 0, 1);
+    const perYear = Math.min(1, base * (1 + (1 - c.health / 100)));
+    if (Math.random() < chanceOver(perYear, dt, YEAR_LENGTH)) dying.push(c);
+  }
+
+  // New adults leave the family home for a house of their own where one is free. This is what
+  // keeps a village growing: without it grown children occupy their parents' house for life, the
+  // family home never has room for another child, and the population plateaus at whatever the
+  // founding houses held.
+  if (cameOfAge.length > 0) {
+    const houses = s.buildings.filter((b) => b.built && isHouse(b.type));
+    for (const c of cameOfAge) placeAdult(s, c, houses);
+  }
+  if (dying.length > 0) {
+    for (const c of dying) removeCitizen(s, c);
+    s.seasonDeaths = (s.seasonDeaths ?? 0) + dying.length;
+    log(`${dying.length} elder${dying.length > 1 ? 's' : ''} died of old age`, 'info');
+  }
+
+  s.birthTimer = (s.birthTimer ?? 0) + dt;
+  if (s.birthTimer >= BIRTH_INTERVAL) {
+    births(s, s.birthTimer, log);
+    s.birthTimer = 0;
+  }
+
+  if (s.citizens.length === 0) {
+    s.gameOver = true;
+    log('Your village has died out.', 'bad');
+  }
+}
+
+/**
+ * Reproduction. A household bears a child when three things line up:
+ *   1. it is home to a *couple* — a partnered pair who both live here and are both inside the
+ *      fertile age window (a pair of housemates who never paired off does not count),
+ *   2. it has room under its housing capacity for the child, and
+ *   3. the village has more than one season of food banked.
+ * The chance then scales with how deep that food surplus runs and with average health and
+ * happiness, so a well-fed, content village grows markedly faster than one scraping by.
+ *
+ * Food counts the larders as well as the barns: households take their supplies home, so a
+ * barn-only measure would read as famine in a perfectly comfortable village and stop all births.
+ *
+ * `elapsed` is the span this roll covers — `BIRTH_CHANCE` is quoted per season and restated for it.
+ */
+function births(s: GameState, elapsed: number, log: LogFn): void {
+  const seasonsBanked = totalFoodAvailable(s) / (s.citizens.length * FOOD_PER_CITIZEN_PER_SEASON);
+  if (seasonsBanked <= 1) return;
+  const surplus = clamp((seasonsBanked - 1) / (BIRTH_FOOD_SURPLUS_TARGET - 1), 0, 1);
+  const wellbeing = 0.5 * (avgHealth(s) / 100) + 0.5 * (avgHappiness(s) / 100);
+  const perSeason =
+    BIRTH_CHANCE *
+    (BIRTH_SURPLUS_FLOOR + (1 - BIRTH_SURPLUS_FLOOR) * surplus) *
+    (BIRTH_WELLBEING_FLOOR + (1 - BIRTH_WELLBEING_FLOOR) * wellbeing);
+  const chance = chanceOver(perSeason, elapsed, SEASON_LENGTH);
+  let born = 0;
+  for (const h of s.buildings) {
+    if (!h.built || !isHouse(h.type)) continue;
+    if (residentsOf(s, h).length >= houseCapacityOf(h.type)) continue;
+    const couple = householdCouple(s, h);
+    if (!couple || !isFertile(couple[0]) || !isFertile(couple[1])) continue;
+    if (Math.random() < chance) {
+      spawnChild(s, h, couple);
+      born++;
+    }
+  }
+  if (born > 0) log(born > 1 ? `${born} children were born` : `A child was born`, 'good');
 }
 
 // ---- jobs ----
@@ -1569,44 +1697,11 @@ function wander(s: GameState, c: Citizen, dt: number): void {
 function endSeason(s: GameState, log: LogFn): void {
   const popStart = s.citizens.length; // for tallying deaths (affects morale)
   s.season = (s.season + 1) % SEASONS.length;
+  // Ageing, schooling, coming of age, old age and births all run continuously now — see `lives`.
+  // The calendar still turns here; only the announcement is left.
   if (s.season === 0) {
     s.year++;
     log(`A new year begins — Year ${s.year}`, 'info');
-    // Everyone ages a year.
-    //
-    // Schooling is a year, taken immediately before working age, and only where there is a
-    // staffed school to take it at. A village without one has no students: its children go
-    // straight from child to adult. `educated` therefore means "attended", not "happened to come
-    // of age while a school stood somewhere" — and a school that loses its teacher un-enrols the
-    // class, who then come of age unschooled.
-    const schoolStaffed = s.buildings.some((b) => b.built && b.type === 'school' && b.workers.length > 0);
-    const cameOfAge: Citizen[] = [];
-    for (const c of s.citizens) {
-      const wasChild = c.age < ADULT_AGE;
-      c.age += 1;
-      if (wasChild && c.age >= ADULT_AGE) {
-        c.educated = !!c.student; // they sat the year, or they did not
-        c.student = false;
-        cameOfAge.push(c);
-      } else if (c.age < ADULT_AGE) {
-        c.student = schoolStaffed && c.age >= SCHOOL_AGE;
-      }
-    }
-    // New adults leave the family home for a house of their own where one is free. This is what
-    // keeps a village growing: without it grown children occupy their parents' house for life, the
-    // family home never has room for another child, and the population plateaus at whatever the
-    // founding houses held.
-    const houses = s.buildings.filter((b) => b.built && isHouse(b.type));
-    for (const c of cameOfAge) placeAdult(s, c, houses);
-    // Old age: from OLD_AGE_START the yearly death chance ramps up, worse if unhealthy.
-    const dying: Citizen[] = [];
-    for (const c of s.citizens) {
-      if (c.age < OLD_AGE_START) continue;
-      const base = clamp((c.age - OLD_AGE_START) / (MAX_AGE - OLD_AGE_START), 0, 1);
-      if (Math.random() < Math.min(1, base * (1 + (1 - c.health / 100)))) dying.push(c);
-    }
-    for (const c of dying) removeCitizen(s, c);
-    if (dying.length > 0) log(`${dying.length} elder${dying.length > 1 ? 's' : ''} died of old age`, 'info');
   }
   const season = SEASONS[s.season];
 
@@ -1716,7 +1811,13 @@ function endSeason(s: GameState, log: LogFn): void {
 
   // Tally deaths so far this season (old age, starvation, cold, illness) — they weigh
   // on morale unless the village keeps a cemetery.
-  const deaths = Math.max(0, popStart - s.citizens.length);
+  //
+  // Two sources, because they happen at different times: whatever `endSeason` itself has just
+  // killed (illness, fire), measured by the drop across this call, plus the elders `lives` saw
+  // off during the season, which is carried in `seasonDeaths` — old age used to be settled here
+  // and would otherwise stop counting toward morale entirely.
+  const deaths = Math.max(0, popStart - s.citizens.length) + (s.seasonDeaths ?? 0);
+  s.seasonDeaths = 0;
 
   // Nomad immigration: with spare housing and a comfortable food surplus, a band of
   // wanderers may ask to settle. A few can arrive already sick.
@@ -1730,42 +1831,9 @@ function endSeason(s: GameState, log: LogFn): void {
     }
   }
 
-  // Settle households into couples with room to spare before deciding who bears a child.
+  // Settle households into couples with room to spare — `births` reads the result every few
+  // seconds, so a pair who move in together can start a family without waiting for the year out.
   rehouseVillagers(s);
-
-  // Reproduction. A household bears a child when three things line up:
-  //   1. it is home to a *couple* — a partnered pair who both live here and are both inside the
-  //      fertile age window (a pair of housemates who never paired off does not count),
-  //   2. it has room under its housing capacity for the child, and
-  //   3. the village has more than one season of food banked.
-  // The chance then scales with how deep that food surplus runs and with average health and
-  // happiness, so a well-fed, content village grows markedly faster than one scraping by.
-  //
-  // Food counts the larders as well as the barns: households take their supplies home, so a
-  // barn-only measure would read as famine in a perfectly comfortable village and stop all births.
-  if (s.citizens.length > 0) {
-    const seasonsBanked = totalFoodAvailable(s) / (s.citizens.length * FOOD_PER_CITIZEN_PER_SEASON);
-    if (seasonsBanked > 1) {
-      const surplus = clamp((seasonsBanked - 1) / (BIRTH_FOOD_SURPLUS_TARGET - 1), 0, 1);
-      const wellbeing = 0.5 * (avgHealth(s) / 100) + 0.5 * (avgHappiness(s) / 100);
-      const chance =
-        BIRTH_CHANCE *
-        (BIRTH_SURPLUS_FLOOR + (1 - BIRTH_SURPLUS_FLOOR) * surplus) *
-        (BIRTH_WELLBEING_FLOOR + (1 - BIRTH_WELLBEING_FLOOR) * wellbeing);
-      let born = 0;
-      for (const h of s.buildings) {
-        if (!h.built || !isHouse(h.type)) continue;
-        if (residentsOf(s, h).length >= houseCapacityOf(h.type)) continue;
-        const couple = householdCouple(s, h);
-        if (!couple || !isFertile(couple[0]) || !isFertile(couple[1])) continue;
-        if (Math.random() < chance) {
-          spawnChild(s, h, couple);
-          born++;
-        }
-      }
-      if (born > 0) log(born > 1 ? `${born} children were born` : `A child was born`, 'good');
-    }
-  }
 
   // Well-being drifts toward conditions (food/variety -> health; space/goods/amenities -> happiness).
   updateWellbeing(s, shortFood > 0, deaths, tavernActive);

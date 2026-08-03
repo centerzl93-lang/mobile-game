@@ -589,6 +589,16 @@ export interface Citizen {
   educated: boolean; // attended school in the year before coming of age -> more productive
   /** Enrolled at a staffed school for the final year of childhood. Cleared on coming of age. */
   student?: boolean;
+  /**
+   * Seconds of schooling actually attended, accumulated while enrolled.
+   *
+   * Ageing is continuous, so "did they go to school?" can no longer be a snapshot taken at the
+   * year boundary — that would let a school staffed for one tick educate a whole cohort, and a
+   * school that lost its teacher an hour before a child's birthday un-educate one who had
+   * attended all year. Time in class is counted instead, and `SCHOOL_ATTENDANCE` is how much of
+   * the school year has to be sat.
+   */
+  schooling?: number;
   sick: boolean; // ill from a disease outbreak; can't work until recovered
   /** Seconds of leisure remaining; while > 0 the villager is on a break, not working. */
   rest?: number;
@@ -1012,10 +1022,25 @@ export interface GameState {
    * waiting out the rest of the season.
    */
   rehouseTimer?: number;
+  /**
+   * Seconds since the last reproduction check. Births are rolled on a cadence rather than every
+   * tick because deciding them means walking every house and pairing off its residents, which is
+   * far too much to do sixty times a second — but a season holds hundreds of these, so from the
+   * player's side children simply arrive whenever they arrive.
+   */
+  birthTimer?: number;
+  /**
+   * Villagers who have died so far this season. Old age used to be settled inside `endSeason`, so
+   * the morale hit could be measured by the population dropping over that one call; now that
+   * elders die whenever their time comes, the count has to be carried.
+   */
+  seasonDeaths?: number;
 }
 
 // ---- Time ----
 export const SEASON_LENGTH = 10 * 60; // 10 real minutes per season at 1x speed
+/** A full year of play, at 1x speed. Ageing is billed against this every tick. */
+export const YEAR_LENGTH = SEASON_LENGTH * 4;
 
 // ---- Housing / storage / logistics ----
 /**
@@ -1290,6 +1315,8 @@ export const ADULT_AGE = 4; // children become working adults at this age (years
  * rather than merely happen to come of age while a school stands somewhere.
  */
 export const SCHOOL_AGE = ADULT_AGE - 1;
+/** Fraction of the school year a child must actually sit to count as educated. */
+export const SCHOOL_ATTENDANCE = 0.5;
 export const START_ADULTS = 8; // founding adult villagers
 export const START_CHILDREN = 4; // founding children
 export const ADULT_MIN_AGE = 20; // founding adults' age range

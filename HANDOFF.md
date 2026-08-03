@@ -21,13 +21,53 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **opening stock + tool/coat economy**, **consumption tuning + hearth-only fuel**,
+Latest work: **lives on ticks (ageing/births)**, **opening stock + tool/coat economy**,
+**consumption tuning + hearth-only fuel**,
 **self-filling jobs**, a **seven-item gameplay pass**, **staged construction**,
 **render optimisation**, a **renderer teardown leak**, **lakes**, **landscape play** and
 **building footprints** — all this session.
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Lives run on ticks, not seasons (this session)
+Ageing, schooling, coming of age, old age and births used to land in one lump at the turn of the
+year: the whole village had a birthday together, every child who was going to grow up did so in the
+same frame, every elder who was going to die died in it, and every household that was going to bear
+a child bore it then. A village stood still for four seasons and lurched once. All of it now runs in
+`lives()` (`src/game/simulation.ts`), called every tick from `update` — the same move already made
+for eating, heating and construction.
+
+- **`c.age` is a float now**, gaining `dt / YEAR_LENGTH` a tick. Both display sites already did
+  `Math.floor`, so nothing needed changing there, but **anything new that shows an age must floor
+  it**. Old saves carry whole-number ages and simply carry on from them.
+- **The odds are preserved, not re-tuned.** `chanceOver(p, part, whole)` = `1 - (1-p)^(part/whole)`
+  restates a probability for a shorter span, so the yearly old-age roll and the per-season birth
+  roll keep exactly the odds they had. This is the bit to be careful with if you move anything else
+  off the boundary: `p * dt / whole` is *not* the same number, and neither is rolling `p` per tick.
+- **Births run on a 5-second cadence** (`BIRTH_INTERVAL`, `GameState.birthTimer`), not every tick —
+  deciding them means walking every house and pairing off its residents, far too much to do sixty
+  times a second. A season holds 120 of these, so from the player's side children simply arrive
+  whenever they arrive. Measured: 16 of 17 population changes over two years fell away from a
+  season boundary.
+- **Schooling is counted, not sampled.** With continuous ageing, "did they attend?" can no longer
+  be a snapshot at the year boundary — a school staffed for one tick would educate a whole cohort.
+  `Citizen.schooling` accumulates seconds actually attended and `SCHOOL_ATTENDANCE` (0.5) is how
+  much of the school year has to be sat.
+- **Measurement tests must now pin demographics, not just housing.** The three seasonal-burn tests
+  measure a household's fuel per head over a 500-second window, and that window can now contain a
+  birth, a child coming of age and moving out, or an elder dying — each changes the head count the
+  figure is divided by, and the first two change the burn as well. Spring and autumn came out 12%
+  apart on a rate that is equal by definition. The fix is in `burnDuring`: every resident is moved
+  clear of the thresholds they could cross in 0.21 of a year (children to 1, adults to **34.5** —
+  past `FERTILE_MAX_AGE` so the house cannot bear, still short of `OLD_AGE_START` at the end of the
+  window). **Ages, not partnerships** — `rehouseVillagers` pairs singles off again every couple of
+  seconds, so clearing `partnerId` buys about two seconds. And not by turning children into adults:
+  that leaves a houseful of surplus adults and rehousing moves one out.
+- **`GameState.seasonDeaths` carries the morale tally.** `endSeason` measured deaths by the
+  population dropping across its own call, which worked while old age was settled there. Elders now
+  die whenever their time comes, so the count is accumulated and folded in at the turnover —
+  without it, old age would have silently stopped weighing on morale.
 
 ### Opening stock and the tool/coat economy (this session)
 **Every difficulty now starts with the same survival rations**: 1200 food, 600 firewood, 48 tools,
@@ -906,8 +946,8 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
 - `tests/newgame.spec.ts` — merchant, ranch, farm, and **jobs & builders** suites, plus prior
   seed-gate/staffing tests, and this session's **available workers count**, **fireproof buildings**,
   **clearing land before building**, **camera rotate buttons**, **construction stages**,
-  **placement controls**, **fishing dock**, **auto-staffing**, **consumption and fuel** and
-  **roads get laid** suites. The fishing-dock pair scans every tile and
+  **placement controls**, **fishing dock**, **auto-staffing**, **consumption and fuel**,
+  **roads get laid** and **lives run on ticks** suites. The fishing-dock pair scans every tile and
   rotation on a generated map and asserts that no accepted site has a dry dock, a floating shack,
   or a work circle sitting on the plot instead of the jetty — plus a count check, so it can't pass
   by finding nowhere to build.
@@ -939,12 +979,13 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
 - Committed tests: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers npx playwright test`
   (config runs `npm run build && npm run preview` on port 4173). **Run the three specs separately** —
   the whole suite takes well over 15 minutes, so a wrapping `timeout` will cut it off mid-run and
-  tell you nothing. Last full state: `world` 13/13, `menus` 7/7, `newgame` 98/98 across
-  the run that mattered, but expect **one map-seed flake per full run** rather than a clean sweep:
-  `household larders > residents stock their own house` and `trading post > a stock order pulls
-  goods` have each failed once and passed on their own straight after. Both are the walking-budget
-  pattern below, and both got tighter when fuel started having to be carried home. Re-run a lone
-  failure before believing it.
+  tell you nothing. Last full state: `world` 13/13, `menus` 7/7, `newgame` **101/101**
+  — a clean sweep. Do not read one green run as the suite being flake-free, though: over this
+  session `household larders > residents stock their own house`, `trading post > a stock order
+  pulls goods` and `villager breeding > with no spare housing adults still pair up` have each
+  failed once in a full run and passed on their own straight after. All three are the
+  walking-budget pattern below, and the first two got tighter when fuel started having to be
+  carried home. Re-run a lone failure before believing it.
 - Headless scratchpad drivers use `playwright-core` + chromium at
   `/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell` with SwiftShader flags,
   against `npm run preview` on port 4173 (preview is flaky — run it in the background).

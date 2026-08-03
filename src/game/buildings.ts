@@ -227,18 +227,35 @@ function markFootprintHarvest(s: GameState, b: Building): void {
  * this — resources under the site are hand-harvested first (see `markFootprintHarvest`).
  */
 export function footprintClear(s: GameState, b: Building): boolean {
+  const left = footprintToClear(s, b);
+  return left.trees + left.stone + left.iron === 0;
+}
+
+/**
+ * Tiles under a site still holding something that has to come off before building can start,
+ * counted by what is on them.
+ *
+ * A site can sit at 0% for a long time while the village hand-clears a wood off it, and from the
+ * outside that is indistinguishable from a site nobody has been assigned to. The inspect sheet
+ * shows these counts so "why is nothing happening here" has an answer on the sheet itself.
+ *
+ * Counted in *tiles*, not in resource units: a tile is one trip for whoever clears it, which is
+ * the number that tells the player how much work is left.
+ */
+export function footprintToClear(s: GameState, b: Building): { trees: number; stone: number; iron: number } {
   const fw = footprintW(b);
   const fh = footprintH(b);
+  const out = { trees: 0, stone: 0, iron: 0 };
   for (let dy = 0; dy < fh; dy++) {
     for (let dx = 0; dx < fw; dx++) {
       const t = getTile(s.tiles, b.x + dx, b.y + dy);
       if (!t) continue;
-      if (t.type === 'forest' && t.trees > 0.05) return false;
-      if ((t.stone ?? 0) > 0) return false;
-      if ((t.iron ?? 0) > 0) return false;
+      if (t.type === 'forest' && t.trees > 0.05) out.trees++;
+      if ((t.stone ?? 0) > 0) out.stone++;
+      if ((t.iron ?? 0) > 0) out.iron++;
     }
   }
-  return true;
+  return out;
 }
 
 /** True if storage holds the materials to start this building. */

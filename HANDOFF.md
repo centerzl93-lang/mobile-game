@@ -21,7 +21,8 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **merchant docks properly**, **stockpile limits**, **workers go where the work is**,
+Latest work: **build sites show what is in the way**, **merchant docks properly**,
+**stockpile limits**, **workers go where the work is**,
 **five more tree species**,
 **named/deletable save slots**,
 **lives on ticks (ageing/births)**,
@@ -33,6 +34,22 @@ Latest work: **merchant docks properly**, **stockpile limits**, **workers go whe
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### A build site says what is in its way (this session)
+A site sits at 0% while the village hand-clears the wood off it, and from outside that was
+indistinguishable from a site nobody had been assigned to. `footprintToClear(s, b)` counts the
+tiles under a footprint still holding trees, rock or ore, and `footprintClear` is now derived from
+it. Both places that could answer "why is nothing happening here" do:
+
+- **The inspect sheet** leads with `Clearing the ground` instead of `Building 0%`, then the total
+  and a line per kind (`🌲 Trees 3 to fell`, `🪨 Stone 1 to gather`, …). The sheet's signature is
+  the rows themselves, so the counts tick down on their own as the ground is cleared.
+- **The job board** row reads `🌲 clearing land · 3 tiles left`. Its signature had to change with
+  it: it previously folded in `footprintClear` as a *boolean*, which would have frozen the number
+  at whatever it was when the site was placed.
+
+Counted in tiles rather than resource units, because a tile is one trip for whoever clears it —
+that is the number that says how much work is left.
 
 ### The merchant now actually docks (this session)
 Two separate faults behind one screenshot of a speck floating in a lake.
@@ -1086,7 +1103,7 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
 - Committed tests: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers npx playwright test`
   (config runs `npm run build && npm run preview` on port 4173). **Run the three specs separately** —
   the whole suite takes well over 15 minutes, so a wrapping `timeout` will cut it off mid-run and
-  tell you nothing. Last full state: `world` 13/13, `menus` 10/10, `newgame` 108/109
+  tell you nothing. Last full state: `world` 13/13, `menus` 10/10, `newgame` **111/111**
   — a clean sweep. Do not read one green run as the suite being flake-free, though: over this
   session `household larders > residents stock their own house`, `trading post > a stock order
   pulls goods`, `trading post > a merchant can sail in mid-season`, `household larders > a shortage takes the

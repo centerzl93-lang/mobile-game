@@ -43,7 +43,7 @@ import {
   LimitKey,
   limitedOutput,
 } from '../types';
-import { footprintClear } from '../game/buildings';
+import { footprintToClear } from '../game/buildings';
 import { cappedOut, limitStock } from '../game/simulation';
 import { SLOT_NAME_MAX } from '../game/save';
 import { totalStored, totalStoredAll, totalFoodAvailable, totalInLarders } from '../game/storage';
@@ -777,7 +777,7 @@ export class UI {
     // Free laborers are unemployed *adults* only — children have no job but can't be assigned.
     const laborers = s.citizens.reduce((n, c) => n + (isAdult(c) && c.jobId === null && !c.builder ? 1 : 0), 0);
     const sig =
-      jobs.map((b) => `${b.id}:${b.name ?? ''}:${b.built ? 1 : 0}:${b.built ? 1 : footprintClear(s, b) ? 1 : 0}:${b.workers.length}:${b.desiredWorkers}:${b.output}:${b.recipe}:${b.crop}:${b.animal}`).join('|') +
+      jobs.map((b) => `${b.id}:${b.name ?? ''}:${b.built ? 1 : 0}:${b.built ? 0 : footprintToClear(s, b).trees + footprintToClear(s, b).stone + footprintToClear(s, b).iron}:${b.workers.length}:${b.desiredWorkers}:${b.output}:${b.recipe}:${b.crop}:${b.animal}`).join('|') +
       `#${adults},${children},${employed},${buildersWorking},${laborers},${s.desiredBuilders}#${s.seeds.join(',')}`;
     if (sig === this.jobSig) return;
     this.jobSig = sig;
@@ -831,11 +831,15 @@ export class UI {
         extra = `<div class="jr-toggle" data-toggle="animal">${RANCH_ANIMALS.map((a) => `<button data-v="${a}" class="${cur === a ? 'on' : ''}">${ANIMAL_META[a].emoji}</button>`).join('')}</div>`;
       }
       // Unbuilt sites still list here so workers can be queued; hiring only starts once built.
+      const toClear = b.built ? 0 : (() => {
+        const l = footprintToClear(s, b);
+        return l.trees + l.stone + l.iron;
+      })();
       const status = b.built
         ? `${b.workers.length} working / ${b.desiredWorkers} wanted (max ${def.jobs})`
-        : footprintClear(s, b)
+        : toClear === 0
           ? `🏗 under construction · ${b.desiredWorkers} wanted (max ${def.jobs})`
-          : `🌲 clearing land · ${b.desiredWorkers} wanted (max ${def.jobs})`;
+          : `🌲 clearing land · ${toClear} tile${toClear > 1 ? 's' : ''} left · ${b.desiredWorkers} wanted (max ${def.jobs})`;
       row.innerHTML = `
         <span class="jr-emoji">${def.emoji}</span>
         <div class="jr-main"><div class="jr-name">${escapeAttr(buildingName(b))}</div>

@@ -76,7 +76,7 @@ import {
   cappedOut,
   debugWorkSpotFor,
 } from './game/simulation';
-import { canPlace, placeBuilding, canAfford, demolishBuilding, footprintClear } from './game/buildings';
+import { canPlace, placeBuilding, canAfford, demolishBuilding, footprintClear, footprintToClear } from './game/buildings';
 import { findPath } from './game/pathfind';
 import { tileIndex, inBounds } from './game/world';
 import {
@@ -994,7 +994,22 @@ class Game {
       if (!b) return this.clearInspect();
       const def = BUILDING_DEFS[b.type];
       if (!b.built) {
-        rows.push({ label: 'Status', value: `Building ${Math.floor((b.progress / buildTimeOf(b.type)) * 100)}%` });
+        // Ground first: while anything is still standing on the plot, no construction happens at
+        // all, and a site stuck at 0% otherwise looks like one nobody has been assigned to.
+        const left = footprintToClear(this.state, b);
+        const clearing = left.trees + left.stone + left.iron;
+        rows.push({
+          label: 'Status',
+          value: clearing > 0
+            ? 'Clearing the ground'
+            : `Building ${Math.floor((b.progress / buildTimeOf(b.type)) * 100)}%`,
+        });
+        if (clearing > 0) {
+          rows.push({ label: '—', value: `${clearing} tile${clearing > 1 ? 's' : ''} to clear first` });
+          if (left.trees > 0) rows.push({ label: '🌲 Trees', value: `${left.trees} to fell` });
+          if (left.stone > 0) rows.push({ label: `${RESOURCE_ICON.stone} Stone`, value: `${left.stone} to gather` });
+          if (left.iron > 0) rows.push({ label: `${RESOURCE_ICON.iron} Iron`, value: `${left.iron} to gather` });
+        }
         for (const [k, amt] of Object.entries(def.cost) as [ResourceKind, number][]) {
           rows.push({ label: `${RESOURCE_ICON[k]} ${k}`, value: `${Math.floor(b.store[k] ?? 0)}/${amt} delivered` });
         }

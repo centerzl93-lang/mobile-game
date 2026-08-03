@@ -3825,3 +3825,111 @@ test.describe('the merchant ties up at the trading post', () => {
     expect(out!.lengthTiles).toBeLessThan(5);
   });
 });
+
+test.describe('clearing a build site', () => {
+  test('the sheet says how much ground is left to clear, and counts it down', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      barn.store.wood = 1000;
+      barn.store.stone = 1000;
+      let b: any = null;
+      for (let r = 4; r < 26 && !b; r++)
+        for (let dy = -r; dy <= r && !b; dy++)
+          for (let dx = -r; dx <= r && !b; dx++) {
+            if (!g.debugCanPlace('gatherer', barn.x + dx, barn.y + dy).ok) continue;
+            const id = g.debugPlace('gatherer', barn.x + dx, barn.y + dy);
+            if (id != null) b = s.buildings.find((x: any) => x.id === id);
+          }
+      if (!b) return null;
+      // One of each across the plot, and the rest scrubbed, so the counts are known exactly.
+      const f = g.debugFootprint('gatherer');
+      let n = 0;
+      for (let dy = 0; dy < f.h; dy++)
+        for (let dx = 0; dx < f.w; dx++) {
+          const t = s.tiles[(b.y + dy) * s.w + (b.x + dx)];
+          t.type = 'grass';
+          t.trees = 0;
+          delete t.stone;
+          delete t.iron;
+          if (n === 0) { t.type = 'forest'; t.trees = 1; }
+          else if (n === 1) t.stone = 4;
+          else if (n === 2) t.iron = 4;
+          n++;
+        }
+      g.inspectSel = { kind: 'building', id: b.id };
+      g.refreshInspect();
+      const read = () =>
+        [...document.querySelectorAll('#inspect .inv-row')].map((r) => (r as HTMLElement).innerText.replace(/\s+/g, ' ').trim());
+      const before = read();
+      // Now clear the plot the way the villagers would, and look again.
+      for (let dy = 0; dy < f.h; dy++)
+        for (let dx = 0; dx < f.w; dx++) {
+          const t = s.tiles[(b.y + dy) * s.w + (b.x + dx)];
+          t.type = 'grass';
+          t.trees = 0;
+          delete t.stone;
+          delete t.iron;
+        }
+      g.refreshInspect();
+      return { before, after: read() };
+    });
+
+    expect(out, 'a gatherer site could be placed').not.toBeNull();
+    const before = out!.before.join(' | ');
+    // Why nothing is happening yet, and exactly how much is in the way.
+    expect(before).toContain('Clearing the ground');
+    expect(before).toContain('3 tiles to clear first');
+    expect(before).toContain('1 to fell');
+    expect(before).toMatch(/Stone.*1 to gather/);
+    expect(before).toMatch(/Iron.*1 to gather/);
+
+    // Once the ground is clear the sheet goes back to reporting construction, with no leftovers.
+    const after = out!.after.join(' | ');
+    expect(after).toContain('Building 0%');
+    expect(after).not.toContain('to clear');
+    expect(after).not.toContain('to fell');
+  });
+
+  test('the job board counts the tiles left on an unbuilt site', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      barn.store.wood = 1000;
+      let b: any = null;
+      for (let r = 4; r < 26 && !b; r++)
+        for (let dy = -r; dy <= r && !b; dy++)
+          for (let dx = -r; dx <= r && !b; dx++) {
+            if (!g.debugCanPlace('gatherer', barn.x + dx, barn.y + dy).ok) continue;
+            const id = g.debugPlace('gatherer', barn.x + dx, barn.y + dy);
+            if (id != null) b = s.buildings.find((x: any) => x.id === id);
+          }
+      if (!b) return null;
+      const f = g.debugFootprint('gatherer');
+      let n = 0;
+      for (let dy = 0; dy < f.h; dy++)
+        for (let dx = 0; dx < f.w; dx++) {
+          const t = s.tiles[(b.y + dy) * s.w + (b.x + dx)];
+          t.type = 'grass';
+          t.trees = 0;
+          delete t.stone;
+          delete t.iron;
+          if (n < 2) { t.type = 'forest'; t.trees = 1; }
+          n++;
+        }
+      g.ui.refreshPanels(s);
+      return { name: b.name };
+    });
+    expect(out, 'a gatherer site could be placed').not.toBeNull();
+    await page.click('#btn-jobs');
+    const row = page.locator('#jobboard .job-row').filter({ hasText: out!.name });
+    await expect(row).toContainText('clearing land');
+    await expect(row).toContainText('2 tiles left');
+  });
+});

@@ -884,6 +884,58 @@ export const CIRCLE_WORK: BuildingType[] = ['gatherer', 'hunting', 'lumberyard',
  * Everything with a door except the circle trades and the fishing hut, whose jetty is the point of
  * it. A field and a pen have no door: they are open ground, and their workers are visible on them.
  */
+/** How much a stockpile limit moves per tap of the stepper. */
+export const LIMIT_STEP = 50;
+
+/**
+ * What a stockpile limit can be set on: a resource, or **`'food'` for every food kind at once**.
+ *
+ * Food is one category deliberately. A village does not want "1000 fish"; it wants a full larder,
+ * and which of the twenty edible things fills it is the merchant's business and the seasons'. One
+ * cap over the lot means a gatherer, a fisherman and a hunter all stand down together when the
+ * village has enough to eat, instead of the player having to cap each of them and watch the total
+ * drift past whatever they meant.
+ */
+export type LimitKey = ResourceKind | 'food';
+
+/**
+ * The stockpile a workplace's limit is judged against, or null if a cap can never stop it.
+ *
+ * Fields and pens are deliberately absent: a crop half-grown in the ground and a herd that needs
+ * feeding are not work you can walk away from because the barn is full, so they keep working
+ * whatever the food stocks say. Everything else has one product a limit can speak about — a
+ * mine's depends on which seam it is set to, and the foraging trades all answer to `food`.
+ */
+export function limitedOutput(b: Building): LimitKey | null {
+  switch (b.type) {
+    case 'gatherer':
+    case 'fishing':
+    case 'hunting':
+      return 'food';
+    case 'lumberyard': return 'wood';
+    case 'woodcutter': return 'firewood';
+    case 'quarry': return 'stone';
+    case 'mine': return b.output === 'iron' ? 'iron' : 'coal';
+    case 'blacksmith': return 'tools';
+    case 'tailor': return 'clothing';
+    case 'herbalist': return 'medicine';
+    default: return null;
+  }
+}
+
+/** Every stockpile a limit could actually act on — what the limits panel offers. */
+export const LIMITABLE: LimitKey[] = [
+  'food', 'wood', 'firewood', 'stone', 'coal', 'iron', 'tools', 'clothing', 'medicine',
+];
+
+/** Player-facing name and icon for a limit row. Food is a category, so it has its own. */
+export const LIMIT_META: Record<LimitKey, { label: string; icon: string }> = {
+  food: { label: 'Food (all kinds)', icon: '🍽️' },
+} as Record<LimitKey, { label: string; icon: string }>;
+for (const k of RESOURCE_KINDS) {
+  LIMIT_META[k] = { label: k[0].toUpperCase() + k.slice(1), icon: RESOURCE_ICON[k] };
+}
+
 export function worksIndoors(type: BuildingType): boolean {
   return hasDoor(type) && !CIRCLE_WORK.includes(type) && type !== 'fishing';
 }
@@ -1064,6 +1116,15 @@ export interface GameState {
    * player's side children simply arrive whenever they arrive.
    */
   birthTimer?: number;
+  /**
+   * Player-set stockpile caps, per resource. Absent or 0 means no limit.
+   *
+   * A workplace whose output is at its cap stands down and its workers go back into the labour
+   * pool — see `cappedOut`. It is a way to say "that is enough firewood, go and do something
+   * else" without having to remember to re-staff the hut afterwards, because the moment the stock
+   * falls back below the cap the job fills again on its own.
+   */
+  limits?: Partial<Record<LimitKey, number>>;
   /**
    * Villagers who have died so far this season. Old age used to be settled inside `endSeason`, so
    * the morale hit could be measured by the population dropping over that one call; now that

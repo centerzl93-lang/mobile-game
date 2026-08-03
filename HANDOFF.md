@@ -21,7 +21,7 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **workers go where the work is**, **five more tree species**,
+Latest work: **stockpile limits**, **workers go where the work is**, **five more tree species**,
 **named/deletable save slots**,
 **lives on ticks (ageing/births)**,
 **opening stock + tool/coat economy**,
@@ -32,6 +32,23 @@ Latest work: **workers go where the work is**, **five more tree species**,
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Stockpile limits (this session)
+A cap per stockpile, in a new 📦 panel beside the job board. Over the cap, the workplaces that make
+that thing stop producing — **their workers keep the job** and simply labour instead: hauling,
+clearing marked ground, laying drawn roads. Nothing else can hire them, and they pick their trade
+straight back up the moment the stock drops, so a limit is a standing instruction rather than
+something the player has to re-staff around.
+
+- **Food is one category, not one cap per edible thing** (`LimitKey = ResourceKind | 'food'`). A
+  village wants a full larder, not "1000 fish" — one `food` cap stands the gatherer, the fisherman
+  and the hunter down together, judged against every food kind in storage.
+- **Fields and pens are exempt** (`limitedOutput` returns null for them). A crop half-grown in the
+  ground and a herd that needs feeding are not work you can walk away from because the barn is full.
+- The rule is `cappedOut(s, b)`, checked in `runCitizen`: a capped worker runs `runBuilder` instead
+  of `runWorker`. A load already in hand is still delivered first.
+- `LIMIT_STEP` is 50, and the first tap up from "no limit" lands on the current stock rounded up to
+  a step — a cap you set while looking at the panel should be about where the stock is now.
 
 ### Workers go where the work is (this session)
 Every worker used to stand on their building's doorstep whatever their trade. Now `workSpot` in
@@ -1049,12 +1066,12 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
 - Committed tests: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers npx playwright test`
   (config runs `npm run build && npm run preview` on port 4173). **Run the three specs separately** —
   the whole suite takes well over 15 minutes, so a wrapping `timeout` will cut it off mid-run and
-  tell you nothing. Last full state: `world` 13/13, `menus` **10/10**, `newgame` **101/101**
+  tell you nothing. Last full state: `world` 13/13, `menus` 10/10, `newgame` 105/107
   — a clean sweep. Do not read one green run as the suite being flake-free, though: over this
   session `household larders > residents stock their own house`, `trading post > a stock order
-  pulls goods`, `trading post > a merchant can sail in mid-season` and `villager breeding > with no
-  spare housing adults still pair up` have each failed once in a full run and passed on their own
-  straight after. All three are the
+  pulls goods`, `trading post > a merchant can sail in mid-season`, `household larders > a shortage takes the
+  villagers who went without` and `villager breeding > with no spare housing adults still pair up`
+  have each failed once in a full run and passed on their own straight after. All three are the
   walking-budget pattern below, and the first two got tighter when fuel started having to be
   carried home. Re-run a lone failure before believing it.
 - Headless scratchpad drivers use `playwright-core` + chromium at
@@ -1093,6 +1110,14 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   numbers. When isolating one household's consumption, leave **clothing** in the barns (it is
   village-wide, not a larder item) or winter illness confounds the result, and capture the resident
   count *before* the turnover, since `rehouseVillagers` moves adults out afterwards.
+- **Do not flood a barn to pay for a test's buildings.** `barn.store.wood = 9e4` fills it to
+  capacity, and a worker who then finishes a load can never put it down — they stand holding it
+  for ever, and the test measures a stuck villager. It cost an afternoon: production appeared to
+  have stopped when it was delivery that had. A thousand is plenty for anything a test puts up.
+- **A test about *what* a worker does should stand them where the work is.** `debugWorkSpot(id)`
+  returns the tile their job would send them to; setting `c.x/c.y` to it (and clearing `c.route`)
+  takes the walk out of the measurement. Without it these tests are really measuring how far the
+  barn happens to be on a randomly generated map, and they flake accordingly.
 - **Never write a tuned constant into a test — ask the game.** The food gate test set each
   household `residents * 60` grain and called it "one season's rations". `FOOD_PER_CITIZEN_PER_SEASON`
   is 20 now, so that was three seasons of plenty and the test had quietly inverted into asserting

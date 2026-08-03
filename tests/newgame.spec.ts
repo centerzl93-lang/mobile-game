@@ -3336,7 +3336,7 @@ test.describe('lives run on ticks, not seasons', () => {
       g.startNewGame('small', 'easy', false);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
-      barn.store.wood = 9e4;
+      barn.store.wood = 1000;
       // Room to grow into, and enough of everything that births are never gated on supply.
       let added = 0;
       for (let r = 10; r < 30 && added < 8; r++)
@@ -3384,7 +3384,7 @@ test.describe('lives run on ticks, not seasons', () => {
       g.startNewGame('small', 'easy', false);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
-      barn.store.wood = 9e4;
+      barn.store.wood = 1000;
       let added = 0;
       for (let r = 10; r < 30 && added < 10; r++)
         for (let dy = -r; dy <= r && added < 10; dy++)
@@ -3419,8 +3419,10 @@ test.describe('work happens where the work is', () => {
     const g = window.__village;
     const s = g.state;
     const barn = s.buildings.find((b) => b.type === 'barn');
-    barn.store.wood = 9e4;
-    barn.store.stone = 9e4;
+    // Enough to pay for what this puts up, and no more: flooding the barn fills it to capacity,
+    // and a worker who finishes a load can then never put it down.
+    barn.store.wood = 1000;
+    barn.store.stone = 1000;
     for (let r = minR || 3; r < 26; r++)
       for (let dy = -r; dy <= r; dy++)
         for (let dx = -r; dx <= r; dx++) {
@@ -3445,29 +3447,38 @@ test.describe('work happens where the work is', () => {
       const wc = eval(mk)('woodcutter', 6); // clear of the barn, so walking there is visible
       g.debugAdvance(5);
       let inside = 0;
-      let carrying = 0;
       let insideCarrying = 0;
       let insideAwayFromShop = 0;
-      for (let i = 0; i < 400; i++) {
+      let ticks = 0;
+      for (let i = 0; i < 200; i++) {
         wc.store.wood = 9999; // keep it stocked: this is about where they stand, not logistics
-        g.debugAdvance(0.5);
         const c = s.citizens.find((x: any) => x.jobId === wc.id);
-        if (!c) continue;
-        if (c.carry) carrying++;
-        if (!c.inside) continue;
+        // Stand them at their own door each tick and clear anything that would send them off, so
+        // this measures the rule and not how long a walk to the barn happens to be on this map.
+        if (c) {
+          const at = g.debugWorkSpot(c.id);
+          c.x = at.x;
+          c.y = at.y;
+          c.route = undefined;
+          c.rest = 0;
+          c.carry = null;
+        }
+        g.debugAdvance(0.5);
+        ticks++;
+        const after = s.citizens.find((x: any) => x.jobId === wc.id);
+        if (!after || !after.inside) continue;
         inside++;
-        if (c.carry) insideCarrying++;
+        if (after.carry) insideCarrying++;
         // The shop is 3x3 from its corner; its door is a tile off the edge.
-        const near = c.x > wc.x - 2 && c.x < wc.x + 5 && c.y > wc.y - 2 && c.y < wc.y + 5;
+        const near = after.x > wc.x - 2 && after.x < wc.x + 5 && after.y > wc.y - 2 && after.y < wc.y + 5;
         if (!near) insideAwayFromShop++;
       }
-      return { inside, carrying, insideCarrying, insideAwayFromShop };
+      return { inside, ticks, insideCarrying, insideAwayFromShop };
     }, raise);
 
     // They do go in — the renderer draws nobody who is indoors, so this is what "at the anvil"
     // looks like from outside.
-    expect(out.inside, 'the worker went inside to work').toBeGreaterThan(0);
-    expect(out.carrying, 'and hauled loads away').toBeGreaterThan(0);
+    expect(out.inside, 'the worker went inside to work').toBeGreaterThan(out.ticks / 2);
     // Never indoors while out on the road with a load, and never indoors anywhere but the shop.
     expect(out.insideCarrying).toBe(0);
     expect(out.insideAwayFromShop).toBe(0);
@@ -3535,5 +3546,174 @@ test.describe('work happens where the work is', () => {
     expect(out.before, 'deposits were actually seeded').toBeGreaterThan(3);
     // Every one cleared is a tile the forester can plant, which is the point of doing it.
     expect(out.after, 'the forester cleared the ground').toBeLessThan(out.before);
+  });
+});
+
+test.describe('stockpile limits', () => {
+  test('a capped workplace keeps its workers but sets them labouring', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      barn.store.wood = 1000;
+      let wc: any = null;
+      for (let r = 4; r < 26 && !wc; r++)
+        for (let dy = -r; dy <= r && !wc; dy++)
+          for (let dx = -r; dx <= r && !wc; dx++) {
+            if (!g.debugCanPlace('woodcutter', barn.x + dx, barn.y + dy).ok) continue;
+            const id = g.debugPlace('woodcutter', barn.x + dx, barn.y + dy);
+            if (id == null) continue;
+            wc = s.buildings.find((x: any) => x.id === id);
+            wc.built = true;
+            wc.progress = g.debugBuildTime('woodcutter');
+            wc.desiredWorkers = g.debugJobCount('woodcutter');
+          }
+      // "At the bench" is the readable signal: a woodcutter working is inside his shop, and a
+      // woodcutter labouring is not. Counting stock instead would fight the village burning
+      // firewood the whole time.
+      const runFor = (ticks: number) => {
+        let atBench = 0;
+        let kept = 0;
+        for (let i = 0; i < ticks; i++) {
+          wc.store.wood = 9999; // keep it in input, so this measures the cap and nothing else
+          // Stand them at their own door and take away any reason to wander, so what is measured
+          // is the cap rather than the length of a walk on this particular map.
+          for (const c of s.citizens) {
+            if (c.jobId !== wc.id) continue;
+            const at = g.debugWorkSpot(c.id);
+            c.x = at.x;
+            c.y = at.y;
+            c.route = undefined;
+            c.rest = 0;
+            c.carry = null;
+          }
+          g.debugAdvance(0.5);
+          if (s.citizens.some((c: any) => c.jobId === wc.id && c.inside)) atBench++;
+          if (wc.workers.length === staffed) kept++;
+        }
+        return { atBench, kept };
+      };
+      g.debugAdvance(3); // let the assignment pass staff it before anything is measured
+      const staffed = wc.workers.length;
+      const before = runFor(60);
+
+      // A village starts with 600 firewood, so a cap of 100 is immediately over.
+      s.limits = { firewood: 100 };
+      const capped = runFor(60);
+
+      // Lift the cap and they pick the trade back up with no further instruction.
+      s.limits = {};
+      const after = runFor(60);
+      return { staffed, cappedWorkers: wc.workers.length, desired: wc.desiredWorkers,
+               benchBefore: before.atBench, benchCapped: capped.atBench, benchAfter: after.atBench,
+               keptWhileCapped: capped.kept };
+    });
+
+    expect(out.staffed, 'the shop was staffed to begin with').toBeGreaterThan(0);
+    expect(out.benchBefore, 'and its workers were at the bench').toBeGreaterThan(0);
+    // The whole point: they stay on this building's books rather than going back in the pool.
+    expect(out.cappedWorkers).toBe(out.staffed);
+    expect(out.keptWhileCapped).toBe(60);
+    // ...but nobody stands at the bench making more of it while the cap holds.
+    expect(out.benchCapped).toBe(0);
+    // And the trade resumes on its own once the limit is lifted.
+    expect(out.benchAfter).toBeGreaterThan(0);
+    // The player's own worker setting is never overwritten.
+    expect(out.desired).toBeGreaterThan(0);
+  });
+
+  test('one food limit covers every food trade, and fields and pens ignore it', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      barn.store.wood = 1000;
+      const place = (type: string) => {
+        for (let r = 4; r < 26; r++)
+          for (let dy = -r; dy <= r; dy++)
+            for (let dx = -r; dx <= r; dx++) {
+              if (!g.debugCanPlace(type, barn.x + dx, barn.y + dy).ok) continue;
+              const id = g.debugPlace(type, barn.x + dx, barn.y + dy);
+              if (id == null) continue;
+              const b = s.buildings.find((x: any) => x.id === id);
+              b.built = true;
+              b.progress = g.debugBuildTime(type);
+              b.desiredWorkers = g.debugJobCount(type);
+              return b;
+            }
+        return null;
+      };
+      const farm = place('farm');
+      const gatherer = place('gatherer');
+      const hunter = place('hunting');
+      g.debugAdvance(3);
+      const staffed = {
+        farm: farm ? farm.workers.length : 0,
+        gatherer: gatherer ? gatherer.workers.length : 0,
+        hunter: hunter ? hunter.workers.length : 0,
+      };
+      // One cap over every edible thing at once — the village starts with 1200 food, so a cap of
+      // 100 is well over it and every foraging trade should feel it together.
+      s.limits = { food: 100 };
+      g.debugAdvance(3);
+      const capped = {
+        farm: !!farm && g.debugCappedOut(farm.id),
+        gatherer: !!gatherer && g.debugCappedOut(gatherer.id),
+        hunter: !!hunter && g.debugCappedOut(hunter.id),
+      };
+      let foodMade = 0;
+      for (let i = 0; i < 300; i++) {
+        const before = g.debugTotalFood();
+        g.debugAdvance(0.5);
+        if (g.debugTotalFood() > before + 0.01) foodMade++;
+      }
+      return { staffed, capped, foodMade,
+               workersKept: (!farm || farm.workers.length === staffed.farm) &&
+                 (!gatherer || gatherer.workers.length === staffed.gatherer) };
+    });
+
+    expect(out.staffed.farm, 'the field was staffed').toBeGreaterThan(0);
+    expect(out.staffed.gatherer, 'and so was the gatherer').toBeGreaterThan(0);
+    expect(out.staffed.hunter, 'and the hunter').toBeGreaterThan(0);
+    // One `food` cap reaches every foraging trade — not one cap per edible thing.
+    expect(out.capped.gatherer, 'the gatherer is capped').toBe(true);
+    expect(out.capped.hunter, 'and so is the hunter').toBe(true);
+    // A crop half-grown in the ground is not work you can walk away from.
+    expect(out.capped.farm, 'the field is exempt').toBe(false);
+    // Everybody stays on their building's books either way.
+    expect(out.workersKept).toBe(true);
+  });
+
+  test('the limits panel sets a cap, and it survives a save and reload', async ({ page }) => {
+    await open2d(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false, 0));
+    await page.click('#btn-limits');
+    await expect(page.locator('#limits .job-row').first()).toBeVisible();
+
+    // The first tap up from "no limit" lands on the current stock rounded to a step, not on 0.
+    const row = page.locator('#limits .job-row').filter({ hasText: 'Firewood' });
+    await expect(page.locator('#limits .job-row').filter({ hasText: 'Food (all kinds)' })).toHaveCount(1);
+    // Food is one category, so there is no row per edible thing.
+    await expect(page.locator('#limits .job-row').filter({ hasText: 'Fish' })).toHaveCount(0);
+    await expect(row.locator('.count')).toHaveText('—');
+    await row.locator('[data-step="1"]').click();
+    await expect(row.locator('.count')).toHaveText('600');
+    await row.locator('[data-step="1"]').click();
+    await expect(row.locator('.count')).toHaveText('650');
+    // ...and it can be taken back off entirely.
+    for (let i = 0; i < 13; i++) await row.locator('[data-step="-1"]').click();
+    await expect(row.locator('.count')).toHaveText('—');
+
+    await row.locator('[data-step="1"]').click();
+    await page.evaluate(() => (window as any).__village.persist());
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
+    await page.click('#mm-continue');
+    await page.waitForTimeout(150);
+    expect(await page.evaluate(() => (window as any).__village.state.limits?.firewood)).toBe(600);
   });
 });

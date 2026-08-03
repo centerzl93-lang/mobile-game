@@ -38,10 +38,15 @@ import {
   isInfant,
   isStudent,
   isAdult,
+  LIMITABLE,
+  LIMIT_META,
+  LimitKey,
+  limitedOutput,
 } from '../types';
 import { footprintClear } from '../game/buildings';
+import { cappedOut, limitStock } from '../game/simulation';
 import { SLOT_NAME_MAX } from '../game/save';
-import { totalStoredAll, totalFoodAvailable, totalInLarders } from '../game/storage';
+import { totalStored, totalStoredAll, totalFoodAvailable, totalInLarders } from '../game/storage';
 import {
   LogKind,
   TradeResult,
@@ -97,6 +102,8 @@ export interface UICallbacks {
   /** Rename a workplace. An empty or blank name restores the automatic default. */
   onRenameBuilding: (buildingId: number, name: string) => void;
   onSetBuilders: (delta: number) => void;
+  /** Nudge a resource's stockpile cap by one step (see `LIMIT_STEP`); a cap of 0 means none. */
+  onSetLimit: (key: LimitKey, delta: number) => void;
   onSetMineOutput: (buildingId: number, output: MineOutput) => void;
   onSetSmithRecipe: (buildingId: number, recipe: SmithRecipe) => void;
   onSetForesterReplant: (buildingId: number, on: boolean) => void;
@@ -159,6 +166,8 @@ export class UI {
     inspect: byId('inspect'),
     overlay: byId('overlay'),
     jobboard: byId('jobboard'),
+    limitsBtn: byId('btn-limits'),
+    limits: byId('limits'),
     historyBtn: byId('btn-history'),
     history: byId('history'),
     trade: byId('trade-overlay'),
@@ -171,6 +180,8 @@ export class UI {
   private openCategory: BuildCategory | 'paths' | null = null;
   private jobBoardOpen = false;
   private jobSig = '';
+  private limitsOpen = false;
+  private limitsSig = '';
   private historyOpen = false;
   private historySig = '';
   // Trading post overlay: which post is open, and the in-progress value-matching basket.
@@ -186,6 +197,7 @@ export class UI {
     this.el.pause.addEventListener('click', () => this.cb.onPauseToggle());
     this.el.speed.addEventListener('click', () => this.cb.onSpeedCycle());
     this.el.jobs.addEventListener('click', () => this.toggleJobBoard());
+    this.el.limitsBtn.addEventListener('click', () => this.toggleLimits());
     this.el.historyBtn.addEventListener('click', () => this.toggleHistory());
     this.el.menuBtn.addEventListener('click', () => this.cb.onOpenMenu());
     this.holdToRotate(this.el.rotLeft, -1);
@@ -598,15 +610,28 @@ export class UI {
     this.jobBoardOpen = !this.jobBoardOpen;
     this.el.jobboard.classList.toggle('hidden', !this.jobBoardOpen);
     this.jobSig = '';
-    // The two side panels occupy the same space — opening one closes the other.
-    if (this.jobBoardOpen && this.historyOpen) this.toggleHistory();
+    // The side panels occupy the same strip of screen — opening one closes the others.
+    if (this.jobBoardOpen) this.closeOtherPanels('jobs');
   }
 
   private toggleHistory(): void {
     this.historyOpen = !this.historyOpen;
     this.el.history.classList.toggle('hidden', !this.historyOpen);
     this.historySig = '';
-    if (this.historyOpen && this.jobBoardOpen) this.toggleJobBoard();
+    if (this.historyOpen) this.closeOtherPanels('history');
+  }
+
+  private toggleLimits(): void {
+    this.limitsOpen = !this.limitsOpen;
+    this.el.limits.classList.toggle('hidden', !this.limitsOpen);
+    this.limitsSig = '';
+    if (this.limitsOpen) this.closeOtherPanels('limits');
+  }
+
+  private closeOtherPanels(keep: 'jobs' | 'history' | 'limits'): void {
+    if (keep !== 'jobs' && this.jobBoardOpen) this.toggleJobBoard();
+    if (keep !== 'history' && this.historyOpen) this.toggleHistory();
+    if (keep !== 'limits' && this.limitsOpen) this.toggleLimits();
   }
 
   /**
@@ -655,6 +680,7 @@ export class UI {
 
   refreshPanels(s: GameState): void {
     if (this.jobBoardOpen) this.refreshJobBoard(s);
+    if (this.limitsOpen) this.refreshLimits(s);
     if (this.historyOpen) this.refreshHistory(s);
     if (this.tradingPostId !== null) this.refreshTradingPost(s);
     this.refreshNomadPrompt(s);
@@ -687,6 +713,58 @@ export class UI {
     this.el.nomad.classList.remove('hidden');
     byId('nomad-accept').addEventListener('click', () => this.cb.onAcceptNomads());
     byId('nomad-reject').addEventListener('click', () => this.cb.onRejectNomads());
+  }
+
+  /**
+   * Stockpile limits: a cap per resource, and what it is currently doing to the village.
+   *
+   * Only the resources a limit can actually act on are listed (`LIMITABLE`) — offering a cap on
+   * something no workplace produces would be a control that does nothing. Each row says how much
+   * is stored, what the cap is, and whether it has stood any workplaces down, because "my
+   * woodcutters have all become labourers" is otherwise a mystery.
+   */
+  private refreshLimits(s: GameState): void {
+    const rows = LIMITABLE.map((k) => ({
+      key: k,
+      have: Math.round(limitStock(s, k)),
+      cap: s.limits?.[k] ?? 0,
+      idled: s.buildings.filter((b) => b.built && limitedOutput(b) === k && cappedOut(s, b)).length,
+      places: s.buildings.filter((b) => b.built && limitedOutput(b) === k).length,
+    }));
+    const sig = rows.map((r) => `${r.key}:${r.have}:${r.cap}:${r.idled}/${r.places}`).join('|');
+    if (sig === this.limitsSig) return;
+    this.limitsSig = sig;
+
+    const p = this.el.limits;
+    p.innerHTML = '';
+    const head = document.createElement('h3');
+    head.innerHTML = `Stockpile Limits <button class="close" id="lim-close">×</button>`;
+    p.appendChild(head);
+    head.querySelector('#lim-close')!.addEventListener('click', () => this.toggleLimits());
+    const sum = document.createElement('div');
+    sum.className = 'summary';
+    sum.textContent = 'At its limit, a workplace stops producing and its workers turn to labouring — they keep the job and pick it back up when the stock drops. Fields and pens carry on regardless.';
+    p.appendChild(sum);
+
+    for (const r of rows) {
+      const row = document.createElement('div');
+      row.className = 'job-row';
+      const capText = r.cap > 0 ? `${r.have} / ${r.cap}` : `${r.have} · no limit`;
+      const note = r.places === 0
+        ? 'nothing produces this yet'
+        : r.idled > 0
+          ? `${r.idled} of ${r.places} labouring`
+          : `${r.places} working`;
+      const meta = LIMIT_META[r.key];
+      row.innerHTML =
+        `<span class="jr-emoji">${meta.icon}</span>` +
+        `<div class="jr-main"><div class="jr-name">${meta.label}</div>` +
+        `<div class="jr-sub">${capText} · ${note}</div></div>` +
+        `<div class="stepper"><button data-step="-1">−</button><span class="count">${r.cap > 0 ? r.cap : '—'}</span><button data-step="1">+</button></div>`;
+      row.querySelector('[data-step="-1"]')!.addEventListener('click', () => this.cb.onSetLimit(r.key, -1));
+      row.querySelector('[data-step="1"]')!.addEventListener('click', () => this.cb.onSetLimit(r.key, 1));
+      p.appendChild(row);
+    }
   }
 
   private refreshJobBoard(s: GameState): void {

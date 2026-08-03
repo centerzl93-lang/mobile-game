@@ -82,6 +82,8 @@ import {
   isFertile,
   entranceTile,
   hasDoor,
+  limitedOutput,
+  LimitKey,
   worksIndoors,
   CIRCLE_WORK,
   ADULT_AGE,
@@ -149,6 +151,7 @@ import {
   takeFromLarder,
   takeFoodFromLarder,
   totalAvailable,
+  totalFood,
   totalFoodAvailable,
 } from './storage';
 
@@ -353,6 +356,32 @@ function heat(s: GameState, dt: number, log: LogFn): void {
   }
 }
 
+/** How many workers a building should be holding: the player's setting, capped by the job count. */
+function staffWanted(s: GameState, b: Building): number {
+  if (!b.built) return 0;
+  return Math.min(BUILDING_DEFS[b.type].jobs, b.desiredWorkers);
+}
+
+/** What the village has stored of whatever a limit is set on — food being every edible kind. */
+export function limitStock(s: GameState, key: LimitKey): number {
+  return key === 'food' ? totalFood(s) : totalStored(s, key);
+}
+
+/**
+ * Is this workplace's product at or over the limit the player set for it?
+ *
+ * A capped workplace keeps its workers — they stay on its books and are not offered to anything
+ * else — but they spend the time labouring instead: hauling, clearing marked ground, laying the
+ * roads that have been drawn. The moment the stock falls back under the cap they pick their trade
+ * straight back up, with nobody needing to re-staff anything.
+ */
+export function cappedOut(s: GameState, b: Building): boolean {
+  const key = limitedOutput(b);
+  if (!key) return false;
+  const cap = s.limits?.[key] ?? 0;
+  return cap > 0 && limitStock(s, key) >= cap;
+}
+
 // ---- lives (ageing, schooling, old age, births) ----
 
 /** How often births are considered, in seconds. See `GameState.birthTimer`. */
@@ -528,7 +557,7 @@ function assignHomesAndJobs(s: GameState): void {
 
   const byId = new Map(s.citizens.map((c) => [c.id, c]));
   for (const b of s.buildings) {
-    const target = b.built ? Math.min(BUILDING_DEFS[b.type].jobs, b.desiredWorkers) : 0;
+    const target = staffWanted(s, b);
     while (b.workers.length > target) {
       const id = b.workers.pop()!;
       const c = byId.get(id);
@@ -573,7 +602,7 @@ function assignHomesAndJobs(s: GameState): void {
   let i = 0;
   for (const b of s.buildings) {
     if (!b.built) continue;
-    const target = Math.min(BUILDING_DEFS[b.type].jobs, b.desiredWorkers);
+    const target = staffWanted(s, b);
     while (b.workers.length < target && i < hireable) {
       const c = avail[i++];
       b.workers.push(c.id);
@@ -754,6 +783,14 @@ function runCitizen(s: GameState, c: Citizen, dt: number, toolFactor: number): v
     // Paths can be laid by any adult: an employed worker not mid-haul detours to a *nearby*
     // planned path before returning to their workplace.
     if (!c.carry && buildPath(s, c, dt, NEAR_PATH_RADIUS * NEAR_PATH_RADIUS)) return;
+    // The village has all it wants of what this place makes, so its workers turn their hand to
+    // labouring until it needs some more. They keep the job — nothing else can hire them and they
+    // resume the moment the stock drops — they simply do not stand at a bench making more of it.
+    // A load already in hand is still delivered first, which `runWorker` handles.
+    if (!c.carry && cappedOut(s, job)) {
+      runBuilder(s, c, dt);
+      return;
+    }
     runWorker(s, c, job, dt, toolFactor);
   } else runBuilder(s, c, dt);
 }
@@ -992,6 +1029,10 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
  * standing timber for a gatherer or a hunter, and failing that anywhere in the circle at all, so a
  * worked-out wood still has its people walking it rather than queueing at the door.
  */
+export function debugWorkSpotFor(s: GameState, c: Citizen, b: Building): { x: number; y: number } {
+  return workSpot(s, c, b);
+}
+
 function workSpot(s: GameState, c: Citizen, b: Building): { x: number; y: number } {
   if (!CIRCLE_WORK.includes(b.type)) return buildingApproach(s, b);
   if (c.workAt && reachableTile(c, Math.floor(c.workAt.x), Math.floor(c.workAt.y))) return c.workAt;

@@ -42,6 +42,8 @@ import {
   ResourceKind,
   RESOURCE_ICON,
   LARDER_KINDS,
+  LIMIT_STEP,
+  LimitKey,
   carryLimit,
   RESOURCE_KINDS,
   ADULT_AGE,
@@ -70,12 +72,16 @@ import {
   markHarvestRect,
   coupleNeedsAHome,
   pickHarvestFor,
+  limitStock,
+  cappedOut,
+  debugWorkSpotFor,
 } from './game/simulation';
 import { canPlace, placeBuilding, canAfford, demolishBuilding, footprintClear } from './game/buildings';
 import { findPath } from './game/pathfind';
 import { tileIndex, inBounds } from './game/world';
 import {
   addNearest,
+  totalStored,
   barnLoad,
   capacityOf,
   houseFuelPerSeason,
@@ -174,6 +180,7 @@ class Game {
       onSetWorkers: (id, d) => this.setWorkers(id, d),
       onRenameBuilding: (id, name) => this.renameBuilding(id, name),
       onSetBuilders: (d) => this.setBuilders(d),
+      onSetLimit: (kind, d) => this.setLimit(kind, d),
       onSetMineOutput: (id, o) => this.setMineOutput(id, o),
       onSetSmithRecipe: (id, r) => this.setSmithRecipe(id, r),
       onSetForesterReplant: (id, on) => this.setForesterReplant(id, on),
@@ -449,6 +456,25 @@ class Game {
     if (!b || !isWorkplace(b.type)) return;
     const trimmed = name.trim().slice(0, 24);
     b.name = trimmed || nextBuildingName(this.state.buildings.filter((x) => x !== b), b.type);
+    this.persist();
+  }
+
+  /**
+   * Nudge a resource's stockpile cap. Zero means no limit, and the first tap down from no limit
+   * lands on the current stock rounded up to a step rather than on some arbitrary number — a cap
+   * you set while looking at the panel should be about where the stock is now.
+   */
+  private setLimit(key: LimitKey, delta: number): void {
+    const limits = (this.state.limits ??= {});
+    const cur = limits[key] ?? 0;
+    let next: number;
+    if (cur === 0 && delta > 0) {
+      next = Math.max(LIMIT_STEP, Math.ceil(limitStock(this.state, key) / LIMIT_STEP) * LIMIT_STEP);
+    } else {
+      next = Math.max(0, cur + delta * LIMIT_STEP);
+    }
+    if (next > 0) limits[key] = next;
+    else delete limits[key];
     this.persist();
   }
 
@@ -1228,6 +1254,35 @@ class Game {
   }
   debugHeatPerCitizen(): number {
     return HEAT_PER_CITIZEN_WINTER;
+  }
+
+  /**
+   * Debug/testing helper: where a villager's job would have them stand for a cycle of work.
+   *
+   * Tests that care about *what* a worker does, not how far they had to walk to do it, put them
+   * here first — otherwise every such test is really measuring the distance to the barn on
+   * whatever map was generated.
+   */
+  debugWorkSpot(citizenId: number): { x: number; y: number } {
+    const c = this.state.citizens.find((x) => x.id === citizenId)!;
+    const b = this.state.buildings.find((x) => x.id === c.jobId)!;
+    return debugWorkSpotFor(this.state, c, b);
+  }
+
+  /** Debug/testing helper: the village total of one resource, as the limits rule measures it. */
+  debugTotalStored(kind: ResourceKind): number {
+    return totalStored(this.state, kind);
+  }
+
+  /** Debug/testing helper: food across every edible kind — what a `food` limit is judged against. */
+  debugTotalFood(): number {
+    return limitStock(this.state, 'food');
+  }
+
+  /** Debug/testing helper: is this building's product at its stockpile limit? */
+  debugCappedOut(id: number): boolean {
+    const b = this.state.buildings.find((x) => x.id === id);
+    return !!b && cappedOut(this.state, b);
   }
 
   /** Debug/testing helper: how many workers a building type can employ. */

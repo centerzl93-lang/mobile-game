@@ -80,15 +80,20 @@ def fishing():
     lighter and messier — a working platform rather than a merchant's wharf. The 3x5 plot is what
     finally gives the jetty room to be a jetty: it runs two thirds the length of the plot, with
     the boat moored off the end of it rather than tucked alongside.
+
+    Orientation matters here more than for any other building. `dockDepth` in the game makes
+    placement require water under the far (-Y) rows and land under the near (+Y) rows, and the
+    work circle is centred on that far end — so the jetty must run to -Y and the shack must sit
+    at +Y with its door on the landward face, or the model would read backwards on the map.
     """
     reset_scene()
     m = palette()
     parts = []
 
-    # Shack on the landward half, on its own low platform, at the -Y end of the plot.
+    # Shack on the landward half, on its own low platform, at the +Y end of the plot.
     shack_w, shack_d = 1.86, 1.54
     base_h, wall_h, roof_h = 0.18, 1.06, 1.02
-    oy = -1.62
+    oy = 1.62
     parts.append(box("Platform", (shack_w + 0.16, shack_d + 0.16, base_h), (0, oy, base_h / 2), m["timber_dark"]))
     walls = half_timber(shack_w, shack_d, wall_h, base_h, m, braces=False, name="Shack")
     roof = shingled_roof(shack_w, shack_d, roof_h, base_h + wall_h, m, overhang=0.16,
@@ -99,30 +104,31 @@ def fishing():
     parts += door("Shack", oy + shack_d / 2, base_h, m, width=0.38, height=0.66)
     for sx in (-1, 1):
         parts += window("Shack", sx * 0.62, oy + shack_d / 2, base_h + 0.74, m, width=0.26, height=0.24)
+    # The one window that looks out over the jetty, so the shack watches its own water.
     parts += window("Side", 0.0, oy - shack_d / 2, base_h + 0.74, m, width=0.30, height=0.26)
 
-    # The jetty: decking on stilts running out along +Y from the shack's threshold.
+    # The jetty: decking on stilts running out along -Y from the shack's back wall.
     deck_z = 0.34
     parts += posts(
         "Stilt",
-        [(x, y) for x in (-1.00, 0.0, 1.00) for y in (-0.55, 0.35, 1.25, 2.05)],
+        [(x, y) for x in (-1.00, 0.0, 1.00) for y in (0.55, -0.35, -1.25, -2.05)],
         deck_z, 0.11, -0.12, m["timber_dark"],
     )
-    parts += deck("Jetty", 2.60, 3.30, 0.09, (0, 0.72, deck_z), m["timber"], planks=11)
+    parts += deck("Jetty", 2.60, 3.30, 0.09, (0, -0.72, deck_z), m["timber"], planks=11)
     # Mooring bollards down the seaward edge, and a rail along one side of the walk.
-    for by in (0.30, 1.30, 2.20):
+    for by in (-0.30, -1.30, -2.20):
         parts.append(box("Bollard", (0.16, 0.16, 0.30), (1.16, by, deck_z + 0.19), m["timber_dark"]))
-    parts += posts("Rail", [(-1.22, y) for y in (0.10, 0.90, 1.70, 2.34)], 0.52, 0.08, deck_z, m["timber"])
-    parts.append(box("RailBar", (0.08, 2.36, 0.08), (-1.22, 1.22, deck_z + 0.48), m["timber"]))
+    parts += posts("Rail", [(-1.22, y) for y in (-0.10, -0.90, -1.70, -2.34)], 0.52, 0.08, deck_z, m["timber"])
+    parts.append(box("RailBar", (0.08, 2.36, 0.08), (-1.22, -1.22, deck_z + 0.48), m["timber"]))
 
     # Nets on A-frames, barrels of salted catch, creels, and a moored rowing boat off the end.
-    parts += drying_rack("Nets", 0.86, (-0.96, -0.34, 0.0), m, bars=4)
-    parts += drying_rack("Nets2", 0.70, (0.98, -0.44, 0.0), m, bars=3)
-    parts += barrel("Catch", (0.44, -0.42, 0.19), m["timber"])
-    parts += barrel("Catch2", (0.10, -0.50, 0.19), m["timber_dark"])
-    for i, (cx, cy) in enumerate(((-0.60, 1.10), (-0.34, 1.46), (0.52, 1.90))):
+    parts += drying_rack("Nets", 0.86, (-0.96, 0.34, 0.0), m, bars=4)
+    parts += drying_rack("Nets2", 0.70, (0.98, 0.44, 0.0), m, bars=3)
+    parts += barrel("Catch", (0.44, 0.42, 0.19), m["timber"])
+    parts += barrel("Catch2", (0.10, 0.50, 0.19), m["timber_dark"])
+    for i, (cx, cy) in enumerate(((-0.60, -1.10), (-0.34, -1.46), (0.52, -1.90))):
         parts += _creel(f"Creel{i}", (cx, cy, deck_z + 0.09), m)
-    parts += _rowboat("Boat", (1.14, 1.72, 0.10), m)
+    parts += _rowboat("Boat", (1.14, -1.72, 0.10), m)
 
     return finish(parts, "Fishing")
 

@@ -1267,13 +1267,12 @@ export class UI {
       `<h2>Choose a map size</h2>` +
         `<div class="menu-list">` +
         btn('small', 'Small') +
-        btn('medium', 'Medium') +
         btn('large', 'Large') +
         `<button class="ghost" id="sz-back">Back</button>` +
         `</div>`,
       'menu-card',
     );
-    (['small', 'medium', 'large'] as MapSize[]).forEach((size) =>
+    (['small', 'large'] as MapSize[]).forEach((size) =>
       byId(`sz-${size}`).addEventListener('click', () => opts.onPick(size)),
     );
     byId('sz-back').addEventListener('click', () => opts.onBack());
@@ -1342,7 +1341,7 @@ export class UI {
     onPick: (slot: number) => void;
     onBack: () => void;
   }): void {
-    const sizeLabel: Record<MapSize, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
+    const sizeLabel: Record<MapSize, string> = { small: 'Small', large: 'Large' };
     const rows = opts.slots
       .map(({ index, info }) => {
         const label = info

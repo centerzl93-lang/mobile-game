@@ -1,10 +1,12 @@
 import {
   GameState,
   Building,
+  Tile,
   Citizen,
   ResourceKind,
   BUILDING_DEFS,
   buildTimeOf,
+  autoBuilderDemand,
   workRadiusOf,
   MAP_W,
   MAP_H,
@@ -81,6 +83,7 @@ import {
   entranceTile,
   hasDoor,
   ADULT_AGE,
+  SCHOOL_AGE,
   OLD_AGE_START,
   MAX_AGE,
   EDUCATED_BONUS,
@@ -399,10 +402,16 @@ function assignHomesAndJobs(s: GameState): void {
   for (const b of s.buildings) for (const id of b.workers) stillEmployed.add(id);
   for (const c of s.citizens) if (!stillEmployed.has(c.id)) c.jobId = null;
 
+  // How many builders the village wants: what the open sites are asking for, plus whatever the
+  // player has dialled on top (or taken off). Derived every tick rather than nudged up and down
+  // on each placement, so it cannot fall out of step with the work actually outstanding.
+  const adults = s.citizens.reduce((n, c) => n + (isAdult(c) ? 1 : 0), 0);
+  s.desiredBuilders = Math.max(0, Math.min(adults, autoBuilderDemand(s) + (s.builderExtra ?? 0)));
+
   // Builders are a global job (no building): tag the first N free adults as builders so only they
   // construct work buildings. Buildings fill first (above), builders take the leftover idle pool;
   // everyone else — employed, children, and surplus laborers — is not a builder.
-  const wantBuilders = Math.max(0, s.desiredBuilders ?? 0);
+  const wantBuilders = s.desiredBuilders;
   let builderN = 0;
   for (const c of s.citizens) {
     c.builder = isAdult(c) && c.jobId === null && builderN < wantBuilders;
@@ -1467,11 +1476,26 @@ function clearGroundForPath(s: GameState, tx: number, ty: number): void {
   s.harvest[tileIndex(tx, ty)] = HARVEST_NONE;
 }
 
+/**
+ * Where a villager with nothing to do hangs about: their own doorstep if they have one, else the
+ * founding clearing.
+ *
+ * Not `centreOfVillage` — that is the mean position of every building, so putting a quarry or a
+ * mine out at the edge of the map walks the whole idle population halfway there, into open
+ * ground nobody lives in.
+ */
+function loiterPoint(s: GameState, c: Citizen): { x: number; y: number } {
+  const home = c.homeId !== null ? s.buildings.find((b) => b.id === c.homeId) : null;
+  if (home) return buildingCenter(home);
+  if (s.origin) return s.origin;
+  return centreOfVillage(s);
+}
+
 function wander(s: GameState, c: Citizen, dt: number): void {
   // Re-pick on a timer (not only on arrival) so an unreachable spot never freezes a villager.
   c.timer -= dt;
   if (c.timer <= 0) {
-    const centre = centreOfVillage(s);
+    const centre = loiterPoint(s, c);
     let set = false;
     for (let k = 0; k < 6; k++) {
       const tx = clampTile(centre.x + (Math.random() - 0.5) * 8);
@@ -1499,15 +1523,24 @@ function endSeason(s: GameState, log: LogFn): void {
   if (s.season === 0) {
     s.year++;
     log(`A new year begins — Year ${s.year}`, 'info');
-    // Everyone ages a year. Children coming of age are educated if a school is staffed.
+    // Everyone ages a year.
+    //
+    // Schooling is a year, taken immediately before working age, and only where there is a
+    // staffed school to take it at. A village without one has no students: its children go
+    // straight from child to adult. `educated` therefore means "attended", not "happened to come
+    // of age while a school stood somewhere" — and a school that loses its teacher un-enrols the
+    // class, who then come of age unschooled.
     const schoolStaffed = s.buildings.some((b) => b.built && b.type === 'school' && b.workers.length > 0);
     const cameOfAge: Citizen[] = [];
     for (const c of s.citizens) {
       const wasChild = c.age < ADULT_AGE;
       c.age += 1;
       if (wasChild && c.age >= ADULT_AGE) {
-        c.educated = schoolStaffed;
+        c.educated = !!c.student; // they sat the year, or they did not
+        c.student = false;
         cameOfAge.push(c);
+      } else if (c.age < ADULT_AGE) {
+        c.student = schoolStaffed && c.age >= SCHOOL_AGE;
       }
     }
     // New adults leave the family home for a house of their own where one is free. This is what
@@ -2671,39 +2704,57 @@ function tileUnderBuilding(s: GameState, tx: number, ty: number): boolean {
   return false;
 }
 
-/** Sow a few saplings on plain grass in the work circle, growing new forest to harvest later. */
-function plantCircle(s: GameState, b: Building): void {
+/**
+ * Every tile in a building's work circle that passes `pred`, in a shuffled order.
+ *
+ * The order is the point. Scanning the circle row by row and taking the first match makes a
+ * forester plant and fell along a marching front: a straight edge of stumps eating across the
+ * wood, and saplings appearing in tidy rows behind it. Foresters work a patch of forest, not a
+ * lawn — picking at random is what makes the wood look worked rather than mown.
+ */
+function scatteredCircleTiles(s: GameState, b: Building, pred: (t: Tile, tx: number, ty: number) => boolean): Tile[] {
   const r = workRadiusOf(b) ?? 4;
   const cx = b.x + footprintW(b) / 2;
   const cy = b.y + footprintH(b) / 2;
   const r2 = r * r;
-  let planted = 0;
-  for (let ty = Math.floor(cy - r); ty <= Math.ceil(cy + r) && planted < 2; ty++) {
-    for (let tx = Math.floor(cx - r); tx <= Math.ceil(cx + r) && planted < 2; tx++) {
+  const out: Tile[] = [];
+  for (let ty = Math.floor(cy - r); ty <= Math.ceil(cy + r); ty++) {
+    for (let tx = Math.floor(cx - r); tx <= Math.ceil(cx + r); tx++) {
       const ddx = tx + 0.5 - cx;
       const ddy = ty + 0.5 - cy;
       if (ddx * ddx + ddy * ddy > r2) continue;
       const t = getTile(s.tiles, tx, ty);
-      if (!t || t.type !== 'grass' || (t.stone ?? 0) > 0 || (t.iron ?? 0) > 0) continue;
-      if (tileUnderBuilding(s, tx, ty)) continue;
-      if (hasPath(s, tx, ty)) continue; // foresters don't plant saplings in the road
-      t.type = 'forest';
-      t.trees = 0.12; // a young sapling; tendCircle grows it toward maturity
-      planted++;
-      s.forestVersion = (s.forestVersion ?? 0) + 1; // a new forest tile — refresh the render layer
+      if (t && pred(t, tx, ty)) out.push(t);
     }
+  }
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/** Sow a few saplings on plain grass in the work circle, growing new forest to harvest later. */
+function plantCircle(s: GameState, b: Building): void {
+  const open = scatteredCircleTiles(s, b, (t, tx, ty) =>
+    t.type === 'grass' && (t.stone ?? 0) <= 0 && (t.iron ?? 0) <= 0 &&
+    !tileUnderBuilding(s, tx, ty) &&
+    !hasPath(s, tx, ty)); // foresters don't plant saplings in the road
+  for (const t of open.slice(0, 2)) {
+    t.type = 'forest';
+    t.trees = 0.12; // a young sapling; tendCircle grows it toward maturity
+    s.forestVersion = (s.forestVersion ?? 0) + 1; // a new forest tile — refresh the render layer
   }
 }
 
 function depleteCircleTrees(s: GameState, b: Building, amount: number): void {
-  circleTiles(s, b, (t) => {
-    if (amount <= 0) return;
-    if (t.trees > 0.05) {
-      const take = Math.min(amount, t.trees - 0.05);
-      t.trees -= take;
-      amount -= take;
-    }
-  });
+  // Shuffled, so a stand thins unevenly instead of being shaved off one row at a time.
+  for (const t of scatteredCircleTiles(s, b, (t) => t.type === 'forest' && t.trees > 0.05)) {
+    if (amount <= 0) break;
+    const take = Math.min(amount, t.trees - 0.05);
+    t.trees -= take;
+    amount -= take;
+  }
 }
 
 function clampTile(v: number): number {

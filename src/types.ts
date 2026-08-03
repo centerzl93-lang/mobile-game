@@ -8,18 +8,19 @@ export const TILE = 32; // base pixels per tile at zoom 1
 export let MAP_W = 48;
 export let MAP_H = 48;
 
-export type MapSize = 'small' | 'medium' | 'large';
-/** Side length (tiles) for each selectable map size. Medium/Large double each side. */
+export type MapSize = 'small' | 'large';
 /**
  * Map edge length in tiles per size.
  *
- * Small and medium are scaled up by half against the sizes that shipped before the buildings were
- * resized: the new footprints are roughly 2.25x the area of the old ones (a 2x2 hut becomes 3x3,
- * a 3x6 quarry becomes 8x8), so keeping the old edge lengths would have left a village crowding
- * itself out of a map it used to sit comfortably in. Large is unchanged — it is already at the
- * tile count where per-tick work, not space, is the limit.
+ * Two sizes, not three. The old 192-tile map was where per-tick simulation work, not space, ran
+ * the show, and it asked the player to choose between three numbers when only two of them played
+ * differently — so it is gone and the 144 that used to be Medium is now Large. Both are scaled up
+ * by half against the sizes that shipped before the buildings were resized: the footprints are
+ * roughly 2.25x the area they were (a 2x2 hut became 3x3, a 3x6 quarry became 8x8), so keeping
+ * the old edge lengths would have left a village crowding itself out of a map it used to sit
+ * comfortably in.
  */
-export const MAP_SIZES: Record<MapSize, number> = { small: 72, medium: 144, large: 192 };
+export const MAP_SIZES: Record<MapSize, number> = { small: 72, large: 144 };
 
 /** Starting difficulty chosen at New Game — governs the opening stockpile and starter houses. */
 export type Difficulty = 'easy' | 'normal' | 'hard';
@@ -420,6 +421,15 @@ export interface BuildingDef {
    * over the water for boats). The rest of the footprint must be on buildable land.
    */
   requiresWaterFraction?: number;
+  /**
+   * Rows at the **far end** — the end away from the door — that must be standing in water.
+   *
+   * `requiresWaterFraction` only counts water anywhere under the footprint, which lets a jetty be
+   * built with the water off to one side and the dock itself high and dry. This says where the
+   * water has to be: at the business end. The near rows still have to be land, so the building
+   * always straddles a shoreline with its dock out over the water and its door back on the bank.
+   */
+  dockDepth?: number;
   /** Radius (tiles) of the circular work area, for forest-worked buildings. */
   workRadius?: number;
   /** Immune to fire — never ignites and fire never spreads to it (wells, stone-built barns). */
@@ -576,7 +586,9 @@ export interface Citizen {
   parents?: [number, number];
   health: number; // 0..100
   happiness: number; // 0..100
-  educated: boolean; // grew up with a staffed school -> more productive
+  educated: boolean; // attended school in the year before coming of age -> more productive
+  /** Enrolled at a staffed school for the final year of childhood. Cleared on coming of age. */
+  student?: boolean;
   sick: boolean; // ill from a disease outbreak; can't work until recovered
   /** Seconds of leisure remaining; while > 0 the villager is on a break, not working. */
   rest?: number;
@@ -613,17 +625,21 @@ export function isAdult(c: { age: number }): boolean {
 }
 
 /**
- * A child old enough for school but not yet of working age. Students are still children in every
- * mechanical sense — they can't work and they eat a child's ration — the distinction exists so the
- * player can see who is close to joining the workforce and size their schooling accordingly.
+ * A child currently *enrolled* — in its last year before working age, with a staffed school to
+ * attend. Not an age band: a village with no school (or no teacher in it) has no students at all,
+ * and its children go straight from child to adult.
+ *
+ * Students are still children mechanically — they can't work and they eat a child's ration. The
+ * count exists to answer one question at a glance: how much of the next generation is being
+ * schooled and about to join the workforce.
  */
-export function isStudent(c: { age: number }): boolean {
-  return c.age >= SCHOOL_AGE && c.age < ADULT_AGE;
+export function isStudent(c: { age: number; student?: boolean }): boolean {
+  return !!c.student && c.age < ADULT_AGE;
 }
 
-/** A child too young for school. */
-export function isInfant(c: { age: number }): boolean {
-  return c.age < SCHOOL_AGE;
+/** A child who is not enrolled — too young, or with no school to go to. */
+export function isInfant(c: { age: number; student?: boolean }): boolean {
+  return c.age < ADULT_AGE && !isStudent(c);
 }
 
 /** Whether a villager is inside the fertile age window and can father/bear a child. */
@@ -673,9 +689,54 @@ export function framedFraction(b: Building): number {
   return p < 0 ? 0 : p > 1 ? 1 : p;
 }
 
+/**
+ * How many builders an open construction site asks for.
+ *
+ * Two for an ordinary building, more for the ones that are genuinely a lot of work — sized off
+ * the footprint, which is the honest measure of how much there is to put up. The point is that
+ * the wanted count on the Job Board reads as *what the outstanding work needs*: place three
+ * cottages and it asks for six, finish one and it drops back to four.
+ */
+export function buildersWantedFor(type: BuildingType): number {
+  const d = BUILDING_DEFS[type];
+  const area = d.w * d.h;
+  return area >= 20 ? 4 : area >= 9 ? 3 : 2;
+}
+
+/** Builders the village's open construction sites are asking for, added up. */
+export function autoBuilderDemand(s: GameState): number {
+  let n = 0;
+  for (const b of s.buildings) if (!b.built) n += buildersWantedFor(b.type);
+  return n;
+}
+
 /** A building's effective construction time in seconds (base time × the pace multiplier). */
 export function buildTimeOf(type: BuildingType): number {
   return BUILDING_DEFS[type].buildTime * BUILD_TIME_SCALE;
+}
+
+/**
+ * Where a building's work circle is centred.
+ *
+ * Usually the middle of the footprint. A dock is the exception: a fishing hut is mostly jetty,
+ * and the fish are off the end of it, so centring the circle on the hut puts half of it inland
+ * over ground that will never hold a fish. The circle slides out toward the dock end instead.
+ */
+export function workCentre(b: Placed): { x: number; y: number } {
+  const fw = footprintW(b);
+  const fh = footprintH(b);
+  const cx = b.x + fw / 2;
+  const cy = b.y + fh / 2;
+  const dock = BUILDING_DEFS[b.type].dockDepth;
+  if (!dock) return { x: cx, y: cy };
+  // The door is on the +Y face unrotated, so the dock is the -Y end; a quarter turn moves both.
+  const reach = Math.max(fw, fh) / 2;
+  switch (b.rot ?? 0) {
+    case 1: return { x: cx + reach, y: cy };
+    case 2: return { x: cx, y: cy + reach };
+    case 3: return { x: cx - reach, y: cy };
+    default: return { x: cx, y: cy - reach };
+  }
 }
 
 /** Extra work-circle radius a building gains per worker beyond the first. */
@@ -686,7 +747,7 @@ export const WORK_RADIUS_PER_WORKER = 2;
  * Every work-circle building's circle expands with its worker target — a base radius at 1 worker,
  * growing by WORK_RADIUS_PER_WORKER for each additional worker up to its job cap.
  */
-export function workRadiusOf(b: Building): number | undefined {
+export function workRadiusOf(b: Pick<Building, 'type' | 'desiredWorkers'>): number | undefined {
   const def = BUILDING_DEFS[b.type];
   if (def.workRadius === undefined) return undefined;
   const workers = Math.max(1, Math.min(def.jobs, b.desiredWorkers));
@@ -694,16 +755,23 @@ export function workRadiusOf(b: Building): number | undefined {
 }
 
 /**
+ * The part of a building that decides where it sits: enough for the footprint and work-centre
+ * helpers, and no more. A placement preview is one of these before it is ever a `Building`, so
+ * the ghost the player is dragging measures its work circle by exactly the same rules.
+ */
+export type Placed = Pick<Building, 'type' | 'x' | 'y'> & Partial<Pick<Building, 'rot' | 'w' | 'h'>>;
+
+/**
  * A building's footprint width *as it stands on the map*. Ranches carry a custom `w`; everything
  * else uses its def size — and a quarter turn (rot 1 or 3) swaps the two, so `b.x, b.y` is always
  * the top-left corner of the tiles actually occupied.
  */
-export function footprintW(b: Building): number {
+export function footprintW(b: Placed): number {
   const d = BUILDING_DEFS[b.type];
   return (b.rot ?? 0) % 2 === 1 ? (b.h ?? d.h) : (b.w ?? d.w);
 }
 /** A building's footprint height (see `footprintW`). */
-export function footprintH(b: Building): number {
+export function footprintH(b: Placed): number {
   const d = BUILDING_DEFS[b.type];
   return (b.rot ?? 0) % 2 === 1 ? (b.w ?? d.w) : (b.h ?? d.h);
 }
@@ -878,6 +946,25 @@ export interface GameState {
    * (or the state identity) changes — keeping per-tick nav ~O(1) on large maps.
    */
   navVersion?: number;
+  /**
+   * The founding clearing — where the village was first pegged out.
+   *
+   * Idle villagers loiter near home, and someone with no home loiters here. They used to amble
+   * around `centreOfVillage`, the *average* of every building's position, which drifts off into
+   * empty ground the moment a quarry or a mine goes up on the far side of the map and drags the
+   * whole population with it.
+   */
+  origin?: { x: number; y: number };
+  /**
+   * The player's own adjustment to the builder count, on top of what the open sites ask for.
+   *
+   * `desiredBuilders` is derived (`autoBuilderDemand` + this, clamped to the adult population) so
+   * it cannot drift out of step with the work outstanding — an incremental "+2 on placement, -2
+   * on completion" loses count the first time a site burns down or is demolished mid-build. This
+   * holds the difference instead, so the stepper still works and still means something when there
+   * is nothing being built (builders lay paths too).
+   */
+  builderExtra?: number;
   /** Bumped when a tile becomes / stops being forest (replanting or clear-cutting), so the
    * renderer knows to rebuild its tree layer to show the new/removed trees. */
   forestVersion?: number;
@@ -1129,11 +1216,13 @@ export const LARDER_CARRY_VOLUME = CARRY_VOLUME * 3;
 // ---- Demographics ----
 export const ADULT_AGE = 4; // children become working adults at this age (years)
 /**
- * Age at which a child becomes a student. Purely a reporting distinction — a student is still a
- * child to the simulation — but it tells the player how much of the next generation is nearly
- * ready to work, which is what a school is an investment in.
+ * Age from which a child can be enrolled: the last year before working age.
+ *
+ * Schooling is one year, taken immediately before adulthood, and only where a staffed school
+ * exists — see `isStudent`. Enrolment is what sets `educated`, so a child has to actually attend
+ * rather than merely happen to come of age while a school stands somewhere.
  */
-export const SCHOOL_AGE = 2;
+export const SCHOOL_AGE = ADULT_AGE - 1;
 export const START_ADULTS = 8; // founding adult villagers
 export const START_CHILDREN = 4; // founding children
 export const ADULT_MIN_AGE = 20; // founding adults' age range
@@ -1406,8 +1495,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   fishing: {
     type: 'fishing', name: 'Fishing Hut', emoji: '🎣', category: 'food', w: 3, h: 5,
-    cost: { wood: 12 }, jobs: 2, buildTime: 6, requiresAdjacent: ['water'], workRadius: 4,
-    desc: 'Catches fish from water in its work circle — more water and more workers, more fish. Must be built on the shoreline.',
+    cost: { wood: 12 }, jobs: 2, buildTime: 6, dockDepth: 2, workRadius: 4,
+    desc: 'Catches fish from water in its work circle — more water and more workers, more fish. Its jetty must reach out over the water, so turn it until the dock end is wet and the door is on the bank.',
   },
   hunting: {
     type: 'hunting', name: 'Hunting Cabin', emoji: '🏹', category: 'food', w: 3, h: 3,

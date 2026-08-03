@@ -7,6 +7,23 @@ async function open(page: Page): Promise<void> {
   await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
 }
 
+/**
+ * Open on the flat 2D renderer, for tests that click their way through the UI or run the
+ * simulation hard.
+ *
+ * Headless Chromium has no GPU: it rasterises the 3D view in software, which drops the page to
+ * about 2 fps. Playwright's click actionability check waits on animation frames, so at 2 fps a
+ * single click can take seconds and a test spends its whole 30s budget rendering scenery nothing
+ * asserts on. Two menu clicks measured 15.4s in 3D against 165ms here.
+ *
+ * Use this wherever the assertions are about game state or the DOM. Use `open` only where they
+ * are about the 3D renderer itself.
+ */
+async function open2d(page: Page): Promise<void> {
+  await page.goto('/?2d&gfx=low', { waitUntil: 'load' });
+  await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
+}
+
 test.describe('start location', () => {
   test('the barn and every villager spawn on grass, never water (many seeds)', async ({ page }) => {
     await open(page);
@@ -719,7 +736,9 @@ test.describe('jobs & builders', () => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', true); // full stockpile of wood in the barn
       const id = eval(place)();
-      // Default 0 builders → no construction progress even after time passes.
+      // Placing a site now asks for builders on its own, so "zero builders" is something the
+      // player has to choose. Dial it down and nothing happens.
+      g.debugSetBuilders(0);
       g.debugAdvance(200);
       const none = g.state.buildings.find((x: any) => x.id === id);
       const stalled = { built: none.built, progress: none.progress };
@@ -732,6 +751,49 @@ test.describe('jobs & builders', () => {
     expect(out.stalled.built).toBe(false);
     expect(out.stalled.progress).toBe(0);
     expect(out.built).toBe(true);
+  });
+
+  test('placing sites asks for builders by itself, and the ask stacks and clears', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((place) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true);
+      const s = g.state;
+      // Nothing outstanding at the start of a game, so nobody is wanted on the tools.
+      g.debugAdvance(1);
+      const idle = s.desiredBuilders;
+
+      const first = eval(place)();
+      g.debugAdvance(1);
+      const one = s.desiredBuilders;
+
+      // A second site adds its own demand on top rather than replacing it.
+      let second: number | null = null;
+      for (let r = 3; r < 24 && second == null; r++)
+        for (let dy = -r; dy <= r && second == null; dy++)
+          for (let dx = -r; dx <= r && second == null; dx++) {
+            const b = s.buildings.find((x: any) => x.id === first);
+            const x = b.x + dx, y = b.y + dy;
+            if (g.debugCanPlace('house', x, y).ok) second = g.debugPlace('house', x, y);
+          }
+      g.debugAdvance(1);
+      const two = s.desiredBuilders;
+
+      // Finish both and the demand falls away again — builders are wanted for work outstanding,
+      // not permanently.
+      for (const id of [first, second]) {
+        const b = s.buildings.find((x: any) => x.id === id);
+        b.built = true;
+        b.progress = g.debugBuildTime(b.type);
+      }
+      g.debugAdvance(1);
+      return { idle, one, two, after: s.desiredBuilders, placedSecond: second != null };
+    }, placeGatherer);
+    expect(out.idle).toBe(0);
+    expect(out.one, 'one open site wants builders').toBeGreaterThan(0);
+    expect(out.placedSecond).toBe(true);
+    expect(out.two, 'a second site stacks on top of the first').toBeGreaterThan(out.one);
+    expect(out.after, 'nothing outstanding, nobody wanted').toBe(0);
   });
 
   test('paths are laid by any adult even with zero builders', async ({ page }) => {
@@ -1647,7 +1709,7 @@ test.describe('villager breeding', () => {
     // fastest-growing villages the game can produce — a household now averages about a child a
     // year, so by the last season there are far more villagers to step than there used to be.
     test.setTimeout(GROWTH_TIMEOUT);
-    await open(page);
+    await open2d(page);
     const out = await growUnderIdealConditions(page, 12); // 3 years
     expect(out.addedHouses).toBe(10);
     expect(out.startPop).toBe(12);
@@ -1658,7 +1720,7 @@ test.describe('villager breeding', () => {
 
   test('households settle into one couple with room for their children', async ({ page }) => {
     test.setTimeout(GROWTH_TIMEOUT);
-    await open(page);
+    await open2d(page);
     const out = await growUnderIdealConditions(page, 12);
 
     // A household is one couple plus their children. With spare houses to move into, no house
@@ -1682,7 +1744,7 @@ test.describe('villager breeding', () => {
 
   test('every child lives with an adult, and children are spread across households', async ({ page }) => {
     test.setTimeout(GROWTH_TIMEOUT);
-    await open(page);
+    await open2d(page);
     const out = await growUnderIdealConditions(page, 12);
 
     // The founding children have no recorded parents. They used to be dropped into whichever house
@@ -1698,7 +1760,7 @@ test.describe('villager breeding', () => {
 
   test('children still live with an adult when housing is tight', async ({ page }) => {
     test.setTimeout(GROWTH_TIMEOUT);
-    await open(page);
+    await open2d(page);
     const out = await growUnderIdealConditions(page, 16, 0); // only the starter houses
     expect(out.allChildren).toBeGreaterThan(0);
     expect(out.childrenWithNoAdultAtHome).toBe(0);
@@ -1707,7 +1769,7 @@ test.describe('villager breeding', () => {
 
   test('with no spare housing adults still pair up, silently', async ({ page }) => {
     test.setTimeout(GROWTH_TIMEOUT);
-    await open(page);
+    await open2d(page);
     // Same generous conditions, but *no* extra houses: the only limit is somewhere to live.
     const out = await growUnderIdealConditions(page, 12, 0);
     expect(out.addedHouses).toBe(0);
@@ -2487,7 +2549,7 @@ test.describe('village history', () => {
 
 test.describe('disasters toggle', () => {
   test('the toggle flows from the difficulty screen and persists through save/load', async ({ page }) => {
-    await open(page);
+    await open2d(page);
     // New Game → size → difficulty, turn disasters Off, start Normal.
     await page.click('#mm-new');
     await page.click('#sz-small');
@@ -2636,14 +2698,21 @@ test.describe('age groups', () => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
       const s = g.state;
-      // One of each: an infant, a student, a working adult, and someone well past old age.
+      // One of each: a child, an enrolled student, a working adult, and someone past old age.
+      // A student is a child that is *being schooled*, not a child of a certain age, so the flag
+      // is what makes one — an unenrolled child of the same age counts as a child.
       s.citizens = s.citizens.slice(0, 4);
-      [1, 3, 20, 40].forEach((age, i) => { s.citizens[i].age = age; });
+      [1, 3, 20, 40].forEach((age: number, i: number) => { s.citizens[i].age = age; });
+      s.citizens[1].student = true;
       g.ui.updateHud(s, 1, false);
-      return document.querySelector('#stat-ages .val')!.textContent;
+      const enrolled = document.querySelector('#stat-ages .val')!.textContent;
+      // Same ages, nobody at school: the student counts as a child instead.
+      s.citizens[1].student = false;
+      g.ui.updateHud(s, 1, false);
+      return { enrolled, unschooled: document.querySelector('#stat-ages .val')!.textContent };
     });
-    // SCHOOL_AGE 2, ADULT_AGE 4: one infant, one student, two adults (the elder counts as one).
-    expect(out).toBe('🧒1 🎓1 🧑2');
+    expect(out.enrolled).toBe('🧒1 🎓1 🧑2');
+    expect(out.unschooled).toBe('🧒2 🎓0 🧑2');
   });
 });
 
@@ -2749,7 +2818,7 @@ test.describe('construction stages', () => {
 
 test.describe('placement controls', () => {
   test('Build and Rotate sit under the ghost, and Build places at the reticle', async ({ page }) => {
-    await open(page);
+    await open2d(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
     await page.click('#toolbar [data-tool="housing"]');
     await page.click('#popout button >> nth=0');
@@ -2806,5 +2875,107 @@ test.describe('placement controls', () => {
       return { n: g.state.buildings.length, why: g.debugCanPlace('house', tx, ty, g.buildRot), tx, ty };
     });
     expect(after.n, JSON.stringify(after)).toBe(before + 1);
+  });
+});
+
+test.describe('fishing dock', () => {
+  test('every buildable site puts the dock over water and the shack on land', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const isWater = (x: number, y: number) =>
+        x >= 0 && y >= 0 && x < s.w && y < s.h && s.tiles[y * s.w + x].type === 'water';
+
+      let sites = 0, dryDock = 0, floating = 0, centredOnPlot = 0;
+      const rots: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0 };
+      for (let y = 0; y < s.h; y++) {
+        for (let x = 0; x < s.w; x++) {
+          for (const rot of [0, 1, 2, 3] as const) {
+            if (!g.debugCanPlace('fishing', x, y, rot).ok) continue;
+            sites++; rots[rot]++;
+            const f = g.debugFootprint('fishing');
+            const w = rot % 2 === 1 ? f.h : f.w;
+            const h = rot % 2 === 1 ? f.w : f.h;
+            // Distance along the hut's own axis, from the dock end (0) to the door end.
+            const dock: boolean[] = [], land: boolean[] = [];
+            for (let dy = 0; dy < h; dy++)
+              for (let dx = 0; dx < w; dx++) {
+                const along = rot === 0 ? dy : rot === 1 ? w - 1 - dx : rot === 2 ? h - 1 - dy : dx;
+                (along < 2 ? dock : land).push(isWater(x + dx, y + dy));
+              }
+            if (dock.filter(Boolean).length / dock.length < 0.6) dryDock++;
+            if (!land.some((wet) => !wet)) floating++;
+            // The circle it works has to follow the dock out, or a hut on a headland fishes the
+            // field behind it.
+            const wc = g.debugWorkCentre('fishing', x, y, rot);
+            const mx = x + w / 2, my = y + h / 2;
+            const out = rot === 0 ? wc.y < my - 0.5 : rot === 1 ? wc.x > mx + 0.5
+              : rot === 2 ? wc.y > my + 0.5 : wc.x < mx - 0.5;
+            if (!out) centredOnPlot++;
+          }
+        }
+      }
+      return { sites, rots, dryDock, floating, centredOnPlot };
+    });
+    // A shoreline map should offer plenty of sites, at every rotation — otherwise the checks
+    // below would pass on an empty set.
+    expect(out.sites).toBeGreaterThan(50);
+    for (const rot of [0, 1, 2, 3]) expect(out.rots[rot], `rotation ${rot}`).toBeGreaterThan(0);
+    expect(out.dryDock, 'sites whose dock end is not in the water').toBe(0);
+    expect(out.floating, 'sites with no land under the shack').toBe(0);
+    expect(out.centredOnPlot, 'sites whose work circle sits on the plot, not the dock').toBe(0);
+  });
+
+  test('the work circle shows while siting a hut, centred on the dock', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(async () => {
+      const g = (window as any).__village;
+      const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      // The renderer rebuilds its overlay objects on the first frame of a new map, so `workRing`
+      // has to be read *after* that frame — grabbing it earlier hands you an orphan that nothing
+      // will ever touch again, and the test then quietly measures nothing.
+      await frame();
+      const before = g.renderer.workRing.visible;
+
+      let site: { x: number; y: number; rot: 0 | 1 | 2 | 3 } | null = null;
+      for (let y = 0; y < s.h && !site; y++)
+        for (let x = 0; x < s.w && !site; x++)
+          for (const rot of [0, 1, 2, 3] as const)
+            if (g.debugCanPlace('fishing', x, y, rot).ok) { site = { x, y, rot }; break; }
+      if (!site) return { before, site: null };
+
+      const f = g.debugFootprint('fishing');
+      const w = site.rot % 2 === 1 ? f.h : f.w;
+      const h = site.rot % 2 === 1 ? f.w : f.h;
+      g.selectedBuild = 'fishing';
+      g.buildRot = site.rot;
+      g.camera.focus(site.x + w / 2, site.y + h / 2);
+      await frame();
+
+      // The ghost follows the reticle, so read where the game actually put it rather than
+      // assuming the camera landed on the tile we picked.
+      const { tx, ty } = g.debugReticleTile('fishing');
+      const wc = g.debugWorkCentre('fishing', tx, ty, site.rot);
+      const ring = g.renderer.workRing;
+      return {
+        before,
+        site,
+        visible: ring.visible,
+        at: { x: ring.position.x, y: ring.position.z },
+        wc,
+        radius: ring.scale.x,
+      };
+    });
+    expect(out.site, 'the map offered somewhere to put a hut').not.toBeNull();
+    // Nothing is selected at the start, so the ring appearing is down to the placement.
+    expect(out.before).toBe(false);
+    expect(out.visible, 'the work circle is drawn while siting').toBe(true);
+    expect(out.at!.x).toBeCloseTo(out.wc!.x, 3);
+    expect(out.at!.y).toBeCloseTo(out.wc!.y, 3);
+    expect(out.radius).toBeGreaterThan(0);
   });
 });

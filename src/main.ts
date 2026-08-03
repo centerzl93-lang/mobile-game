@@ -12,7 +12,9 @@ import {
   BuildingType,
   BUILDING_DEFS,
   buildTimeOf,
+  autoBuilderDemand,
   workRadiusOf,
+  workCentre,
   footprintW,
   footprintH,
   ranchCapacity,
@@ -127,8 +129,11 @@ class Game {
   inspectSel: { kind: 'building' | 'citizen'; id: number } | null = null;
   /** Held rotate button: -1 = counter-clockwise, +1 = clockwise, 0 = released. */
   rotateDir: -1 | 0 | 1 = 0;
-  /** Demolition picked but not yet confirmed — nothing is destroyed until the player says so. */
-  pendingDemolish: { kind: 'building' | 'path'; id: number; label: string } | null = null;
+  /**
+   * Demolition picked but not yet confirmed — nothing is destroyed until the player says so.
+   * A list, because a demolish drag can enclose several buildings at once.
+   */
+  pendingDemolish: { kind: 'building' | 'path'; ids: number[]; label: string } | null = null;
 
   dpr = 1;
   cw = 0;
@@ -369,13 +374,35 @@ class Game {
     if (this.demolish) {
       const [dx0, dy0] = this.camera.screenToTile(sx0, sy0, this.cw, this.ch);
       const [dx1, dy1] = this.camera.screenToTile(sx1, sy1, this.cw, this.ch);
-      const removed = demolishPathRect(
-        this.state,
-        Math.floor(dx0), Math.floor(dy0), Math.floor(dx1), Math.floor(dy1),
-      );
+      const x0 = Math.floor(Math.min(dx0, dx1));
+      const y0 = Math.floor(Math.min(dy0, dy1));
+      const x1 = Math.floor(Math.max(dx0, dx1));
+      const y1 = Math.floor(Math.max(dy0, dy1));
+      // Buildings the square encloses *completely*. Requiring the whole footprint keeps a drag
+      // that happens to clip a neighbour's corner from taking it too — with an 8x8 quarry about,
+      // a partial overlap is far too easy to make by accident.
+      const caught = this.state.buildings.filter((b) => {
+        const bw = footprintW(b);
+        const bh = footprintH(b);
+        return b.x >= x0 && b.y >= y0 && b.x + bw - 1 <= x1 && b.y + bh - 1 <= y1;
+      });
       // Ripping up road is cheap and instantly reversible by drawing it again, so unlike
       // demolishing a building it does not need a confirmation step.
-      this.ui.flashHint(removed > 0 ? `Removed ${removed} path tile${removed > 1 ? 's' : ''}` : 'No paths there');
+      const removed = demolishPathRect(this.state, x0, y0, x1, y1);
+      if (caught.length > 0) {
+        this.pendingDemolish = {
+          kind: 'building',
+          ids: caught.map((b) => b.id),
+          label: caught.length === 1 ? buildingName(caught[0]) : `${caught.length} buildings`,
+        };
+        // Ring a single target so it is obvious which one is about to go.
+        if (caught.length === 1) {
+          this.inspectSel = { kind: 'building', id: caught[0].id };
+          this.refreshInspect();
+        }
+      } else {
+        this.ui.flashHint(removed > 0 ? `Removed ${removed} path tile${removed > 1 ? 's' : ''}` : 'Nothing there to demolish');
+      }
       if (removed > 0) this.persist();
       return;
     }
@@ -418,7 +445,12 @@ class Game {
   /** Adjust the global Builders target (clamped to the number of adults). */
   private setBuilders(delta: number): void {
     const adults = this.state.citizens.reduce((n, c) => n + (c.age >= ADULT_AGE ? 1 : 0), 0);
-    this.state.desiredBuilders = Math.max(0, Math.min(adults, this.state.desiredBuilders + delta));
+    // The stepper moves the player's own offset; the total is derived from that plus whatever
+    // the open sites are asking for (see `autoBuilderDemand`). Clamped so it can be dialled down
+    // to nobody but not below, however many sites are open.
+    const extra = (this.state.builderExtra ?? 0) + delta;
+    const floor = -autoBuilderDemand(this.state);
+    this.state.builderExtra = Math.max(floor, Math.min(adults, extra));
     this.persist();
   }
 
@@ -601,13 +633,19 @@ class Game {
     this.pendingDemolish = null;
     if (!target) return;
     if (target.kind === 'building') {
-      const b = this.state.buildings.find((x) => x.id === target.id);
-      if (!b) return;
-      const label = buildingName(b);
-      demolishBuilding(this.state, b);
-      this.ui.log(`${label} demolished`, 'info');
+      let n = 0;
+      let last = '';
+      for (const id of target.ids) {
+        const b = this.state.buildings.find((x) => x.id === id);
+        if (!b) continue;
+        last = buildingName(b);
+        demolishBuilding(this.state, b);
+        n++;
+      }
+      if (n === 1) this.ui.log(`${last} demolished`, 'info');
+      else if (n > 1) this.ui.log(`${n} buildings demolished`, 'info');
     } else {
-      const idx = target.id;
+      const idx = target.ids[0];
       const v = this.state.paths[idx];
       const wasStone = v === PATH_STONE || v === PATH_STONE_PLAN;
       const wasBridge = v === PATH_BRIDGE;
@@ -848,7 +886,7 @@ class Game {
   private demolishAt(wx: number, wy: number): void {
     const b = this.buildingAt(wx, wy);
     if (b) {
-      this.pendingDemolish = { kind: 'building', id: b.id, label: buildingName(b) };
+      this.pendingDemolish = { kind: 'building', ids: [b.id], label: buildingName(b) };
       this.inspectSel = { kind: 'building', id: b.id }; // ring it so the target is obvious
       this.refreshInspect();
       return;
@@ -858,7 +896,7 @@ class Game {
     const idx = ty * MAP_W + tx;
     if (idx < 0 || idx >= this.state.paths.length) return;
     if (this.state.paths[idx] !== PATH_NONE) {
-      this.pendingDemolish = { kind: 'path', id: idx, label: 'this path tile' };
+      this.pendingDemolish = { kind: 'path', ids: [idx], label: 'this path tile' };
     } else if (this.state.harvest[idx] !== 0) {
       this.state.harvest[idx] = 0; // un-mark a harvest order — nothing is lost, so no confirmation
       this.persist();
@@ -1127,6 +1165,17 @@ class Game {
     return buildTimeOf(type);
   }
 
+  /**
+   * Debug/testing helper: the tile a building would work *from*.
+   *
+   * For most buildings this is the middle of the plot, but a fishing hut works off the end of
+   * its dock — so a test that assumes the centre would measure the water from the wrong tile.
+   */
+  debugWorkCentre(type: BuildingType, x: number, y: number, rot: 0 | 1 | 2 | 3 = 0): { x: number; y: number } {
+    const { w, h } = this.placeSize(type);
+    return workCentre({ type, x, y, rot, w, h });
+  }
+
   /** Debug/testing helper: check a placement at a tile (uses the current ranch size). */
   debugCanPlace(type: BuildingType, x: number, y: number, rot: 0 | 1 | 2 | 3 = 0): { ok: boolean; reason?: string } {
     const { w, h } = this.placeSize(type);
@@ -1169,9 +1218,19 @@ class Game {
     return true;
   }
 
-  /** Debug/testing helper: set the global Builders target directly (bypasses the adult clamp). */
+  /**
+   * Debug/testing helper: pin the global Builders target to exactly `n`.
+   *
+   * `desiredBuilders` is derived each tick from what the open sites ask for plus the player's
+   * offset, so writing it directly would be overwritten on the next update. This sets the offset
+   * that *produces* `n` instead, which keeps the helper meaning what it always meant — including
+   * `debugSetBuilders(0)` for "nobody builds", now that placing a site asks for builders by
+   * itself.
+   */
   debugSetBuilders(n: number): void {
-    this.state.desiredBuilders = Math.max(0, n);
+    const want = Math.max(0, n);
+    this.state.builderExtra = want - autoBuilderDemand(this.state);
+    this.state.desiredBuilders = want;
   }
 
   /** Debug/testing helper: a ranch's current head capacity (from its size + animal). */

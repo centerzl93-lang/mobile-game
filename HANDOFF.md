@@ -1,7 +1,8 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-08-02 (lakes, landscape play, building footprints; see Current State)
+> Last updated: 2026-08-03 (seven-item gameplay pass, staged construction, lakes, landscape play,
+> building footprints; see Current State)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -20,11 +21,59 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **staged construction**, **render optimisation**, a **renderer teardown leak**,
-**lakes**, **landscape play** and **building footprints** — all this session.
+Latest work: a **seven-item gameplay pass**, **staged construction**, **render optimisation**, a
+**renderer teardown leak**, **lakes**, **landscape play** and **building footprints** — all this
+session.
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Seven gameplay fixes (this session)
+One request, seven separate things. Taken in order, with what each actually touched:
+
+**1. Schooling is a building, not a life stage.** Children used to spend years as "students" with
+nothing teaching them. Now `isStudent(c)` reads a `student` flag that only gets set — at the yearly
+ageing pass in `src/game/simulation.ts` — when a school is *staffed*, and only for the last year
+before `ADULT_AGE` (`SCHOOL_AGE`). No school, no students: children go straight to adults. The HUD
+chip counts the enrolled, so it now says how many are actually being educated rather than how many
+happen to be the right age.
+
+**2. Placing a construction asks for builders.** `autoBuilderDemand(s)` in `src/types.ts` sums
+`buildersWantedFor(type)` over every unbuilt building — 2 for a small plot, 3 from 9 tiles, 4 from
+20 — and `assignHomesAndJobs` sets `s.desiredBuilders` to that plus `s.builderExtra`, clamped to
+the adult count. Demand therefore stacks across sites and falls back to nothing when the last one
+finishes. `builderExtra` is the player's own adjustment on top, so dragging the Builders slider
+still works: `setBuilders(n)` stores `n - autoBuilderDemand(s)` rather than the raw figure.
+
+**3. The fishing hut stands its dock in the water.** `BuildingDef.dockDepth` (2 for `fishing`)
+replaced the old `requiresAdjacent: ['water']`. `canPlace` now requires the far two rows of the
+plot to be ≥60% water and the near rows to include land, so the jetty is over the lake and the
+shack is on the bank — at any rotation. `workCentre(b)` returns the dock end rather than the middle
+of the plot, and `buildingCenterTile` routes through it, so `nearbyWater` and the work circle both
+measure from where the villager actually stands to fish. The model in `tools/models/food.py` was
+mirrored to match (jetty at -Y, door on the +Y landward face) — **if you re-author it, the jetty
+must stay at -Y or the model reads backwards against `dockDepth`.**
+
+Work circles are also drawn *while siting* now, not only after selecting a built building:
+`syncOverlays` builds a `Placed` ghost from the placement preview and runs the same `workCentre`.
+`Placed` (in `src/types.ts`) is the `type/x/y/rot/w/h` subset the footprint helpers need, which is
+what lets a preview measure by exactly the same rules as a building.
+
+**4. Foresters work the wood in a scattered order.** `plantCircle`/`depleteCircleTrees` swept the
+work circle in row order, so a lodge clear-cut a moving edge. `scatteredCircleTiles()` shuffles the
+tile list (Fisher-Yates) before handing it out, so planting and felling land all over the circle.
+
+**5. Demolish takes a drag-square.** `onMarqueeEnd` collects every building *fully enclosed* by the
+box; `pendingDemolish` grew from a single id to `{ kind; ids; label }` so the confirm bar can offer
+"Demolish 6 buildings" as one decision.
+
+**6. Idle villagers stay home.** `s.origin` records the founding clearing at `newGame`, and
+`loiterPoint()` sends anyone without a task back toward it, so an unemployed village no longer
+drifts to the middle of the map. Old saves default `origin` to their first barn.
+
+**7. Two map sizes.** `MAP_SIZES` is `{ small: 72, large: 144 }` — the old medium renamed, the old
+192 large retired. `slotInfo` reports anything wider than 72 as Large, so a save made on the 192 map
+still lists sensibly.
 
 ### Construction now has three looks (this session)
 A placed building used to be the finished model in glass until the moment it completed. It is
@@ -233,7 +282,8 @@ plus larger maps so the density stays similar. Done: the maps, the footprints, t
 to be redrawn to fit them, and the fallout.
 
 **Maps.** Small 48 -> **72** tiles a side, medium 96 -> **144**; large stays 192. `MAP_SIZES` in
-`src/types.ts`.
+`src/types.ts`. (Superseded later the same session — see item 7 above: there are two sizes now,
+small 72 and large 144, and the 192 map is gone.)
 
 **Footprints.** `BUILDING_DEFS` now carries the player's table:
 
@@ -714,7 +764,9 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   `moveBoatTo`), `runTrader` + `basketTrade`/value helpers; ranch `penFromStorage`, per-season breeding
   + `butcherProducts`, `cullRanch`/`splitRanch`/`transferRanch`/`eligibleRanchTargets`; farm
   area-scaled autumn harvest.
-- `src/game/buildings.ts` — sized `canPlace`/`placeBuilding` (`SIZABLE`-driven `w/h` init).
+- `src/game/buildings.ts` — sized `canPlace`/`placeBuilding` (`SIZABLE`-driven `w/h` init); the
+  `dockDepth` check that keeps a fishing hut's jetty over water; `buildingCenterTile` routing
+  through `workCentre`.
 - `src/game/world.ts` — `riverColumnX` (boat's river path).
 - `src/game/state.ts` — `makeBuilding` sizable + ranch init; merchant init; `seeds` seeding;
   `desiredWorkers 0` defaults.
@@ -734,7 +786,11 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
 - `index.html` — removed `#btn-merchant`. `src/style.css` — `.ranch-size`, `.tp-*`, ranch-picker styles.
 - `tests/newgame.spec.ts` — merchant, ranch, farm, and **jobs & builders** suites, plus prior
   seed-gate/staffing tests, and this session's **available workers count**, **fireproof buildings**,
-  **clearing land before building**, and **camera rotate buttons** suites.
+  **clearing land before building**, **camera rotate buttons**, **construction stages**,
+  **placement controls** and **fishing dock** suites. The fishing-dock pair scans every tile and
+  rotation on a generated map and asserts that no accepted site has a dry dock, a floating shack,
+  or a work circle sitting on the plot instead of the jetty — plus a count check, so it can't pass
+  by finding nowhere to build.
 
 ## Architecture notes
 - **Sizable buildings.** `SIZABLE` (`types.ts`) lists the types the player sizes at placement
@@ -761,14 +817,36 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   the committed `.gltf`/`.bin` byte for byte, so `git status` after a full rebuild is an honest
   diff of what you actually changed.
 - Committed tests: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers npx playwright test`
-  (config runs `npm run build && npm run preview` on port 4173).
+  (config runs `npm run build && npm run preview` on port 4173). **Run the three specs separately** —
+  the whole suite takes well over 15 minutes, so a wrapping `timeout` will cut it off mid-run and
+  tell you nothing. Last full state: `world` 13/13, `menus` 7/7, `newgame` 87/90 — the three
+  outstanding are the two breeding timeouts below and one household-larder test that passes on its
+  own and fails on an unlucky map (the walking-budget flake, also below).
 - Headless scratchpad drivers use `playwright-core` + chromium at
   `/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell` with SwiftShader flags,
   against `npm run preview` on port 4173 (preview is flaky — run it in the background).
 - App exposes a `window.__village` debug hook (`startNewGame`, `debugAdvance`, `debugPlace`,
-  `debugCanPlace`, `debugRanchCapacity`, `debugWorkRadius`, `debugSetBuilders`, `debugPlanPath`,
+  `debugCanPlace`, `debugFootprint`, `debugBuildTime`, `debugWorkCentre`, `debugReticleTile`,
+  `debugRanchCapacity`, `debugWorkRadius`, `debugSetBuilders`, `debugPlanPath`,
   `inspectSel`/`refreshInspect`, `persist`, plus the sizing fields `sizeW/sizeH`, `rotateDir`, and the
-  private action methods and `log` — TS `private` is runtime-callable).
+  private action methods and `log` — TS `private` is runtime-callable). `debugFootprint` and
+  `debugBuildTime` exist because both numbers are transformed before they mean anything —
+  `buildTime` is multiplied by `BUILD_TIME_SCALE`, and a rotated footprint swaps `w`/`h` — and a
+  test that reads the raw def value lands somewhere else than it thinks.
+- **Headless Chromium renders the 3D view in software, at about 2 fps.** Measured on this box at
+  390x844, `?gfx=low`: **2.4 fps** on a small map, **1.3 fps** on a large one — and only 13% of that
+  frame is `renderer.render` in JS. The other 87% is SwiftShader rasterising, which no amount of
+  JS optimisation touches. This is a *test-harness* number, not a device number: it says nothing
+  about the game on a phone with a real GPU.
+
+  It matters because **Playwright's click actionability check waits on animation frames**. At 2 fps
+  a single menu click takes seconds: two clicks measured **15.4s** in 3D against **165ms** on `?2d`.
+  Any click-driven test therefore burns its 30s budget on rendering. `tests/menus.spec.ts` now
+  opens on `?2d&gfx=low` for exactly this reason — it drives menus, sizes and save slots, none of
+  which involve the 3D view — and went from a timeout at 1.8m to 7 passing in 38s. **Reach for
+  `?2d` in any new spec that clicks its way through the UI**; keep the 3D renderer only where the
+  assertions are about the 3D renderer (`newgame.spec.ts` reads `renderer.buildingMeshes` and
+  `renderer.workRing`, so it stays).
 - **Test caveats learned this session.** Kill any stray `npm run preview` before running Playwright —
   the config reuses an existing server on 4173 and will happily test a **stale build**. Don't assert
   wall-clock rates against animation frames (headless rAF is slow and irregular; drive N frames
@@ -800,10 +878,12 @@ Never put the model ID in commits/PRs/code/comments — chat replies only.
   in `BUILDING_DEFS`; the counter-argument is that the *land* is now the real cost — finding eight
   clear tiles a side is most of what placing a quarry takes.
 - **Work circles did not grow with the buildings.** `workRadius` is still 4-6 tiles measured from
-  the building's centre, so a 3x5 fishing hut's radius-4 circle now spends 15 of its ~50 tiles on
-  its own footprint where the 2x2 spent 4. Yields sag a little for the biggest foraging buildings.
-  Scaling the radius with the footprint is a couple of lines in `workRadiusOf`, but it is a balance
-  change and wants play-testing rather than a guess.
+  the building's centre, so a big foraging building's circle now spends more of its tiles on its own
+  footprint than the 2x2 version did. Yields sag a little for the biggest ones. Scaling the radius
+  with the footprint is a couple of lines in `workRadiusOf`, but it is a balance change and wants
+  play-testing rather than a guess. The fishing hut is the one already handled — `dockDepth` moves
+  its circle out to the end of the jetty, so it fishes water rather than its own decking — and the
+  same trick would suit anything else that works off one edge.
 - **Old saves keep their tile positions but pick up the new sizes** (`footprintW/H` falls back to
   the def for everything but the field and the pen), so a village saved before this change can have
   buildings overlapping each other, and in the worst case a door covered by a neighbour that grew.
@@ -866,6 +946,16 @@ Never put the model ID in commits/PRs/code/comments — chat replies only.
   across page loads — leaked WebGL contexts under SwiftShader is the obvious suspect, since each
   `open()` builds a fresh Three.js renderer. Chasing that is the real fix; a `page.close()` /
   fresh-context per test in the breeding describe is the cheap experiment to try first.
+
+  **Tried and partly worked: `open2d`.** The breeding describe now opens on `?2d`, so those pages
+  hold no WebGL context at all (see the software-rendering note above). It moved the tally from
+  three of them failing to two — `every child lives with an adult` went from timing out to passing,
+  and the other two still hit the 480s cap. So leaked GL contexts were *part* of it and are not the
+  whole story. What is left is the simulation itself: `growUnderIdealConditions` steps 12 seasons at
+  0.1s a tick — 72,000 ticks — over a village that is deliberately breeding as fast as the game
+  allows, so the last seasons step several times the population of the first. Making that cheaper
+  (a coarser tick for the test, or fewer seasons with the same assertion) is the next thing to try;
+  **do not raise `GROWTH_TIMEOUT` again.**
 
   They share a named `GROWTH_TIMEOUT` (480s), which is a plaster, not a cure — it was 240s and
   raising it did not make the full-suite run green. **Do not raise it again**; it is already at

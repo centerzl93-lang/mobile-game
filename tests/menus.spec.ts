@@ -4,8 +4,14 @@ import { test, expect, Page } from '@playwright/test';
 
 // Each test runs in an isolated context, so localStorage starts empty — no manual clearing
 // needed (and clearing on every navigation would wipe saves the reload-based tests rely on).
+// `?2d` runs the flat fallback renderer. Nothing in this file is about the 3D view — it drives
+// menus, map sizes and save slots, all of which are DOM and game state — and the 3D view is
+// ruinous here: headless Chromium rasterises it in software (SwiftShader), which drops the page
+// to ~2 fps. Playwright's click actionability check waits on animation frames, so at 2 fps a
+// single menu click takes seconds and a whole sequence of them blows the test's 30s budget.
+// Measured on this box: two menu clicks take 15.4s in 3D and 165ms in 2D.
 async function open(page: Page): Promise<void> {
-  await page.goto('/?gfx=low', { waitUntil: 'load' });
+  await page.goto('/?2d&gfx=low', { waitUntil: 'load' });
   await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
 }
 
@@ -15,7 +21,7 @@ test.describe('map sizes', () => {
     const dims = await page.evaluate(() => {
       const g = (window as any).__village;
       const out: Record<string, any> = {};
-      for (const size of ['small', 'medium', 'large']) {
+      for (const size of ['small', 'large']) {
         g.startNewGame(size);
         const s = g.state;
         out[size] = { w: s.w, tiles: s.tiles.length, paths: s.paths.length, running: g.running };
@@ -24,11 +30,9 @@ test.describe('map sizes', () => {
     });
     expect(dims.small.w).toBe(72);
     expect(dims.small.tiles).toBe(72 * 72);
-    expect(dims.medium.w).toBe(144);
-    expect(dims.medium.tiles).toBe(144 * 144);
-    expect(dims.large.w).toBe(192);
-    expect(dims.large.tiles).toBe(192 * 192);
-    expect(dims.large.paths).toBe(192 * 192);
+    expect(dims.large.w).toBe(144);
+    expect(dims.large.tiles).toBe(144 * 144);
+    expect(dims.large.paths).toBe(144 * 144);
     expect(dims.large.running).toBe(true);
   });
 });
@@ -45,14 +49,14 @@ test.describe('main menu', () => {
     expect(await page.evaluate(() => (document.getElementById('mm-account') as HTMLButtonElement).disabled)).toBe(true);
   });
 
-  test('New Game → size select → difficulty → Large starts a 192 game', async ({ page }) => {
+  test('New Game → size select → difficulty → Large starts a 144 game', async ({ page }) => {
     await open(page);
     await page.click('#mm-new');
     await page.click('#sz-large');
     await page.click('#diff-normal'); // difficulty screen now sits between size and start
     await page.waitForTimeout(150);
     const started = await page.evaluate(() => ({ w: (window as any).__village.state.w, running: (window as any).__village.running, hidden: document.getElementById('overlay')!.classList.contains('hidden') }));
-    expect(started.w).toBe(192);
+    expect(started.w).toBe(144);
     expect(started.running).toBe(true);
     expect(started.hidden).toBe(true);
   });
@@ -61,7 +65,7 @@ test.describe('main menu', () => {
 test.describe('save slots', () => {
   test('a game saved to a slot round-trips through reload + Continue', async ({ page }) => {
     await open(page);
-    await page.evaluate(() => (window as any).__village.startNewGame('medium', 'normal', true, 1)); // slot 2, persists
+    await page.evaluate(() => (window as any).__village.startNewGame('large', 'normal', true, 1)); // slot 2, persists
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
     await expect(page.locator('#mm-continue')).toBeVisible();
@@ -86,7 +90,7 @@ test.describe('save slots', () => {
     await expect(page.locator('#slot-2')).toBeEnabled();
     await page.click('#slot-2');
     await page.waitForTimeout(150);
-    expect(await page.evaluate(() => (window as any).__village.state.w)).toBe(192);
+    expect(await page.evaluate(() => (window as any).__village.state.w)).toBe(144);
   });
 });
 
@@ -122,7 +126,7 @@ test.describe('pause menu', () => {
     // New Game → size select → difficulty.
     await page.click('#pm-new');
     await expect(page.locator('#sz-small')).toBeVisible();
-    await page.click('#sz-medium');
+    await page.click('#sz-large');
     await page.click('#diff-easy');
     await page.waitForTimeout(120);
     expect(await page.evaluate(() => (window as any).__village.state.w)).toBe(144);

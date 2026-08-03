@@ -124,6 +124,9 @@ export function newGame(
     pathProgress: 0,
     pendingPaths: [], // drawn-but-unconfirmed path tiles
     desiredBuilders: 0, // no builders until the player assigns them on the Job Board
+    // Where the village was founded. Idle villagers keep to it rather than drifting toward the
+    // shifting average of every building on the map.
+    origin: { x: start.x + 1, y: start.y + 1 },
     // Crops the village can plant. Easy starts with one random seed; Normal/Hard start with none
     // and must buy seeds from a merchant before any field will grow.
     seeds: difficulty === 'easy' ? [CROPS[Math.floor(Math.random() * CROPS.length)]] : [],

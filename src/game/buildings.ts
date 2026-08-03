@@ -7,6 +7,7 @@ import {
   TileType,
   REFUND_FRACTION,
   workRadiusOf,
+  workCentre,
   footprintW,
   footprintH,
   ranchCapacity,
@@ -49,7 +50,9 @@ export function canPlace(
   // A quarter turn swaps the footprint, so everything below works in map space.
   const fw = rot % 2 === 1 ? baseH : baseW;
   const fh = rot % 2 === 1 ? baseW : baseH;
-  const allowsWater = def.requiresWaterFraction !== undefined; // a dock may sit partly on water
+  // The two ways a building is allowed to stand in water: a wharf that just needs enough of its
+  // footprint wet, or a jetty that has to reach out over the water from a specific end.
+  const allowsWater = def.requiresWaterFraction !== undefined || def.dockDepth !== undefined;
   let waterTiles = 0;
   let landTiles = 0;
   for (let dy = 0; dy < fh; dy++) {
@@ -67,8 +70,32 @@ export function canPlace(
       }
     }
   }
+  // A jetty has to reach *out* over the water: the far rows (away from the door) must be wet and
+  // the near ones dry. Counting water anywhere under the footprint, the way
+  // `requiresWaterFraction` does, happily allows a dock built along a bank with its landing high
+  // and dry and the water off to one side.
+  if (def.dockDepth) {
+    const turn = ((rot % 4) + 4) % 4;
+    let wet = 0;
+    let dry = 0;
+    for (let dy = 0; dy < fh; dy++) {
+      for (let dx = 0; dx < fw; dx++) {
+        // Distance from the far end, measured along whichever axis the building has been turned to.
+        const depth = turn === 1 ? fw - 1 - dx : turn === 2 ? fh - 1 - dy : turn === 3 ? dx : dy;
+        const t = getTile(s.tiles, x + dx, y + dy)!;
+        if (depth < def.dockDepth) {
+          if (t.type === 'water') wet++;
+        } else if (t.type !== 'water') dry++;
+      }
+    }
+    const dockTiles = def.dockDepth * (turn % 2 === 1 ? fh : fw);
+    if (wet < Math.ceil(dockTiles * 0.6)) {
+      return { ok: false, reason: 'Its jetty must reach out over the water — turn it toward the shore' };
+    }
+    if (dry === 0) return { ok: false, reason: 'It must also stand on the bank' };
+  }
   // Docks: enough of the footprint over water, and the rest anchored on land.
-  if (allowsWater) {
+  if (def.requiresWaterFraction !== undefined) {
     const need = Math.ceil(fw * fh * def.requiresWaterFraction!);
     if (waterTiles < need) return { ok: false, reason: 'Part of it must reach over the water' };
     if (landTiles === 0) return { ok: false, reason: 'It must also touch the shore' };
@@ -275,7 +302,10 @@ function borderHasType(
 }
 
 export function buildingCenterTile(b: Building): { cx: number; cy: number } {
-  return { cx: b.x + footprintW(b) / 2, cy: b.y + footprintH(b) / 2 };
+  // `workCentre` is the footprint centre for everything except a dock, whose circle slides out
+  // over the water — see the note there.
+  const c = workCentre(b);
+  return { cx: c.x, cy: c.y };
 }
 
 /** Sum of forest tree-resource within a building's circular work radius. */

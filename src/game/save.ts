@@ -1,6 +1,6 @@
 import {
   GameState, MAP_W, MAP_H, MapSize, setMapSize, CROPS, RANCH_MIN, ranchCapacity, EVENT_LOG_MAX,
-  isWorkplace, nextBuildingName, SEASON_LENGTH,
+  isWorkplace, nextBuildingName, SEASON_LENGTH, Building,
 } from '../types';
 import { randomName } from './names';
 
@@ -53,6 +53,12 @@ export function loadGame(slot = 0): GameState | null {
     if (typeof s.desiredBuilders !== 'number') s.desiredBuilders = 0;
     // Drawn-but-unconfirmed path tiles; older saves simply have none outstanding.
     if (!Array.isArray(s.pendingPaths)) s.pendingPaths = [];
+    // Saves from before idle villagers had somewhere to loiter: fall back to the first barn,
+    // which is where the village was founded.
+    if (!s.origin || typeof s.origin.x !== 'number') {
+      const first = (s.buildings ?? []).find((b: Building) => b.type === 'barn') ?? (s.buildings ?? [])[0];
+      s.origin = first ? { x: first.x + 1, y: first.y + 1 } : { x: w / 2, y: h / 2 };
+    }
     // The village chronicle was added after this format shipped; older saves simply start empty
     // and begin recording from the moment they are loaded.
     if (!Array.isArray(s.events)) s.events = [];
@@ -175,7 +181,8 @@ export function slotInfo(slot: number): { year: number; pop: number; size: MapSi
     if (!env || env.v !== VERSION || !env.state) return null;
     const s = env.state;
     const w = typeof s.w === 'number' ? s.w : 48;
-    const size: MapSize = w >= 192 ? 'large' : w >= 96 ? 'medium' : 'small';
+    // Anything wider than Small is Large now, including saves made on the retired 192 map.
+    const size: MapSize = w > 72 ? 'large' : 'small';
     return { year: s.year ?? 1, pop: Array.isArray(s.citizens) ? s.citizens.length : 0, size };
   } catch {
     return null;

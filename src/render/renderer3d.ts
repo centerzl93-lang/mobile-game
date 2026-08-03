@@ -3,10 +3,12 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import {
   GameState,
   Building,
+  Placed,
   Tile,
   BUILDING_DEFS,
   BuildingType,
   workRadiusOf,
+  workCentre,
   footprintW,
   footprintH,
   buildStage,
@@ -1896,13 +1898,14 @@ export class Renderer3D {
     if (pv.selBuildingId != null) {
       const b = s.buildings.find((x) => x.id === pv.selBuildingId);
       if (b) {
-        const d = BUILDING_DEFS[b.type];
-        void d;
         const bw = footprintW(b);
         const bh = footprintH(b);
         selPos = { x: b.x + bw / 2, y: b.y + bh / 2, r: Math.max(bw, bh) * 0.6 };
         const wr = workRadiusOf(b);
-        if (wr && b.built) workCircle = { x: b.x + d.w / 2, y: b.y + d.h / 2, r: wr };
+        if (wr && b.built) {
+          const wc = workCentre(b);
+          workCircle = { x: wc.x, y: wc.y, r: wr };
+        }
       }
     } else if (pv.selCitizenId != null) {
       const c = s.citizens.find((x) => x.id === pv.selCitizenId);
@@ -1914,6 +1917,21 @@ export class Renderer3D {
       this.selRing.scale.setScalar(selPos.r);
     } else {
       this.selRing.visible = false;
+    }
+    // While siting a building, show the circle it would work — you are choosing where the trees
+    // or the fish are, and picking that spot blind and finding out afterwards is the whole
+    // difficulty of placing a forester or a fishing hut.
+    if (!workCircle && pv.type) {
+      const d = BUILDING_DEFS[pv.type];
+      if (d.workRadius !== undefined) {
+        const ghost: Placed = {
+          type: pv.type, x: pv.tx, y: pv.ty, rot: pv.prot ?? 0,
+          ...(pv.pw !== undefined ? { w: pv.pw, h: pv.ph } : {}),
+        };
+        const wc = workCentre(ghost);
+        // A fresh site starts on one worker, so show the radius that single worker covers.
+        workCircle = { x: wc.x, y: wc.y, r: d.workRadius };
+      }
     }
     if (workCircle) {
       this.workRing.visible = true;

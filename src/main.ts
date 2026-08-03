@@ -87,7 +87,7 @@ import {
   planPath, markPending, pendingPathCount, confirmPendingPaths, cancelPendingPaths,
   isSpanTier, spanLine, unplanTiles, demolishPathRect,
 } from './game/paths';
-import { saveGame, loadGame, hasSave, clearSave, slotInfo, lastSlot, SLOTS } from './game/save';
+import { saveGame, loadGame, hasSave, clearSave, slotInfo, slotName, setSlotName, lastSlot, SLOTS } from './game/save';
 import { InspectRow, InspectControls } from './ui/ui';
 
 /** Where the tips preference lives. Kept out of the save so it follows the player, not a village. */
@@ -747,6 +747,7 @@ class Game {
   /** Slot picker for loading or saving. `back` returns to whichever menu opened it. */
   private openSlotSelect(mode: 'load' | 'save', back: () => void): void {
     const slots = Array.from({ length: SLOTS }, (_, i) => ({ index: i, info: slotInfo(i) }));
+    const label = (slot: number): string => slotName(slot) ?? `Slot ${slot + 1}`;
     this.ui.showSlotSelect({
       mode,
       slots,
@@ -756,9 +757,26 @@ class Game {
         } else {
           this.currentSlot = slot;
           this.persist();
-          this.ui.flashHint(`Saved to Slot ${slot + 1}`);
+          this.ui.flashHint(`Saved to ${label(slot)}`);
           this.openPauseMenu();
         }
+      },
+      onRename: (slot, name) => {
+        if (name.trim() === (slotName(slot) ?? '')) return; // blur with nothing typed
+        setSlotName(slot, name);
+        this.openSlotSelect(mode, back); // redraw so the row title follows the field
+      },
+      onDelete: (slot) => {
+        // Deleting the village you are playing would be undone by the next autosave a few seconds
+        // later, which looks like the delete silently failing. Say so instead of pretending.
+        if (this.running && slot === this.currentSlot) {
+          this.ui.flashHint('That is the village you are playing — it would be saved again straight away');
+          return;
+        }
+        if (!confirm(`Delete ${label(slot)}? This cannot be undone.`)) return;
+        clearSave(slot);
+        this.ui.flashHint(`${label(slot)} deleted`);
+        this.openSlotSelect(mode, back);
       },
       onBack: back,
     });

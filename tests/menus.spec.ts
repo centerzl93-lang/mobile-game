@@ -92,6 +92,82 @@ test.describe('save slots', () => {
     await page.waitForTimeout(150);
     expect(await page.evaluate(() => (window as any).__village.state.w)).toBe(144);
   });
+
+  test('a slot can be named, and the name sticks through a reload', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'normal', true, 0));
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
+
+    await page.click('#mm-load');
+    // An occupied slot is titled "Slot 1" until it is named; an empty one carries no controls.
+    await expect(page.locator('#slot-0')).toContainText('Slot 1');
+    await expect(page.locator('#slot-name-1')).toHaveCount(0);
+    await expect(page.locator('#slot-del-1')).toHaveCount(0);
+
+    await page.fill('#slot-name-0', 'Riverstead');
+    await page.press('#slot-name-0', 'Enter');
+    // The list redraws so the row title follows the field.
+    await expect(page.locator('#slot-0')).toContainText('Riverstead');
+    await expect(page.locator('#slot-0')).toContainText('12 people');
+
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
+    await page.click('#mm-load');
+    await expect(page.locator('#slot-0')).toContainText('Riverstead');
+    await expect(page.locator('#slot-name-0')).toHaveValue('Riverstead');
+
+    // Clearing the field puts the default back rather than leaving a blank row.
+    await page.fill('#slot-name-0', '');
+    await page.press('#slot-name-0', 'Enter');
+    await expect(page.locator('#slot-0')).toContainText('Slot 1');
+  });
+
+  test('a slot can be deleted, taking its name with it', async ({ page }) => {
+    page.on('dialog', (d) => d.accept()); // the delete asks first
+    await open(page);
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true, 0);
+      g.startNewGame('large', 'normal', true, 1);
+    });
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
+
+    await page.click('#mm-load');
+    await page.fill('#slot-name-0', 'Doomed');
+    await page.press('#slot-name-0', 'Enter');
+    await expect(page.locator('#slot-0')).toContainText('Doomed');
+
+    await page.click('#slot-del-0');
+    // The row goes back to being an empty slot, and the other save is untouched.
+    await expect(page.locator('#slot-0')).toContainText('Empty');
+    await expect(page.locator('#slot-0')).toBeDisabled();
+    await expect(page.locator('#slot-1')).toBeEnabled();
+    expect(await page.evaluate(() => localStorage.getItem('little-village-save-v12-slot0'))).toBeNull();
+    // The name is gone too — a slot reused later must not inherit the last village's name.
+    expect(await page.evaluate(() => localStorage.getItem('little-village-save-v12-slot0-name'))).toBeNull();
+  });
+
+  test('the village you are playing cannot be deleted out from under you', async ({ page }) => {
+    let asked = false;
+    page.on('dialog', (d) => { asked = true; d.accept(); });
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'normal', true, 0));
+    await page.evaluate(() => (window as any).__village.persist());
+
+    // Reach the slot list from the pause menu, i.e. mid-game, and try to delete the live slot.
+    await page.click('#btn-menu');
+    await page.click('#pm-save');
+    await expect(page.locator('#slot-del-0')).toBeVisible();
+    await page.click('#slot-del-0');
+    await page.waitForTimeout(100);
+
+    // Refused outright — the next autosave would put it straight back, so it is not even asked.
+    expect(asked, 'no confirmation was raised').toBe(false);
+    expect(await page.evaluate(() => localStorage.getItem('little-village-save-v12-slot0'))).not.toBeNull();
+    await expect(page.locator('#hint')).toContainText('village you are playing');
+  });
 });
 
 test.describe('pause menu', () => {

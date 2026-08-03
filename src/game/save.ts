@@ -11,8 +11,20 @@ const VERSION = 12;
 /** Number of fixed save slots the player can use. */
 export const SLOTS = 3;
 const slotKey = (slot: number): string => `little-village-save-v12-slot${slot}`;
+/**
+ * A slot's player-given name, kept beside the save rather than inside it.
+ *
+ * The game autosaves over the slot every few seconds, so a name stored in the envelope would have
+ * to be read back and re-attached on every one of those writes to survive — and would be lost the
+ * moment a save was written by any path that forgot. Beside it, the name is written once when the
+ * player types it and is untouched by anything else.
+ */
+const slotNameKey = (slot: number): string => `little-village-save-v12-slot${slot}-name`;
 const LAST_SLOT_KEY = 'little-village-last-slot';
 const MIGRATED_KEY = 'little-village-migrated';
+
+/** Longest slot name the player can set. Matches the building-rename field. */
+export const SLOT_NAME_MAX = 24;
 
 interface SaveEnvelope {
   v: number;
@@ -171,8 +183,33 @@ export function hasSave(slot?: number): boolean {
   }
 }
 
+/**
+ * The name the player gave a slot, or null if they never named it (the list shows "Slot N" then).
+ * Trimmed and length-capped on the way in, so a name is either something readable or absent.
+ */
+export function slotName(slot: number): string | null {
+  try {
+    const raw = localStorage.getItem(slotNameKey(slot));
+    const name = raw?.trim().slice(0, SLOT_NAME_MAX) ?? '';
+    return name.length > 0 ? name : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Name a slot, or clear the name back to the default by passing an empty one. */
+export function setSlotName(slot: number, name: string): void {
+  try {
+    const clean = name.trim().slice(0, SLOT_NAME_MAX);
+    if (clean.length > 0) localStorage.setItem(slotNameKey(slot), clean);
+    else localStorage.removeItem(slotNameKey(slot));
+  } catch {
+    /* storage full or unavailable — the village is unaffected, it just keeps its default name */
+  }
+}
+
 /** A cheap summary of a slot's save for the load/save list, or null if empty/corrupt. */
-export function slotInfo(slot: number): { year: number; pop: number; size: MapSize } | null {
+export function slotInfo(slot: number): { year: number; pop: number; size: MapSize; name: string | null } | null {
   try {
     migrateLegacy();
     const raw = localStorage.getItem(slotKey(slot));
@@ -183,7 +220,12 @@ export function slotInfo(slot: number): { year: number; pop: number; size: MapSi
     const w = typeof s.w === 'number' ? s.w : 48;
     // Anything wider than Small is Large now, including saves made on the retired 192 map.
     const size: MapSize = w > 72 ? 'large' : 'small';
-    return { year: s.year ?? 1, pop: Array.isArray(s.citizens) ? s.citizens.length : 0, size };
+    return {
+      year: s.year ?? 1,
+      pop: Array.isArray(s.citizens) ? s.citizens.length : 0,
+      size,
+      name: slotName(slot),
+    };
   } catch {
     return null;
   }
@@ -210,9 +252,13 @@ export function clearSave(slot?: number): void {
   try {
     if (typeof slot === 'number') {
       localStorage.removeItem(slotKey(slot));
+      localStorage.removeItem(slotNameKey(slot)); // an empty slot is not a named one
       return;
     }
-    for (let i = 0; i < SLOTS; i++) localStorage.removeItem(slotKey(i));
+    for (let i = 0; i < SLOTS; i++) {
+      localStorage.removeItem(slotKey(i));
+      localStorage.removeItem(slotNameKey(i));
+    }
     localStorage.removeItem(LAST_SLOT_KEY);
     localStorage.removeItem(LEGACY_KEY);
     localStorage.setItem(MIGRATED_KEY, '1'); // don't resurrect the legacy save after a clear-all

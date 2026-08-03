@@ -40,6 +40,7 @@ import {
   isAdult,
 } from '../types';
 import { footprintClear } from '../game/buildings';
+import { SLOT_NAME_MAX } from '../game/save';
 import { totalStoredAll, totalFoodAvailable, totalInLarders } from '../game/storage';
 import {
   LogKind,
@@ -1334,21 +1335,40 @@ export class UI {
     byId('pm-main').addEventListener('click', () => opts.onMainMenu());
   }
 
-  /** Slot picker for loading or saving. Empty slots are disabled in load mode. */
+  /**
+   * Slot picker for loading or saving. Empty slots are disabled in load mode.
+   *
+   * An occupied slot also carries a rename field and a delete button. The name is an input rather
+   * than a prompt so it reads as part of the row, and it sits *outside* the big pick button — a
+   * text field nested in a button cannot be focused without also triggering the button.
+   */
   showSlotSelect(opts: {
     mode: 'load' | 'save';
-    slots: { index: number; info: { year: number; pop: number; size: MapSize } | null }[];
+    slots: { index: number; info: { year: number; pop: number; size: MapSize; name: string | null } | null }[];
     onPick: (slot: number) => void;
+    onRename: (slot: number, name: string) => void;
+    onDelete: (slot: number) => void;
     onBack: () => void;
   }): void {
     const sizeLabel: Record<MapSize, string> = { small: 'Small', large: 'Large' };
     const rows = opts.slots
       .map(({ index, info }) => {
-        const label = info
-          ? `Yr ${info.year} · ${info.pop} people · ${sizeLabel[info.size]}`
-          : 'Empty';
-        const disabled = opts.mode === 'load' && !info ? ' disabled' : '';
-        return `<button id="slot-${index}"${disabled}>Slot ${index + 1}<span class="sub">${label}</span></button>`;
+        const fallback = `Slot ${index + 1}`;
+        if (!info) {
+          const disabled = opts.mode === 'load' ? ' disabled' : '';
+          return `<button id="slot-${index}"${disabled}>${fallback}<span class="sub">Empty</span></button>`;
+        }
+        const title = info.name ?? fallback;
+        return (
+          `<div class="slot-row">` +
+          `<button id="slot-${index}" class="slot-pick">${escapeHtml(title)}` +
+          `<span class="sub">Yr ${info.year} · ${info.pop} people · ${sizeLabel[info.size]}</span></button>` +
+          `<div class="slot-edit">` +
+          `<input id="slot-name-${index}" class="slot-name" type="text" maxlength="${SLOT_NAME_MAX}"` +
+          ` value="${escapeAttr(info.name ?? '')}" placeholder="${fallback}" aria-label="Name for ${fallback}" />` +
+          `<button id="slot-del-${index}" class="slot-del" title="Delete this village" aria-label="Delete ${escapeAttr(title)}">🗑</button>` +
+          `</div></div>`
+        );
       })
       .join('');
     this.overlayCard(
@@ -1359,6 +1379,16 @@ export class UI {
     for (const { index, info } of opts.slots) {
       if (opts.mode === 'load' && !info) continue;
       byId(`slot-${index}`).addEventListener('click', () => opts.onPick(index));
+      if (!info) continue;
+      const field = byId(`slot-name-${index}`) as HTMLInputElement;
+      // Commit on blur and on Enter, the same as the building rename field.
+      const commit = () => opts.onRename(index, field.value);
+      field.addEventListener('change', commit);
+      field.addEventListener('blur', commit);
+      field.addEventListener('keydown', (e) => {
+        if ((e as KeyboardEvent).key === 'Enter') field.blur();
+      });
+      byId(`slot-del-${index}`).addEventListener('click', () => opts.onDelete(index));
     }
     byId('slot-back').addEventListener('click', () => opts.onBack());
   }
@@ -1464,4 +1494,9 @@ function clampInt(v: number, lo: number, hi: number): number {
 /** Escape a string for use inside a double-quoted HTML attribute (building names are player text). */
 function escapeAttr(v: string): string {
   return v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** Player-typed text going into element *content* rather than an attribute. */
+function escapeHtml(v: string): string {
+  return v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

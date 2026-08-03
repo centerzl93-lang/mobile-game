@@ -21,7 +21,8 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **lives on ticks (ageing/births)**, **opening stock + tool/coat economy**,
+Latest work: **named/deletable save slots**, **lives on ticks (ageing/births)**,
+**opening stock + tool/coat economy**,
 **consumption tuning + hearth-only fuel**,
 **self-filling jobs**, a **seven-item gameplay pass**, **staged construction**,
 **render optimisation**, a **renderer teardown leak**, **lakes**, **landscape play** and
@@ -29,6 +30,25 @@ Latest work: **lives on ticks (ageing/births)**, **opening stock + tool/coat eco
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Named and deletable save slots (this session)
+Each occupied slot in the Load/Save picker now carries a rename field and a delete button; empty
+slots carry neither. A slot with no name shows "Slot N", and clearing the field puts that back.
+
+- **The name lives beside the save, not in it** — `little-village-save-v12-slot{N}-name`. The game
+  autosaves over the slot every few seconds, so a name inside the envelope would have to be read
+  back and re-attached on every one of those writes to survive, and would be lost by any save path
+  that forgot. `clearSave(slot)` removes the name with the save, so a slot reused later cannot
+  inherit the last village's name.
+- **Deleting the village you are playing is refused**, with a hint saying why. It is not a
+  confirmation the player can insist past: the next autosave is a few seconds away and would put
+  the file straight back, which would read as the delete having silently failed.
+- **Two layout traps**, both from `.card button`. It sets `width: 100%`, and a flex item resolves
+  its `auto` basis from that — so the bin button took the whole row and squeezed the name field to
+  22px until `width: auto` was set on it. And the global `*` reset turns text selection off, which
+  a field you type into needs back (`user-select: text`).
+- The name is player-typed text rendered into markup, so the row title goes through a new
+  `escapeHtml` (the existing `escapeAttr` is for attributes, and is still used for the field value).
 
 ### Lives run on ticks, not seasons (this session)
 Ageing, schooling, coming of age, old age and births used to land in one lump at the turn of the
@@ -930,7 +950,8 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
 - `src/game/state.ts` — `makeBuilding` sizable + ranch init; merchant init; `seeds` seeding;
   `desiredWorkers 0` defaults.
 - `src/game/save.ts` — merchant-shape + `orders` migration; ranch/farm `w/h` + herd defaults; `seeds`
-  default + stale-crop reset (all load-time, still v12).
+  default + stale-crop reset (all load-time, still v12); per-slot names (`slotName`/`setSlotName`,
+  stored beside the save and cleared with it).
 - `src/main.ts` / `src/ui/ui.ts` — generic placement size widget (`sizeW/H`, `onSizeChange`,
   `showSizeWidget`); inspect controls — ranch (max/cull/split/transfer + destination picker), farm
   (size + growth rows), trading-post overlay (`onSetTradeOrder`/`onBasketTrade`/`onDismissMerchant`).
@@ -979,11 +1000,12 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
 - Committed tests: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers npx playwright test`
   (config runs `npm run build && npm run preview` on port 4173). **Run the three specs separately** —
   the whole suite takes well over 15 minutes, so a wrapping `timeout` will cut it off mid-run and
-  tell you nothing. Last full state: `world` 13/13, `menus` 7/7, `newgame` **101/101**
+  tell you nothing. Last full state: `world` 13/13, `menus` **10/10**, `newgame` **101/101**
   — a clean sweep. Do not read one green run as the suite being flake-free, though: over this
   session `household larders > residents stock their own house`, `trading post > a stock order
-  pulls goods` and `villager breeding > with no spare housing adults still pair up` have each
-  failed once in a full run and passed on their own straight after. All three are the
+  pulls goods`, `trading post > a merchant can sail in mid-season` and `villager breeding > with no
+  spare housing adults still pair up` have each failed once in a full run and passed on their own
+  straight after. All three are the
   walking-budget pattern below, and the first two got tighter when fuel started having to be
   carried home. Re-run a lone failure before believing it.
 - Headless scratchpad drivers use `playwright-core` + chromium at

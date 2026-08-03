@@ -703,10 +703,34 @@ export function buildersWantedFor(type: BuildingType): number {
   return area >= 20 ? 4 : area >= 9 ? 3 : 2;
 }
 
-/** Builders the village's open construction sites are asking for, added up. */
+/**
+ * Builders the village's outstanding work is asking for: construction sites, plus the roads that
+ * have been confirmed but not yet laid.
+ *
+ * Roads count because builders are who lays them when nobody is idle. An employed villager will
+ * only detour to a planned tile close to their workplace, so a road drawn across the far side of
+ * the map is nobody's job unless somebody is free — and a fully staffed village has nobody free,
+ * which left confirmed roads sitting unbuilt for good. One builder gets a road moving; long runs
+ * ask for a couple more, and it stops at three so a big road plan cannot empty the workplaces.
+ */
 export function autoBuilderDemand(s: GameState): number {
   let n = 0;
   for (const b of s.buildings) if (!b.built) n += buildersWantedFor(b.type);
+  const road = plannedRoadTiles(s);
+  if (road > 0) n += Math.min(3, 1 + Math.floor(road / 15));
+  return n;
+}
+
+/** Road tiles the player has confirmed and nobody has laid yet (drawn-but-unconfirmed don't count). */
+export function plannedRoadTiles(s: GameState): number {
+  const pending = s.pendingPaths?.length ? new Set(s.pendingPaths) : null;
+  let n = 0;
+  for (let i = 0; i < s.paths.length; i++) {
+    const v = s.paths[i];
+    if (v !== PATH_DIRT_PLAN && v !== PATH_STONE_PLAN && v !== PATH_BRIDGE_PLAN && v !== PATH_TUNNEL_PLAN) continue;
+    if (pending?.has(i)) continue;
+    n++;
+  }
   return n;
 }
 
@@ -1143,8 +1167,18 @@ export const FREEZE_SECONDS = SEASON_LENGTH / 3;
 /** How fast the cold clock unwinds once a villager's hearth is lit again, per second. */
 export const FREEZE_RECOVERY = 2;
 
-export const FOOD_PER_CITIZEN_PER_SEASON = 60;
-export const HEAT_PER_CITIZEN_WINTER = 40; // heat units; firewood = 1, coal = 2
+/**
+ * How much slower a villager eats and burns fuel than the original tuning.
+ *
+ * The rates below read as "a season's ration" and are billed continuously, so dividing them here
+ * slows the drain on the stores without changing the shape of anything: larder targets, the
+ * "seasons banked" mood check and the low-stores warnings are all derived from the same two
+ * numbers and scale with them. Production is untouched, so this is a straight loosening of the
+ * survival pressure — one number to turn if it wants tightening again.
+ */
+export const CONSUMPTION_SLOWDOWN = 3;
+export const FOOD_PER_CITIZEN_PER_SEASON = 60 / CONSUMPTION_SLOWDOWN;
+export const HEAT_PER_CITIZEN_WINTER = 40 / CONSUMPTION_SLOWDOWN; // heat units; firewood = 1, coal = 2
 export const FIREWOOD_HEAT = 1;
 export const COAL_HEAT = 2;
 export const CLOTHING_PER_CITIZEN_WINTER = 5; // clothing worn out over winter

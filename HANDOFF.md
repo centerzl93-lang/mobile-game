@@ -21,12 +21,61 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **self-filling jobs**, a **seven-item gameplay pass**, **staged construction**,
+Latest work: **consumption tuning + hearth-only fuel**, **self-filling jobs**, a **seven-item
+gameplay pass**, **staged construction**,
 **render optimisation**, a **renderer teardown leak**, **lakes**, **landscape play** and
 **building footprints** — all this session.
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Consumption, hearths, and the road that never got built (this session)
+Three asks, and the third turned out to be a fault the *previous* change had introduced.
+
+**Food and fuel drain a third as fast.** `CONSUMPTION_SLOWDOWN = 3` divides
+`FOOD_PER_CITIZEN_PER_SEASON` (60 → 20) and `HEAT_PER_CITIZEN_WINTER` (40 → 13⅓). Everything else
+is derived from those two — larder targets, the low-stores warnings, the "seasons banked" mood
+check — so the whole economy scales with them and nothing needed adjusting alongside. Production is
+untouched, so this is a straight loosening of the survival pressure; it is one number to turn back.
+
+**Fuel is only burned in a hearth.** `heat()` used to fall back to the village fuel pile for
+whatever a household's woodpile didn't cover, which meant the barn stock drained on its own while
+the houses it was meant to supply stood cold. That fall-back is gone: a villager burns firewood
+(then coal, if a house ever holds any) from their own home larder and nothing else. Carrying fuel
+home is now the only way it is ever spent, so a full barn beside an unstocked house keeps nobody
+warm. A villager with no house burns nothing at all — verified: twelve roofless villagers next to
+a 400-firewood barn leave all 400 of it where it is.
+
+**The sting in hearth-only fuel: a barn nobody can walk to is now fatal.** Eating draws on village
+totals without anyone moving, and heating used to as well — so a barn walled in behind new
+buildings, or cut off across a river, cost nothing. Now fuel has to be *carried*, and a household
+whose hauler cannot reach a barn goes cold beside a full woodpile; in winter that kills everyone.
+This surfaced as four breeding tests dying outright: `growUnderIdealConditions` packs ten houses in
+a tight ring from `r = 3` around the barn, which strangles the approach — no larder in that village
+ever received *anything*, food included, and it had simply never mattered before. The helper now
+starts its ring at `r = 10`. Two of those four had been timing out for several sessions and now
+pass, which is a real gain, not just a restored baseline.
+
+Because none of the stock warnings can see this (they all read village totals, which are healthy),
+`warnOfShortfalls` gained one that can: when the village holds fuel but half or more of its
+occupied houses have none at home, it says so and names the delivery, not the stock. Without it the
+player's first sign of a blockaded barn is a pile of corpses.
+
+**And roads stopped being built.** This is the "dirt paths are green" report: a *planned* path is
+tinted green and only goes brown once laid, so "green paths" meant nothing was laying them. The
+cause was the auto-staffing default from the previous change. Only a **free** adult lays a planned
+tile at any distance; an employed one merely detours to tiles within `NEAR_PATH_RADIUS` (6) of
+their workplace. Auto-staffing hires every workplace to its cap, so "free adult" became nobody —
+and with nobody free there are no builders either, meaning **no roads, no construction, and no
+harvesting, permanently.** Measured before the fix: a fully staffed village laid 0 of 6 confirmed
+tiles in 600 seconds, and stayed at 0.
+
+Two changes fix it. `autoBuilderDemand` now counts confirmed-but-unlaid road tiles as well as
+construction sites (one builder to get a road moving, up to three for a long run). And
+`assignHomesAndJobs` **reserves that many adults before the workplaces hire**, releasing staff from
+the most recently built workplaces if they have already taken everyone. When nothing is
+outstanding the reserve is zero and every job fills as before; the player's `builderExtra` still
+adjusts it either way.
 
 ### Jobs fill themselves (this session)
 Two halves of one request, and they turned out to be quite different jobs.
@@ -813,7 +862,8 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
 - `tests/newgame.spec.ts` — merchant, ranch, farm, and **jobs & builders** suites, plus prior
   seed-gate/staffing tests, and this session's **available workers count**, **fireproof buildings**,
   **clearing land before building**, **camera rotate buttons**, **construction stages**,
-  **placement controls**, **fishing dock** and **auto-staffing** suites. The fishing-dock pair scans every tile and
+  **placement controls**, **fishing dock**, **auto-staffing**, **consumption and fuel** and
+  **roads get laid** suites. The fishing-dock pair scans every tile and
   rotation on a generated map and asserts that no accepted site has a dry dock, a floating shack,
   or a work circle sitting on the plot instead of the jetty — plus a count check, so it can't pass
   by finding nowhere to build.
@@ -845,14 +895,16 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
 - Committed tests: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers npx playwright test`
   (config runs `npm run build && npm run preview` on port 4173). **Run the three specs separately** —
   the whole suite takes well over 15 minutes, so a wrapping `timeout` will cut it off mid-run and
-  tell you nothing. Last full state: `world` 13/13, `menus` 7/7, `newgame` 91/93 — the two
-  outstanding are the breeding timeouts below. One household-larder test is also a known flake:
-  it passes on its own and fails on an unlucky map (the walking-budget pattern, also below).
+  tell you nothing. Last full state: `world` 13/13, `menus` 7/7, `newgame` 96/97 — the
+  villager-breeding block, which had been timing out for several sessions, is green. The single
+  failure is the known map-seed flake in `household larders > residents stock their own house`:
+  it passes on its own (verified) and fails on an unlucky map, the walking-budget pattern below.
 - Headless scratchpad drivers use `playwright-core` + chromium at
   `/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell` with SwiftShader flags,
   against `npm run preview` on port 4173 (preview is flaky — run it in the background).
 - App exposes a `window.__village` debug hook (`startNewGame`, `debugAdvance`, `debugPlace`,
   `debugCanPlace`, `debugFootprint`, `debugBuildTime`, `debugWorkCentre`, `debugJobCount`,
+  `debugFoodPerCitizen`, `debugHeatPerCitizen`,
   `debugReticleTile`,
   `debugRanchCapacity`, `debugWorkRadius`, `debugSetBuilders`, `debugPlanPath`,
   `inspectSel`/`refreshInspect`, `persist`, plus the sizing fields `sizeW/sizeH`, `rotateDir`, and the
@@ -883,6 +935,11 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   numbers. When isolating one household's consumption, leave **clothing** in the barns (it is
   village-wide, not a larder item) or winter illness confounds the result, and capture the resident
   count *before* the turnover, since `rehouseVillagers` moves adults out afterwards.
+- **Never write a tuned constant into a test — ask the game.** The food gate test set each
+  household `residents * 60` grain and called it "one season's rations". `FOOD_PER_CITIZEN_PER_SEASON`
+  is 20 now, so that was three seasons of plenty and the test had quietly inverted into asserting
+  that births *do* happen. `debugFoodPerCitizen` / `debugHeatPerCitizen` / `debugBuildTime` /
+  `debugJobCount` all exist for exactly this: the number they return is the one the game is using.
 - **Test caveat:** when advancing whole seasons with `debugAdvance`, step *just past* the boundary
   (e.g. `600*2 + 30`), never exactly `N*600` — float drift on the 0.1s steps can miss the boundary and
   run one fewer season, which made season-timed tests flaky. Fields synthesized in tests set
@@ -917,9 +974,16 @@ Never put the model ID in commits/PRs/code/comments — chat replies only.
   Same as when the quarry went 2x2 -> 3x6 in an earlier session, and handled the same way: start a
   new game. Say so if the player hits it rather than building migration machinery for one save.
 - **Balance review.** Knobs that moved the economy and want play-testing rather
-  than more code: housing capacity (8/10), `HOUSE_LARDER_SEASONS` (0.5) with `LARDER_CARRY_CAP`
-  (×3), the `SEASON_BURN` table (firewood and clothing now cost across the whole year, so the annual
-  bill is meaningfully higher), and the birth rates (`BIRTH_CHANCE` 0.55 + surplus/wellbeing).
+  than more code: `CONSUMPTION_SLOWDOWN` (3 — the newest and largest of these; demand fell by two
+  thirds and nothing on the supply side moved to meet it, so the village should now be markedly
+  easier to feed and heat, and may be too easy), housing capacity (8/10), `HOUSE_LARDER_SEASONS`
+  (0.5) with `LARDER_CARRY_CAP` (×3), the `SEASON_BURN` table (firewood and clothing cost across
+  the whole year), and the birth rates (`BIRTH_CHANCE` 0.55 + surplus/wellbeing).
+- **Fuel now has a delivery problem rather than a supply problem.** With the barn fall-back gone,
+  a household that its hauler never reaches goes cold no matter how much firewood the village owns
+  — and in winter that kills. The 3× slowdown gives a woodpile three times the runway, so the two
+  changes were made together deliberately. If villagers start freezing beside full barns, the thing
+  to look at is `stockLarder` and the hauler's round, not the fuel stock.
 - **Housing is now the growth lever**, by design: a couple needs a free house to move into before
   they can form. Grown children stay home until the player builds. Watch that this reads as a clear
   prompt to build rather than as the village being stuck.
@@ -957,37 +1021,23 @@ Never put the model ID in commits/PRs/code/comments — chat replies only.
   tune `MERCHANT_ARRIVAL_CHANCE`/category stock; optional HUD cue for an arriving boat (top-bar button
   was removed).
 - **Minor:** the 3D ranch pen shows no live animal glyphs/count (the 2D renderer does).
-- **The villager-breeding tests get slower the later they run — this is unsolved and worth an
-  hour.** All five drive `growUnderIdealConditions`, sixteen season turnovers on a whole village.
-  Timings for the *identical* test:
+- **The villager-breeding tests are fixed (was: "unsolved and worth an hour").** They used to get
+  slower the later they ran — 1.6m first in a run, 6.8m second, 8.1m at position 59 — and two or
+  three of them timed out in every full suite. Two causes, both now removed:
 
-  | when it ran | time |
-  |---|---|
-  | first in a 3-test run, idle machine | **1.6m** ✓ |
-  | second in that same run, still idle | **6.8m** ✗ |
-  | 59th in the full suite | **8.1m** ✗ (hit the cap) |
+  1. **A WebGL context per page.** Headless Chromium renders the 3D view in software (see the
+     ~2 fps note above), and every `open()` built a fresh Three.js renderer. The whole breeding
+     describe now opens on `?2d` — none of it asserts anything about the 3D view — which fixed
+     one of the three failures on its own. Getting the last two needed the second cause as well;
+     if you are tempted to leave a simulation-heavy test on the 3D opener, this is why not.
+  2. **The setup strangled its own barn.** `growUnderIdealConditions` ringed ten houses from
+     `r = 3` around the barn, walling in the approach, so no larder ever received anything. That
+     was invisible while food and fuel both drew on village totals without anyone walking; it
+     became fatal the moment fuel had to be carried to a hearth. Ring now starts at `r = 10`.
 
-  Not the map seed, and not this session's change: the commit *before* the footprints shows the
-  same pattern, and there the first breeding test passed while the later one timed out. What
-  predicts the time is **position in the browser session**, which points at something accumulating
-  across page loads — leaked WebGL contexts under SwiftShader is the obvious suspect, since each
-  `open()` builds a fresh Three.js renderer. Chasing that is the real fix; a `page.close()` /
-  fresh-context per test in the breeding describe is the cheap experiment to try first.
-
-  **Tried and partly worked: `open2d`.** The breeding describe now opens on `?2d`, so those pages
-  hold no WebGL context at all (see the software-rendering note above). It moved the tally from
-  three of them failing to two — `every child lives with an adult` went from timing out to passing,
-  and the other two still hit the 480s cap. So leaked GL contexts were *part* of it and are not the
-  whole story. What is left is the simulation itself: `growUnderIdealConditions` steps 12 seasons at
-  0.1s a tick — 72,000 ticks — over a village that is deliberately breeding as fast as the game
-  allows, so the last seasons step several times the population of the first. Making that cheaper
-  (a coarser tick for the test, or fewer seasons with the same assertion) is the next thing to try;
-  **do not raise `GROWTH_TIMEOUT` again.**
-
-  They share a named `GROWTH_TIMEOUT` (480s), which is a plaster, not a cure — it was 240s and
-  raising it did not make the full-suite run green. **Do not raise it again**; it is already at
-  eight minutes for one test. Until the leak is found, expect the last two or three breeding
-  tests to fail in a full run and pass in isolation.
+  All seven now pass, and the whole describe runs in **3.6m** rather than timing out. `GROWTH_TIMEOUT`
+  (480s) is left where it is and is no longer being approached — **still do not raise it**; if these
+  start creeping again, look for a third accumulator rather than more headroom.
 - **Suite flakiness.** Several latent map-seed flakes were hunted down; the recurring pattern is a
   test that depends on villagers *walking* somewhere within a step budget, which an unlucky map
   (target across a river, or simply far) breaks. The fix that works is to stand the villagers where

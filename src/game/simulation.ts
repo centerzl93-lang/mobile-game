@@ -307,19 +307,21 @@ function heat(s: GameState, dt: number, log: LogFn): void {
     const stoneFactor = home?.type === 'stonehouse' ? STONE_HOUSE_HEAT_FACTOR : 1;
     const clothFactor = c.clothed ? CLOTHED_HEAT_FACTOR : 1;
     let need = HEAT_PER_CITIZEN_WINTER * rate * stoneFactor * clothFactor; // heat units
+    // Fuel is only burned where it is kept: in the hearth of the house the villager lives in.
+    // There is no fall-back to the village fuel pile any more — a barn is a woodshed, not a fire,
+    // and letting everyone draw on it directly meant the stockpile drained on its own while the
+    // houses it was meant to supply stood cold. The household hauler carrying wood home is now
+    // the only way fuel is ever spent, so a well-stocked barn beside an unstocked house keeps
+    // nobody warm, which is the point.
     if (home) {
-      const fromLarder = Math.min(need / FIREWOOD_HEAT, home.store['firewood'] ?? 0);
-      if (fromLarder > 0) {
-        takeFromLarder(home, 'firewood', fromLarder);
-        need -= fromLarder * FIREWOOD_HEAT;
+      for (const [kind, heat] of [['firewood', FIREWOOD_HEAT], ['coal', COAL_HEAT]] as const) {
+        if (need <= 0.000001) break;
+        const fromLarder = Math.min(need / heat, home.store[kind] ?? 0);
+        if (fromLarder > 0) {
+          takeFromLarder(home, kind, fromLarder);
+          need -= fromLarder * heat;
+        }
       }
-    }
-    if (need > 0.000001) {
-      // Fall back to the village fuel pile for whatever the household woodpile didn't cover, so
-      // going cold depends on this villager's own larder plus what is left in the barns — not on
-      // a village-wide average.
-      need = consume(s, 'firewood', need / FIREWOOD_HEAT) * FIREWOOD_HEAT;
-      if (need > 0.000001) need = consume(s, 'coal', need / COAL_HEAT) * COAL_HEAT;
     }
     // Only winter kills. Going short of fuel in summer is uncomfortable, not fatal, and an
     // unheated villager has to stay unheated for FREEZE_SECONDS before they die — a gap while a
@@ -338,6 +340,15 @@ function heat(s: GameState, dt: number, log: LogFn): void {
 }
 
 // ---- jobs ----
+/** Adults not currently holding a workplace job — the pool builders and laborers come from. */
+function countFreeAdults(s: GameState): number {
+  const employed = new Set<number>();
+  for (const b of s.buildings) for (const id of b.workers) employed.add(id);
+  let n = 0;
+  for (const c of s.citizens) if (isAdult(c) && !employed.has(c.id)) n++;
+  return n;
+}
+
 function reconcileWorkers(s: GameState): void {
   const alive = new Set(s.citizens.map((c) => c.id));
   for (const b of s.buildings) b.workers = b.workers.filter((id) => alive.has(id));
@@ -385,15 +396,46 @@ function assignHomesAndJobs(s: GameState): void {
       if (c) c.jobId = null;
     }
   }
+  // How many builders the village wants: what the outstanding work is asking for — sites to raise
+  // and roads to lay — plus whatever the player has dialled on top (or taken off). Derived every
+  // tick rather than nudged up and down on each placement, so it cannot fall out of step with the
+  // work actually outstanding.
+  const adults = s.citizens.reduce((n, c) => n + (isAdult(c) ? 1 : 0), 0);
+  s.desiredBuilders = Math.max(0, Math.min(adults, autoBuilderDemand(s) + (s.builderExtra ?? 0)));
+
+  // If the workplaces have already taken everyone, hand some back. Trimming above only releases
+  // workers the player has dialled *down*; without this a village that filled every job before
+  // the work was ordered can never staff it — the road is drawn, the site is pegged out, and
+  // nobody is ever free again. Later workplaces give up their staff first, so the oldest and
+  // usually most-established ones keep running.
+  let shortfall = s.desiredBuilders - countFreeAdults(s);
+  for (let bi = s.buildings.length - 1; bi >= 0 && shortfall > 0; bi--) {
+    const b = s.buildings[bi];
+    while (b.workers.length > 0 && shortfall > 0) {
+      const c = byId.get(b.workers.pop()!);
+      if (c) c.jobId = null;
+      shortfall--;
+    }
+  }
+
   const employed = new Set<number>();
   for (const b of s.buildings) for (const id of b.workers) employed.add(id);
   // Only adults can be hired.
   const avail = s.citizens.filter((c) => !employed.has(c.id) && isAdult(c));
+  // Outstanding work is held back from the hiring pool before the workplaces pick it over.
+  //
+  // Workplaces used to take everyone and builders got whatever was left, which was fine while a
+  // new building started unstaffed and the player left slack by hand. Now that a finished
+  // workplace can hire itself up to its cap, "whatever was left" is routinely nobody — and a
+  // village with no builders never raises another building, never lays a road, and never notices
+  // it has stopped. Reserving the builders first means the work the player has actually ordered
+  // always has hands on it; when nothing is outstanding the reserve is zero and every job fills.
+  const hireable = Math.max(0, avail.length - s.desiredBuilders);
   let i = 0;
   for (const b of s.buildings) {
     if (!b.built) continue;
     const target = Math.min(BUILDING_DEFS[b.type].jobs, b.desiredWorkers);
-    while (b.workers.length < target && i < avail.length) {
+    while (b.workers.length < target && i < hireable) {
       const c = avail[i++];
       b.workers.push(c.id);
       c.jobId = b.id;
@@ -403,15 +445,8 @@ function assignHomesAndJobs(s: GameState): void {
   for (const b of s.buildings) for (const id of b.workers) stillEmployed.add(id);
   for (const c of s.citizens) if (!stillEmployed.has(c.id)) c.jobId = null;
 
-  // How many builders the village wants: what the open sites are asking for, plus whatever the
-  // player has dialled on top (or taken off). Derived every tick rather than nudged up and down
-  // on each placement, so it cannot fall out of step with the work actually outstanding.
-  const adults = s.citizens.reduce((n, c) => n + (isAdult(c) ? 1 : 0), 0);
-  s.desiredBuilders = Math.max(0, Math.min(adults, autoBuilderDemand(s) + (s.builderExtra ?? 0)));
-
   // Builders are a global job (no building): tag the first N free adults as builders so only they
-  // construct work buildings. Buildings fill first (above), builders take the leftover idle pool;
-  // everyone else — employed, children, and surplus laborers — is not a builder.
+  // construct work buildings. Everyone else — employed, children, and surplus laborers — is not.
   const wantBuilders = s.desiredBuilders;
   let builderN = 0;
   for (const c of s.citizens) {
@@ -1759,6 +1794,17 @@ function warnOfShortfalls(s: GameState, season: Season, log: LogFn): void {
   // Any season: less than a full season of food left across the barns and larders.
   if (totalFoodAvailable(s) < pop * FOOD_PER_CITIZEN_PER_SEASON) {
     log('🍽️ Food stores are running low', 'bad');
+  }
+
+  // Fuel the village owns but cannot deliver. Fuel is only burned in a hearth now, so a household
+  // whose hauler cannot reach a barn — walled in behind new buildings, or cut off across a river —
+  // goes cold beside a full woodpile, and in winter that kills. The stock warnings above all read
+  // village totals and would say everything is fine, so this is the only sign the player would get.
+  const roofed = s.buildings.filter((b) => b.built && isHouse(b.type) && residentsOf(s, b).length > 0);
+  const cold = roofed.filter((b) => (b.store['firewood'] ?? 0) <= 0 && (b.store['coal'] ?? 0) <= 0);
+  const villageFuel = totalStored(s, 'firewood') + totalStored(s, 'coal');
+  if (villageFuel > 0 && cold.length > 0 && cold.length >= roofed.length / 2) {
+    log(`🪵 ${cold.length} household${cold.length > 1 ? 's have' : ' has'} no fuel at home — the barns are stocked but nobody is carrying it`, 'bad');
   }
 
   // Deliberately *not* warned about: couples with no home of their own. A housing shortage is for

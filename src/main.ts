@@ -13,6 +13,8 @@ import {
   BUILDING_DEFS,
   buildTimeOf,
   autoBuilderDemand,
+  FOOD_PER_CITIZEN_PER_SEASON,
+  HEAT_PER_CITIZEN_WINTER,
   workRadiusOf,
   workCentre,
   footprintW,
@@ -1195,6 +1197,19 @@ class Game {
   debugWorkCentre(type: BuildingType, x: number, y: number, rot: 0 | 1 | 2 | 3 = 0): { x: number; y: number } {
     const { w, h } = this.placeSize(type);
     return workCentre({ type, x, y, rot, w, h });
+  }
+
+  /**
+   * Debug/testing helpers: the tuned consumption rates.
+   *
+   * Both are divided by `CONSUMPTION_SLOWDOWN`, so a test that hard-codes the pre-slowdown
+   * figures would be measuring the old game rather than this one.
+   */
+  debugFoodPerCitizen(): number {
+    return FOOD_PER_CITIZEN_PER_SEASON;
+  }
+  debugHeatPerCitizen(): number {
+    return HEAT_PER_CITIZEN_WINTER;
   }
 
   /** Debug/testing helper: how many workers a building type can employ. */

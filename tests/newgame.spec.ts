@@ -1593,7 +1593,12 @@ test.describe('villager breeding', () => {
         for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
         const barn = s.buildings.find((b: any) => b.type === 'barn');
         let added = 0;
-        for (let r = 3; r < 20 && added < extraHouses; r++)
+        // Start the ring well clear of the barn. Packing ten houses tight around it walls in the
+        // approach, and a barn nobody can walk to cannot stock a single larder — which is not
+        // "ideal conditions" at all. It used to pass unnoticed because eating and heating both
+        // drew on village totals without anyone walking; now that fuel is only burned at a hearth
+        // it is carried there or not at all, so a blockaded barn freezes the village solid.
+        for (let r = 10; r < 30 && added < extraHouses; r++)
           for (let dy = -r; dy <= r && added < extraHouses; dy++)
             for (let dx = -r; dx <= r && added < extraHouses; dx++) {
               const id = g.debugCanPlace('house', barn.x + dx, barn.y + dy).ok
@@ -1792,7 +1797,7 @@ test.describe('villager breeding', () => {
   });
 
   test('no births while the village has under a season of food banked', async ({ page }) => {
-    await open(page);
+    await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
@@ -1812,7 +1817,10 @@ test.describe('villager breeding', () => {
         for (const h of s.buildings) {
           if (h.type !== 'house') continue;
           const residents = s.citizens.filter((c: any) => c.homeId === h.id).length;
-          h.store = { grain: residents * 60, firewood: 1e4 }; // FOOD_PER_CITIZEN_PER_SEASON
+          // Ask the game what a season's ration is rather than writing the number down: it is
+          // divided by CONSUMPTION_SLOWDOWN, so a hard-coded 60 became three seasons of plenty
+          // and quietly turned this into a test that births happen.
+          h.store = { grain: residents * g.debugFoodPerCitizen(), firewood: 1e4 };
         }
         g.debugAdvance(610);
         if (s.gameOver) break;
@@ -1829,7 +1837,7 @@ test.describe('villager breeding', () => {
   });
 
   test('villagers past the fertile window stop bearing children', async ({ page }) => {
-    await open(page);
+    await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
@@ -3089,5 +3097,142 @@ test.describe('auto-staffing', () => {
     await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
     expect(await page.evaluate(() => (window as any).__village.state.autoStaff)).toBe(false);
+  });
+});
+
+test.describe('consumption and fuel', () => {
+  test('a season costs a third of what it used to', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      return { food: g.debugFoodPerCitizen(), heat: g.debugHeatPerCitizen() };
+    });
+    // The rates the rest of the economy is derived from — larder targets, the low-stores warnings
+    // and the "seasons banked" mood check all scale off these two.
+    expect(out.food).toBeCloseTo(60 / 3, 6);
+    expect(out.heat).toBeCloseTo(40 / 3, 6);
+  });
+
+  test('fuel is only ever burned in a house, never straight out of the barns', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      // Summer: heat is still charged every tick, but only winter kills — so the villagers live
+      // long enough to be measured instead of freezing and ending the run early.
+      s.season = 1;
+      // Take every house away. Nobody has a hearth and no hauler has a larder to stock, so the
+      // barn pile can only move if fuel is being burned directly out of it.
+      s.buildings = s.buildings.filter((b: any) => b.type !== 'house' && b.type !== 'stonehouse');
+      for (const c of s.citizens) c.homeId = null;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      barn.store.firewood = 400;
+      barn.store.coal = 100;
+      for (let i = 0; i < 1200; i++) g.debugAdvance(0.1);
+      return {
+        pop: s.citizens.length,
+        homeless: s.citizens.filter((c: any) => c.homeId === null).length,
+        firewood: barn.store.firewood ?? 0,
+        coal: barn.store.coal ?? 0,
+      };
+    });
+    // The measurement is only worth anything if there were villagers, and all of them roofless.
+    expect(out.pop).toBeGreaterThan(0);
+    expect(out.homeless).toBe(out.pop);
+    expect(out.firewood, 'barn firewood is untouched').toBe(400);
+    expect(out.coal, 'barn coal is untouched').toBe(100);
+  });
+
+  test('a household burns its own woodpile', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      s.season = 3; // Winter, the heaviest burn
+      g.debugAdvance(1); // let everyone be housed
+      const house = s.buildings.find((b: any) =>
+        (b.type === 'house' || b.type === 'stonehouse') && b.built &&
+        s.citizens.some((c: any) => c.homeId === b.id));
+      if (!house) return null;
+      house.store.firewood = 500;
+      const before = house.store.firewood;
+      for (let i = 0; i < 1200; i++) g.debugAdvance(0.1);
+      return { burned: before - (house.store.firewood ?? 0) };
+    });
+    expect(out, 'somebody was living somewhere').not.toBeNull();
+    expect(out!.burned, 'the hearth drew on its own woodpile').toBeGreaterThan(0);
+  });
+});
+
+test.describe('roads get laid', () => {
+  test('a confirmed road frees a builder even when every job is taken', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const PATH_DIRT_PLAN = 1, PATH_DIRT = 2;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      barn.store.wood = 9000;
+      barn.store.stone = 9000;
+
+      // Employ the whole village: huts, finished, staffed to their caps.
+      const huts: number[] = [];
+      for (let r = 3; r < 20 && huts.length < 5; r++)
+        for (let dy = -r; dy <= r && huts.length < 5; dy++)
+          for (let dx = -r; dx <= r && huts.length < 5; dx++) {
+            const id = g.debugCanPlace('gatherer', barn.x + dx, barn.y + dy).ok
+              ? g.debugPlace('gatherer', barn.x + dx, barn.y + dy) : null;
+            if (id == null) continue;
+            const b = s.buildings.find((x: any) => x.id === id);
+            b.built = true;
+            b.progress = g.debugBuildTime('gatherer');
+            b.desiredWorkers = g.debugJobCount('gatherer');
+            huts.push(id);
+          }
+      g.debugAdvance(2);
+      const freeBefore = s.citizens.filter((c: any) => c.age >= 4 && c.jobId === null && !c.builder).length;
+
+      // Order a road on clear ground near the barn.
+      const occupied = (x: number, y: number) => s.buildings.some((b: any) => {
+        const f = g.debugFootprint(b.type);
+        return x >= b.x && x < b.x + (b.w ?? f.w) && y >= b.y && y < b.y + (b.h ?? f.h);
+      });
+      const idx: number[] = [];
+      for (let r = 2; r < 14 && idx.length < 6; r++)
+        for (let dy = -r; dy <= r && idx.length < 6; dy++)
+          for (let dx = -r; dx <= r && idx.length < 6; dx++) {
+            const x = barn.x + dx, y = barn.y + dy;
+            if (x < 1 || y < 1 || x >= s.w - 1 || y >= s.h - 1) continue;
+            const i = y * s.w + x;
+            const t = s.tiles[i];
+            if (t.type === 'water' || t.type === 'stone' || occupied(x, y) || s.paths[i] !== 0) continue;
+            t.type = 'grass'; t.trees = 0; delete t.stone; delete t.iron;
+            s.harvest[i] = 0;
+            s.paths[i] = PATH_DIRT_PLAN;
+            idx.push(i);
+          }
+      s.navVersion = (s.navVersion ?? 0) + 1;
+      g.debugAdvance(1);
+      const asked = s.desiredBuilders;
+      const builders = s.citizens.filter((c: any) => c.builder).length;
+      for (let i = 0; i < 6000; i++) g.debugAdvance(0.1);
+      return { huts: huts.length, freeBefore, planned: idx.length, asked, builders,
+               laid: idx.filter((i) => s.paths[i] === PATH_DIRT).length };
+    });
+
+    // The premise: a village with nobody spare, and a road it has been told to build.
+    expect(out.huts).toBeGreaterThan(0);
+    expect(out.planned).toBeGreaterThan(0);
+    expect(out.freeBefore, 'every adult was employed before the road was ordered').toBe(0);
+    // Outstanding road work asks for a builder, and one is handed back by the workplaces —
+    // without that the road sits planned (and green) for good, because an employed villager only
+    // detours to planned tiles close to their own workplace.
+    expect(out.asked, 'the road asks for a builder').toBeGreaterThan(0);
+    expect(out.builders, 'a hand was freed to lay it').toBeGreaterThan(0);
+    expect(out.laid, 'and the road actually gets laid').toBeGreaterThan(0);
   });
 });

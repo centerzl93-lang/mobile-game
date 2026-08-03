@@ -2705,6 +2705,48 @@ test.describe('birth rate', () => {
   });
 });
 
+test.describe('construction stages', () => {
+  test('a site becomes footings, then a rising frame, then the finished building', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(async () => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      let id: number | null = null;
+      for (let r = 3; r < 24 && id == null; r++)
+        for (let dy = -r; dy <= r && id == null; dy++)
+          for (let dx = -r; dx <= r && id == null; dx++) {
+            const x = barn.x + dx, y = barn.y + dy;
+            if (g.debugCanPlace('house', x, y).ok) id = g.debugPlace('house', x, y);
+          }
+      const b = s.buildings.find((x: any) => x.id === id);
+      // Ask the game for the build time. `buildTime` on the def is multiplied by
+      // BUILD_TIME_SCALE before it means anything, so a "70%" computed from the raw number is
+      // really 35% — and the frame stage never appears.
+      const total = g.debugBuildTime('house');
+      const seen: string[] = [];
+      for (const frac of [0.05, 0.3, 0.55, 0.9, 1]) {
+        b.built = frac >= 1;
+        b.progress = total * Math.min(frac, 1);
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        seen.push(g.renderer.buildingMeshes.get(b.id)?.userData.kind ?? 'none');
+      }
+      // Nothing standing on the map is drawn see-through any more — that look belongs to the
+      // placement preview, which is a different object entirely.
+      let anyTransparent = false;
+      for (const [, obj] of g.renderer.buildingMeshes)
+        obj.traverse((o: any) => { if (o.isMesh && o.material?.transparent) anyTransparent = true; });
+      return { placed: id != null, seen, anyTransparent };
+    });
+    expect(out.placed).toBe(true);
+    // Below the halfway mark it is groundworks; above it, the model rising out of them; then the
+    // building itself.
+    expect(out.seen).toEqual(['site', 'site', 'frame', 'frame', 'model']);
+    expect(out.anyTransparent, 'no placed building is drawn see-through').toBe(false);
+  });
+});
+
 test.describe('placement controls', () => {
   test('Build and Rotate sit under the ghost, and Build places at the reticle', async ({ page }) => {
     await open(page);

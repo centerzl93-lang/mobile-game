@@ -9,6 +9,8 @@ import {
   workRadiusOf,
   footprintW,
   footprintH,
+  buildStage,
+  framedFraction,
   entranceAt,
   MAP_W,
   MAP_H,
@@ -336,6 +338,9 @@ export class Renderer3D {
   constructor(canvas: HTMLCanvasElement) {
     this.tier = detectTier();
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    // The framing stage cuts a half-built model off at the height the work has reached, with a
+    // per-material clipping plane. Only materials that ask for one pay for this.
+    this.renderer.localClippingEnabled = true;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.tier === 'low' ? 1.5 : 2));
     // Filmic tone mapping. Without it the raw linear output clips highlights to flat white and
     // leaves midtones washed out, which reads as "cartoon" no matter how good the models are.
@@ -1396,7 +1401,11 @@ export class Renderer3D {
   private syncBuildings(s: GameState): void {
     let sig = '';
     for (const b of s.buildings) {
-      sig += b.id + ':' + (b.built ? 1 : 0) + ':' + (b.fireTimer ? 1 : 0) + ':' + (b.rot ?? 0) + ';';
+      // The frame's height is quantised into steps: it has to move as the work goes on, but not
+      // rebuild this whole pass on every frame of a build.
+      const stage = buildStage(b);
+      const step = stage === 'framing' ? Math.round(framedFraction(b) * 12) : 0;
+      sig += b.id + ':' + stage + ':' + step + ':' + (b.fireTimer ? 1 : 0) + ':' + (b.rot ?? 0) + ';';
     }
     if (sig === this.sig.bld) return;
     this.sig.bld = sig;
@@ -1409,27 +1418,41 @@ export class Renderer3D {
       }
     }
     for (const b of s.buildings) {
+      const fw = footprintW(b);
+      const fh = footprintH(b);
+      const stage = buildStage(b);
       // A ranch is a variable-size pen (model-less); everything else uses its model or a box.
       // Ranch and field are always drawn as fenced plots, never a model.
-      const wantModel = b.type !== 'ranch' && b.type !== 'farm' && !!this.models.buildingClone(b.type);
+      const hasModel = b.type !== 'ranch' && b.type !== 'farm' && !!this.models.buildingClone(b.type);
+      // What this building is drawn *as* right now. Groundworks first, then the model rising out
+      // of them, then the building. Plots and box fallbacks have no frame stage — there is no
+      // model to raise — so they go from site straight to finished.
+      const kind = stage === 'site' ? 'site'
+        : !hasModel ? 'plot'
+        : stage === 'framing' ? 'frame'
+        : 'model';
       let obj = this.buildingMeshes.get(b.id);
-      // Recreate if missing or if the desired kind (model vs box) changed since last build.
-      if (!obj || !!obj.userData.model !== wantModel) {
+      if (!obj || obj.userData.kind !== kind) {
         if (obj) {
           this.disposeBuilding(obj);
           this.buildingMeshes.delete(b.id);
         }
-        obj = wantModel ? this.makeBuildingModel(b.type) : this.makeBuildingBox(b);
-        obj.position.set(b.x + footprintW(b) / 2, TOP, b.y + footprintH(b) / 2);
+        obj = kind === 'site' ? this.makeBuildingSite(fw, fh)
+          : kind === 'frame' ? this.makeBuildingFrame(b.type, fw, fh)
+          : kind === 'model' ? this.makeBuildingModel(b.type)
+          : this.makeBuildingBox(b);
+        obj.userData.kind = kind;
+        obj.position.set(b.x + fw / 2, TOP, b.y + fh / 2);
         // A model is authored facing south; turning it is what puts its door on the face the
-        // simulation is routing villagers to. The box fallback is built at the rotated size
-        // already, so only models turn.
-        if (wantModel) obj.rotation.y = buildingYaw(b.rot ?? 0);
+        // simulation is routing villagers to. The site pad, the box fallback and the fenced plot
+        // are all built at the rotated size already, so only the model and the frame turn.
+        if (kind === 'model' || kind === 'frame') obj.rotation.y = buildingYaw(b.rot ?? 0);
         this.enableShadows(obj);
         this.buildingMeshes.set(b.id, obj);
         this.scene.add(obj);
       }
-      this.styleBuilding(obj, b.type, b.built, !!b.fireTimer);
+      if (kind === 'frame') this.updateFrameClip(obj, framedFraction(b));
+      this.styleBuilding(obj, b.type, !!b.fireTimer);
     }
 
     // Chimney smoke emitters: hearth buildings that are built.
@@ -1501,6 +1524,54 @@ export class Renderer3D {
     return group;
   }
 
+  /**
+   * A building site: the ground opened up, stone footings laid round the edge, corner stakes and
+   * the materials waiting to go into it.
+   *
+   * Procedural from the footprint rather than an authored model per building, because what a site
+   * looks like barely depends on what is going up on it — and 23 buildings x 2 extra stages is a
+   * lot of Blender for a stage that lasts a few seconds.
+   */
+  private makeBuildingSite(fw: number, fh: number): THREE.Object3D {
+    const group = new THREE.Group();
+    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      group.add(m);
+      return m;
+    };
+    const soil = new THREE.MeshStandardMaterial({ color: 0x6b5238, roughness: 1 });
+    const stone = new THREE.MeshStandardMaterial({ color: 0x8e8d86, roughness: 0.95 });
+    const timber = new THREE.MeshStandardMaterial({ color: 0x7a5535, roughness: 0.9 });
+
+    // Turned earth across the plot, a little proud of the terrain so it has an edge.
+    add(new THREE.BoxGeometry(fw - 0.1, 0.09, fh - 0.1), soil, 0, 0.045, 0);
+    // Footing courses round the perimeter — the outline of what is coming.
+    const fh1 = 0.22;
+    const t = 0.26;
+    add(new THREE.BoxGeometry(fw - 0.1, fh1, t), stone, 0, fh1 / 2, -fh / 2 + t / 2 + 0.05);
+    add(new THREE.BoxGeometry(fw - 0.1, fh1, t), stone, 0, fh1 / 2, fh / 2 - t / 2 - 0.05);
+    add(new THREE.BoxGeometry(t, fh1, fh - 0.1 - t * 2), stone, -fw / 2 + t / 2 + 0.05, fh1 / 2, 0);
+    add(new THREE.BoxGeometry(t, fh1, fh - 0.1 - t * 2), stone, fw / 2 - t / 2 - 0.05, fh1 / 2, 0);
+    // Corner stakes, so the plot reads as pegged out even on a big footprint.
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        add(new THREE.BoxGeometry(0.1, 0.62, 0.1), timber,
+          sx * (fw / 2 - 0.18), 0.31, sz * (fh / 2 - 0.18));
+      }
+    }
+    // Materials stacked on the pad, scaled so a big plot does not look under-supplied.
+    const piles = Math.max(1, Math.min(4, Math.round(Math.min(fw, fh) / 1.6)));
+    for (let i = 0; i < piles; i++) {
+      const px = (i - (piles - 1) / 2) * 0.8;
+      add(new THREE.BoxGeometry(0.5, 0.2, 0.42), timber, px, 0.19, fh / 2 - 0.75);
+      add(new THREE.BoxGeometry(0.42, 0.16, 0.36), stone, px * 0.7, 0.17, -fh / 2 + 0.8);
+    }
+    group.userData.model = false;
+    group.userData.site = true; // styleBuilding leaves the site's own earth/stone colours alone
+    return group;
+  }
+
   private makeBuildingModel(type: BuildingType): THREE.Object3D {
     const def = BUILDING_DEFS[type];
     const clone = this.models.buildingClone(type)!; // longest footprint axis normalized to 1
@@ -1521,35 +1592,100 @@ export class Renderer3D {
       m.material = Array.isArray(m.material)
         ? m.material.map((x) => x.clone())
         : (m.material as THREE.Material).clone();
+      m.userData.sharedGeo = true; // geometry belongs to the loader's template, not to us
     });
     clone.userData.model = true;
+    // How tall this building stands once placed — `normalize` measured it with the footprint at
+    // 1, so it scales with the plot the same way the model does. The frame stage clips against it.
+    clone.userData.worldHeight = ((clone.userData.height as number) ?? 1) * k;
     return clone;
   }
 
-  /** Apply built / construction / fire appearance to whichever object represents a building. */
-  private styleBuilding(obj: THREE.Object3D, type: BuildingType, built: boolean, fire: boolean): void {
+  /**
+   * A building part-way up: the real model, cut off at the height the work has reached, standing
+   * in a cage of scaffold poles.
+   *
+   * Clipping rather than a separate half-built model, so every building gets the stage for free
+   * and the shape you watch rising is the shape you end up with. The cut faces are drawn
+   * double-sided — a one-sided wall sliced across reads as a hole in the building, not as a wall
+   * that has not been finished.
+   */
+  private makeBuildingFrame(type: BuildingType, fw: number, fh: number): THREE.Object3D {
+    const group = new THREE.Group();
+    const model = this.makeBuildingModel(type);
+    const plane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+    model.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      for (const mat of mats as THREE.MeshStandardMaterial[]) {
+        mat.clippingPlanes = [plane];
+        mat.clipShadows = true;
+        mat.side = THREE.DoubleSide;
+        mat.needsUpdate = true;
+      }
+    });
+    group.add(model);
+
+    // Scaffolding: uprights at the corners with a rail round them, tall enough to stand above
+    // the cut so the building reads as still being worked on rather than simply short.
+    const pole = new THREE.MeshStandardMaterial({ color: 0x8a6a3c, roughness: 0.95 });
+    const poleH = 1.0;
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const p = new THREE.Mesh(new THREE.BoxGeometry(0.09, poleH, 0.09), pole);
+        p.position.set(sx * (fw / 2 - 0.22), poleH / 2, sz * (fh / 2 - 0.22));
+        group.add(p);
+      }
+    }
+    group.userData.model = true; // keep the model's own textures through styleBuilding
+    group.userData.frame = { plane, height: (model.userData.worldHeight as number) ?? 1 };
+    return group;
+  }
+
+  /** Raise the frame's cut to wherever the work has got to (0..1 of the finished height). */
+  private updateFrameClip(obj: THREE.Object3D, frac: number): void {
+    const f = obj.userData.frame as { plane: THREE.Plane; height: number } | undefined;
+    if (!f) return;
+    // Never nothing and never quite everything: at the start there is a course of walling to see,
+    // and at the end the roof is still visibly missing until the build actually completes.
+    const cut = 0.18 + 0.74 * frac;
+    f.plane.constant = obj.position.y + f.height * cut;
+    // The scaffold keeps pace with the walls, always a little above them. The poles are unit-tall
+    // and centred on their own middle, so growing one means moving it up by half as much again —
+    // scaling alone would sink it through the ground.
+    const poleH = Math.max(0.6, f.height * cut + 0.35);
+    for (const child of obj.children) {
+      if (!(child as THREE.Mesh).isMesh) continue; // the model itself is a Group
+      child.scale.y = poleH;
+      child.position.y = poleH / 2;
+    }
+  }
+
+  /**
+   * Apply the flat colour (box fallbacks only) and the burning tint.
+   *
+   * Nothing standing on the map is drawn see-through any more. A site under construction used to
+   * be the finished building's silhouette in glass, which is what made a half-built village look
+   * like a village of ghosts — and, while materials were shared between buildings of a type, made
+   * the *finished* ones look like ghosts too. Construction now has its own three looks
+   * (`makeBuildingSite`, `makeBuildingFrame`, then the model), and the glass silhouette is kept
+   * for the placement preview alone, where see-through is the honest reading: it is not there yet.
+   */
+  private styleBuilding(obj: THREE.Object3D, type: BuildingType, fire: boolean): void {
     const isModel = !!obj.userData.model;
-    const isRanch = !!obj.userData.ranch; // the pen keeps its own shed/rail colours
+    const ownColours = !!obj.userData.ranch || !!obj.userData.site; // pen and site keep their own
     obj.traverse((o) => {
       const m = o as THREE.Mesh;
       if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
       const mat = m.material as THREE.MeshStandardMaterial;
       if (!mat || Array.isArray(mat)) return;
       // Box meshes get the flat building color; model meshes keep their own textures/colors.
-      if (!isModel && !isRanch && mat.color) mat.color.set(BUILDING_COLORS[type]);
-      if (fire) {
-        mat.emissive?.set(0x812c10);
-        mat.transparent = false;
-        mat.opacity = 1;
-      } else {
-        mat.emissive?.set(0x000000);
-        // An unbuilt site is the finished building's silhouette in glass — same shape, same
-        // materials, see-through — so the player can read what is going up there. depthWrite has
-        // to go with the transparency or the near faces punch holes in the far ones.
-        mat.transparent = !built;
-        mat.opacity = built ? 1 : GHOST_OPACITY;
-        mat.depthWrite = built;
-      }
+      if (!isModel && !ownColours && mat.color) mat.color.set(BUILDING_COLORS[type]);
+      mat.emissive?.set(fire ? 0x812c10 : 0x000000);
+      mat.transparent = false;
+      mat.opacity = 1;
+      mat.depthWrite = true;
       mat.needsUpdate = true;
     });
   }
@@ -1560,11 +1696,12 @@ export class Renderer3D {
     // demolition would pull the mesh out from under every other building of the same type, and
     // out of the template every future one is cloned from. Its materials are its own (see
     // `makeBuildingModel`) and do need releasing. A box or a fenced plot owns both.
-    const sharedGeometry = !!obj.userData.model;
     obj.traverse((o) => {
       const m = o as THREE.Mesh;
       if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
-      if (!sharedGeometry) m.geometry?.dispose();
+      // Marked per mesh rather than per building: a frame group mixes the template's geometry
+      // (shared, never ours to release) with its own scaffold poles (ours).
+      if (!m.userData.sharedGeo) m.geometry?.dispose();
       const mat = m.material;
       if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
       else mat?.dispose();

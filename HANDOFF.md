@@ -20,11 +20,48 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **render optimisation**, a **renderer teardown leak**, **lakes**, **landscape
-play** and **building footprints** — all this session.
+Latest work: **staged construction**, **render optimisation**, a **renderer teardown leak**,
+**lakes**, **landscape play** and **building footprints** — all this session.
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Construction now has three looks (this session)
+A placed building used to be the finished model in glass until the moment it completed. It is
+three stages now, and the glass is kept for the one place it tells the truth:
+
+| when | drawn as |
+|---|---|
+| choosing where to put it | the silhouette (the placement preview — unchanged) |
+| placed, under half built | **site**: turned earth, stone footings round the plot, corner stakes, materials stacked |
+| half built to finished | **frame**: the real model rising out of those footings, cut off at the height the work has reached, inside a cage of scaffold poles |
+| finished | the building |
+
+`buildStage(b)` / `framedFraction(b)` / `BUILD_FRAMING_AT` live in `src/types.ts` so the rule is
+one place. The renderer picks an object kind from the stage (`userData.kind`, which is also what
+tells it when to rebuild) and `syncBuildings`' signature carries the stage plus the frame height
+quantised into twelfths — the frame has to rise as work goes on without rebuilding every frame.
+
+Two things worth knowing if you touch this:
+
+- **The frame is the real model with a clipping plane, not a second model.** Every building gets
+  the stage for free and the shape you watch going up is the shape you end up with. It needs
+  `renderer.localClippingEnabled = true` (set in the constructor) and the cut faces drawn
+  `DoubleSide` — a one-sided wall sliced across reads as a hole in the building rather than as a
+  wall that has not been finished yet. The scaffold poles are unit-tall and centred on their own
+  middle, so raising one means moving it up half as much again; scaling alone sinks it through
+  the ground.
+- **This only works because building materials are per-instance.** Clipping planes are set on the
+  material, so with the old shared materials one building's frame would have sliced every other
+  building of that type in half. That fix is in the commit before this one.
+
+`styleBuilding` no longer takes a `built` flag: nothing standing on the map is transparent, so
+all it does now is the flat colour for box fallbacks and the burning tint.
+
+**`debugBuildTime(type)` is new** and tests laying out a part-built building must use it.
+`buildTime` on the def is multiplied by `BUILD_TIME_SCALE` (2), so setting `progress` from the
+raw number lands at half the fraction you meant — which is exactly how the first screenshot of
+this feature came out showing three identical foundations and no frame at all.
 
 ### Render optimisation (this session)
 The player reported lag on medium. Profiling first, guessing never: the scene was drawing

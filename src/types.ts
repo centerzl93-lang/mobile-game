@@ -641,6 +641,38 @@ export function houseCapacityOf(type: BuildingType): number {
   return type === 'stonehouse' ? STONE_HOUSE_CAPACITY : HOUSING_PER_HOUSE;
 }
 
+/**
+ * How far into construction a site stops being groundworks and starts being a frame.
+ *
+ * Construction reads in three stages rather than as one see-through silhouette that snaps to a
+ * finished building: **site** (the ground opened up, footings laid, materials stacked), **frame**
+ * (the building itself rising out of those footings, cut off at whatever height the work has
+ * reached), then **done**. The silhouette is kept for the *placement preview* only, where it
+ * means "this is what would go here" — which is the one place a transparent building is telling
+ * the truth.
+ */
+export const BUILD_FRAMING_AT = 0.5;
+
+/** Which of the three construction looks a building should be drawn with. */
+export type BuildStage = 'site' | 'framing' | 'done';
+
+export function buildStage(b: Building): BuildStage {
+  if (b.built) return 'done';
+  const total = buildTimeOf(b.type);
+  return total > 0 && b.progress / total >= BUILD_FRAMING_AT ? 'framing' : 'site';
+}
+
+/**
+ * How far the frame has risen, 0..1, across the framing stage — 0 the moment framing starts and
+ * 1 as it finishes. Meaningless outside that stage.
+ */
+export function framedFraction(b: Building): number {
+  const total = buildTimeOf(b.type);
+  if (total <= 0) return 1;
+  const p = (b.progress / total - BUILD_FRAMING_AT) / (1 - BUILD_FRAMING_AT);
+  return p < 0 ? 0 : p > 1 ? 1 : p;
+}
+
 /** A building's effective construction time in seconds (base time × the pace multiplier). */
 export function buildTimeOf(type: BuildingType): number {
   return BUILDING_DEFS[type].buildTime * BUILD_TIME_SCALE;

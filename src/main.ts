@@ -1116,6 +1116,17 @@ class Game {
     return this.placeSize(type);
   }
 
+  /**
+   * Debug/testing helper: seconds of work a building takes to put up.
+   *
+   * Same reasoning as `debugFootprint` — `buildTime` in the def is multiplied by
+   * `BUILD_TIME_SCALE` before it means anything, and a test that sets `progress` from the raw
+   * number lands at half the fraction it thinks it does.
+   */
+  debugBuildTime(type: BuildingType): number {
+    return buildTimeOf(type);
+  }
+
   /** Debug/testing helper: check a placement at a tile (uses the current ranch size). */
   debugCanPlace(type: BuildingType, x: number, y: number, rot: 0 | 1 | 2 | 3 = 0): { ok: boolean; reason?: string } {
     const { w, h } = this.placeSize(type);

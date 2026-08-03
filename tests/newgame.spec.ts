@@ -3717,3 +3717,111 @@ test.describe('stockpile limits', () => {
     expect(await page.evaluate(() => (window as any).__village.state.limits?.firewood)).toBe(600);
   });
 });
+
+test.describe('the merchant ties up at the trading post', () => {
+  test.setTimeout(240_000);
+
+  /** Put a finished trading post somewhere it can be built, retrying across generated maps. */
+  const raisePost = `() => {
+    const g = window.__village;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b) => b.type === 'barn');
+      barn.store.wood = 2000;
+      barn.store.stone = 2000;
+      for (let r = 3; r < 40; r++)
+        for (let dy = -r; dy <= r; dy++)
+          for (let dx = -r; dx <= r; dx++)
+            for (const rot of [0, 1, 2, 3]) {
+              if (!g.debugCanPlace('trading', barn.x + dx, barn.y + dy, rot).ok) continue;
+              const id = g.debugPlace('trading', barn.x + dx, barn.y + dy, rot);
+              if (id == null) continue;
+              const b = s.buildings.find((x) => x.id === id);
+              b.built = true;
+              b.progress = g.debugBuildTime('trading');
+              return b;
+            }
+    }
+    return null;
+  }`;
+
+  test('it moors alongside the post, on water — not out at the river', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      const post = eval(mk)();
+      if (!post) return null;
+      const s = g.state;
+      Object.assign(s.merchant, { phase: 'away', present: false, cooldownTimer: 0,
+        category: null, stock: {}, seedStock: [], boat: null });
+      // Arrivals are a per-tick roll, so run until one lands rather than hoping for a lucky window.
+      for (let i = 0; i < 60 && s.merchant.phase === 'away'; i++) g.debugAdvance(300);
+      for (let i = 0; i < 8000 && s.merchant.phase !== 'docked'; i++) g.debugAdvance(0.1);
+
+      const f = g.debugFootprint('trading');
+      const rot = post.rot ?? 0;
+      const w = rot % 2 === 1 ? f.h : f.w;
+      const h = rot % 2 === 1 ? f.w : f.h;
+      const b = s.merchant.boat;
+      return {
+        phase: s.merchant.phase,
+        dist: b ? Math.hypot(b.x - (post.x + w / 2), b.y - (post.y + h / 2)) : null,
+        // Half the footprint's diagonal: anything inside that is up against the wharf.
+        reach: Math.hypot(w, h) / 2,
+        onWater: b ? s.tiles[Math.floor(b.y) * s.w + Math.floor(b.x)].type === 'water' : false,
+        heading: b ? typeof b.h : null,
+      };
+    }, raisePost);
+
+    expect(out, 'a trading post could be built on one of the maps tried').not.toBeNull();
+    expect(out!.phase, 'a merchant arrived and docked').toBe('docked');
+    // The berth comes from the post, not from the central river — a post on a lake used to leave
+    // its merchant sitting out in open water on the far side of the map.
+    expect(out!.dist!, 'moored up against the wharf').toBeLessThanOrEqual(out!.reach);
+    expect(out!.onWater, 'and floating, not beached').toBe(true);
+    expect(out!.heading, 'with a heading for the renderer to point the bow along').toBe('number');
+  });
+
+  test('the boat is drawn at a size a wharf would berth', async ({ page }) => {
+    await open(page); // the 3D renderer is the thing under test here
+    const out = await page.evaluate(async (mk) => {
+      const g = (window as any).__village;
+      const post = eval(mk)();
+      if (!post) return null;
+      const s = g.state;
+      Object.assign(s.merchant, { phase: 'away', present: false, cooldownTimer: 0,
+        category: null, stock: {}, seedStock: [], boat: null });
+      for (let i = 0; i < 60 && s.merchant.phase === 'away'; i++) g.debugAdvance(300);
+      for (let i = 0; i < 8000 && s.merchant.phase !== 'docked'; i++) g.debugAdvance(0.1);
+      g.camera.focus(post.x, post.y);
+      for (let i = 0; i < 20; i++) await new Promise(requestAnimationFrame);
+      const boat = g.renderer.boat;
+      const THREE = g.renderer.THREE ?? null;
+      // Measure the drawn extent straight off the scene graph rather than trusting a constant.
+      const box = { min: [1e9, 1e9, 1e9], max: [-1e9, -1e9, -1e9] };
+      boat.updateWorldMatrix(true, true);
+      boat.traverse((o: any) => {
+        if (!o.isMesh || !o.geometry) return;
+        o.geometry.computeBoundingBox();
+        const bb = o.geometry.boundingBox.clone();
+        bb.applyMatrix4(o.matrixWorld);
+        box.min = [Math.min(box.min[0], bb.min.x), Math.min(box.min[1], bb.min.y), Math.min(box.min[2], bb.min.z)];
+        box.max = [Math.max(box.max[0], bb.max.x), Math.max(box.max[1], bb.max.y), Math.max(box.max[2], bb.max.z)];
+      });
+      void THREE;
+      return { visible: boat.visible, modelled: g.renderer.boatModelled,
+               lengthTiles: Math.max(box.max[0] - box.min[0], box.max[2] - box.min[2]) };
+    }, raisePost);
+
+    expect(out, 'a trading post could be built on one of the maps tried').not.toBeNull();
+    expect(out!.visible).toBe(true);
+    expect(out!.modelled, 'the authored hull loaded, not the placeholder').toBe(true);
+    // A one-tile boat is a speck beside a 5x9 wharf; much past five and it covers the wharf and
+    // the houses behind it. This also catches the `setScalar` trap — overwriting the template's
+    // normalizing scale instead of multiplying it drew the hull at five tiles rather than three
+    // and a half, which is only obvious if the drawn size is measured rather than assumed.
+    expect(out!.lengthTiles).toBeGreaterThan(2.5);
+    expect(out!.lengthTiles).toBeLessThan(5);
+  });
+});

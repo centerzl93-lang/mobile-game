@@ -2062,12 +2062,82 @@ function spawnMerchant(s: GameState, log: LogFn): void {
   }
   m.phase = 'arriving';
   m.present = false;
-  m.boat = { x: riverColumnX(s.tiles, 0), y: 0 };
+  const post = tradingPost(s);
+  m.boat = post ? boatEntry(s, dockSpot(s, post)) : { x: riverColumnX(s.tiles, 0), y: 0 };
   const meta = MERCHANT_CATEGORY_META[category];
   log(`${meta.emoji} A ${meta.label.toLowerCase()}'s boat is sailing in`, 'info');
 }
 
-/** Per-tick boat motion: sail in to the dock, hold there, then sail off downstream. */
+/**
+ * Where the merchant's boat ties up: the water tile just off the trading post's quay.
+ *
+ * It used to moor at `riverColumnX(dockY)` — the *central river's* column at the post's row —
+ * whatever water the post was actually built on. A post on a lake therefore had its merchant sit
+ * out in open water on the far side of the map, which is what "it doesn't dock at the trading
+ * post" looks like. The berth is now found from the post itself: the water tile nearest its middle,
+ * preferring one just outside the footprint so the boat lies alongside the wharf rather than on it.
+ */
+function dockSpot(s: GameState, post: Building): { x: number; y: number } {
+  const c = buildingCenter(post);
+  const fw = footprintW(post);
+  const fh = footprintH(post);
+  let best: { x: number; y: number } | null = null;
+  let bestScore = Infinity;
+  // A ring around the footprint, then the footprint itself as a fallback for a post whose wharf
+  // covers all the water it touches.
+  for (const outside of [true, false]) {
+    for (let dy = -1; dy <= fh; dy++) {
+      for (let dx = -1; dx <= fw; dx++) {
+        const onEdge = dx < 0 || dy < 0 || dx >= fw || dy >= fh;
+        if (onEdge !== outside) continue;
+        const tx = post.x + dx;
+        const ty = post.y + dy;
+        const t = getTile(s.tiles, tx, ty);
+        if (!t || t.type !== 'water') continue;
+        const d = (tx + 0.5 - c.x) ** 2 + (ty + 0.5 - c.y) ** 2;
+        if (d < bestScore) {
+          bestScore = d;
+          best = { x: tx + 0.5, y: ty + 0.5 };
+        }
+      }
+    }
+    if (best) return best;
+  }
+  // No water at all around the post (it should not have been placeable): fall back to the river.
+  return { x: riverColumnX(s.tiles, c.y), y: c.y };
+}
+
+/**
+ * Where a boat enters and leaves the map: the edge water tile closest to the berth.
+ *
+ * Sailing in from the top of the river regardless of where the post is meant a boat bound for a
+ * lake on the far side started its run in the wrong body of water entirely. Coming in from the
+ * nearest edge keeps the crossing over the water the post is actually on, most of the time.
+ */
+function boatEntry(s: GameState, to: { x: number; y: number }): { x: number; y: number } {
+  let best: { x: number; y: number } | null = null;
+  let bestD = Infinity;
+  const consider = (tx: number, ty: number) => {
+    const t = getTile(s.tiles, tx, ty);
+    if (!t || t.type !== 'water') return;
+    const d = (tx + 0.5 - to.x) ** 2 + (ty + 0.5 - to.y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = { x: tx + 0.5, y: ty + 0.5 };
+    }
+  };
+  for (let x = 0; x < MAP_W; x++) {
+    consider(x, 0);
+    consider(x, MAP_H - 1);
+  }
+  for (let y = 0; y < MAP_H; y++) {
+    consider(0, y);
+    consider(MAP_W - 1, y);
+  }
+  return best ?? { x: riverColumnX(s.tiles, 0), y: 0 };
+}
+
+/** Per-tick boat motion: sail in to the dock, hold there, then sail back out to sea. */
 function updateMerchantBoat(s: GameState, dt: number, log: LogFn): void {
   const m = s.merchant;
   if (!m.boat) return;
@@ -2080,8 +2150,7 @@ function updateMerchantBoat(s: GameState, dt: number, log: LogFn): void {
       m.present = false;
       return;
     }
-    const dockY = buildingCenter(post).y;
-    if (moveBoatTo(s, m.boat, dockY, dt)) {
+    if (moveBoatTo(m.boat, dockSpot(s, post), dt)) {
       m.phase = 'docked';
       m.present = true;
       m.stayTimer = MERCHANT_STAY_SEASONS * SEASON_LENGTH;
@@ -2089,15 +2158,17 @@ function updateMerchantBoat(s: GameState, dt: number, log: LogFn): void {
       log(`${meta.emoji} A ${meta.label.toLowerCase()} has docked — trade at the post`, 'good');
     }
   } else if (m.phase === 'docked') {
-    // Hold station beside the dock.
+    // Hold station alongside the quay. Recomputed rather than remembered so a post that is
+    // rebuilt or resized under the merchant does not leave it moored to nothing.
     if (post) {
-      const dockY = buildingCenter(post).y;
-      m.boat.y = dockY;
-      m.boat.x = riverColumnX(s.tiles, dockY);
+      const berth = dockSpot(s, post);
+      m.boat.x = berth.x;
+      m.boat.y = berth.y;
     }
   } else if (m.phase === 'leaving') {
     m.present = false;
-    if (moveBoatTo(s, m.boat, MAP_H + 2, dt)) {
+    const out = boatEntry(s, m.boat);
+    if (moveBoatTo(m.boat, { x: out.x, y: out.y }, dt)) {
       m.phase = 'away';
       m.boat = null;
       m.stock = {};
@@ -2109,13 +2180,26 @@ function updateMerchantBoat(s: GameState, dt: number, log: LogFn): void {
   }
 }
 
-/** Move the boat toward river row `goalY`, tracking the river's x. Returns true once arrived. */
-function moveBoatTo(s: GameState, boat: { x: number; y: number }, goalY: number, dt: number): boolean {
+/**
+ * Sail the boat toward a point, turning the bow onto the course. Returns true once it arrives.
+ *
+ * Straight-line across the water rather than following the river column, because the berth is now
+ * wherever the trading post is and the river may have nothing to do with it.
+ */
+function moveBoatTo(boat: { x: number; y: number; h?: number }, goal: { x: number; y: number }, dt: number): boolean {
+  const dx = goal.x - boat.x;
+  const dy = goal.y - boat.y;
+  const d = Math.hypot(dx, dy);
+  if (d > 0.01) boat.h = Math.atan2(dx, dy);
   const step = BOAT_SPEED * dt;
-  const dy = goalY - boat.y;
-  boat.y = Math.abs(dy) <= step ? goalY : boat.y + Math.sign(dy) * step;
-  boat.x = riverColumnX(s.tiles, boat.y);
-  return Math.abs(goalY - boat.y) < 0.01;
+  if (d <= step) {
+    boat.x = goal.x;
+    boat.y = goal.y;
+    return true;
+  }
+  boat.x += (dx / d) * step;
+  boat.y += (dy / d) * step;
+  return false;
 }
 
 /** End a merchant visit early at the player's request. */

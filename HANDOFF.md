@@ -21,7 +21,8 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **stockpile limits**, **workers go where the work is**, **five more tree species**,
+Latest work: **merchant docks properly**, **stockpile limits**, **workers go where the work is**,
+**five more tree species**,
 **named/deletable save slots**,
 **lives on ticks (ageing/births)**,
 **opening stock + tool/coat economy**,
@@ -32,6 +33,25 @@ Latest work: **stockpile limits**, **workers go where the work is**, **five more
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### The merchant now actually docks (this session)
+Two separate faults behind one screenshot of a speck floating in a lake.
+
+**It never moored at the post.** `updateMerchantBoat` parked the boat at `riverColumnX(dockY)` —
+the *central river's* column at the post's row — whatever water the post was built on. A post on a
+lake therefore had its merchant sit in open water on the far side of the map. The berth now comes
+from the post: `dockSpot` takes the water tile nearest its middle, preferring one just outside the
+footprint so the boat lies alongside the wharf rather than on it, and `boatEntry` starts the run
+from the map-edge water tile nearest that berth so the crossing stays on the same water.
+`moveBoatTo` sails a straight line to a point instead of following the river column, and records
+a heading on `Merchant.boat.h` so the renderer can point the bow along the course.
+
+**It was drawn one tile long.** Models arrive normalized to a one-tile footprint and the boat was
+never scaled up, so it was a speck beside a 5x9 wharf. `BOAT_SIZE` is 3.5 tiles now — but note the
+trap it cost: **multiply the template's scale, never set it.** The normalizing factor *lives on
+that scale*, so `setScalar(3.5)` drew the hull at 3.5x its raw authored size (five tiles, swamping
+the wharf) rather than 3.5 tiles. The size test measures the drawn extent off the scene graph for
+exactly this reason — a constant that looks right can still be drawing the wrong thing.
 
 ### Stockpile limits (this session)
 A cap per stockpile, in a new 📦 panel beside the job board. Over the cap, the workplaces that make
@@ -1066,7 +1086,7 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
 - Committed tests: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers npx playwright test`
   (config runs `npm run build && npm run preview` on port 4173). **Run the three specs separately** —
   the whole suite takes well over 15 minutes, so a wrapping `timeout` will cut it off mid-run and
-  tell you nothing. Last full state: `world` 13/13, `menus` 10/10, `newgame` 105/107
+  tell you nothing. Last full state: `world` 13/13, `menus` 10/10, `newgame` 108/109
   — a clean sweep. Do not read one green run as the suite being flake-free, though: over this
   session `household larders > residents stock their own house`, `trading post > a stock order
   pulls goods`, `trading post > a merchant can sail in mid-season`, `household larders > a shortage takes the
@@ -1205,9 +1225,9 @@ Never put the model ID in commits/PRs/code/comments — chat replies only.
 - **Per-crop designs:** `CROP_DESIGN` (color + reserved `model` slot) and the render hook in
   `drawFarm`/`makeFencedPlot` exist, but fields draw generically. Next step is real per-crop art at the
   hook, or a cheap first pass tinting the field by `cropDesign(crop).color` (~a couple of lines).
-- **Trading-post polish (optional):** boat parks on the *central* river even for an edge-lake post;
-  tune `MERCHANT_ARRIVAL_CHANCE`/category stock; optional HUD cue for an arriving boat (top-bar button
-  was removed).
+- **Trading-post polish (optional):** tune `MERCHANT_ARRIVAL_CHANCE`/category stock; optional HUD
+  cue for an arriving boat (top-bar button was removed). The boat parking on the central river
+  regardless of where the post was is fixed — see the docking section above.
 - **Minor:** the 3D ranch pen shows no live animal glyphs/count (the 2D renderer does).
 - **The villager-breeding tests are fixed (was: "unsolved and worth an hour").** They used to get
   slower the later they ran — 1.6m first in a run, 6.8m second, 8.1m at position 59 — and two or

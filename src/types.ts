@@ -987,8 +987,12 @@ export interface Merchant {
   stock: Partial<Record<ResourceKind, number>>;
   /** Seeds category only: the (still-unowned) crop seeds on offer. */
   seedStock: Crop[];
-  /** Animated boat position on the water while arriving/docked/leaving (null when away). */
-  boat: { x: number; y: number } | null;
+  /**
+   * Animated boat position on the water while arriving/docked/leaving (null when away), plus the
+   * heading it is sailing on so the renderer can point the bow the right way. A boat that sails
+   * across a lake to reach a wharf cannot keep the fixed downstream yaw it used to have.
+   */
+  boat: { x: number; y: number; h?: number } | null;
 }
 
 /** A band of nomads awaiting the player's decision to let them settle or turn them away. */

@@ -59,6 +59,17 @@ const SNOWLINE_H = 4.6;
 const SNOWCAP_FULL_H = 7.6;
 const TOP = LAND_H; // y of the walkable surface props sit on
 const TREE_MODEL_SIZE = 0.55; // world scale for a normalized (footprint=1) tree model — see tools/models/pine.py
+/**
+ * How many tiles long the merchant's boat is.
+ *
+ * Models arrive normalized to a one-tile footprint, and the boat was being drawn at exactly that —
+ * a speck alongside a 5x9 trading post, which is a wharf big enough to berth a real vessel.
+ *
+ * Three and a half tiles is the length that reads: clearly a bigger thing than a two-tile cottage,
+ * and comfortably berthed at a nine-tile quay. Two was still a rowing boat; five swamped the wharf
+ * and the houses behind it.
+ */
+const BOAT_SIZE = 3.5;
 const ROCK_MODEL_SIZE = 0.52; // world scale applied to a normalized loose-stone model
 /**
  * Props drawn per resource tile.
@@ -2034,9 +2045,13 @@ export class Renderer3D {
           this.boat.remove(child);
           disposeTree(child);
         }
-        // Authored bow-along-+Y like every building, so it needs the same half turn to face the
-        // way it sails — always downstream, toward +z.
+        // Authored bow-along-+Y like every building, so it needs the same half turn to sit the
+        // right way round in its group; the group itself is then turned to the heading it sails.
         model.rotation.y = buildingYaw(0);
+        // *Multiply*, never set: the template's own scale is what normalizes it to one tile, and
+        // overwriting that makes the boat BOAT_SIZE times its raw authored size instead — which
+        // came out at five tiles rather than two.
+        model.scale.multiplyScalar(BOAT_SIZE);
         this.boat.add(model);
         this.enableShadows(this.boat);
       }
@@ -2044,9 +2059,10 @@ export class Renderer3D {
     this.boat.visible = true;
     this.boat.position.set(b.x, 0.16, b.y);
     // A little roll and pitch on the same swell the water is riding, so a moored boat is not a
-    // static prop sitting on a moving surface.
+    // static prop sitting on a moving surface — and a yaw from the course it is steering, since
+    // it no longer only ever sails downstream.
     const t = this.waterTime;
-    this.boat.rotation.set(Math.sin(t * 1.5) * 0.035, 0, Math.sin(t * 2.1 + 1) * 0.05);
+    this.boat.rotation.set(Math.sin(t * 1.5) * 0.035, b.h ?? 0, Math.sin(t * 2.1 + 1) * 0.05);
   }
 
   private teardown(): void {

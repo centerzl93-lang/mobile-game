@@ -88,6 +88,7 @@ import {
   MAX_AGE,
   EDUCATED_BONUS,
   isHouse,
+  isWorkplace,
   houseCapacityOf,
   STONE_HOUSE_HEAT_FACTOR,
   HAPPY_TAVERN,
@@ -1354,6 +1355,10 @@ function finishConstruction(s: GameState, b: Building): void {
   }
   b.built = true;
   b.progress = BUILDING_DEFS[b.type].buildTime;
+  // Open its jobs, if the player has asked for that. `assignHomesAndJobs` hires whoever is free
+  // on the next tick and picks up the rest as laborers come free, so a hut finished with nobody
+  // spare still fills itself later rather than waiting to be noticed.
+  if (s.autoStaff && isWorkplace(b.type)) b.desiredWorkers = BUILDING_DEFS[b.type].jobs;
   // A finished building is a wall villagers must walk around, so routes and reachability have to
   // be recomputed — while it was a site they walked straight over it.
   s.navVersion = (s.navVersion ?? 0) + 1;

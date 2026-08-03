@@ -2979,3 +2979,115 @@ test.describe('fishing dock', () => {
     expect(out.radius).toBeGreaterThan(0);
   });
 });
+
+test.describe('auto-staffing', () => {
+  /**
+   * Raise a gatherer's hut the way the game does — builders hauling to it — rather than flipping
+   * `built` by hand, because the whole point under test is what happens at the moment it finishes.
+   */
+  const raiseAHut = `() => {
+    const g = window.__village;
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    barn.store.wood = 5000;
+    barn.store.stone = 5000;
+    let id = null;
+    for (let r = 3; r < 24 && id == null; r++)
+      for (let dy = -r; dy <= r && id == null; dy++)
+        for (let dx = -r; dx <= r && id == null; dx++)
+          if (g.debugCanPlace('gatherer', barn.x + dx, barn.y + dy).ok)
+            id = g.debugPlace('gatherer', barn.x + dx, barn.y + dy);
+    const b = s.buildings.find((x) => x.id === id);
+    if (!b) throw new Error('no placeable gatherer site anywhere on this map');
+    // Clear the ground and pre-deliver the materials so this measures completion, not hauling.
+    for (const t of s.tiles) if (t.type === 'forest') t.trees = 0;
+    for (let i = 0; i < s.harvest.length; i++) s.harvest[i] = 0;
+    b.store.wood = 999;
+    for (let i = 0; i < 6000 && !b.built; i++) g.debugAdvance(0.1);
+    g.debugAdvance(2);
+    return b;
+  }`;
+
+  test('a finished workplace hires itself when the setting is on, and not when it is off', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((raise) => {
+      const g = (window as any).__village;
+      const run = (auto: boolean) => {
+        localStorage.setItem('village-auto-staff', auto ? 'on' : 'off');
+        g.startNewGame('small', 'easy', false);
+        const b = eval(raise)();
+        return {
+          pref: g.state.autoStaff,
+          built: b.built,
+          jobs: g.debugJobCount('gatherer'),
+          desiredWorkers: b.desiredWorkers,
+          workers: b.workers.length,
+        };
+      };
+      return { on: run(true), off: run(false) };
+    }, raiseAHut);
+
+    // Both runs have to actually finish the hut, or neither branch proves anything.
+    expect(out.on.built, 'the hut went up with the setting on').toBe(true);
+    expect(out.off.built, 'the hut went up with the setting off').toBe(true);
+
+    // On: the hut opens its jobs and takes whoever is free.
+    expect(out.on.pref).toBe(true);
+    expect(out.on.desiredWorkers).toBe(out.on.jobs);
+    expect(out.on.workers, 'free villagers were hired').toBeGreaterThan(0);
+
+    // Off: it stands empty until the player staffs it, which is the old behaviour.
+    expect(out.off.pref).toBe(false);
+    expect(out.off.desiredWorkers).toBe(0);
+    expect(out.off.workers).toBe(0);
+  });
+
+  test('a job left open by a death is refilled either way', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((raise) => {
+      const g = (window as any).__village;
+      const run = (auto: boolean) => {
+        localStorage.setItem('village-auto-staff', auto ? 'on' : 'off');
+        g.startNewGame('small', 'easy', false);
+        const s = g.state;
+        const b = eval(raise)();
+        // With the setting off the player would have staffed it; do that, so both branches are
+        // testing a death rather than testing the setting again.
+        if (b.workers.length === 0) {
+          b.desiredWorkers = 2;
+          g.debugAdvance(2);
+        }
+        const before = [...b.workers];
+        const victim = before[0];
+        s.citizens.splice(s.citizens.findIndex((c: any) => c.id === victim), 1);
+        g.debugAdvance(2);
+        return { before, victim, after: [...b.workers] };
+      };
+      return { on: run(true), off: run(false) };
+    }, raiseAHut);
+
+    for (const [label, r] of Object.entries(out)) {
+      expect(r.before.length, `${label}: the hut was staffed to begin with`).toBeGreaterThan(0);
+      expect(r.after, `${label}: the dead villager is gone from the roster`).not.toContain(r.victim);
+      expect(r.after.length, `${label}: the slot was refilled`).toBe(r.before.length);
+    }
+  });
+
+  test('the toggle is in Settings and survives a reload', async ({ page }) => {
+    await open2d(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+    await page.click('#btn-menu');
+    await page.click('#pm-settings');
+    await expect(page.locator('#set-staff-on')).toBeVisible();
+    // Defaults on — the point of it is to spare the player re-staffing every hut by hand.
+    await expect(page.locator('#set-staff-on')).toHaveClass(/on/);
+    await page.click('#set-staff-off');
+    await expect(page.locator('#set-staff-off')).toHaveClass(/on/);
+    expect(await page.evaluate(() => (window as any).__village.state.autoStaff)).toBe(false);
+
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+    expect(await page.evaluate(() => (window as any).__village.state.autoStaff)).toBe(false);
+  });
+});

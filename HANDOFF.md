@@ -21,12 +21,38 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: a **seven-item gameplay pass**, **staged construction**, **render optimisation**, a
-**renderer teardown leak**, **lakes**, **landscape play** and **building footprints** — all this
-session.
+Latest work: **self-filling jobs**, a **seven-item gameplay pass**, **staged construction**,
+**render optimisation**, a **renderer teardown leak**, **lakes**, **landscape play** and
+**building footprints** — all this session.
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Jobs fill themselves (this session)
+Two halves of one request, and they turned out to be quite different jobs.
+
+**A job left open by a death was already refilled** — `assignHomesAndJobs` runs every tick and
+tops every built workplace back up to its `desiredWorkers` from the free adults, and
+`removeCitizen` strips the dead from `b.workers` on the way out. Measured it rather than assumed
+it: worker 5 dies, worker 7 has the slot on the next tick. So nothing was built for this half; it
+is now pinned by a test that kills a worker and checks the roster, with the setting below both on
+and off, so it cannot quietly regress.
+
+**A newly finished workplace was the real gap.** `placeBuilding` sets `desiredWorkers: 0` — a hut
+stood empty until the player went to the Job Board — so `finishConstruction` now opens its jobs
+(`desiredWorkers = def.jobs`) when `s.autoStaff` is set, and the existing hiring loop fills what it
+can and picks up the rest as villagers come free.
+
+**The toggle** is *Settings → Staff new workplaces*, **default on**: the request was to stop
+re-staffing every hut by hand, so the toggle exists for players who want the old behaviour rather
+than to opt into the new one. It lives in `localStorage` (`village-auto-staff`) like the tips
+preference — it follows the player, not the village — and is copied onto `state.autoStaff` at
+`startNewGame` and `continueGame` so the simulation reads it from one place. Deliberately **not**
+persisted when toggled: Settings is reachable from the main menu, where `state` is only the idle
+backdrop village, and saving there would write that over whatever is really in the slot.
+
+Builders are outside all of this, as asked: their count is derived from the open construction sites
+(`autoBuilderDemand`, below) and no workplace slot is involved.
 
 ### Seven gameplay fixes (this session)
 One request, seven separate things. Taken in order, with what each actually touched:
@@ -787,7 +813,7 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
 - `tests/newgame.spec.ts` — merchant, ranch, farm, and **jobs & builders** suites, plus prior
   seed-gate/staffing tests, and this session's **available workers count**, **fireproof buildings**,
   **clearing land before building**, **camera rotate buttons**, **construction stages**,
-  **placement controls** and **fishing dock** suites. The fishing-dock pair scans every tile and
+  **placement controls**, **fishing dock** and **auto-staffing** suites. The fishing-dock pair scans every tile and
   rotation on a generated map and asserts that no accepted site has a dry dock, a floating shack,
   or a work circle sitting on the plot instead of the jetty — plus a count check, so it can't pass
   by finding nowhere to build.
@@ -819,14 +845,15 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
 - Committed tests: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers npx playwright test`
   (config runs `npm run build && npm run preview` on port 4173). **Run the three specs separately** —
   the whole suite takes well over 15 minutes, so a wrapping `timeout` will cut it off mid-run and
-  tell you nothing. Last full state: `world` 13/13, `menus` 7/7, `newgame` 87/90 — the three
-  outstanding are the two breeding timeouts below and one household-larder test that passes on its
-  own and fails on an unlucky map (the walking-budget flake, also below).
+  tell you nothing. Last full state: `world` 13/13, `menus` 7/7, `newgame` 91/93 — the two
+  outstanding are the breeding timeouts below. One household-larder test is also a known flake:
+  it passes on its own and fails on an unlucky map (the walking-budget pattern, also below).
 - Headless scratchpad drivers use `playwright-core` + chromium at
   `/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell` with SwiftShader flags,
   against `npm run preview` on port 4173 (preview is flaky — run it in the background).
 - App exposes a `window.__village` debug hook (`startNewGame`, `debugAdvance`, `debugPlace`,
-  `debugCanPlace`, `debugFootprint`, `debugBuildTime`, `debugWorkCentre`, `debugReticleTile`,
+  `debugCanPlace`, `debugFootprint`, `debugBuildTime`, `debugWorkCentre`, `debugJobCount`,
+  `debugReticleTile`,
   `debugRanchCapacity`, `debugWorkRadius`, `debugSetBuilders`, `debugPlanPath`,
   `inspectSel`/`refreshInspect`, `persist`, plus the sizing fields `sizeW/sizeH`, `rotateDir`, and the
   private action methods and `log` — TS `private` is runtime-callable). `debugFootprint` and

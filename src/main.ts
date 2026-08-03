@@ -91,6 +91,14 @@ import { InspectRow, InspectControls } from './ui/ui';
 /** Where the tips preference lives. Kept out of the save so it follows the player, not a village. */
 const TIPS_KEY = 'village-tips';
 
+/**
+ * Where the auto-staffing preference lives. Like tips, it follows the player rather than the
+ * village, and is copied onto each game's state so the simulation reads it from one place.
+ * Defaults on: the point of it is to spare the player re-staffing every hut by hand.
+ */
+const AUTO_STAFF_KEY = 'village-auto-staff';
+const autoStaffPref = (): boolean => localStorage.getItem(AUTO_STAFF_KEY) !== 'off';
+
 const SPEEDS = [1, 2, 3];
 /**
  * Yaw speed (radians/sec) while a corner rotate button is held — 45°/s, so a full turn takes
@@ -674,6 +682,7 @@ class Game {
   startNewGame(size: MapSize = 'small', difficulty: Difficulty = 'normal', disasters = true, slot = 0): void {
     this.currentSlot = slot;
     this.state = newGame(size, difficulty, disasters);
+    this.state.autoStaff = autoStaffPref();
     this.centreOnVillage();
     this.paused = false;
     this.selectedBuild = null;
@@ -758,6 +767,7 @@ class Game {
     this.ui.showSettings({
       gfx: (localStorage.getItem('village-gfx') as 'low' | 'high' | null) ?? 'auto',
       tips: this.ui.tipsEnabled(),
+      autoStaff: autoStaffPref(),
       onSetGfx: (g) => {
         if (g === 'auto') localStorage.removeItem('village-gfx');
         else localStorage.setItem('village-gfx', g);
@@ -765,6 +775,14 @@ class Game {
       onSetTips: (on) => {
         this.ui.setTips(on);
         localStorage.setItem(TIPS_KEY, on ? 'on' : 'off');
+      },
+      onSetAutoStaff: (on) => {
+        localStorage.setItem(AUTO_STAFF_KEY, on ? 'on' : 'off');
+        // Takes effect on the next building to finish. Deliberately not persisted: Settings is
+        // reachable from the main menu, where `state` is only the idle backdrop village, and
+        // saving that would write it over whatever is really in the slot. The preference is
+        // re-applied from storage every time a game is started or loaded.
+        this.state.autoStaff = on;
       },
       onClearSaves: () => {
         clearSave();
@@ -786,6 +804,9 @@ class Game {
     }
     this.currentSlot = target;
     this.state = saved;
+    // The preference belongs to the player, not the village, so a loaded save adopts whatever is
+    // set now rather than whatever was set when it was saved.
+    this.state.autoStaff = autoStaffPref();
     this.centreOnVillage();
     this.paused = false;
     this.clearInspect();
@@ -1174,6 +1195,11 @@ class Game {
   debugWorkCentre(type: BuildingType, x: number, y: number, rot: 0 | 1 | 2 | 3 = 0): { x: number; y: number } {
     const { w, h } = this.placeSize(type);
     return workCentre({ type, x, y, rot, w, h });
+  }
+
+  /** Debug/testing helper: how many workers a building type can employ. */
+  debugJobCount(type: BuildingType): number {
+    return BUILDING_DEFS[type].jobs;
   }
 
   /** Debug/testing helper: check a placement at a tile (uses the current ranch size). */

@@ -59,24 +59,29 @@ test.describe('difficulties', () => {
       };
       return { easy: setup('easy'), normal: setup('normal'), hard: setup('hard') };
     });
-    // Opening stock is the difficulty baseline × 3 (scaled for the 12-villager founding pop).
-    // Easy: full stock + 3 houses.
+    // Survival rations are identical on every difficulty — they are tuned against the founding
+    // twelve, not against difficulty. 1200 food, 600 firewood, and a year of tools and coats.
+    const FOODS = ['fruit', 'grain', 'fish', 'meat'];
+    for (const [name, run] of Object.entries(d)) {
+      const food = FOODS.reduce((n, k) => n + ((run.store as any)[k] ?? 0), 0);
+      expect(food, `${name} food`).toBe(1200);
+      expect(run.store.firewood, `${name} firewood`).toBe(600);
+      expect(run.store.tools, `${name} tools`).toBe(48);
+      expect(run.store.clothing, `${name} coats`).toBe(48);
+    }
+    // What difficulty actually changes is the leg-up. Easy: building materials, medicine, houses.
     expect(d.easy.houses).toBe(3);
     expect(d.easy.store.wood).toBe(660);
+    expect(d.easy.store.stone).toBe(120);
     expect(d.easy.store.medicine).toBe(120);
-    // Normal: no houses, and no building materials at all — wood and stone must be gathered.
-    expect(d.normal.houses).toBe(0);
-    expect(d.normal.store.wood ?? 0).toBe(0);
-    expect(d.normal.store.stone ?? 0).toBe(0);
-    expect(d.normal.store.medicine ?? 0).toBe(0);
-    expect(d.normal.store.coal ?? 0).toBe(0);
-    expect(d.normal.store.firewood).toBe(300);
-    // Hard: no wood or stone either, and half of everything else Normal gets.
-    expect(d.hard.store.wood ?? 0).toBe(0);
-    expect(d.hard.store.stone ?? 0).toBe(0);
-    expect(d.hard.store.firewood).toBe(150);
-    expect(d.hard.store.tools).toBe(90);
-    expect(d.hard.store.grain).toBe(d.normal.store.grain / 2);
+    // Normal and Hard: no houses and no building materials at all — everything must be gathered.
+    for (const name of ['normal', 'hard'] as const) {
+      expect(d[name].houses, `${name} houses`).toBe(0);
+      expect(d[name].store.wood ?? 0, `${name} wood`).toBe(0);
+      expect(d[name].store.stone ?? 0, `${name} stone`).toBe(0);
+      expect(d[name].store.medicine ?? 0, `${name} medicine`).toBe(0);
+      expect(d[name].store.coal ?? 0, `${name} coal`).toBe(0);
+    }
   });
 
   test('a fresh game founds 8 adults and 4 children', async ({ page }) => {
@@ -441,7 +446,11 @@ test.describe('trading post & merchant', () => {
       const post = { id: s.nextId++, type: 'trading', x: barn.x, y: barn.y, built: true, progress: 99,
         workers: [], desiredWorkers: 1, growth: 0, output: 'coal', recipe: 'iron', store: {} as any, orders: { wood: 20 } };
       s.buildings.push(post);
-      g.debugAdvance(200); // let the assigned trader haul a few loads
+      // Let the assigned trader haul a few loads. Generous on purpose: household errands come
+      // before paid work, and every household now has to carry its own fuel home before anyone
+      // settles into a job, so the first load into the post can be a while coming on a map where
+      // the barn is a walk away. 200s was enough before that and is marginal now.
+      g.debugAdvance(400);
       return { woodBefore, postWood: post.store.wood ?? 0, hasWorker: post.workers.length };
     });
     expect(out.woodBefore).toBeGreaterThan(20);
@@ -2494,7 +2503,15 @@ test.describe('village history', () => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', true);
       for (let i = 0; i < 5; i++) g.debugAdvance(610);
+      // Five seasons of a well-fed village can leave a band of nomads waiting at the gate, and
+      // that panel sits over the top bar and swallows the click on the History button. This test
+      // is about the History panel, not about immigration, so turn any callers away first.
+      if (g.state.pendingNomads) {
+        g.rejectNomads();
+        g.ui.refreshPanels(g.state);
+      }
     });
+    await expect(page.locator('#nomad')).toBeHidden();
     await expect(page.locator('#history')).toBeHidden();
     await page.click('#btn-history');
     await expect(page.locator('#history')).toBeVisible();
@@ -3114,35 +3131,63 @@ test.describe('consumption and fuel', () => {
     expect(out.heat).toBeCloseTo(40 / 3, 6);
   });
 
-  test('fuel is only ever burned in a house, never straight out of the barns', async ({ page }) => {
+  test('a housed villager burns their own woodpile and never the barns', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
       const s = g.state;
-      // Summer: heat is still charged every tick, but only winter kills — so the villagers live
-      // long enough to be measured instead of freezing and ending the run early.
-      s.season = 1;
-      // Take every house away. Nobody has a hearth and no hauler has a larder to stock, so the
-      // barn pile can only move if fuel is being burned directly out of it.
-      s.buildings = s.buildings.filter((b: any) => b.type !== 'house' && b.type !== 'stonehouse');
-      for (const c of s.citizens) c.homeId = null;
+      s.season = 3; // Winter, the heaviest burn
+      g.debugAdvance(1); // let everyone be housed
+      // Everyone has a roof, and every hearth is stocked, so nothing should ever reach for a barn.
+      const houses = s.buildings.filter((b: any) =>
+        (b.type === 'house' || b.type === 'stonehouse') && b.built);
+      for (const h of houses) h.store.firewood = 500;
+      const roofless = s.citizens.filter((c: any) => c.homeId === null).length;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       barn.store.firewood = 400;
       barn.store.coal = 100;
+      const hearthBefore = houses.reduce((n: number, h: any) => n + (h.store.firewood ?? 0), 0);
       for (let i = 0; i < 1200; i++) g.debugAdvance(0.1);
       return {
         pop: s.citizens.length,
-        homeless: s.citizens.filter((c: any) => c.homeId === null).length,
-        firewood: barn.store.firewood ?? 0,
+        roofless,
+        hearthBurned: hearthBefore - houses.reduce((n: number, h: any) => n + (h.store.firewood ?? 0), 0),
+        // The haulers top larders up from the barn, so barn firewood may *fall*. What must never
+        // happen is it being burned — measured by the coal, which no household ever stocks.
         coal: barn.store.coal ?? 0,
       };
     });
-    // The measurement is only worth anything if there were villagers, and all of them roofless.
     expect(out.pop).toBeGreaterThan(0);
-    expect(out.homeless).toBe(out.pop);
-    expect(out.firewood, 'barn firewood is untouched').toBe(400);
-    expect(out.coal, 'barn coal is untouched').toBe(100);
+    expect(out.roofless, 'everybody had a roof').toBe(0);
+    expect(out.hearthBurned, 'the hearths did the burning').toBeGreaterThan(0);
+    expect(out.coal, 'no housed villager burns village coal').toBe(100);
+  });
+
+  test('a villager with no house at all can still keep warm', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', false); // Normal grants no houses — everyone starts roofless
+      const s = g.state;
+      s.season = 3; // Winter, when going without fuel kills
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      barn.store.firewood = 5000;
+      const startPop = s.citizens.length;
+      const roofless = s.citizens.filter((c: any) => c.homeId === null).length;
+      for (let i = 0; i < 3000; i++) g.debugAdvance(0.1); // a whole winter and then some
+      return {
+        startPop, roofless, endPop: s.citizens.length,
+        burned: 5000 - (barn.store.firewood ?? 0),
+        chilled: s.citizens.filter((c: any) => (c.chill ?? 0) > 0).length,
+      };
+    });
+    // A villager with nowhere to keep fuel has to be able to burn the village's, or Normal and
+    // Hard — which start everyone roofless — would wipe out in the first winter before a single
+    // house could be raised.
+    expect(out.roofless, 'Normal really does start everyone roofless').toBe(out.startPop);
+    expect(out.burned, 'the village pile is what keeps them warm').toBeGreaterThan(0);
+    expect(out.endPop, 'and nobody freezes while it holds out').toBe(out.startPop);
   });
 
   test('a household burns its own woodpile', async ({ page }) => {

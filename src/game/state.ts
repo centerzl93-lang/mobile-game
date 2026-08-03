@@ -27,7 +27,6 @@ import {
   Difficulty,
   CROPS,
   DIFFICULTY_RESOURCES,
-  STARTING_STOCK_SCALE,
   EASY_START_HOUSES,
   START_ADULTS,
   START_CHILDREN,
@@ -139,7 +138,7 @@ export function newGame(
   const barn = makeBuilding(state, 'barn', start.x, start.y, true);
   const stock = DIFFICULTY_RESOURCES[difficulty];
   for (const k of Object.keys(stock) as ResourceKind[]) {
-    const amt = (stock[k] ?? 0) * STARTING_STOCK_SCALE;
+    const amt = stock[k] ?? 0;
     if (amt > 0) barn.store[k] = amt;
   }
   state.buildings.push(barn);

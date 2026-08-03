@@ -97,6 +97,7 @@ import {
   DEATH_UNREST,
   TAVERN_GRAIN_PER_SEASON,
   IMMIGRATION_CHANCE,
+  NOMAD_SURPLUS_SEASONS,
   IMMIGRATION_MIN,
   IMMIGRATION_MAX,
   IMMIGRANT_SICK_CHANCE,
@@ -307,12 +308,17 @@ function heat(s: GameState, dt: number, log: LogFn): void {
     const stoneFactor = home?.type === 'stonehouse' ? STONE_HOUSE_HEAT_FACTOR : 1;
     const clothFactor = c.clothed ? CLOTHED_HEAT_FACTOR : 1;
     let need = HEAT_PER_CITIZEN_WINTER * rate * stoneFactor * clothFactor; // heat units
-    // Fuel is only burned where it is kept: in the hearth of the house the villager lives in.
-    // There is no fall-back to the village fuel pile any more — a barn is a woodshed, not a fire,
-    // and letting everyone draw on it directly meant the stockpile drained on its own while the
-    // houses it was meant to supply stood cold. The household hauler carrying wood home is now
-    // the only way fuel is ever spent, so a well-stocked barn beside an unstocked house keeps
-    // nobody warm, which is the point.
+    // Fuel is burned where it is kept: in the hearth of the house the villager lives in. A housed
+    // villager has no fall-back to the village fuel pile — a barn is a woodshed, not a fire, and
+    // letting everyone draw on it directly meant the stockpile drained on its own while the houses
+    // it was meant to supply stood cold. Carrying wood home is the only way a household spends it,
+    // so a well-stocked barn beside an unstocked house keeps nobody warm.
+    //
+    // Someone with *no* house is the exception, and has to be: they have nowhere to keep fuel, so
+    // the rule would mean they can never have a fire at all. Normal and Hard start every villager
+    // roofless — that is the whole difficulty — and without this they all freeze in the first
+    // winter beside a full woodpile, with the village wiped out before a single house is up. They
+    // camp round the village pile instead until somebody roofs them.
     if (home) {
       for (const [kind, heat] of [['firewood', FIREWOOD_HEAT], ['coal', COAL_HEAT]] as const) {
         if (need <= 0.000001) break;
@@ -322,6 +328,9 @@ function heat(s: GameState, dt: number, log: LogFn): void {
           need -= fromLarder * heat;
         }
       }
+    } else if (need > 0.000001) {
+      need = consume(s, 'firewood', need / FIREWOOD_HEAT) * FIREWOOD_HEAT;
+      if (need > 0.000001) need = consume(s, 'coal', need / COAL_HEAT) * COAL_HEAT;
     }
     // Only winter kills. Going short of fuel in summer is uncomfortable, not fatal, and an
     // unheated villager has to stay unheated for FREEZE_SECONDS before they die — a gap while a
@@ -2525,7 +2534,12 @@ function immigrate(s: GameState, log: LogFn): void {
   const pop = s.citizens.length;
   if (pop === 0) return;
   // Needs a comfortable surplus. Counts larders too — see the reproduction block.
-  if (totalFoodAvailable(s) <= pop * FOOD_PER_CITIZEN_PER_SEASON * 1.5) return;
+  //
+  // The multiple is 4.5 seasons rather than the 1.5 it used to be purely to hold the bar still
+  // when the ration was cut by `CONSUMPTION_SLOWDOWN`: 1.5 seasons of the old ration and 4.5 of
+  // the new one are the same amount of food. Left at 1.5 a founding village cleared it three
+  // times over on day one, and nomads knocked every single season from the start.
+  if (totalFoodAvailable(s) <= pop * FOOD_PER_CITIZEN_PER_SEASON * NOMAD_SURPLUS_SEASONS) return;
   if (Math.random() >= IMMIGRATION_CHANCE) return;
 
   const count = IMMIGRATION_MIN + Math.floor(Math.random() * (IMMIGRATION_MAX - IMMIGRATION_MIN + 1));

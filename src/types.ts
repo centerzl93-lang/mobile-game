@@ -1181,8 +1181,27 @@ export const FOOD_PER_CITIZEN_PER_SEASON = 60 / CONSUMPTION_SLOWDOWN;
 export const HEAT_PER_CITIZEN_WINTER = 40 / CONSUMPTION_SLOWDOWN; // heat units; firewood = 1, coal = 2
 export const FIREWOOD_HEAT = 1;
 export const COAL_HEAT = 2;
-export const CLOTHING_PER_CITIZEN_WINTER = 5; // clothing worn out over winter
-export const TOOL_WEAR_PER_WORKER = 4; // tools consumed per employed worker per season
+/**
+ * Coats worn out per villager over a *winter* season. Spring, autumn and summer are scaled down
+ * by `SEASON_BURN`, so a year costs 2.05x this — averaging out to about one coat per villager per
+ * season, which is the rule this is tuned to.
+ *
+ * At 2 the founding twelve get through their first year on the 48 coats they start with and
+ * nothing over. A tailor makes `TAILOR_CLOTHING_OUT` (6) a worker a season, so two tailors' worth
+ * of work covers a village of roughly this size — which is the point: coats are meant to be
+ * scarce until the village is big enough to keep a tailor in leather.
+ */
+export const CLOTHING_PER_CITIZEN_WINTER = 2;
+/**
+ * Tools consumed per employed worker per season — one tool, one season's work.
+ *
+ * A village starts with 48, which is twelve villagers' worth of a full year. Only working adults
+ * wear tools out, so the founding eight actually get about six seasons from it; the margin closes
+ * as the village grows and every new worker adds four tools a year to the bill. A blacksmith
+ * turns out `SMITH_IRON_TOOLS_OUT` (8) a worker a season, so one staffed smithy keeps about
+ * sixteen workers in tools — the village has to reach that before the opening stock runs dry.
+ */
+export const TOOL_WEAR_PER_WORKER = 1;
 export const NO_TOOLS_PENALTY = 0.6; // output multiplier when the tool stockpile is empty
 export const SICKNESS_CHANCE = 0.5; // chance an unclothed villager sickens in winter
 
@@ -1327,6 +1346,14 @@ export const TAVERN_GRAIN_PER_SEASON = 10; // grain a staffed tavern brews into 
 
 // ---- Immigration (nomads seeking a home) ----
 export const IMMIGRATION_CHANCE = 0.25; // per-season chance when a food surplus draws newcomers
+/**
+ * Seasons of food the village must have banked before nomads think it worth joining.
+ *
+ * Tuned as an absolute quantity, not a multiple of the ration: it was 1.5 seasons when a season
+ * cost 60 a head, and is 4.5 now that `CONSUMPTION_SLOWDOWN` has taken that to 20 — the same
+ * larder, described against a smaller ration.
+ */
+export const NOMAD_SURPLUS_SEASONS = 4.5;
 export const IMMIGRATION_MIN = 4; // fewest nomads in an arriving band
 export const IMMIGRATION_MAX = 12; // most nomads in an arriving band
 export const IMMIGRANT_SICK_CHANCE = 0.15; // chance a newcomer arrives already sick
@@ -1390,54 +1417,31 @@ export const TAILOR_LEATHER_IN = 8;
 export const TAILOR_CLOTHING_OUT = 6;
 
 // ---- Starting stockpile / population ----
-export const START_RESOURCES: Resources = {
-  fruit: 120,
-  grain: 120,
-  corn: 0,
-  potato: 0,
-  rice: 0,
-  barley: 0,
-  carrot: 0,
-  tomato: 0,
-  onion: 0,
-  pepper: 0,
-  cabbage: 0,
-  beans: 0,
-  pumpkin: 0,
-  apple: 0,
-  grapes: 0,
-  strawberry: 0,
-  melon: 0,
-  eggs: 0,
-  fish: 90,
-  meat: 90,
-  wood: 220,
-  firewood: 200,
-  stone: 40,
-  coal: 0,
-  iron: 0,
-  tools: 120,
-  leather: 0,
-  clothing: 80,
-  cattle: 0,
-  pigs: 0,
-  chickens: 0,
-  medicine: 40,
-};
-
 /**
- * Opening stockpile per difficulty. Easy is the full `START_RESOURCES` (and also grants
- * `EASY_START_HOUSES` houses). Normal is half of the basics only — food, wood, stone, firewood,
- * clothing, tools. Hard is the same as Normal minus wood and stone.
+ * Opening stockpile per difficulty, in the units the barn actually receives.
+ *
+ * These were formerly written at a third of their real size and multiplied by a
+ * `STARTING_STOCK_SCALE` of 3 on the way in, which meant the table said 120 tools and the game
+ * gave 360. The scale is folded in here now: what you read is what you get.
+ *
+ * **Survival rations are the same on every difficulty** — 1200 food, 600 firewood, 48 tools and
+ * 48 coats — because they are tuned against the founding twelve rather than against difficulty
+ * (see `TOOL_WEAR_PER_WORKER` and `CLOTHING_PER_CITIZEN_WINTER`: roughly a year's worth, so the
+ * first winter is survivable and the second is not unless a blacksmith and a tailor are running).
+ * What difficulty changes is the leg-up: Easy hands over building materials, medicine and
+ * `EASY_START_HOUSES` finished houses; Normal and Hard grant no wood or stone at all, so
+ * everything has to be gathered before anything can be raised.
  */
-/** Opening stockpiles are multiplied by this, matching the founding population (4 → 12). */
-export const STARTING_STOCK_SCALE = 3;
+const SURVIVAL_START = {
+  fruit: 300, grain: 300, fish: 300, meat: 300, // 1200 food all told
+  firewood: 600,
+  tools: 48,
+  clothing: 48,
+} as const;
 export const DIFFICULTY_RESOURCES: Record<Difficulty, Partial<Resources>> = {
-  easy: { ...START_RESOURCES },
-  // Neither Normal nor Hard grants building materials: wood and stone must be gathered before
-  // anything can be raised. Hard differs by starting on shorter rations of everything else.
-  normal: { fruit: 60, grain: 60, fish: 45, meat: 45, firewood: 100, clothing: 40, tools: 60 },
-  hard: { fruit: 30, grain: 30, fish: 25, meat: 25, firewood: 50, clothing: 20, tools: 30 },
+  easy: { ...SURVIVAL_START, wood: 660, stone: 120, medicine: 120 },
+  normal: { ...SURVIVAL_START },
+  hard: { ...SURVIVAL_START },
 };
 
 // ---- Trade (barter by relative value; merchant keeps a margin) ----

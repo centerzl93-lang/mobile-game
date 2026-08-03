@@ -21,13 +21,57 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **consumption tuning + hearth-only fuel**, **self-filling jobs**, a **seven-item
-gameplay pass**, **staged construction**,
+Latest work: **opening stock + tool/coat economy**, **consumption tuning + hearth-only fuel**,
+**self-filling jobs**, a **seven-item gameplay pass**, **staged construction**,
 **render optimisation**, a **renderer teardown leak**, **lakes**, **landscape play** and
 **building footprints** — all this session.
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Opening stock and the tool/coat economy (this session)
+**Every difficulty now starts with the same survival rations**: 1200 food, 600 firewood, 48 tools,
+48 coats. Those numbers are tuned against the founding twelve, not against difficulty. What
+difficulty changes is the leg-up — Easy still hands over 660 wood, 120 stone, 120 medicine and
+three finished houses; Normal and Hard grant no building materials at all.
+
+While setting them I folded away `STARTING_STOCK_SCALE`. The tables used to be written at a third
+of their real size and multiplied by 3 on the way into the barn, so the table said 120 tools and
+the game gave 360 — a trap for anyone reading it to answer "what do we start with". The figures in
+`DIFFICULTY_RESOURCES` are now what the barn actually receives, and the dead `START_RESOURCES`
+table (a second, now-wrong source of truth) is gone.
+
+**Wear rates**, both re-tuned to "one per villager per season":
+
+| | was | now | a year costs |
+|---|---|---|---|
+| `TOOL_WEAR_PER_WORKER` | 4 / employed worker / season | **1** | workers × 4 |
+| `CLOTHING_PER_CITIZEN_WINTER` | 5 / villager / winter | **2** | villagers × 4.1 |
+
+Coats are billed through `SEASON_BURN` (winter 1, spring/autumn 0.45, summer 0.15 — 2.05 over a
+year), so 2 a winter averages out to about one coat per villager per season. Measured: the founding
+twelve reach exactly **0 coats at the end of year one**, which is the intended cliff. Tools are not
+season-weighted and only *employed* villagers wear them, so the founding eight workers get about six
+seasons out of 48 — measured at exactly 8 a season for 8 workers. The margin closes as the village
+grows; past twelve workers, 48 is a year and no more.
+
+That is the loop the player asked for: a staffed blacksmith turns out 8 tools a worker a season
+(≈16 workers kept supplied) and a tailor 6 coats (≈one village's worth), so both have to be running
+before the opening stock is gone.
+
+**A knock-on worth knowing:** the nomad gate is written as a multiple of the ration
+(`totalFoodAvailable > pop * FOOD_PER_CITIZEN_PER_SEASON * n`), so cutting the ration by three cut
+the bar with it — from 1080 food for a founding village to 360, which a fresh start clears three
+times over. Nomads began knocking every season from day one. `NOMAD_SURPLUS_SEASONS` (4.5, up from
+a hard-coded 1.5) holds the bar at the same *absolute* larder it always meant. Anything else keyed
+to `FOOD_PER_CITIZEN_PER_SEASON` as a threshold rather than as a rate deserves the same look.
+
+**A wipe this uncovered.** Normal and Hard start every villager roofless, and the previous change
+had made fuel burnable *only* from a house larder — so on those difficulties everybody froze in the
+first winter beside a full, untouched 600-firewood pile, before a single house could be raised.
+Measured: pop 12 → 0 in year one with food and firewood barely touched. A villager with no house at
+all now falls back to the village pile; they have nowhere to keep fuel, so the rule cannot apply to
+them. A *housed* villager still has no fall-back, which is the case the rule was for.
 
 ### Consumption, hearths, and the road that never got built (this session)
 Three asks, and the third turned out to be a fault the *previous* change had introduced.
@@ -895,10 +939,12 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
 - Committed tests: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers npx playwright test`
   (config runs `npm run build && npm run preview` on port 4173). **Run the three specs separately** —
   the whole suite takes well over 15 minutes, so a wrapping `timeout` will cut it off mid-run and
-  tell you nothing. Last full state: `world` 13/13, `menus` 7/7, `newgame` 96/97 — the
-  villager-breeding block, which had been timing out for several sessions, is green. The single
-  failure is the known map-seed flake in `household larders > residents stock their own house`:
-  it passes on its own (verified) and fails on an unlucky map, the walking-budget pattern below.
+  tell you nothing. Last full state: `world` 13/13, `menus` 7/7, `newgame` 98/98 across
+  the run that mattered, but expect **one map-seed flake per full run** rather than a clean sweep:
+  `household larders > residents stock their own house` and `trading post > a stock order pulls
+  goods` have each failed once and passed on their own straight after. Both are the walking-budget
+  pattern below, and both got tighter when fuel started having to be carried home. Re-run a lone
+  failure before believing it.
 - Headless scratchpad drivers use `playwright-core` + chromium at
   `/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell` with SwiftShader flags,
   against `npm run preview` on port 4173 (preview is flaky — run it in the background).
@@ -979,6 +1025,11 @@ Never put the model ID in commits/PRs/code/comments — chat replies only.
   easier to feed and heat, and may be too easy), housing capacity (8/10), `HOUSE_LARDER_SEASONS`
   (0.5) with `LARDER_CARRY_CAP` (×3), the `SEASON_BURN` table (firewood and clothing cost across
   the whole year), and the birth rates (`BIRTH_CHANCE` 0.55 + surplus/wellbeing).
+- **Difficulty is now only a leg-up, not a ration.** Food, firewood, tools and coats are identical
+  on Easy, Normal and Hard; only building materials, medicine and Easy's three free houses differ.
+  That was the explicit ask, but it does flatten the ladder — if Normal needs to bite harder, the
+  lever to reach for is the starting *materials*, or `EASY_START_HOUSES`, rather than putting the
+  survival rations back on a per-difficulty curve.
 - **Fuel now has a delivery problem rather than a supply problem.** With the barn fall-back gone,
   a household that its hauler never reaches goes cold no matter how much firewood the village owns
   — and in winter that kills. The 3× slowdown gives a woodpile three times the runway, so the two

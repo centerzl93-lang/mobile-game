@@ -82,6 +82,8 @@ import {
   isFertile,
   entranceTile,
   hasDoor,
+  worksIndoors,
+  CIRCLE_WORK,
   ADULT_AGE,
   SCHOOL_AGE,
   SCHOOL_ATTENDANCE,
@@ -725,6 +727,9 @@ function stepOutOfWalls(s: GameState, c: Citizen): void {
 // ---- per-citizen behaviour ----
 function runCitizen(s: GameState, c: Citizen, dt: number, toolFactor: number): void {
   stepOutOfWalls(s, c);
+  // Out of the building unless this tick puts them back at their bench, so a worker who breaks off
+  // to haul, shop or rest reappears rather than staying invisible on the doorstep.
+  c.inside = false;
   if (!isAdult(c) || c.sick) {
     wander(s, c, dt); // children play; the sick rest — neither can work or haul
     return;
@@ -936,13 +941,21 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
     return;
   }
 
-  // 3. Work at the building; on completion, fill carry with a produced load.
-  goTo(c, buildingApproach(s, b));
+  // 3. Go where the work actually is, and on completion fill carry with a produced load.
+  //
+  // For most trades that is the building itself — and for the indoor ones, inside it. For a
+  // forester, gatherer, hunter or herbalist it is a tile out in their work circle: the tree they
+  // are felling or the patch they are foraging, held in `c.workAt` for the length of the cycle so
+  // they walk to one place and stay there.
+  const spot = workSpot(s, c, b);
+  goTo(c, spot);
   if (stepTo(s, c, dt)) {
+    c.inside = worksIndoors(b.type);
     c.timer += dt;
     if (c.timer >= WORK_SECONDS) {
       c.timer = 0;
-      const out = workOutput(s, b, dt, toolFactor);
+      const out = workOutput(s, b, dt, toolFactor, c);
+      c.workAt = undefined; // next cycle picks somewhere new
       if (out && out.amount > 0.01) {
         // Healthier, happier, and educated workers produce more.
         const wellbeing = (0.7 + 0.3 * (c.health / 100)) * (0.85 + 0.15 * (c.happiness / 100));
@@ -965,6 +978,40 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
       }
     }
   }
+}
+
+/**
+ * Where this villager stands to do a cycle of their job.
+ *
+ * Most trades are done at the building — and `stepTo` arriving there is what sets `c.inside` for
+ * the ones done under a roof. The circle trades are the exception: their work is out among the
+ * trees, so they pick a tile, walk to it, and hold it in `c.workAt` until the cycle completes.
+ *
+ * A forester takes rock and ore out of his circle before he takes wood, because every deposit
+ * cleared is another tile that can be planted. Everyone else simply works wherever the yield is —
+ * standing timber for a gatherer or a hunter, and failing that anywhere in the circle at all, so a
+ * worked-out wood still has its people walking it rather than queueing at the door.
+ */
+function workSpot(s: GameState, c: Citizen, b: Building): { x: number; y: number } {
+  if (!CIRCLE_WORK.includes(b.type)) return buildingApproach(s, b);
+  if (c.workAt && reachableTile(c, Math.floor(c.workAt.x), Math.floor(c.workAt.y))) return c.workAt;
+
+  const pickFrom = (pred: (t: Tile, tx: number, ty: number) => boolean): { x: number; y: number } | null => {
+    for (const [tx, ty] of scatteredCircleSpots(s, b, pred)) {
+      if (!isWalkable(s, tx, ty) || !reachableTile(c, tx, ty)) continue;
+      return { x: tx + 0.5, y: ty + 0.5 };
+    }
+    return null;
+  };
+
+  let spot: { x: number; y: number } | null = null;
+  if (b.type === 'lumberyard') {
+    spot = pickFrom((t) => (t.stone ?? 0) > 0 || (t.iron ?? 0) > 0);
+  }
+  spot ??= pickFrom((t) => t.type === 'forest' && t.trees > 0.05);
+  spot ??= pickFrom(() => true);
+  c.workAt = spot ?? buildingApproach(s, b);
+  return c.workAt;
 }
 
 /** Market vendor: ferry a bit of every good from barns into the market stall. */
@@ -1141,6 +1188,7 @@ function workOutput(
   b: Building,
   dt: number,
   tf: number,
+  c?: Citizen,
 ): { kind: ResourceKind; amount: number } | null {
   switch (b.type) {
     case 'gatherer':
@@ -1175,9 +1223,26 @@ function workOutput(
     }
     case 'lumberyard': {
       if (b.replant ?? true) plantCircle(s, b); // sow saplings on grass so the forest renews
-      const f = factorCircle(s, b);
-      depleteCircleTrees(s, b, 0.25 * f);
       tendCircle(s, b, WORK_SECONDS);
+      // Standing on rock or ore? That is what this cycle was for: clearing it is what makes the
+      // tile plantable, and the forester carries the haul back like any other load.
+      const here = c && getTile(s.tiles, Math.floor(c.x), Math.floor(c.y));
+      if (here && ((here.stone ?? 0) > 0 || (here.iron ?? 0) > 0)) {
+        const iron = (here.iron ?? 0) > 0;
+        const got = iron ? (here.iron ?? 0) : (here.stone ?? 0);
+        delete here.iron;
+        delete here.stone;
+        s.forestVersion = (s.forestVersion ?? 0) + 1; // the prop layers have to drop it
+        return { kind: iron ? 'iron' : 'stone', amount: Math.max(LOAD_MAT * 0.5, got) * tf };
+      }
+      const f = factorCircle(s, b);
+      // Fell the tree he actually walked to, and only spread the cut over the circle when he is
+      // not standing at one — otherwise the wood thins evenly around a man chopping in one spot.
+      if (here && here.type === 'forest' && here.trees > 0.05) {
+        here.trees = Math.max(0.05, here.trees - 0.25 * f);
+      } else {
+        depleteCircleTrees(s, b, 0.25 * f);
+      }
       return { kind: 'wood', amount: LOAD_MAT * f * tf };
     }
     case 'herbalist':
@@ -2845,6 +2910,33 @@ function tileUnderBuilding(s: GameState, tx: number, ty: number): boolean {
  * wood, and saplings appearing in tidy rows behind it. Foresters work a patch of forest, not a
  * lawn — picking at random is what makes the wood look worked rather than mown.
  */
+/** `scatteredCircleTiles`, but yielding the tile coordinates — what `workSpot` needs to walk to. */
+function scatteredCircleSpots(
+  s: GameState,
+  b: Building,
+  pred: (t: Tile, tx: number, ty: number) => boolean,
+): [number, number][] {
+  const r = workRadiusOf(b) ?? 4;
+  const cx = b.x + footprintW(b) / 2;
+  const cy = b.y + footprintH(b) / 2;
+  const r2 = r * r;
+  const out: [number, number][] = [];
+  for (let ty = Math.floor(cy - r); ty <= Math.ceil(cy + r); ty++) {
+    for (let tx = Math.floor(cx - r); tx <= Math.ceil(cx + r); tx++) {
+      const ddx = tx + 0.5 - cx;
+      const ddy = ty + 0.5 - cy;
+      if (ddx * ddx + ddy * ddy > r2) continue;
+      const t = getTile(s.tiles, tx, ty);
+      if (t && pred(t, tx, ty)) out.push([tx, ty]);
+    }
+  }
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
 function scatteredCircleTiles(s: GameState, b: Building, pred: (t: Tile, tx: number, ty: number) => boolean): Tile[] {
   const r = workRadiusOf(b) ?? 4;
   const cx = b.x + footprintW(b) / 2;

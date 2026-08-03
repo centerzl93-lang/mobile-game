@@ -603,6 +603,19 @@ export interface Citizen {
   /** Seconds of leisure remaining; while > 0 the villager is on a break, not working. */
   rest?: number;
   /**
+   * The tile in their work circle this villager is working this cycle — the tree they are felling,
+   * the rock they are clearing, the patch they are foraging. Held across ticks so they walk to one
+   * place and stay there rather than re-picking a destination every frame, and cleared when the
+   * cycle finishes so the next one takes them somewhere new.
+   */
+  workAt?: { x: number; y: number };
+  /**
+   * Inside their workplace. Set while an indoor trade is actually working (see `worksIndoors`);
+   * the renderer draws nobody who is indoors, so a smith at his anvil is out of sight rather than
+   * loitering on the doorstep. Transient — never saved, recomputed as they work.
+   */
+  inside?: boolean;
+  /**
    * Got a clothing ration at the last season turnover. Transient — recomputed each season in
    * `endSeason`, never saved. A clothed villager burns less firewood; an unclothed one risks
    * falling ill in winter.
@@ -852,6 +865,28 @@ export function hasDoor(type: BuildingType): boolean {
  * builders carrying to them.
  */
 export const OPEN_FOOTPRINT: BuildingType[] = ['farm', 'ranch'];
+
+/**
+ * Buildings whose work happens out in the work circle, not at the building.
+ *
+ * A forester fells the trees in his circle and clears the rock out of it; a gatherer, a hunter and
+ * a herbalist walk theirs. These villagers spend their day away from their hut and only come back
+ * to drop a load off. Not every building with a `workRadius` belongs here — a fishing hut's circle
+ * is water, and its worker stands on the jetty.
+ */
+export const CIRCLE_WORK: BuildingType[] = ['gatherer', 'hunting', 'lumberyard', 'herbalist'];
+
+/**
+ * Does this trade happen under a roof? A smith, a tailor, a woodcutter, a teacher and a miner are
+ * all inside their building while they work, and are drawn as such — out of sight until they come
+ * out with a load.
+ *
+ * Everything with a door except the circle trades and the fishing hut, whose jetty is the point of
+ * it. A field and a pen have no door: they are open ground, and their workers are visible on them.
+ */
+export function worksIndoors(type: BuildingType): boolean {
+  return hasDoor(type) && !CIRCLE_WORK.includes(type) && type !== 'fishing';
+}
 export function blocksMovement(b: Building): boolean {
   return b.built && !OPEN_FOOTPRINT.includes(b.type);
 }

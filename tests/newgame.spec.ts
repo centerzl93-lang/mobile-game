@@ -3412,3 +3412,128 @@ test.describe('lives run on ticks, not seasons', () => {
     expect(out.endPop).toBeLessThan(out.startPop * 3);
   });
 });
+
+test.describe('work happens where the work is', () => {
+  /** Put a finished, fully staffed building of `type` somewhere near the barn. */
+  const raise = `(type, minR) => {
+    const g = window.__village;
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    barn.store.wood = 9e4;
+    barn.store.stone = 9e4;
+    for (let r = minR || 3; r < 26; r++)
+      for (let dy = -r; dy <= r; dy++)
+        for (let dx = -r; dx <= r; dx++) {
+          if (!g.debugCanPlace(type, barn.x + dx, barn.y + dy).ok) continue;
+          const id = g.debugPlace(type, barn.x + dx, barn.y + dy);
+          if (id == null) continue;
+          const b = s.buildings.find((x) => x.id === id);
+          b.built = true;
+          b.progress = g.debugBuildTime(type);
+          b.desiredWorkers = g.debugJobCount(type);
+          return b;
+        }
+    throw new Error('nowhere to put a ' + type);
+  }`;
+
+  test('an indoor trade works inside its building, and steps out to haul', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state; // after the new game: startNewGame replaces the state object wholesale
+      const wc = eval(mk)('woodcutter', 6); // clear of the barn, so walking there is visible
+      g.debugAdvance(5);
+      let inside = 0;
+      let carrying = 0;
+      let insideCarrying = 0;
+      let insideAwayFromShop = 0;
+      for (let i = 0; i < 400; i++) {
+        wc.store.wood = 9999; // keep it stocked: this is about where they stand, not logistics
+        g.debugAdvance(0.5);
+        const c = s.citizens.find((x: any) => x.jobId === wc.id);
+        if (!c) continue;
+        if (c.carry) carrying++;
+        if (!c.inside) continue;
+        inside++;
+        if (c.carry) insideCarrying++;
+        // The shop is 3x3 from its corner; its door is a tile off the edge.
+        const near = c.x > wc.x - 2 && c.x < wc.x + 5 && c.y > wc.y - 2 && c.y < wc.y + 5;
+        if (!near) insideAwayFromShop++;
+      }
+      return { inside, carrying, insideCarrying, insideAwayFromShop };
+    }, raise);
+
+    // They do go in — the renderer draws nobody who is indoors, so this is what "at the anvil"
+    // looks like from outside.
+    expect(out.inside, 'the worker went inside to work').toBeGreaterThan(0);
+    expect(out.carrying, 'and hauled loads away').toBeGreaterThan(0);
+    // Never indoors while out on the road with a load, and never indoors anywhere but the shop.
+    expect(out.insideCarrying).toBe(0);
+    expect(out.insideAwayFromShop).toBe(0);
+  });
+
+  test('a forester works out in the circle, not on the doorstep', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state; // after the new game: startNewGame replaces the state object wholesale
+      const lum = eval(mk)('lumberyard', 4);
+      g.debugAdvance(5);
+      const centre = { x: lum.x + 1.5, y: lum.y + 1.5 };
+      let maxDist = 0;
+      const spots = new Set<string>();
+      for (let i = 0; i < 400; i++) {
+        g.debugAdvance(0.5);
+        for (const c of s.citizens) {
+          if (c.jobId !== lum.id || c.carry) continue;
+          maxDist = Math.max(maxDist, Math.hypot(c.x - centre.x, c.y - centre.y));
+          if (c.workAt) spots.add(`${Math.floor(c.workAt.x)},${Math.floor(c.workAt.y)}`);
+        }
+      }
+      return { maxDist, spots: spots.size, radius: g.debugWorkRadius(lum.id) };
+    }, raise);
+
+    // The hut is 3x3, so anything past ~2.2 tiles from its middle is off the building entirely.
+    expect(out.maxDist, 'the forester left the building behind').toBeGreaterThan(3);
+    expect(out.maxDist).toBeLessThanOrEqual(out.radius + 2); // ...but stayed in their own circle
+    // And worked more than one spot rather than standing at a single favourite tree.
+    expect(out.spots).toBeGreaterThan(1);
+  });
+
+  test('a forester clears rock and ore out of its circle', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state; // after the new game: startNewGame replaces the state object wholesale
+      const lum = eval(mk)('lumberyard', 4);
+      // Seed the circle with deposits, and count only the tiles seeded so natural rock elsewhere
+      // cannot muddy the figure.
+      const seeded: number[] = [];
+      const r = g.debugWorkRadius(lum.id);
+      for (let dy = -r; dy <= r && seeded.length < 8; dy++)
+        for (let dx = -r; dx <= r && seeded.length < 8; dx++) {
+          if (dx * dx + dy * dy > r * r) continue;
+          const x = lum.x + 1 + dx, y = lum.y + 1 + dy;
+          if (x < 1 || y < 1 || x >= s.w - 1 || y >= s.h - 1) continue;
+          const i = y * s.w + x;
+          const t = s.tiles[i];
+          if (t.type === 'water' || t.type === 'stone') continue;
+          if (s.buildings.some((b: any) => x >= b.x && x < b.x + 3 && y >= b.y && y < b.y + 3)) continue;
+          t.type = 'grass';
+          t.trees = 0;
+          t.stone = 3;
+          seeded.push(i);
+        }
+      const before = seeded.filter((i) => (s.tiles[i].stone ?? 0) > 0).length;
+      for (let i = 0; i < 3000; i++) g.debugAdvance(0.2);
+      return { before, after: seeded.filter((i) => (s.tiles[i].stone ?? 0) > 0).length };
+    }, raise);
+
+    expect(out.before, 'deposits were actually seeded').toBeGreaterThan(3);
+    // Every one cleared is a tile the forester can plant, which is the point of doing it.
+    expect(out.after, 'the forester cleared the ground').toBeLessThan(out.before);
+  });
+});

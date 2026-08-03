@@ -1759,7 +1759,10 @@ export class Renderer3D {
     for (let i = 0; i < n; i++) {
       const c = s.citizens[i];
       const child = c.age < ADULT_AGE;
-      const sc = child ? 0.62 : 1;
+      // A villager working an indoor trade is *in* the workshop, so nothing is drawn for them.
+      // Scaled away rather than skipped: every layer below indexes by `i`, and leaving the slot
+      // out would shift everyone after them onto the wrong body.
+      const sc = c.inside ? 0.0001 : child ? 0.62 : 1;
       const fit = OUTFITS[lookIndex(c.id, 0x9e3779b9, OUTFITS.length)];
       const moving = Math.abs(c.tx - c.x) + Math.abs(c.ty - c.y) > 0.03;
       // A small rise and fall on each stride, in step with the legs below (hence the doubled

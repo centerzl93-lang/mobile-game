@@ -21,7 +21,8 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **five more tree species**, **named/deletable save slots**,
+Latest work: **workers go where the work is**, **five more tree species**,
+**named/deletable save slots**,
 **lives on ticks (ageing/births)**,
 **opening stock + tool/coat economy**,
 **consumption tuning + hearth-only fuel**,
@@ -31,6 +32,27 @@ Latest work: **five more tree species**, **named/deletable save slots**,
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Workers go where the work is (this session)
+Every worker used to stand on their building's doorstep whatever their trade. Now `workSpot` in
+`src/game/simulation.ts` decides where a cycle happens, and there are three answers:
+
+- **Circle trades** (`CIRCLE_WORK` — forester, gatherer, hunter, herbalist) pick a tile out in
+  their work circle, walk to it, and hold it in `Citizen.workAt` until the cycle completes, so
+  they settle at one tree rather than re-picking a destination every frame. A forester takes rock
+  and ore out of the circle *before* wood — every deposit cleared is another tile that can be
+  planted — and fells the tile he is standing on rather than thinning the whole circle evenly.
+- **Indoor trades** (`worksIndoors` — everything with a door that is not a circle trade or the
+  fishing hut) go in. `Citizen.inside` is set on arrival at the bench, and the renderer scales
+  those villagers to nothing, so a smith at his anvil is out of sight instead of loitering
+  outdoors. It is cleared at the top of `runCitizen` every tick and re-set by the work branch, so
+  anyone who breaks off to haul, shop or rest reappears immediately.
+- **Fields, pens and the fishing hut** are unchanged: open ground and a jetty, where the worker
+  should be visible standing on the job.
+
+Note the renderer *scales* an indoor villager away rather than skipping them — every instanced
+layer indexes by the citizen's position in the array, and leaving a slot out would shift everyone
+after them onto the wrong body.
 
 ### Five more tree species, and the tint bug that hid them (this session)
 The wood was all pine. There are six species now — `pine` plus `spruce`, `birch`, `oak`, `maple`

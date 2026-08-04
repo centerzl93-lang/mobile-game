@@ -1444,7 +1444,11 @@ export class Renderer3D {
       // rebuild this whole pass on every frame of a build.
       const stage = buildStage(b);
       const step = stage === 'framing' ? Math.round(framedFraction(b) * 12) : 0;
-      sig += b.id + ':' + stage + ':' + step + ':' + (b.fireTimer ? 1 : 0) + ':' + (b.rot ?? 0) + ';';
+      // `demolish` is in the signature as well as the stage: a building that has been marked but
+      // not started on looks exactly like one that has not, and the mark is what the player wants
+      // to see. `type` too — an upgrade changes it in place, on the same building id.
+      sig += b.id + ':' + b.type + ':' + stage + ':' + step + ':' + (b.fireTimer ? 1 : 0) +
+        ':' + (b.demolish ? 1 : 0) + ':' + (b.rot ?? 0) + ';';
     }
     if (sig === this.sig.bld) return;
     this.sig.bld = sig;
@@ -1491,7 +1495,9 @@ export class Renderer3D {
         this.scene.add(obj);
       }
       if (kind === 'frame') this.updateFrameClip(obj, framedFraction(b));
-      this.styleBuilding(obj, b.type, !!b.fireTimer);
+      // A condemned building glows the same way a burning one does, in a colder colour: whatever
+      // is standing there is coming down, and that has to read from across the map.
+      this.styleBuilding(obj, b.type, !!b.fireTimer, !!b.demolish);
     }
 
     // Chimney smoke emitters: hearth buildings that are built.
@@ -1711,7 +1717,12 @@ export class Renderer3D {
    * (`makeBuildingSite`, `makeBuildingFrame`, then the model), and the glass silhouette is kept
    * for the placement preview alone, where see-through is the honest reading: it is not there yet.
    */
-  private styleBuilding(obj: THREE.Object3D, type: BuildingType, fire: boolean): void {
+  private styleBuilding(
+    obj: THREE.Object3D,
+    type: BuildingType,
+    fire: boolean,
+    condemned = false,
+  ): void {
     const isModel = !!obj.userData.model;
     const ownColours = !!obj.userData.ranch || !!obj.userData.site; // pen and site keep their own
     obj.traverse((o) => {
@@ -1721,7 +1732,7 @@ export class Renderer3D {
       if (!mat || Array.isArray(mat)) return;
       // Box meshes get the flat building color; model meshes keep their own textures/colors.
       if (!isModel && !ownColours && mat.color) mat.color.set(BUILDING_COLORS[type]);
-      mat.emissive?.set(fire ? 0x812c10 : 0x000000);
+      mat.emissive?.set(fire ? 0x812c10 : condemned ? 0x4a1410 : 0x000000);
       mat.transparent = false;
       mat.opacity = 1;
       mat.depthWrite = true;

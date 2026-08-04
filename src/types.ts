@@ -495,6 +495,27 @@ export interface Building {
   store: Partial<Record<ResourceKind, number>>;
   /** Seconds of fire remaining while burning down (undefined = not on fire). */
   fireTimer?: number;
+  /**
+   * Marked for demolition: builders will come and pull it down. It keeps working — housing its
+   * residents, employing its workers — right up until it is actually razed, so marking a mistake
+   * costs nothing until somebody swings a hammer.
+   */
+  demolish?: boolean;
+  /** Seconds of tearing-down done, against `demoTimeOf(type)`. */
+  demoProgress?: number;
+  /**
+   * The structure is down and what is left is a rubble pile: whatever it held plus the salvage off
+   * its frame, sitting in `store` waiting for a builder to cart it to a barn. `built` is false, so
+   * it is no longer a workplace, a home or a warehouse — but it is not a construction site either,
+   * and every loop that walks unbuilt buildings has to say which of the two it means.
+   */
+  razed?: boolean;
+  /**
+   * What to raise on this spot once the rubble is gone. Set by an upgrade (a house becoming a
+   * stone house): the old building is razed and carted off like any other, and then instead of the
+   * plot going empty it becomes a construction site for this type.
+   */
+  upgradeTo?: BuildingType;
   /** Forester: plant saplings on grass in the work circle to grow a renewable forest. */
   replant?: boolean;
   /** Farm: which crop it grows (defaults to wheat). */
@@ -537,6 +558,7 @@ export type TaskKind =
   | 'build' // laboring at a construction site
   | 'toPath' // walking to a planned path tile
   | 'toLarder' // carrying household supplies home to stock the larder
+  | 'toHouse' // a market vendor carrying groceries out to a household in the circle
   | 'wander';
 
 export interface CitizenTask {
@@ -692,10 +714,39 @@ export function houseCapacityOf(type: BuildingType): number {
  */
 export const BUILD_FRAMING_AT = 0.5;
 
+/**
+ * Tearing a building down takes this much of the time it took to put up. Pulling a house apart is
+ * quicker than raising one, but it is not free — that is the whole point of demolition being a job
+ * a builder has to walk to rather than something a menu does instantly.
+ */
+export const DEMO_TIME_FRACTION = 0.5;
+
+export function demoTimeOf(type: BuildingType): number {
+  return buildTimeOf(type) * DEMO_TIME_FRACTION;
+}
+
+/** How far a teardown has got, 0..1. */
+export function demoFraction(b: Building): number {
+  const total = demoTimeOf(b.type);
+  if (total <= 0) return 1;
+  const p = (b.demoProgress ?? 0) / total;
+  return p < 0 ? 0 : p > 1 ? 1 : p;
+}
+
+/**
+ * When a teardown starts showing. Construction spends its first half as bare ground and raises the
+ * frame over the second; demolition is the mirror of that, but weighted the other way — the
+ * building stands whole while the roof and fittings come off, and then the frame comes down over
+ * the long tail. Same three looks, run backwards, on a different clock.
+ */
+export const DEMO_FRAME_AT = 0.25;
+
 /** Which of the three construction looks a building should be drawn with. */
 export type BuildStage = 'site' | 'framing' | 'done';
 
 export function buildStage(b: Building): BuildStage {
+  if (b.razed) return 'site'; // rubble waiting to be carted off
+  if (b.demolish && b.built) return demoFraction(b) >= DEMO_FRAME_AT ? 'framing' : 'done';
   if (b.built) return 'done';
   const total = buildTimeOf(b.type);
   return total > 0 && b.progress / total >= BUILD_FRAMING_AT ? 'framing' : 'site';
@@ -704,8 +755,15 @@ export function buildStage(b: Building): BuildStage {
 /**
  * How far the frame has risen, 0..1, across the framing stage — 0 the moment framing starts and
  * 1 as it finishes. Meaningless outside that stage.
+ *
+ * A teardown reads the same number the other way: 1 when the frame is still full height, falling
+ * to 0 as the last of it comes down.
  */
 export function framedFraction(b: Building): number {
+  if (b.demolish && b.built) {
+    const p = (demoFraction(b) - DEMO_FRAME_AT) / (1 - DEMO_FRAME_AT);
+    return 1 - (p < 0 ? 0 : p > 1 ? 1 : p);
+  }
   const total = buildTimeOf(b.type);
   if (total <= 0) return 1;
   const p = (b.progress / total - BUILD_FRAMING_AT) / (1 - BUILD_FRAMING_AT);
@@ -738,7 +796,12 @@ export function buildersWantedFor(type: BuildingType): number {
  */
 export function autoBuilderDemand(s: GameState): number {
   let n = 0;
-  for (const b of s.buildings) if (!b.built) n += buildersWantedFor(b.type);
+  for (const b of s.buildings) {
+    // Rubble asks for one pair of hands to cart it off; a standing building marked for demolition
+    // asks for as many as putting it up would have, and a site for the same again.
+    if (b.razed) n += 1;
+    else if (b.demolish || !b.built) n += buildersWantedFor(b.type);
+  }
   const road = plannedRoadTiles(s);
   if (road > 0) n += Math.min(3, 1 + Math.floor(road / 15));
   return n;
@@ -1191,6 +1254,13 @@ export const HOUSING_PER_HOUSE = 8;
 export const BARN_CAPACITY = 5000;
 export const MARKET_CAPACITY = 2000;
 export const MARKET_STOCK_TARGET = 60; // per-resource amount a vendor keeps stocked
+/**
+ * The market's work circle at one vendor; `WORK_RADIUS_PER_WORKER` widens it to 12 at its full
+ * three. It is the largest circle in the game on purpose — a market is not producing anything out
+ * there, it is *delivering*, and the point of building one is that a whole quarter of the village
+ * stops walking to the barn for its groceries.
+ */
+export const MARKET_RADIUS = 8;
 /**
  * How much *space* a villager has in their arms for one trip, in wood-equivalents: a log is volume
  * 1, so this is the old "12 units" for timber and stone, and much more of anything compact.
@@ -1798,8 +1868,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   market: {
     type: 'market', name: 'Market', emoji: '🛒', category: 'resources', w: 4, h: 4,
-    cost: { wood: 22, stone: 10 }, jobs: 2, buildTime: 8,
-    desc: 'Vendors keep a bit of every good in stock here, so nearby homes and workshops fetch and deliver locally instead of hiking to a distant barn.',
+    cost: { wood: 22, stone: 10 }, jobs: 3, buildTime: 8, workRadius: MARKET_RADIUS,
+    desc: 'Stores goods like a barn, and its vendors carry food, fuel and coats out to every home inside its circle so households never have to leave work to shop. Three vendors reach the furthest.',
   },
   barn: {
     type: 'barn', name: 'Barn', emoji: '🛖', category: 'resources', w: 3, h: 3,

@@ -183,7 +183,15 @@ export class Renderer {
       const bw = footprintW(b) * p;
       const bh = footprintH(b) * p;
       ctx.save();
-      if (!b.built) {
+      if (b.razed) {
+        // Rubble: the plot with the salvage still on it, waiting for a cart.
+        ctx.globalAlpha = 0.45;
+        ctx.fillStyle = '#6b6152';
+        roundRect(ctx, sx + 2, sy + 2, bw - 4, bh - 4, 4);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        this.glyph('🧱', sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.5);
+      } else if (!b.built) {
         // Construction: dashed outline + partial fill.
         ctx.globalAlpha = 0.55;
         ctx.fillStyle = BUILDING_COLORS[b.type];
@@ -228,6 +236,14 @@ export class Renderer {
           roundRect(ctx, sx + 2, sy + 2, bw - 4, bh - 4, 5);
           ctx.fill();
           this.glyph('🔥', sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.6);
+        }
+        // Marked for demolition: say so on the map, or the order is invisible until a builder
+        // happens to walk over and start swinging.
+        if (b.demolish) {
+          ctx.fillStyle = 'rgba(224,106,90,0.35)';
+          roundRect(ctx, sx + 2, sy + 2, bw - 4, bh - 4, 5);
+          ctx.fill();
+          this.glyph(b.upgradeTo ? '⬆️' : '💥', sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.5);
         }
         // Worker badge (staffing) on job buildings: green = full, amber = short.
         if (def.jobs > 0 && p > 12) {

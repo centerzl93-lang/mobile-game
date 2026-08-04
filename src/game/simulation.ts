@@ -6,6 +6,7 @@ import {
   ResourceKind,
   BUILDING_DEFS,
   buildTimeOf,
+  demoTimeOf,
   autoBuilderDemand,
   workRadiusOf,
   MAP_W,
@@ -20,6 +21,7 @@ import {
   BASE_WALK_SPEED,
   carryLimit,
   LARDER_CARRY_VOLUME,
+  FOOD_KINDS,
   WORK_SECONDS,
   LEISURE_CHANCE_PER_SEC,
   LEISURE_MIN_SECONDS,
@@ -131,7 +133,15 @@ import {
   isFireproof,
 } from '../types';
 import { housingCapacity, buildingCenter, makeCitizen } from './state';
-import { forestInCircle, nearbyStone, nearbyWater, footprintClear } from './buildings';
+import {
+  forestInCircle,
+  nearbyStone,
+  nearbyWater,
+  footprintClear,
+  razeBuilding,
+  clearRubble,
+  rubbleEmpty,
+} from './buildings';
 import { getTile, tileIndex, inBounds, riverColumnX } from './world';
 import { pathSpeedMult, hasPath } from './paths';
 import { findPath, isWalkable, labelComponents } from './pathfind';
@@ -452,7 +462,7 @@ function lives(s: GameState, dt: number, log: LogFn): void {
   // family home never has room for another child, and the population plateaus at whatever the
   // founding houses held.
   if (cameOfAge.length > 0) {
-    const houses = s.buildings.filter((b) => b.built && isHouse(b.type));
+    const houses = s.buildings.filter((b) => b.built && !b.demolish && isHouse(b.type));
     for (const c of cameOfAge) placeAdult(s, c, houses);
   }
   if (dying.length > 0) {
@@ -533,7 +543,9 @@ function assignHomesAndJobs(s: GameState): void {
   // Homes for anyone without one — newcomers, and anyone whose house burned down or was
   // demolished. Household *shape* (couples, who lives with whom) is settled once a season by
   // `rehouseVillagers`; this only finds a roof for the roofless.
-  const houses = s.buildings.filter((b) => b.built && isHouse(b.type));
+  // A condemned house is not somewhere to move anyone into: its residents are about to be turned
+  // out as it is. It keeps the ones it already has until the walls come down.
+  const houses = s.buildings.filter((b) => b.built && !b.demolish && isHouse(b.type));
   const occupancy = () => {
     const occ = new Map<number, number>();
     for (const c of s.citizens) if (c.homeId !== null) occ.set(c.homeId, (occ.get(c.homeId) ?? 0) + 1);
@@ -1059,8 +1071,68 @@ function workSpot(s: GameState, c: Citizen, b: Building): { x: number; y: number
   return c.workAt;
 }
 
-/** Market vendor: ferry a bit of every good from barns into the market stall. */
+/**
+ * A household inside the market's circle that the stall can supply, and what to take them.
+ *
+ * First match rather than nearest: a household drops out of the search the moment its larder is
+ * back over `LARDER_RESTOCK_AT`, so service rotates on its own and the scan can stop at the first
+ * hit instead of measuring every home in the circle on every tick.
+ *
+ * `larderShortfall` answers with what the *village* can supply, which is not always what is on
+ * this stall's shelves. If the named good is not here, food falls back to whatever food the market
+ * does hold — a household short of bread will take apples — and anything else is left for the
+ * restocking leg to fetch in from a barn.
+ */
+function marketErrand(
+  s: GameState,
+  b: Building,
+): { house: Building; kind: ResourceKind; amount: number } | null {
+  const r = workRadiusOf(b) ?? 0;
+  if (r <= 0) return null;
+  const centre = buildingCenter(b);
+  for (const h of s.buildings) {
+    if (!h.built || !isHouse(h.type)) continue;
+    const hc = buildingCenter(h);
+    if ((hc.x - centre.x) ** 2 + (hc.y - centre.y) ** 2 > r * r) continue;
+    const want = larderShortfall(s, h);
+    if (!want) continue;
+    let kind = want.kind;
+    if ((b.store[kind] ?? 0) <= 0) {
+      if (!FOOD_KINDS.includes(kind)) continue;
+      let alt: ResourceKind | null = null;
+      for (const k of FOOD_KINDS) if ((b.store[k] ?? 0) > (alt ? (b.store[alt] ?? 0) : 0)) alt = k;
+      if (!alt) continue;
+      kind = alt;
+    }
+    return { house: h, kind, amount: want.amount };
+  }
+  return null;
+}
+
+/**
+ * Market vendor: carry groceries out to the homes in the circle, and keep the stall stocked from
+ * the barns so there is something to carry.
+ *
+ * Delivery comes first. A market that only held goods was a shortcut for households doing their
+ * own shopping; a market that *delivers* is the reason to build one — every home inside the circle
+ * stops sending a worker off to queue at a barn, and the further the circle reaches (three vendors
+ * take it to `MARKET_RADIUS` + 2 per extra worker) the more of the village that covers.
+ */
 function runVendor(s: GameState, c: Citizen, b: Building, dt: number): void {
+  // Second leg of a delivery: groceries in hand, walking them to the door.
+  if (c.task.kind === 'toHouse' && c.carry) {
+    const house = s.buildings.find((h) => h.id === c.task.targetId);
+    if (house?.built) {
+      goTo(c, buildingApproach(s, house));
+      if (stepTo(s, c, dt)) {
+        house.store[c.carry.kind] = (house.store[c.carry.kind] ?? 0) + c.carry.amount;
+        c.carry = null;
+        c.task = { kind: 'idle' };
+      }
+      return;
+    }
+    c.task = { kind: 'idle' }; // house gone mid-errand — the load goes back on the shelf below
+  }
   if (c.carry) {
     goTo(c, buildingApproach(s, b));
     if (stepTo(s, c, dt)) {
@@ -1075,6 +1147,26 @@ function runVendor(s: GameState, c: Citizen, b: Building, dt: number): void {
     }
     return;
   }
+  // Groceries for a household inside the circle: load up at the stall, walk them to the door.
+  const errand = marketErrand(s, b);
+  if (errand) {
+    goTo(c, buildingApproach(s, b));
+    if (stepTo(s, c, dt)) {
+      const take = Math.min(
+        carryLimit(errand.kind, LARDER_CARRY_VOLUME),
+        errand.amount,
+        b.store[errand.kind] ?? 0,
+      );
+      if (take > 0) {
+        b.store[errand.kind] = (b.store[errand.kind] ?? 0) - take;
+        if ((b.store[errand.kind] ?? 0) <= 0) delete b.store[errand.kind];
+        c.carry = { kind: errand.kind, amount: take };
+        c.task = { kind: 'toHouse', targetId: errand.house.id };
+      }
+    }
+    return;
+  }
+
   // Find a good the market is short on that a barn can supply.
   let want: { kind: (typeof RESOURCE_KINDS)[number]; barn: Building } | null = null;
   for (const k of RESOURCE_KINDS) {
@@ -1340,7 +1432,7 @@ function consumeStore(b: Building, inputs: [ResourceKind, number][]): boolean {
 // ---- builders (construction + path logistics) ----
 interface SiteAction {
   site: Building;
-  action: 'fetch' | 'build';
+  action: 'fetch' | 'build' | 'raze' | 'salvage';
   kind?: ResourceKind;
 }
 
@@ -1348,26 +1440,40 @@ function pickSite(s: GameState, c: Citizen): SiteAction | null {
   let best: SiteAction | null = null;
   let bestD = Infinity;
   for (const b of s.buildings) {
-    if (b.built) continue;
-    const cost = BUILDING_DEFS[b.type].cost;
-    let fetchKind: ResourceKind | null = null;
-    let fully = true;
-    for (const k in cost) {
-      const kind = k as ResourceKind;
-      if ((b.store[kind] ?? 0) < (cost[kind] ?? 0)) {
-        fully = false;
-        if (totalStored(s, kind) > 0 && fetchKind === null) fetchKind = kind;
+    let action: SiteAction | null = null;
+    if (b.razed) {
+      // Rubble: cart the salvage off, one load at a time, until there is nothing left.
+      let kind: ResourceKind | null = null;
+      for (const k in b.store) {
+        if ((b.store[k as ResourceKind] ?? 0) > 0.01) {
+          kind = k as ResourceKind;
+          break;
+        }
       }
+      action = kind ? { site: b, action: 'salvage', kind } : null;
+    } else if (b.demolish) {
+      action = { site: b, action: 'raze' };
+    } else if (!b.built) {
+      const cost = BUILDING_DEFS[b.type].cost;
+      let fetchKind: ResourceKind | null = null;
+      let fully = true;
+      for (const k in cost) {
+        const kind = k as ResourceKind;
+        if ((b.store[kind] ?? 0) < (cost[kind] ?? 0)) {
+          fully = false;
+          if (totalStored(s, kind) > 0 && fetchKind === null) fetchKind = kind;
+        }
+      }
+      // Materials are all delivered, but don't raise the building until any trees / loose stone
+      // under its footprint have been harvested away (the free-adult workforce clears them).
+      action = fully
+        ? footprintClear(s, b)
+          ? { site: b, action: 'build' }
+          : null
+        : fetchKind
+          ? { site: b, action: 'fetch', kind: fetchKind }
+          : null;
     }
-    // Materials are all delivered, but don't raise the building until any trees / loose stone
-    // under its footprint have been harvested away (the free-adult workforce clears them).
-    const action: SiteAction | null = fully
-      ? footprintClear(s, b)
-        ? { site: b, action: 'build' }
-        : null
-      : fetchKind
-        ? { site: b, action: 'fetch', kind: fetchKind }
-        : null;
     if (!action) continue;
     const p = buildingApproach(s, b);
     if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) continue;
@@ -1429,6 +1535,32 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
             c.carry = { kind, amount: want };
           }
         }
+      }
+      return;
+    }
+    if (pick.action === 'raze') {
+      // Stand at the building and pull it down. No materials to fetch first — that is the one way
+      // demolition is not construction run backwards.
+      goTo(c, buildingApproach(s, pick.site));
+      if (stepTo(s, c, dt)) {
+        pick.site.demoProgress = (pick.site.demoProgress ?? 0) + dt;
+        if (pick.site.demoProgress >= demoTimeOf(pick.site.type)) razeBuilding(s, pick.site);
+      }
+      return;
+    }
+    if (pick.action === 'salvage') {
+      // Load up from the rubble; the carry branch above walks it to a barn (or straight to a site
+      // that needs it). The plot clears the moment the pile is empty.
+      const kind = pick.kind!;
+      goTo(c, buildingApproach(s, pick.site));
+      if (stepTo(s, c, dt)) {
+        const take = Math.min(carryLimit(kind), pick.site.store[kind] ?? 0);
+        if (take > 0) {
+          pick.site.store[kind] = (pick.site.store[kind] ?? 0) - take;
+          if ((pick.site.store[kind] ?? 0) <= 0.01) delete pick.site.store[kind];
+          c.carry = { kind, amount: take };
+        }
+        if (rubbleEmpty(pick.site)) clearRubble(s, pick.site);
       }
       return;
     }
@@ -2562,7 +2694,9 @@ function placeChildrenWithAdults(s: GameState, houses: Building[]): void {
  */
 function rehouseVillagers(s: GameState): void {
   releaseLostPartners(s);
-  const houses = s.buildings.filter((b) => b.built && isHouse(b.type));
+  // Condemned houses are left out of the shuffle for the same reason as above: moving a couple
+  // into one would only make them homeless again when the builders arrive.
+  const houses = s.buildings.filter((b) => b.built && !b.demolish && isHouse(b.type));
 
   // Pair first, so the moves below are made on behalf of couples that already exist, then get
   // those couples under one roof wherever a house allows it.

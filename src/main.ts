@@ -12,6 +12,7 @@ import {
   BuildingType,
   BUILDING_DEFS,
   BUILD_ORDER,
+  demoFraction,
   buildTimeOf,
   autoBuilderDemand,
   FOOD_PER_CITIZEN_PER_SEASON,
@@ -77,7 +78,17 @@ import {
   cappedOut,
   debugWorkSpotFor,
 } from './game/simulation';
-import { canPlace, placeBuilding, canAfford, demolishBuilding, footprintClear, footprintToClear } from './game/buildings';
+import {
+  canPlace,
+  placeBuilding,
+  canAfford,
+  demolishBuilding,
+  markDemolish,
+  cancelDemolish,
+  canDemolish,
+  footprintClear,
+  footprintToClear,
+} from './game/buildings';
 import { findPath } from './game/pathfind';
 import { tileIndex, inBounds } from './game/world';
 import {
@@ -179,6 +190,8 @@ class Game {
       onNewGame: () => this.openSizeSelect(),
       onOpenMenu: () => this.openPauseMenu(),
       onSetWorkers: (id, d) => this.setWorkers(id, d),
+      onDemolishBuilding: (id, on) => this.setBuildingDemolish(id, on),
+      onUpgradeBuilding: (id) => this.upgradeBuilding(id),
       onRenameBuilding: (id, name) => this.renameBuilding(id, name),
       onSetBuilders: (d) => this.setBuilders(d),
       onSetLimit: (kind, d) => this.setLimit(kind, d),
@@ -534,6 +547,40 @@ class Game {
     }
   }
 
+  /** Mark a building for demolition from its own sheet, or take the mark back off. */
+  private setBuildingDemolish(id: number, on: boolean): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (!b) return;
+    if (on) {
+      if (!markDemolish(this.state, b)) {
+        this.ui.flashHint('Your last barn has to stay standing');
+        return;
+      }
+      // A site cancelled outright is gone; there is nothing left to keep selected.
+      if (!this.state.buildings.includes(b)) this.clearInspect();
+      else this.ui.log(`${buildingName(b)} marked for demolition`, 'info');
+    } else {
+      cancelDemolish(b);
+      this.ui.flashHint('Demolition called off');
+    }
+    this.persist();
+    if (this.inspectSel) this.refreshInspect();
+  }
+
+  /**
+   * Trade a wooden house up to a stone one. It is a demolition with a note attached: builders pull
+   * the old house down and cart the salvage off exactly as they would for any other, and then the
+   * plot becomes the construction site for its replacement rather than going back to grass.
+   */
+  private upgradeBuilding(id: number): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (!b || b.type !== 'house' || !b.built) return;
+    markDemolish(this.state, b, 'stonehouse');
+    this.ui.log(`${buildingName(b)} is being rebuilt in stone`, 'info');
+    this.persist();
+    if (this.inspectSel) this.refreshInspect();
+  }
+
   /** Set a ranch's desired herd cap (clamped 0..capacity). */
   private setRanchMax(id: number, delta: number): void {
     const b = this.state.buildings.find((x) => x.id === id);
@@ -671,16 +718,20 @@ class Game {
     if (!target) return;
     if (target.kind === 'building') {
       let n = 0;
+      let refused = 0;
       let last = '';
       for (const id of target.ids) {
         const b = this.state.buildings.find((x) => x.id === id);
         if (!b) continue;
         last = buildingName(b);
-        demolishBuilding(this.state, b);
-        n++;
+        if (markDemolish(this.state, b)) n++;
+        else refused++;
       }
-      if (n === 1) this.ui.log(`${last} demolished`, 'info');
-      else if (n > 1) this.ui.log(`${n} buildings demolished`, 'info');
+      // Marked, not gone: builders have to come and pull it down. A construction site is the
+      // exception and vanishes on the spot — there is nothing standing to tear apart.
+      if (n === 1) this.ui.log(`${last} marked for demolition`, 'info');
+      else if (n > 1) this.ui.log(`${n} buildings marked for demolition`, 'info');
+      if (refused > 0) this.ui.flashHint('Your last barn has to stay standing');
     } else {
       const idx = target.ids[0];
       const v = this.state.paths[idx];
@@ -1148,6 +1199,46 @@ class Game {
           controls.tradingPost = { merchantDocked: this.state.merchant.present };
         }
       }
+      // Demolition and upgrades live on the sheet, not only under the Demolish tool: by the time
+      // you have tapped a building to read about it, "and take it away" is the obvious next thing
+      // to want, and hunting for a tool at the other end of the screen to do it is not.
+      if (b.built) {
+        if (b.demolish) {
+          rows.push({
+            label: '💥 Demolition',
+            value: b.demoProgress
+              ? `${Math.floor(demoFraction(b) * 100)}% pulled down`
+              : 'Waiting on a builder',
+          });
+          if (b.upgradeTo) {
+            rows.push({ label: '⬆️ Then', value: `${BUILDING_DEFS[b.upgradeTo].name} on this spot` });
+          }
+        }
+        controls = {
+          ...controls,
+          buildingId: b.id,
+          demolish: {
+            marked: !!b.demolish,
+            blocked: !b.demolish && !canDemolish(this.state, b),
+            underway: (b.demoProgress ?? 0) > 0,
+          },
+        };
+        if (b.type === 'house' && !b.demolish) {
+          const cost = (Object.entries(BUILDING_DEFS.stonehouse.cost) as [ResourceKind, number][])
+            .map(([k, a]) => `${RESOURCE_ICON[k]}${a}`)
+            .join(' ');
+          controls.upgrade = { to: BUILDING_DEFS.stonehouse.name, cost };
+        }
+      } else if (b.razed) {
+        // Rubble: what is still to be carted off, and what happens to the plot afterwards.
+        let left = 0;
+        for (const k of RESOURCE_KINDS) left += b.store[k] ?? 0;
+        rows.unshift({ label: 'Status', value: 'Rubble — salvage being carted off' });
+        rows.push({ label: '📦 To haul', value: `${Math.floor(left)} items` });
+        if (b.upgradeTo) {
+          rows.push({ label: '⬆️ Then', value: `${BUILDING_DEFS[b.upgradeTo].name} on this spot` });
+        }
+      }
       // Workplaces show their own name (renameable); everything else shows its type.
       this.ui.showInspect(`${def.emoji} ${buildingName(b)}`, rows, controls);
     } else {
@@ -1258,6 +1349,26 @@ class Game {
   /** Debug/testing helper: every buildable type, named, in build-menu order. */
   debugBuildNames(): string[] {
     return BUILD_ORDER.map((t) => BUILDING_DEFS[t].name);
+  }
+
+  /** Debug/testing helper: mark a building for demolition. Returns false if it may not be. */
+  debugDemolish(id: number, upgradeTo?: BuildingType): boolean {
+    const b = this.state.buildings.find((x) => x.id === id);
+    return !!b && markDemolish(this.state, b, upgradeTo);
+  }
+
+  /** Debug/testing helper: how a demolition is going, or null once the plot is clear. */
+  debugDemoState(id: number): { marked: boolean; razed: boolean; progress: number; hauling: number } | null {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (!b) return null;
+    let hauling = 0;
+    for (const k of RESOURCE_KINDS) hauling += b.store[k] ?? 0;
+    return {
+      marked: !!b.demolish,
+      razed: !!b.razed,
+      progress: demoFraction(b),
+      hauling,
+    };
   }
 
   /**

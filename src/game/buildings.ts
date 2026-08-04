@@ -268,8 +268,112 @@ export function canAfford(s: GameState, type: BuildingType): boolean {
 }
 
 /**
+ * Can this building be pulled down at all?
+ *
+ * Only one rule: the village may not demolish its last barn. Everything a village owns lives in a
+ * barn, and taking the final one away has no sane outcome — the goods have nowhere to be carted
+ * to, the salvage from the barn itself included, so the demolition could never finish. A second
+ * barn standing (and not itself marked) is enough.
+ */
+export function canDemolish(s: GameState, b: Building): boolean {
+  if (b.type !== 'barn') return true;
+  return s.buildings.some((o) => o !== b && o.type === 'barn' && o.built && !o.demolish);
+}
+
+/**
+ * Mark a building for demolition. Builders do the actual work — see `runBuilder`.
+ *
+ * A construction site is the exception: there is no structure to tear down, so cancelling one
+ * takes it away at once and returns what has already been delivered to it. Returns false when the
+ * building may not be demolished at all.
+ */
+export function markDemolish(s: GameState, b: Building, upgradeTo?: BuildingType): boolean {
+  if (!canDemolish(s, b)) return false;
+  if (!b.built) {
+    if (b.razed) return false; // already rubble; the haulers are on their way
+    demolishBuilding(s, b);
+    return true;
+  }
+  b.demolish = true;
+  b.demoProgress = b.demoProgress ?? 0;
+  if (upgradeTo) b.upgradeTo = upgradeTo;
+  return true;
+}
+
+/** Call the whole thing off, so long as the walls are still standing. */
+export function cancelDemolish(b: Building): void {
+  if (b.razed) return; // too late — there is nothing left to save
+  b.demolish = false;
+  b.demoProgress = 0;
+  b.upgradeTo = undefined;
+}
+
+/**
+ * The structure comes down. What is salvaged off it — `REFUND_FRACTION` of the build cost — is
+ * added to whatever it was already holding, and the lot is left in place as a rubble pile for
+ * builders to cart to a barn. Nothing teleports: a demolished barn's grain has to be carried out
+ * of it by hand, same as the timber off its own roof.
+ *
+ * Workers and residents are turned out here rather than at marking, so a building keeps doing its
+ * job right up to the moment it stops existing.
+ */
+export function razeBuilding(s: GameState, b: Building): void {
+  const def = BUILDING_DEFS[b.type];
+  for (const [kind, amount] of Object.entries(def.cost) as [ResourceKind, number][]) {
+    const refund = Math.floor(amount * REFUND_FRACTION);
+    if (refund > 0) b.store[kind] = (b.store[kind] ?? 0) + refund;
+  }
+  b.built = false;
+  b.razed = true;
+  b.demolish = true;
+  b.demoProgress = 0;
+  b.workers = [];
+  for (const c of s.citizens) {
+    if (c.jobId === b.id) c.jobId = null;
+    if (c.homeId === b.id) c.homeId = null;
+  }
+  s.navVersion = (s.navVersion ?? 0) + 1; // its walls are gone; routes through it open up
+  if (rubbleEmpty(b)) clearRubble(s, b); // nothing worth carrying — the plot is free already
+}
+
+/** Is there anything left in the rubble worth a trip to the barn? */
+export function rubbleEmpty(b: Building): boolean {
+  for (const k in b.store) if ((b.store[k as ResourceKind] ?? 0) > 0.01) return false;
+  return true;
+}
+
+/**
+ * The last of the salvage has gone. Either the plot goes back to open ground, or — when this was
+ * an upgrade — the same plot becomes the construction site for what replaces it, so the new
+ * building lands exactly where the old one stood without the player having to re-site it.
+ */
+export function clearRubble(s: GameState, b: Building): void {
+  if (b.upgradeTo) {
+    b.type = b.upgradeTo;
+    b.upgradeTo = undefined;
+    b.razed = false;
+    b.demolish = false;
+    b.demoProgress = 0;
+    b.built = false;
+    b.progress = 0;
+    b.store = {};
+    b.desiredWorkers = 0;
+    s.navVersion = (s.navVersion ?? 0) + 1;
+    return;
+  }
+  const idx = s.buildings.indexOf(b);
+  if (idx >= 0) s.buildings.splice(idx, 1);
+  s.navVersion = (s.navVersion ?? 0) + 1;
+}
+
+/**
  * Remove a building, returning REFUND_FRACTION of its build cost (rounded down) to
  * storage. A barn's own contents are spilled into the remaining barns first.
+ *
+ * This is the *instant* removal, which now only covers the cases where nothing is standing to be
+ * torn down: cancelling a construction site, and a building lost to something other than a
+ * demolition order. A player-ordered demolition of a finished building goes through
+ * `markDemolish` and is carried out by builders.
  */
 export function demolishBuilding(s: GameState, b: Building): void {
   const def = BUILDING_DEFS[b.type];

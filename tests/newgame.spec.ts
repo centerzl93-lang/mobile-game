@@ -3845,6 +3845,288 @@ test.describe('work happens where the work is', () => {
   });
 });
 
+test.describe('demolition is a job', () => {
+  /** A village with builders standing by and one finished house singled out. */
+  const setup = `(diff) => {
+    const g = window.__village;
+    g.startNewGame('small', diff ?? 'easy', false);
+    const s = g.state;
+    g.debugSetBuilders(6);
+    for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
+    return s;
+  }`;
+
+  test('a marked building stands until a builder pulls it down, then the salvage is carted off', async ({
+    page,
+  }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      const s = eval(mk)('easy');
+      const house = s.buildings.find((b: any) => b.type === 'house' && b.built);
+      const id = house.id;
+      const woodBefore = g.debugTotalStored('wood');
+
+      // Marking alone changes nothing on the ground: the house is still standing, still lived in.
+      const marked = g.debugDemolish(id);
+      const justMarked = {
+        state: g.debugDemoState(id),
+        stillBuilt: house.built,
+        residents: s.citizens.filter((c: any) => c.homeId === id).length,
+      };
+
+      // Let the builders work. Track whether it passes through the rubble stage on the way out.
+      let sawRazed = false;
+      let cleared = false;
+      for (let i = 0; i < 1200; i++) {
+        g.debugAdvance(0.2);
+        const st = g.debugDemoState(id);
+        if (!st) {
+          cleared = true;
+          break;
+        }
+        if (st.razed) sawRazed = true;
+      }
+      // And then long enough for the last load to reach a barn.
+      for (let i = 0; i < 600; i++) g.debugAdvance(0.2);
+      return {
+        marked,
+        justMarked,
+        sawRazed,
+        cleared,
+        woodBefore,
+        woodAfter: g.debugTotalStored('wood'),
+        homeless: s.citizens.filter((c: any) => c.homeId === id).length,
+      };
+    }, setup);
+
+    expect(out.marked).toBe(true);
+    expect(out.justMarked.state.marked, 'marked, not gone').toBe(true);
+    expect(out.justMarked.state.razed).toBe(false);
+    expect(out.justMarked.stillBuilt, 'it keeps standing until somebody swings a hammer').toBe(true);
+    expect(out.justMarked.residents, 'and keeps its residents that whole time').toBeGreaterThan(0);
+    expect(out.cleared, 'the builders finished the job').toBe(true);
+    expect(out.homeless, 'the plot is empty, so nobody still lives there').toBe(0);
+    // A house costs 12 wood and gives a quarter of it back — carried to a barn by hand, not
+    // conjured into the stockpile the instant the walls come down.
+    expect(out.woodAfter).toBe(out.woodBefore + 3);
+  });
+
+  test('the last barn cannot be demolished', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      const s = eval(mk)('easy');
+      const barns = () => s.buildings.filter((b: any) => b.type === 'barn' && b.built);
+      const only = barns()[0];
+      const refused = g.debugDemolish(only.id);
+
+      // Put a second barn up and the first can go.
+      const extra = { ...only, id: s.nextId++, x: only.x, y: only.y };
+      let placed: any = null;
+      for (let r = 4; r < 24 && !placed; r++)
+        for (let dy = -r; dy <= r && !placed; dy++)
+          for (let dx = -r; dx <= r && !placed; dx++) {
+            if (!g.debugCanPlace('barn', only.x + dx, only.y + dy).ok) continue;
+            const id = g.debugPlace('barn', only.x + dx, only.y + dy);
+            if (id == null) continue;
+            placed = s.buildings.find((b: any) => b.id === id);
+            placed.built = true;
+            placed.progress = g.debugBuildTime('barn');
+          }
+      const allowed = placed ? g.debugDemolish(only.id) : null;
+      // ...and then the *other* one cannot, because it is the last one left standing.
+      const secondRefused = placed ? g.debugDemolish(placed.id) : null;
+      void extra;
+      return { refused, allowed, secondRefused, barns: barns().length };
+    }, setup);
+
+    expect(out.refused, 'a village cannot demolish the only barn it has').toBe(false);
+    expect(out.allowed, 'with a second barn up, the first can go').toBe(true);
+    expect(out.secondRefused, 'and now that one is the last, it is protected in turn').toBe(false);
+  });
+
+  test('a demolition can be called off while the walls are still up', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      const s = eval(mk)('easy');
+      const house = s.buildings.find((b: any) => b.type === 'house' && b.built);
+      g.debugDemolish(house.id);
+      const marked = g.debugDemoState(house.id).marked;
+      // The sheet's own control, not just the model call.
+      g.inspectSel = { kind: 'building', id: house.id };
+      g.refreshInspect();
+      const label = document.getElementById('insp-demolish')?.textContent ?? '';
+      (document.getElementById('insp-demolish') as HTMLButtonElement).click();
+      const after = g.debugDemoState(house.id);
+      for (let i = 0; i < 300; i++) g.debugAdvance(0.2);
+      return { marked, label, after, stillThere: !!s.buildings.find((b: any) => b.id === house.id) };
+    }, setup);
+
+    expect(out.marked).toBe(true);
+    expect(out.label).toContain('Cancel');
+    expect(out.after.marked, 'the order is off').toBe(false);
+    expect(out.stillThere, 'and the house is still standing a while later').toBe(true);
+  });
+
+  test('a house can be upgraded to stone on the same spot', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      const s = eval(mk)('easy');
+      for (const b of s.buildings) {
+        if (b.type === 'barn') {
+          b.store.wood = 500;
+          b.store.stone = 500;
+        }
+      }
+      const house = s.buildings.find((b: any) => b.type === 'house' && b.built);
+      const at = { id: house.id, x: house.x, y: house.y };
+
+      // Drive it from the sheet, which is where the player would.
+      g.inspectSel = { kind: 'building', id: at.id };
+      g.refreshInspect();
+      const btn = document.getElementById('insp-upgrade') as HTMLButtonElement | null;
+      const label = btn?.textContent ?? '';
+      btn?.click();
+
+      const stages = new Set<string>();
+      for (let i = 0; i < 2000; i++) {
+        g.debugAdvance(0.2);
+        const cur = s.buildings.find((b: any) => b.id === at.id);
+        if (!cur) {
+          stages.add('gone');
+          break;
+        }
+        stages.add(`${cur.type}:${cur.built ? 'built' : cur.razed ? 'rubble' : 'site'}`);
+        if (cur.type === 'stonehouse' && cur.built) break;
+      }
+      // Housing is settled by a pass that runs on its own schedule, so give it a moment after the
+      // roof goes on before asking who lives there.
+      for (let i = 0; i < 150; i++) g.debugAdvance(0.2);
+      const cur = s.buildings.find((b: any) => b.id === at.id);
+      return {
+        label,
+        stages: [...stages],
+        type: cur?.type,
+        built: cur?.built,
+        samePlace: cur ? cur.x === at.x && cur.y === at.y : false,
+        residents: s.citizens.filter((c: any) => c.homeId === at.id).length,
+      };
+    }, setup);
+
+    expect(out.label).toContain('Stone House');
+    // It really is a demolition with a note attached: the house comes down first.
+    expect(out.stages).toContain('house:built');
+    expect(out.stages).toContain('stonehouse:site');
+    expect(out.type).toBe('stonehouse');
+    expect(out.built, 'and the builders raise it').toBe(true);
+    expect(out.samePlace, 'on the same tiles the old house stood on').toBe(true);
+    expect(out.residents, 'people move back in').toBeGreaterThan(0);
+  });
+});
+
+test.describe('the market delivers', () => {
+  test('it is a 4x4 with three vendors, and its circle grows with them', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      let mk: any = null;
+      for (let r = 3; r < 22 && !mk; r++)
+        for (let dy = -r; dy <= r && !mk; dy++)
+          for (let dx = -r; dx <= r && !mk; dx++) {
+            if (!g.debugCanPlace('market', barn.x + dx, barn.y + dy).ok) continue;
+            const id = g.debugPlace('market', barn.x + dx, barn.y + dy);
+            if (id != null) mk = s.buildings.find((b: any) => b.id === id);
+          }
+      if (!mk) return { error: 'nowhere to put a market' };
+      const radii: number[] = [];
+      for (let n = 1; n <= 3; n++) {
+        mk.desiredWorkers = n;
+        radii.push(g.debugWorkRadius(mk.id));
+      }
+      return { jobs: g.debugJobCount('market'), footprint: g.debugFootprint('market'), radii };
+    });
+
+    expect(out.error).toBeUndefined();
+    expect(out.jobs, 'three vendors').toBe(3);
+    expect(out.footprint).toEqual({ w: 4, h: 4 });
+    // A one-vendor stall serves its own doorstep; the full three reach across a quarter of the
+    // village. Widest at three is what "three workers for the biggest circle" means.
+    expect(out.radii![0]).toBeLessThan(out.radii![1]);
+    expect(out.radii![1]).toBeLessThan(out.radii![2]);
+    expect(out.radii![2]).toBe(12);
+  });
+
+  test('vendors carry groceries from the stall to the homes in the circle', async ({ page }) => {
+    await open2d(page);
+    // Retry across generated maps, like the trading-post tests do. A market dropped on a random
+    // map is sometimes walled off from the village by the terrain around it, and vendors who
+    // cannot reach their own stall are a placement accident rather than anything about delivery.
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      let last: any = { attempts: 0 };
+      for (let attempt = 0; attempt < 6; attempt++) {
+        g.startNewGame('small', 'easy', false);
+        const s = g.state;
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        let mk: any = null;
+        for (let r = 3; r < 22 && !mk; r++)
+          for (let dy = -r; dy <= r && !mk; dy++)
+            for (let dx = -r; dx <= r && !mk; dx++) {
+              if (!g.debugCanPlace('market', barn.x + dx, barn.y + dy).ok) continue;
+              const id = g.debugPlace('market', barn.x + dx, barn.y + dy);
+              if (id == null) continue;
+              mk = s.buildings.find((b: any) => b.id === id);
+              mk.built = true;
+              mk.progress = g.debugBuildTime('market');
+              mk.desiredWorkers = g.debugJobCount('market');
+            }
+        if (!mk) continue;
+
+        const houses = s.buildings.filter((b: any) => b.type === 'house' && b.built);
+        for (const h of houses) h.store = {};
+        for (let i = 0; i < 40; i++) g.debugAdvance(0.5);
+        // Take the households out of the race: left to themselves they would send their own
+        // shopper to the barn, and a full larder would then prove nothing about the market.
+        // Nobody unwell runs errands (`larderHauler`), so with everyone but the vendors laid up
+        // the market is the only way anything reaches a larder. Stock the stall by hand too —
+        // how long the barn run takes is a question about the map, not about delivery.
+        for (const c of s.citizens) if (c.jobId !== mk.id) c.sick = true;
+        mk.store = { fruit: 400, firewood: 400 };
+        const radius = g.debugWorkRadius(mk.id);
+        const inRange = houses.filter((h: any) => Math.hypot(h.x - mk.x, h.y - mk.y) <= radius);
+
+        let sawDelivery = false;
+        for (let i = 0; i < 1200; i++) {
+          // The vendors keep no household of their own. A villager runs their own house's errands
+          // before their job, and with every other adult laid up they were the only ones left
+          // eligible — so they spent the run shopping for themselves.
+          for (const c of s.citizens) if (c.jobId === mk.id) c.homeId = null;
+          g.debugAdvance(0.2);
+          if (s.citizens.some((c: any) => c.jobId === mk.id && c.task.kind === 'toHouse')) {
+            sawDelivery = true;
+          }
+        }
+        const stocked = inRange.filter((h: any) =>
+          Object.values(h.store).some((v) => (v as number) > 0.5),
+        ).length;
+        last = { attempts: attempt + 1, inRange: inRange.length, stocked, sawDelivery };
+        if (sawDelivery && inRange.length > 0 && stocked === inRange.length) break;
+      }
+      return last;
+    });
+
+    expect(out.inRange, 'the founding houses sit inside the circle').toBeGreaterThan(0);
+    expect(out.sawDelivery, 'a vendor was seen walking groceries to a door').toBe(true);
+    expect(out.stocked, 'and every larder in reach filled up').toBe(out.inRange);
+  });
+});
+
 test.describe('stockpile limits', () => {
   test('a village is founded with caps already set, pitched at what it was handed', async ({
     page,

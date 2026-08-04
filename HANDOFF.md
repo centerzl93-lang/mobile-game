@@ -21,7 +21,8 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **a codex + opening caps**, **a HUD/toolbar pass**, **a real app icon**, **build sites show what is in the way**, **merchant docks properly**,
+Latest work: **demolition as a job + house upgrades + a delivering market**,
+**a codex + opening caps**, **a HUD/toolbar pass**, **a real app icon**, **build sites show what is in the way**, **merchant docks properly**,
 **stockpile limits**, **workers go where the work is**,
 **five more tree species**,
 **named/deletable save slots**,
@@ -34,6 +35,47 @@ Latest work: **a codex + opening caps**, **a HUD/toolbar pass**, **a real app ic
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Demolition is a job, houses upgrade, and the market delivers (this session)
+
+**Demolishing is work now, not a menu action.** The Demolish tool *marks* — `markDemolish` — and
+builders come and do it. A marked building keeps standing, keeps its residents and keeps working
+right up until somebody swings a hammer, so a mis-tap costs nothing until then; `cancelDemolish`
+takes the order back off while the walls are still up. The teardown runs on `demoTimeOf` (half the
+build time) and reuses the construction visual backwards: `buildStage` returns `done` → `framing` →
+`site` for a demolition, and `framedFraction` counts the frame *down* instead of up. It is
+deliberately not the mirror image — construction is bare ground for its first half and then a frame
+rising, while a teardown stands whole for its first quarter (`DEMO_FRAME_AT`) and then comes down
+over the long tail — and there is no fetch-materials leg at all, which is the other way it is less
+linear than building.
+
+**Salvage is carried, not conjured.** `razeBuilding` puts the `REFUND_FRACTION` of the build cost
+*into the building's own store*, on top of whatever it was already holding, and flips it to
+`razed`: a rubble pile that is no longer a workplace, a home or a warehouse. `pickSite` gained two
+actions — `raze` and `salvage` — and builders cart the pile away a load at a time through the
+carry-to-barn path they already had (which will divert a load to a construction site that needs it,
+which is a feature). `clearRubble` frees the plot when the pile is empty. So a demolished barn's
+grain is walked out of it by hand, and its contents leave the village totals until they arrive.
+
+**The last barn cannot be marked** (`canDemolish`): everything the village owns lives in one, and
+with no barn left the salvage would have nowhere to go — the demolition could never finish.
+
+**Demolish and Upgrade are on the building's own sheet**, not only under the tool. A house offers
+**⬆️ Upgrade to Stone House**, which is a demolition with a note attached (`upgradeTo`): the old
+house is razed and carted off exactly as any other, and then `clearRubble` turns the same plot into
+the construction site for its replacement instead of clearing it. Residents are turned out when the
+walls come down and move back in when the new roof goes on. Condemned houses are left out of
+`rehouseVillagers` and the housing passes, so nobody is moved into a building that is about to go.
+
+**The market is a delivery service.** 4×4 (unchanged), now **3 jobs** and a `workRadius` of
+`MARKET_RADIUS` = 8, which `WORK_RADIUS_PER_WORKER` takes to **12 at three vendors** — the largest
+circle in the game, because a market is not producing out there, it is delivering. `runVendor`
+leads with `marketErrand`: the first household inside the circle whose larder is short of something
+the stall holds, loaded up by the basket and walked to the door. Restocking the stall from the
+barns is still there, as the second leg. First match rather than nearest — a house drops out of the
+search as soon as it is back over `LARDER_RESTOCK_AT`, so service rotates on its own without
+measuring every home every tick. Food falls back to whatever food the stall actually has when the
+shortfall names one it does not.
 
 ### A codex, opening caps, and less medicine (this session)
 
@@ -1138,7 +1180,8 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   `moveBoatTo`), `runTrader` + `basketTrade`/value helpers; ranch `penFromStorage`, per-season breeding
   + `butcherProducts`, `cullRanch`/`splitRanch`/`transferRanch`/`eligibleRanchTargets`; farm
   area-scaled autumn harvest.
-- `src/game/buildings.ts` — sized `canPlace`/`placeBuilding` (`SIZABLE`-driven `w/h` init); the
+- `src/game/buildings.ts` — demolition lifecycle (`canDemolish`/`markDemolish`/`cancelDemolish`/
+  `razeBuilding`/`rubbleEmpty`/`clearRubble`); sized `canPlace`/`placeBuilding` (`SIZABLE`-driven `w/h` init); the
   `dockDepth` check that keeps a fishing hut's jetty over water; `buildingCenterTile` routing
   through `workCentre`.
 - `src/game/world.ts` — `riverColumnX` (boat's river path).
@@ -1168,8 +1211,13 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   **clearing land before building**, **camera rotate buttons**, **construction stages**,
   **placement controls**, **fishing dock**, **auto-staffing**, **consumption and fuel**,
   **roads get laid**, **lives run on ticks**, **HUD meters/cap chips**, **two-row toolbar** and
-  **codex** suites. Several sim tests now open with `s.limits = {}` — a village is founded capped,
-  and a test about where a forester stands should not be measuring a cap. The toolbar pair measures the real boxes — eight buttons in exactly two rows of four,
+  **codex**, **demolition is a job** and **the market delivers** suites. Several sim tests now open
+  with `s.limits = {}` — a village is founded capped, and a test about where a forester stands
+  should not be measuring a cap. The market's delivery test lays the households up sick and lodges
+  the vendors nowhere (a villager runs their own errands before their job, so otherwise the vendors
+  spend the run shopping for themselves), and retries across generated maps the way the
+  trading-post tests do — a market the terrain walls off from the village is a placement accident,
+  not a fact about delivery. The toolbar pair measures the real boxes — eight buttons in exactly two rows of four,
   neither the grid nor the pop-out scrolling, the clock stacked inside the bar to the right of the
   tools, and the event log clear of however many rows the pop-out needed. The fishing-dock pair
   scans every tile and

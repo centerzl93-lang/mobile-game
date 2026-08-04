@@ -40,6 +40,7 @@ import {
   isAdult,
   LIMITABLE,
   LIMIT_META,
+  demoFraction,
   LimitKey,
   limitedOutput,
 } from '../types';
@@ -79,6 +80,13 @@ export interface InspectControls {
   toggle?: { group: 'mine' | 'smith' | 'forester' | 'crop' | 'animal'; options: { v: string; label: string; on: boolean }[] };
   /** Trading post: show a button that opens the inventory/trade panel; flags a docked merchant. */
   tradingPost?: { merchantDocked: boolean };
+  /**
+   * Pull it down, or call it off. `blocked` is the village's last barn, which has to stay
+   * standing; `marked` swaps the button for a cancel, right up until the walls actually come down.
+   */
+  demolish?: { marked: boolean; blocked: boolean; underway: boolean };
+  /** Wooden house: trade up to stone. A builder razes it and raises the replacement in its place. */
+  upgrade?: { to: string; cost: string };
   /** Ranch: herd management — cap stepper, cull, and split/transfer to another pen. */
   ranch?: {
     animals: number;
@@ -99,6 +107,10 @@ export interface UICallbacks {
   onNewGame: () => void;
   onOpenMenu: () => void;
   onSetWorkers: (buildingId: number, delta: number) => void;
+  /** Mark this building for demolition, or take the mark back off. */
+  onDemolishBuilding: (buildingId: number, on: boolean) => void;
+  /** Trade a wooden house up to a stone one: raze in place, then rebuild. */
+  onUpgradeBuilding: (buildingId: number) => void;
   /** Rename a workplace. An empty or blank name restores the automatic default. */
   onRenameBuilding: (buildingId: number, name: string) => void;
   onSetBuilders: (delta: number) => void;
@@ -600,6 +612,25 @@ export class UI {
           <button class="ranch-btn" id="insp-transfer"${r.canTransfer ? '' : ' disabled'}>Transfer all</button>
         </div>`;
     }
+    if (controls?.upgrade) {
+      const u = controls.upgrade;
+      ctrlHtml += `<div class="inv-ctrl"><button class="ranch-btn" id="insp-upgrade">⬆️ Upgrade to ${u.to} <small>${u.cost}</small></button></div>`;
+    }
+    if (controls?.demolish) {
+      const d = controls.demolish;
+      // Once the walls are coming down there is nothing to cancel — the button says so rather
+      // than offering an undo that would leave a half-dismantled building standing.
+      const label = d.underway
+        ? '🧱 Being pulled down'
+        : d.marked
+          ? '✖️ Cancel demolition'
+          : d.blocked
+            ? '🛖 Last barn — cannot demolish'
+            : '💥 Demolish';
+      const cls = d.marked && !d.underway ? 'ranch-btn' : 'ranch-btn danger';
+      const dis = d.blocked || d.underway ? ' disabled' : '';
+      ctrlHtml += `<div class="inv-ctrl"><button class="${cls}" id="insp-demolish"${dis}>${label}</button></div>`;
+    }
     this.el.inspect.innerHTML =
       `<div class="inv-head">${title}<button class="close" id="insp-close">×</button></div>` +
       (body || '<div class="inv-row"><span>Empty</span></div>') + ctrlHtml;
@@ -623,6 +654,12 @@ export class UI {
       this.el.inspect.querySelector('[data-step="-1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, -1));
       this.el.inspect.querySelector('[data-step="1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, 1));
       this.el.inspect.querySelector('#insp-tp')?.addEventListener('click', () => this.openTradingPost(id));
+      this.el.inspect
+        .querySelector('#insp-demolish')
+        ?.addEventListener('click', () => this.cb.onDemolishBuilding(id, !controls.demolish?.marked));
+      this.el.inspect
+        .querySelector('#insp-upgrade')
+        ?.addEventListener('click', () => this.cb.onUpgradeBuilding(id));
       if (controls.ranch) {
         const rc = controls.ranch;
         this.el.inspect.querySelector('[data-rmax="-1"]')?.addEventListener('click', () => this.cb.onSetRanchMax(id, -1));
@@ -827,7 +864,7 @@ export class UI {
     // Free laborers are unemployed *adults* only — children have no job but can't be assigned.
     const laborers = s.citizens.reduce((n, c) => n + (isAdult(c) && c.jobId === null && !c.builder ? 1 : 0), 0);
     const sig =
-      jobs.map((b) => `${b.id}:${b.name ?? ''}:${b.built ? 1 : 0}:${b.built ? 0 : footprintToClear(s, b).trees + footprintToClear(s, b).stone + footprintToClear(s, b).iron}:${b.workers.length}:${b.desiredWorkers}:${b.output}:${b.recipe}:${b.crop}:${b.animal}`).join('|') +
+      jobs.map((b) => `${b.id}:${b.name ?? ''}:${b.built ? 1 : 0}:${b.built ? 0 : footprintToClear(s, b).trees + footprintToClear(s, b).stone + footprintToClear(s, b).iron}:${b.workers.length}:${b.desiredWorkers}:${b.output}:${b.recipe}:${b.crop}:${b.animal}:${b.razed ? 'r' : b.demolish ? Math.floor(demoFraction(b) * 100) : ''}`).join('|') +
       `#${adults},${children},${employed},${buildersWorking},${laborers},${s.desiredBuilders}#${s.seeds.join(',')}`;
     if (sig === this.jobSig) return;
     this.jobSig = sig;
@@ -885,11 +922,17 @@ export class UI {
         const l = footprintToClear(s, b);
         return l.trees + l.stone + l.iron;
       })();
-      const status = b.built
-        ? `${b.workers.length} working / ${b.desiredWorkers} wanted (max ${def.jobs})`
-        : toClear === 0
-          ? `🏗 under construction · ${b.desiredWorkers} wanted (max ${def.jobs})`
-          : `🌲 clearing land · ${toClear} tile${toClear > 1 ? 's' : ''} left · ${b.desiredWorkers} wanted (max ${def.jobs})`;
+      // A condemned workplace still lists — it is still staffed and still working — but what the
+      // board says about it is that it is on its way out, not how many hands it would like.
+      const status = b.razed
+        ? '🧱 rubble · salvage being carted off'
+        : b.demolish
+          ? `💥 marked for demolition · ${Math.floor(demoFraction(b) * 100)}% pulled down`
+          : b.built
+            ? `${b.workers.length} working / ${b.desiredWorkers} wanted (max ${def.jobs})`
+            : toClear === 0
+              ? `🏗 under construction · ${b.desiredWorkers} wanted (max ${def.jobs})`
+              : `🌲 clearing land · ${toClear} tile${toClear > 1 ? 's' : ''} left · ${b.desiredWorkers} wanted (max ${def.jobs})`;
       row.innerHTML = `
         <span class="jr-emoji">${def.emoji}</span>
         <div class="jr-main"><div class="jr-name">${escapeAttr(buildingName(b))}</div>

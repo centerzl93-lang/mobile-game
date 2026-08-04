@@ -1603,11 +1603,13 @@ test.describe('villager breeding', () => {
   const houseCapacityForTest = 8;
 
   /**
-   * How long a `growUnderIdealConditions` test is given. These run sixteen full season turnovers
-   * on a whole village, and how long that takes depends on the map: measured between **1.2 and
-   * 4.1 minutes** for the same test on different seeds, on both sides of the building-footprint
-   * change. At the 240s they used to allow, whichever seed came up decided whether the suite was
-   * green — so the budget is the flake, not the simulation. Trim `seasons` before trimming this.
+   * How long a `growUnderIdealConditions` test is given. These run whole season turnovers on a
+   * whole village, and how long that takes used to depend on the map: measured between **1.2 and
+   * 4.1 minutes** for the same test on different seeds, so at the 240s they once allowed,
+   * whichever seed came up decided whether the suite was green. The scenario now pins its
+   * randomness (see below) and the run is the same every time — about 20s for the 12-season
+   * case — but the budget stays generous, because the cost is the simulation and a slower
+   * machine is not a bug. Trim `seasons` before trimming this.
    */
   const GROWTH_TIMEOUT = 480_000;
 
@@ -1619,6 +1621,19 @@ test.describe('villager breeding', () => {
   async function growUnderIdealConditions(page: Page, seasons: number, extraHouses = 10) {
     return page.evaluate(
       ({ seasons, extraHouses }) => {
+        // Pin the randomness for the whole scenario — map, pairing, birth rolls and all.
+        //
+        // Growth is a pile of coin flips, and asserting a fixed bar against a random process
+        // meant the suite's colour was partly luck: the same test came back with 21 villagers on
+        // one run and 16 on the next, one side of `startPop * 1.5` each. Seeding before
+        // `startNewGame` makes the run reproducible, so a failure here is a change in the
+        // breeding rules rather than a bad afternoon. Any linear congruential generator will do;
+        // this is the Numerical Recipes one.
+        let seed = 20260804;
+        Math.random = () => {
+          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+          return seed / 4294967296;
+        };
         const g = (window as any).__village;
         g.startNewGame('small', 'easy', false);
         const s = g.state;
@@ -1752,7 +1767,10 @@ test.describe('villager breeding', () => {
     expect(out.startPop).toBe(12);
     // Previously this sat dead flat at the founding 12: every starter house held four adults, so no
     // household ever had room for a child, and grown children never moved out to form new ones.
-    expect(out.endPop).toBeGreaterThan(out.startPop * 1.5);
+    expect(
+      out.endPop,
+      `grew from ${out.startPop} to ${out.endPop} over ${out.years} years`,
+    ).toBeGreaterThan(out.startPop * 1.5);
   });
 
   test('households settle into one couple with room for their children', async ({ page }) => {

@@ -21,8 +21,6 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      # Icons are generated at build time; the preview server (started by Playwright) needs them.
-      - run: node scripts/gen-icons.mjs
       - run: npx playwright install --with-deps chromium
       - run: npm test
       - uses: actions/upload-artifact@v4

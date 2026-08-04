@@ -64,7 +64,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: [
         'icons/apple-touch-icon.png',
-        'icons/favicon.svg',
+        'icons/favicon-64.png',
       ],
       manifest: {
         name: 'Little Village',
@@ -83,12 +83,13 @@ export default defineConfig({
         scope: BASE,
         icons: [
           { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+          // The artwork is scene edge to edge with nothing to lose in the outer tenth, so one
+          // file serves both purposes — a launcher may crop it to whatever shape it likes.
           {
-            src: 'icons/icon-512-maskable.png',
+            src: 'icons/icon-512.png',
             sizes: '512x512',
             type: 'image/png',
-            purpose: 'maskable',
+            purpose: 'any maskable',
           },
         ],
       },

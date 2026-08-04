@@ -198,10 +198,12 @@ npm run build        # production build into dist/
 npm run preview      # preview the production build + service worker
 ```
 
-Icons are generated (no image tools needed) with:
+The app icons are committed. To re-cut them from the source artwork after editing
+`tools/icon/source.jpg`:
 
 ```bash
-node scripts/gen-icons.mjs
+pip install Pillow
+python3 tools/icon/build.py
 ```
 
 ### 3D view
@@ -234,7 +236,7 @@ src/
   game/                 world gen, buildings, citizens/jobs, simulation, save
   render/renderer.ts    canvas drawing of tiles, buildings, villagers
   ui/ui.ts              HUD, build menu, event log, start/game-over overlays
-scripts/gen-icons.mjs   dependency-free PNG icon generator
+tools/icon/build.py     cuts the app icons from the source artwork
 .github/workflows/      GitHub Pages deploy
 ```
 

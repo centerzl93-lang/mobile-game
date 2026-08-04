@@ -21,7 +21,7 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **build sites show what is in the way**, **merchant docks properly**,
+Latest work: **a real app icon**, **build sites show what is in the way**, **merchant docks properly**,
 **stockpile limits**, **workers go where the work is**,
 **five more tree species**,
 **named/deletable save slots**,
@@ -34,6 +34,34 @@ Latest work: **build sites show what is in the way**, **merchant docks properly*
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### The app icon is artwork now (this session)
+The player supplied a painted village scene; it replaces the little house-and-pine emblem the old
+Node script drew. Source art lives at `tools/icon/source.jpg`, and `tools/icon/build.py` (Pillow)
+cuts the shipped sizes.
+
+**The corners had to go.** The art arrives already composed as an app icon — rounded square,
+dark backdrop showing through the corners. Every platform masks with a shape of *its own*, so
+those baked corners would have drawn a dark rim just inside the system mask. `INSET = 72` crops
+past them: for a corner of radius *R*, clearing it takes `R·(1 − 1/√2) ≈ 0.29R`, and the source
+rounds at ~228px on a 1000px image. What is left is a square of scene edge to edge, which is also
+why there is **no separate maskable file** — the manifest declares the one 512 as
+`purpose: 'any maskable'` rather than precaching a byte-identical twin, and padding a landscape
+into the safe zone would only letterbox the scene inside its own icon.
+
+**The favicon is a different crop.** The whole valley — church, bridge, mountains — turns to
+noise at 64px, so the small size zooms to the cottage (`FOCUS`, given in fractions of the square
+master so the framing survives a re-render of the art).
+
+**They are 256-colour PNGs.** The service worker precaches them, so every kilobyte is paid at
+install; quantising costs a mean of under 3/255 per channel (measured against truecolour) and
+takes the set from ~1.1MB to 174KB.
+
+**CI no longer regenerates them.** `deploy.yml` and `test.yml` both ran `node scripts/gen-icons.mjs`
+before building, which would have redrawn the old emblem over this on every deploy. Those steps
+are gone, the script is deleted, and the icons are committed like the textures are. `favicon.svg`
+went with it — it was a hand-drawn copy of the old emblem — so `index.html` now points at
+`favicon-64.png`.
 
 ### A build site says what is in its way (this session)
 A site sits at 0% while the village hand-clears the wood off it, and from outside that was
@@ -1033,6 +1061,9 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   crop selections cleared on load.
 
 ## Key files
+- `tools/icon/` — `source.jpg` (the icon artwork) + `build.py`, which crops past the art's own
+  rounded corners and writes `public/icons/*.png`. Outputs are committed; nothing regenerates them
+  at build or deploy time.
 - `tools/models/` — the village's geometry, in Python. `common.py` (primitives, world-scale UV
   projection, glTF export), `style.py` (palette, `courses()`, `shingled_roof`, `half_timber`),
   `parts.py` (the shared prop vocabulary), then one module per trade. `build.py` builds; **`check.py`

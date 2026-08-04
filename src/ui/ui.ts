@@ -459,13 +459,11 @@ export class UI {
     } else if (this.openCategory === 'harvest') {
       for (const kind of HARVEST_KINDS) {
         const meta = HARVEST_KIND_META[kind];
+        // No sub-line: "Trees" says what it marks, and the hint under the pop-out already spells
+        // out what the drag will leave behind.
         po.appendChild(
-          this.buildBtn(
-            meta.emoji,
-            meta.label,
-            kind === 'all' ? 'clear it all' : 'leave the rest',
-            kind === this.harvestKind,
-            () => this.selectHarvestKind(kind),
+          this.buildBtn(meta.emoji, meta.label, '', kind === this.harvestKind, () =>
+            this.selectHarvestKind(kind),
           ),
         );
       }
@@ -488,10 +486,13 @@ export class UI {
     this.raiseHints(true);
   }
 
+  /** A pop-out choice. `cost` is optional: some choices cost nothing and have nothing to say. */
   private buildBtn(emoji: string, name: string, cost: string, selected: boolean, fn: () => void): HTMLElement {
     const btn = document.createElement('button');
     btn.className = 'build-btn' + (selected ? ' selected' : '');
-    btn.innerHTML = `<span class="emoji">${emoji}</span><span class="name">${name}</span><span class="cost">${cost}</span>`;
+    btn.innerHTML =
+      `<span class="emoji">${emoji}</span><span class="name">${name}</span>` +
+      (cost ? `<span class="cost">${cost}</span>` : '');
     btn.addEventListener('click', fn);
     return btn;
   }

@@ -59,28 +59,31 @@ test.describe('difficulties', () => {
       };
       return { easy: setup('easy'), normal: setup('normal'), hard: setup('hard') };
     });
-    // Survival rations are identical on every difficulty — they are tuned against the founding
-    // twelve, not against difficulty. 1200 food, 600 firewood, and a year of tools and coats.
+    // Food, tools and coats are identical on every difficulty — they are tuned against the
+    // founding twelve, not against difficulty. 1200 food and a year of tools and coats.
     const FOODS = ['fruit', 'grain', 'fish', 'meat'];
     for (const [name, run] of Object.entries(d)) {
       const food = FOODS.reduce((n, k) => n + ((run.store as any)[k] ?? 0), 0);
       expect(food, `${name} food`).toBe(1200);
-      expect(run.store.firewood, `${name} firewood`).toBe(600);
       expect(run.store.tools, `${name} tools`).toBe(48);
       expect(run.store.clothing, `${name} coats`).toBe(48);
     }
-    // What difficulty actually changes is the leg-up. Easy: building materials, medicine, houses.
+    // What difficulty actually changes is the leg-up. Easy: building materials, fuel, medicine,
+    // houses.
     expect(d.easy.houses).toBe(3);
     expect(d.easy.store.wood).toBe(660);
     expect(d.easy.store.stone).toBe(120);
     expect(d.easy.store.medicine).toBe(50);
-    // Normal and Hard: no houses and no building materials at all — everything must be gathered.
+    expect(d.easy.store.firewood).toBe(600);
+    // Normal and Hard: no houses, no building materials and no fuel — the three seasons before
+    // winter are for raising roofs and filling them.
     for (const name of ['normal', 'hard'] as const) {
       expect(d[name].houses, `${name} houses`).toBe(0);
       expect(d[name].store.wood ?? 0, `${name} wood`).toBe(0);
       expect(d[name].store.stone ?? 0, `${name} stone`).toBe(0);
       expect(d[name].store.medicine ?? 0, `${name} medicine`).toBe(0);
       expect(d[name].store.coal ?? 0, `${name} coal`).toBe(0);
+      expect(d[name].store.firewood ?? 0, `${name} firewood`).toBe(0);
     }
   });
 
@@ -3843,43 +3846,46 @@ test.describe('work happens where the work is', () => {
 });
 
 test.describe('stockpile limits', () => {
-  test('a village is founded with caps already set', async ({ page }) => {
+  test('a village is founded with caps already set, pitched at what it was handed', async ({
+    page,
+  }) => {
     await open2d(page);
-    const out = await page.evaluate(() => {
-      const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false);
-      const s = g.state;
-      const chip = (icon: string) => {
-        const el = [...document.querySelectorAll('#stat-resources .stat')].find(
-          (e) => e.querySelector('.ico')!.textContent === icon,
-        )!;
-        return el.classList.contains('full');
-      };
-      g.ui.updateHud(s, 1, false);
-      return {
-        limits: s.limits,
-        // Easy hands over more wood and firewood than their caps allow, so both read as full
-        // from the first frame — the arrow is doing its job on day one.
-        woodFull: chip('🪵'),
-        firewoodFull: chip('🔥'),
-        stoneFull: chip('🪨'),
-      };
-    });
+    const read = (difficulty: string) =>
+      page.evaluate((d) => {
+        const g = (window as any).__village;
+        g.startNewGame('small', d, false);
+        const s = g.state;
+        g.ui.updateHud(s, 1, false);
+        const chip = (icon: string) =>
+          [...document.querySelectorAll('#stat-resources .stat')]
+            .find((e) => e.querySelector('.ico')!.textContent === icon)!
+            .classList.contains('full');
+        return { limits: s.limits, full: { wood: chip('🪵'), firewood: chip('🔥'), stone: chip('🪨') } };
+      }, difficulty);
 
-    expect(out.limits).toEqual({
+    const easy = await read('easy');
+    expect(easy.limits).toEqual({
       food: 2000,
-      wood: 500,
+      wood: 1000,
       stone: 500,
       iron: 500,
-      firewood: 100,
+      firewood: 1000,
       medicine: 100,
       coal: 100,
       tools: 100,
       clothing: 100,
     });
-    expect(out.woodFull).toBe(true);
-    expect(out.firewoodFull).toBe(true);
-    expect(out.stoneFull, 'easy starts with 120 stone against a cap of 500').toBe(false);
+    // Nothing is over its cap on the first day: Easy's 660 wood and 600 firewood both sit under
+    // the ceilings set for them, so no hut stands down before the player has done anything.
+    expect(easy.full).toEqual({ wood: false, firewood: false, stone: false });
+
+    for (const d of ['normal', 'hard']) {
+      const run = await read(d);
+      expect(run.limits!.firewood, `${d} firewood cap`).toBe(500);
+      expect(run.limits!.wood, `${d} wood cap`).toBe(500);
+      // They start with none of either, so nothing is capped out here either.
+      expect(run.full, `${d} chips`).toEqual({ wood: false, firewood: false, stone: false });
+    }
 
     // Two villages must not share one limits object.
     const separate = await page.evaluate(() => {
@@ -4042,24 +4048,29 @@ test.describe('stockpile limits', () => {
     await expect(page.locator('#limits .job-row').filter({ hasText: 'Food (all kinds)' })).toHaveCount(1);
     // Food is one category, so there is no row per edible thing.
     await expect(page.locator('#limits .job-row').filter({ hasText: 'Fish' })).toHaveCount(0);
-    // A village is founded with caps already set (START_LIMITS).
-    await expect(row.locator('.count')).toHaveText('100');
+    // A village is founded with caps already set — Easy's firewood ceiling is 1000.
+    await expect(row.locator('.count')).toHaveText('1000');
     await row.locator('[data-step="1"]').click();
-    await expect(row.locator('.count')).toHaveText('150');
-    // They can be taken off entirely...
-    for (let i = 0; i < 3; i++) await row.locator('[data-step="-1"]').click();
-    await expect(row.locator('.count')).toHaveText('—');
-    // ...and the first tap back up lands on the current stock rounded to a step, not on 0.
-    await row.locator('[data-step="1"]').click();
-    await expect(row.locator('.count')).toHaveText('600');
+    await expect(row.locator('.count')).toHaveText('1050');
 
-    await row.locator('[data-step="1"]').click();
+    // A cap can be taken off entirely, and the first tap back up lands on the current stock
+    // rounded to a step rather than on 0. Medicine is the short way to show it: Easy founds the
+    // village with 50 of it against a cap of 100, so it is two taps from off.
+    const med = page.locator('#limits .job-row').filter({ hasText: 'Medicine' });
+    await expect(med.locator('.count')).toHaveText('100');
+    for (let i = 0; i < 2; i++) await med.locator('[data-step="-1"]').click();
+    await expect(med.locator('.count')).toHaveText('—');
+    await med.locator('[data-step="1"]').click();
+    await expect(med.locator('.count')).toHaveText('50');
+
     await page.evaluate(() => (window as any).__village.persist());
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
     await page.click('#mm-continue');
     await page.waitForTimeout(150);
-    expect(await page.evaluate(() => (window as any).__village.state.limits?.firewood)).toBe(650);
+    const kept = await page.evaluate(() => (window as any).__village.state.limits);
+    expect(kept.firewood).toBe(1050);
+    expect(kept.medicine).toBe(50);
   });
 });
 

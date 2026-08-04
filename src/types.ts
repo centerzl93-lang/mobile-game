@@ -929,7 +929,7 @@ export const LIMITABLE: LimitKey[] = [
 ];
 
 /**
- * The caps a village is founded with.
+ * The caps a village is founded with, per difficulty.
  *
  * Starting at "no limits anywhere" meant every trade ran flat out until the player noticed and
  * went looking for the stockpile panel — usually after a woodcutter had turned half a forest into
@@ -937,17 +937,28 @@ export const LIMITABLE: LimitKey[] = [
  * has to be doing well to reach one, low enough that runaway production stops before it eats the
  * map. They are only applied to a *new* village; a save from before this had no caps on purpose,
  * and loading it should not quietly change what its huts are doing.
+ *
+ * The wood and firewood ceilings follow the opening stockpile rather than sitting at one number
+ * for everyone. A cap the village is *already* over is a hut that stands down on its first day:
+ * Easy opens with 660 wood and 600 firewood, so both of its ceilings are set above that, while
+ * Normal and Hard open with neither and can bank a winter's fuel (roughly 160 for the founding
+ * twelve) three times over before a woodcutter downs tools.
  */
-export const START_LIMITS: Partial<Record<LimitKey, number>> = {
+const BASE_LIMITS: Partial<Record<LimitKey, number>> = {
   food: 2000,
   wood: 500,
   stone: 500,
   iron: 500,
-  firewood: 100,
+  firewood: 500,
   medicine: 100,
   coal: 100,
   tools: 100,
   clothing: 100,
+};
+export const START_LIMITS: Record<Difficulty, Partial<Record<LimitKey, number>>> = {
+  easy: { ...BASE_LIMITS, wood: 1000, firewood: 1000 },
+  normal: { ...BASE_LIMITS },
+  hard: { ...BASE_LIMITS },
 };
 
 /** Player-facing name and icon for a limit row. Food is a category, so it has its own. */
@@ -1573,23 +1584,25 @@ export const TAILOR_CLOTHING_OUT = 6;
  * `STARTING_STOCK_SCALE` of 3 on the way in, which meant the table said 120 tools and the game
  * gave 360. The scale is folded in here now: what you read is what you get.
  *
- * **Survival rations are the same on every difficulty** — 1200 food, 600 firewood, 48 tools and
- * 48 coats — because they are tuned against the founding twelve rather than against difficulty
- * (see `TOOL_WEAR_PER_WORKER` and `CLOTHING_PER_CITIZEN_WINTER`: roughly a year's worth, so the
- * first winter is survivable and the second is not unless a blacksmith and a tailor are running).
- * What difficulty changes is the leg-up: Easy hands over building materials, a little medicine and
- * `EASY_START_HOUSES` finished houses; Normal and Hard grant no wood, stone or medicine at all, so
- * everything has to be gathered before anything can be raised, and the first illness has to be
- * ridden out or answered with a herbalist.
+ * **Food, tools and coats are the same on every difficulty** — 1200 food, 48 tools and 48 coats —
+ * because they are tuned against the founding twelve rather than against difficulty (see
+ * `TOOL_WEAR_PER_WORKER` and `CLOTHING_PER_CITIZEN_WINTER`: roughly a year's worth, so the first
+ * winter is survivable and the second is not unless a blacksmith and a tailor are running).
+ *
+ * What difficulty changes is the leg-up: Easy hands over building materials, a winter's firewood,
+ * a little medicine and `EASY_START_HOUSES` finished houses. **Normal and Hard start with no
+ * firewood at all** — the game opens in Early Spring, only winter kills, and a coat plus a roof
+ * carries a villager to the turn of the year, so the three seasons before it are the ones in which
+ * houses have to go up and a woodcutter has to fill them. Nothing is handed over: no wood, no
+ * stone, no medicine, no fuel.
  */
 const SURVIVAL_START = {
   fruit: 300, grain: 300, fish: 300, meat: 300, // 1200 food all told
-  firewood: 600,
   tools: 48,
   clothing: 48,
 } as const;
 export const DIFFICULTY_RESOURCES: Record<Difficulty, Partial<Resources>> = {
-  easy: { ...SURVIVAL_START, wood: 660, stone: 120, medicine: 50 },
+  easy: { ...SURVIVAL_START, wood: 660, stone: 120, medicine: 50, firewood: 600 },
   normal: { ...SURVIVAL_START },
   hard: { ...SURVIVAL_START },
 };

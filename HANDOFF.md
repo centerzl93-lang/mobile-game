@@ -48,17 +48,21 @@ the height it is allowed and scrolls inside itself, since twenty-three entries a
 phone; the landscape branch spends width to win reading area back. Path hints stay: those are
 instructions ("drag one finger to draw"), not explainers.
 
-**A village is founded with caps set** — `START_LIMITS` in `types.ts`, copied into
-`newGame`: food 2000, wood/stone/iron 500, and 100 each of firewood, medicine, coal, tools and
-clothing. Applied to new villages only; a save from before this had no caps deliberately and
-loading it should not quietly change what its huts are doing.
+**A village is founded with caps set** — `START_LIMITS` in `types.ts`, keyed by difficulty and
+copied into `newGame`. `BASE_LIMITS` is food 2000, wood/stone/iron 500, firewood 500, and 100 each
+of medicine, coal, tools and clothing; **Easy raises wood and firewood to 1000** because it is
+handed 660 and 600 of them. That is the rule the table follows: a cap the village is already over
+is a hut that stands down on its first day, which is not what a default is for. Applied to new
+villages only; a save from before this had no caps deliberately and loading it should not quietly
+change what its huts are doing.
 
-Two of these bite on day one, which is worth knowing rather than discovering: **Easy starts with
-660 wood against a cap of 500 and 600 firewood against a cap of 100**, so a lumberyard and a
-woodcutter built at the start stand down until stocks fall. The HUD says so — both chips read
-green with a ▲ from the first frame — but firewood is the one to watch: 100 is well under a
-winter's burn for twelve (`HEAT_PER_CITIZEN_WINTER` × 12 ≈ 160), so the cap will hold the
-woodpile below what the season needs unless the player raises it.
+**Normal and Hard now start with no firewood at all.** `SURVIVAL_START` no longer carries any —
+Easy gets its 600 in `DIFFICULTY_RESOURCES` alongside the wood, stone and medicine. The game opens
+in Early Spring and only winter kills (`SEASON_BURN`, and the `chill` clock in `heat()` only runs
+in Winter), so a coat and a roof carry a villager to the turn of the year: the three seasons
+before it are the ones in which houses have to go up and a woodcutter has to fill them. The 500
+ceiling lets them bank roughly three winters' worth for the founding twelve
+(`HEAT_PER_CITIZEN_WINTER` × 12 ≈ 160) before the woodcutter downs tools.
 
 **Starting medicine**: Easy 120 → **50**; Normal and Hard get none, as before.
 

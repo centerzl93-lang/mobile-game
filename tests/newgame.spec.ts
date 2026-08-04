@@ -1416,6 +1416,11 @@ test.describe('household larders', () => {
       );
       s.citizens = s.citizens.filter((c: any) => !surplus.has(c.id));
       stocked.residents = stocked.residents.filter((c: any) => !surplus.has(c.id));
+      // Pin the household's ages away from both boundaries. Ageing runs on ticks, so over a
+      // 610s window a child on the cusp of 4 comes of age, gets rehoused into one of the empty
+      // houses and starves there — a birthday, not a failed larder. Adults sit below
+      // OLD_AGE_START for the same reason: nobody in this house may die of anything but hunger.
+      for (const c of stocked.residents) c.age = c.age >= 4 ? 20 : 1;
       // Clothing is village-wide, not a larder item, so leave it stocked — otherwise winter
       // illness for the unclothed would confound what we're measuring (food and fuel).
       for (const b of s.buildings) if (b.type === 'barn' || b.type === 'market') b.store = { clothing: 1e6 };

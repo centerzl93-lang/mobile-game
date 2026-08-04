@@ -2730,16 +2730,21 @@ test.describe('confirm before it happens', () => {
       await page.evaluate((id) => (window as any).__village.state.buildings.some((b: any) => b.id === id), picked.id),
     ).toBe(true);
 
-    // Re-select and confirm: now it goes.
+    // Re-select and confirm: now the order goes in. It does not take the house away — demolition
+    // is a builder's job (see the `demolition is a job` suite) — it marks it for one.
     await page.evaluate((id) => {
       const g = (window as any).__village;
       const b = g.state.buildings.find((x: any) => x.id === id);
       g.demolishAt(b.x + 0.5, b.y + 0.5);
     }, picked.id);
     await page.click('#cf-ok');
-    expect(
-      await page.evaluate((id) => (window as any).__village.state.buildings.some((b: any) => b.id === id), picked.id),
-    ).toBe(false);
+    const after = await page.evaluate(
+      (id) => (window as any).__village.debugDemoState(id),
+      picked.id,
+    );
+    expect(after, 'still standing, now condemned').not.toBeNull();
+    expect(after.marked).toBe(true);
+    expect(after.razed).toBe(false);
   });
 });
 

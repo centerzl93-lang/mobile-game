@@ -1795,12 +1795,12 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   house: {
     type: 'house', name: 'House', emoji: '🏠', category: 'housing', w: 2, h: 2,
     cost: { wood: 12 }, jobs: 0, buildTime: 6,
-    desc: 'Homes up to 4 villagers and lets families grow.',
+    desc: 'Homes up to 8 villagers — a couple and their children — and a household with room to spare is one that can grow.',
   },
   stonehouse: {
     type: 'stonehouse', name: 'Stone House', emoji: '🏡', category: 'housing', w: 2, h: 2,
     cost: { wood: 8, stone: 16 }, jobs: 0, buildTime: 8,
-    desc: 'A warm, sturdy home for up to 5 — burns far less fuel, and stone walls resist fire.',
+    desc: 'A warm, sturdy home for up to 10. Masonry holds its heat, so a household here burns 40% less firewood through the winter, and it is half as likely to catch fire. A wooden house can be upgraded to one in place.',
   },
   gatherer: {
     type: 'gatherer', name: 'Gatherer', emoji: '🧺', category: 'food', w: 3, h: 3,
@@ -1830,7 +1830,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   lumberyard: {
     type: 'lumberyard', name: 'Forester', emoji: '🌲', category: 'resources', w: 3, h: 3,
     cost: { wood: 12 }, jobs: 3, buildTime: 6, workRadius: 4,
-    desc: 'Foresters fell trees for wood in their work circle — the circle grows with each worker (up to 3). Toggle replanting to sow and grow a renewable forest.',
+    desc: 'Foresters fell trees for wood out in their work circle, and clear the loose rock and ore they find there. Toggle replanting to sow saplings and keep the woods renewable.',
   },
   woodcutter: {
     type: 'woodcutter', name: 'Woodcutter', emoji: '🪓', category: 'resources', w: 3, h: 3,
@@ -1848,7 +1848,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   mine: {
     type: 'mine', name: 'Mine', emoji: '🕳️', category: 'resources', w: 6, h: 6,
     cost: { wood: 14, stone: 10 }, jobs: 2, buildTime: 8, requiresTileAny: ['foothill'],
-    desc: 'Digs coal or iron. Must be dug into a mountain\'s foothills (toggle coal/iron in the job board).',
+    desc: 'Digs coal or iron — pick which in its own panel or on the job board. Part of it must be cut into a mountain\'s foothills.',
   },
   blacksmith: {
     type: 'blacksmith', name: 'Blacksmith', emoji: '⚒️', category: 'resources', w: 3, h: 3,
@@ -1868,7 +1868,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   school: {
     type: 'school', name: 'School', emoji: '🏫', category: 'civic', w: 3, h: 4,
     cost: { wood: 16, stone: 10 }, jobs: 1, buildTime: 7,
-    desc: 'A teacher educates the children; kids who grow up here become skilled, more productive adults.',
+    desc: 'A teacher takes the children for their last year before adulthood. Attend half of it or more and they grow into skilled adults, who work faster for the rest of their lives.',
   },
   tavern: {
     type: 'tavern', name: 'Tavern', emoji: '🍺', category: 'civic', w: 4, h: 4,
@@ -1903,12 +1903,12 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   market: {
     type: 'market', name: 'Market', emoji: '🛒', category: 'resources', w: 4, h: 4,
     cost: { wood: 22, stone: 10 }, jobs: 3, buildTime: 8, workRadius: MARKET_RADIUS,
-    desc: 'Stores goods like a barn, and its vendors carry food, fuel and coats out to every home inside its circle so households never have to leave work to shop. Three vendors reach the furthest.',
+    desc: 'Stores goods like a barn (2000 units of space to a barn\'s 5000), and its vendors carry food, fuel and coats out to every home inside its circle, so households never have to leave work to shop. Three vendors reach the furthest.',
   },
   barn: {
     type: 'barn', name: 'Barn', emoji: '🛖', category: 'resources', w: 3, h: 3,
     cost: { wood: 16 }, jobs: 0, buildTime: 6, fireproof: true,
-    desc: 'Stores up to 5000 goods, safe from fire. Tap it to see what is inside.',
+    desc: 'The village store, and it cannot burn down. It holds 5000 units of space rather than 5000 items — a log takes one, a sack of grain a quarter, a cow four. Tap it to see what is inside.',
   },
 };
 

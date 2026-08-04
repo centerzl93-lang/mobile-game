@@ -29,6 +29,8 @@ import {
   CATEGORY_ORDER,
   CATEGORY_META,
   CODEX_NOTES,
+  SIZABLE,
+  WORK_RADIUS_PER_WORKER,
   TRADE_VALUE,
   SEED_COST,
   MERCHANT_CATEGORY_META,
@@ -1451,9 +1453,19 @@ export class UI {
           .map(([k, a]) => `${RESOURCE_ICON[k]}${a}`)
           .join(' ') || 'free';
       // The facts a player weighs before spending: what it occupies, what it costs, who staffs it.
-      const facts = [`${d.w}×${d.h}`, cost];
+      // A field or a pen is sized by the player at placement, so quoting its smallest setting as
+      // if it were the building's footprint is only a third of the truth.
+      const size = SIZABLE[type]
+        ? `${SIZABLE[type]!.min}×${SIZABLE[type]!.min}–${SIZABLE[type]!.max}×${SIZABLE[type]!.max}`
+        : `${d.w}×${d.h}`;
+      const facts = [size, cost];
       if (d.jobs > 0) facts.push(`👷${d.jobs}`);
-      if (d.workRadius) facts.push(`⭕${d.workRadius}`);
+      if (d.workRadius) {
+        // The circle is not one number: it is what a single worker reaches, widening with each
+        // one hired. Printing only the base under-sold every work building by half.
+        const max = d.workRadius + Math.max(0, d.jobs - 1) * WORK_RADIUS_PER_WORKER;
+        facts.push(`⭕${d.workRadius}${max > d.workRadius ? `–${max}` : ''}`);
+      }
       return (
         `<div class="cx-row">` +
         `<div class="cx-head"><span class="cx-emoji">${d.emoji}</span>` +
@@ -1481,7 +1493,7 @@ export class UI {
     this.overlayCard(
       `<h2>Codex</h2>` +
         // What the shorthand on each row means, once, rather than a word per fact on 23 rows.
-        `<p class="cx-legend">tiles · cost · 👷 workers · ⭕ work circle</p>` +
+        `<p class="cx-legend">tiles · cost · 👷 workers · ⭕ work circle, one worker to full staff</p>` +
         `<div class="cx-list">${groups}${notes}</div>` +
         `<div class="menu-list"><button class="ghost" id="cx-back">Back</button></div>`,
       'menu-card codex-card',

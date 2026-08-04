@@ -37,6 +37,29 @@ Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **stora
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
 
+### The Codex audited against the code (this session)
+A house advertised room for four; `HOUSING_PER_HOUSE` has been **8** for some time. The capacities
+were raised and the prose was not, which is the failure mode a reference page has — so every
+description was read back against the constant that drives it:
+
+- **House 4 → 8**, **Stone House 5 → 10** (`STONE_HOUSE_CAPACITY`).
+- The stone house's "burns far less fuel" is now the actual figure, **40% less**
+  (`STONE_HOUSE_HEAT_FACTOR` 0.6), and its fire resistance is stated as the half it is
+  (`STONE_FIRE_FACTOR`).
+- **Barn**: "stores up to 5000 goods" was a unit error — `BARN_CAPACITY` is *volume*, and a sack of
+  grain takes a quarter of a log's room. It now says space and gives the exchange rate. The market
+  says its 2000 against the barn's 5000.
+- **Work circles** were quoted at their one-worker radius, which under-sold every work building by
+  half. The facts line shows the range (`⭕8–12` for a market), and the legend says so.
+- **Field and Ranch** showed `4×4`, their smallest setting, as though it were their footprint. Now
+  `4×4–8×8`, from `SIZABLE`.
+- Smaller: the forester no longer implies only it has a growing circle (they all do) and now
+  mentions clearing rock and ore, which it does; the mine points at both places its output can be
+  switched; the school states the half-year attendance rule `SCHOOL_ATTENDANCE` actually applies.
+
+`debugFacts()` exposes the driving constants and a test asserts the prose against them, so the next
+balance change that moves a capacity fails the suite instead of quietly making the Codex a liar.
+
 ### The rules moved into the Codex (this session)
 The stockpile panel opened with a four-line paragraph explaining what a limit *does*, and every row
 carried "nothing produces this yet" — which was true of most rows for most of a village's life and

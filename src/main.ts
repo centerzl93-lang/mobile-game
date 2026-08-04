@@ -13,6 +13,8 @@ import {
   BUILDING_DEFS,
   BUILD_ORDER,
   demoFraction,
+  BARN_CAPACITY,
+  MARKET_CAPACITY,
   buildTimeOf,
   autoBuilderDemand,
   FOOD_PER_CITIZEN_PER_SEASON,
@@ -1495,6 +1497,25 @@ class Game {
     const n = this.strokeTiles.length;
     this.onPaintEnd();
     return n;
+  }
+
+  /**
+   * Debug/testing helper: the figures the Codex quotes in prose, read from the constants that
+   * actually drive them — so a test can catch the descriptions drifting out of date, which is
+   * exactly how a house came to advertise half the beds it has.
+   */
+  debugFacts(): Record<string, number> {
+    return {
+      house: houseCapacityOf('house'),
+      stonehouse: houseCapacityOf('stonehouse'),
+      barn: BARN_CAPACITY,
+      market: MARKET_CAPACITY,
+      stoneHeatSaving: Math.round((1 - STONE_HOUSE_HEAT_FACTOR) * 100),
+      farmMin: SIZABLE.farm!.min,
+      farmMax: SIZABLE.farm!.max,
+      ranchMin: SIZABLE.ranch!.min,
+      ranchMax: SIZABLE.ranch!.max,
+    };
   }
 
   /** Debug/testing helper: the route a road would take between two tiles, both ends included. */

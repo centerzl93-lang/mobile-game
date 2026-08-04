@@ -2494,6 +2494,55 @@ test.describe('codex', () => {
     await expect(page.locator('#mm-new')).toBeVisible();
   });
 
+  test('the figures it quotes are the figures the game runs on', async ({ page }) => {
+    await open2d(page);
+    await page.click('#mm-codex');
+
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const desc = (name: string) =>
+        [...document.querySelectorAll('.cx-row')]
+          .find((r) => r.querySelector('.cx-name')!.textContent === name)!
+          .querySelector('.cx-desc')!.textContent!;
+      const facts = (name: string) =>
+        [...document.querySelectorAll('.cx-row')]
+          .find((r) => r.querySelector('.cx-name')!.textContent === name)!
+          .querySelector('.cx-facts')!.textContent!;
+      return {
+        numbers: g.debugFacts(),
+        house: desc('House'),
+        stone: desc('Stone House'),
+        barn: desc('Barn'),
+        market: desc('Market'),
+        field: desc('Field'),
+        ranch: desc('Ranch'),
+        fieldFacts: facts('Field'),
+        marketFacts: facts('Market'),
+        foresterFacts: facts('Forester'),
+        wellFacts: facts('Well'),
+      };
+    });
+
+    const n = out.numbers!;
+    // The one that was wrong: a house sleeps eight, and said four.
+    expect(out.house).toContain(`${n.house} villagers`);
+    expect(out.stone).toContain(`up to ${n.stonehouse}`);
+    expect(out.stone).toContain(`${n.stoneHeatSaving}% less firewood`);
+    // Barn and market capacity are units of *space*, not a count of items, and say so.
+    expect(out.barn).toContain(`${n.barn} units of space`);
+    expect(out.market).toContain(`${n.market} units of space`);
+    expect(out.barn).not.toMatch(new RegExp(`${n.barn} goods`));
+    // Sizable buildings quote their real range, in the prose and in the facts line.
+    expect(out.field).toContain(`${n.farmMin}×${n.farmMin} up to ${n.farmMax}×${n.farmMax}`);
+    expect(out.ranch).toContain(`${n.ranchMin}×${n.ranchMin} up to ${n.ranchMax}×${n.ranchMax}`);
+    expect(out.fieldFacts).toContain(`${n.farmMin}×${n.farmMin}–${n.farmMax}×${n.farmMax}`);
+    // A work circle is a range too — what one worker reaches, out to what a full staff does.
+    expect(out.marketFacts, 'market: 8 at one vendor, 12 at three').toContain('⭕8–12');
+    expect(out.foresterFacts).toContain('⭕4–8');
+    // ...and a building with no circle at all does not pretend to have one.
+    expect(out.wellFacts).not.toContain('⭕');
+  });
+
   test('it is reachable mid-game from the pause menu, and picking a building explains nothing', async ({
     page,
   }) => {

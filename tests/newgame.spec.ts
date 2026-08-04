@@ -3850,6 +3850,165 @@ test.describe('work happens where the work is', () => {
   });
 });
 
+test.describe('drawing a road', () => {
+  /** Find a rectangle of open ground with nothing on it, and return its top-left tile. */
+  const findClear = `(w, h) => {
+    const g = window.__village;
+    const s = g.state;
+    const free = (x, y) => {
+      const t = s.tiles[y * s.w + x];
+      if (!t || t.type === 'water' || t.type === 'stone') return false;
+      return !s.buildings.some((b) => x >= b.x && x < b.x + 8 && y >= b.y && y < b.y + 8);
+    };
+    for (let y = 2; y < s.h - h - 2; y++)
+      for (let x = 2; x < s.w - w - 2; x++) {
+        let ok = true;
+        for (let dy = 0; dy < h && ok; dy++) for (let dx = 0; dx < w && ok; dx++) ok = free(x + dx, y + dy);
+        if (ok) return { x, y };
+      }
+    return null;
+  }`;
+
+  /** How many times a route changes direction. */
+  const turnsIn = (route: { x: number; y: number }[]): number => {
+    let turns = 0;
+    let prev: string | null = null;
+    for (let i = 1; i < route.length; i++) {
+      const d = `${Math.sign(route[i].x - route[i - 1].x)},${Math.sign(route[i].y - route[i - 1].y)}`;
+      if (prev !== null && d !== prev) turns++;
+      prev = d;
+    }
+    return turns;
+  };
+
+  test('a route holds a straight line, and takes one corner rather than a staircase', async ({
+    page,
+  }) => {
+    await open2d(page);
+    const out = await page.evaluate((fc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const at = eval(fc)(16, 10);
+      if (!at) return { error: 'no clear ground on this map' };
+      return {
+        at,
+        straight: g.debugRoutePath(at.x, at.y, at.x + 12, at.y),
+        diagonal: g.debugRoutePath(at.x, at.y, at.x + 7, at.y + 7),
+        ell: g.debugRoutePath(at.x, at.y, at.x + 12, at.y + 3),
+      };
+    }, findClear);
+
+    expect(out.error).toBeUndefined();
+    // Both ends are in the route, and a straight run is straight.
+    expect(out.straight![0]).toEqual(out.at);
+    expect(out.straight![out.straight!.length - 1]).toEqual({ x: out.at!.x + 12, y: out.at!.y });
+    expect(turnsIn(out.straight!), 'a run across open ground never wavers').toBe(0);
+    expect(turnsIn(out.diagonal!), 'nor does a diagonal').toBe(0);
+    // Twelve across and three down is a straight leg and one bend — not twelve little steps.
+    expect(turnsIn(out.ell!)).toBe(1);
+    expect(out.ell!.length).toBe(13);
+  });
+
+  test('a wandering drag lays the road it ends up asking for, not the trail it traced', async ({
+    page,
+  }) => {
+    await open2d(page);
+    const out = await page.evaluate((fc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const at = eval(fc)(16, 10);
+      if (!at) return { error: 'no clear ground on this map' };
+
+      // Drag a zig-zag across three rows and finish back on the row it started from.
+      const wobble: { x: number; y: number }[] = [];
+      for (let i = 0; i <= 12; i++) wobble.push({ x: at.x + i, y: at.y + (i % 3) });
+      wobble.push({ x: at.x + 12, y: at.y });
+      const planned = g.debugDragPath('dirt', wobble);
+      const tiles = s.pendingPaths.map((i: number) => ({ x: i % s.w, y: Math.floor(i / s.w) }));
+      return {
+        at,
+        planned,
+        pending: s.pendingPaths.length,
+        rows: [...new Set(tiles.map((t: any) => t.y))],
+        built: s.paths.filter((v: number) => v === 2 || v === 4).length, // laid dirt/stone
+      };
+    }, findClear);
+
+    expect(out.error).toBeUndefined();
+    // Thirteen tiles in one straight line: the wobble is gone, only the two ends mattered.
+    expect(out.rows, 'the finished road runs along a single row').toEqual([out.at!.y]);
+    expect(out.pending).toBe(13);
+    expect(out.planned).toBe(13);
+    // And nothing is locked in — every tile is still only drawn, waiting on the confirm bar.
+    expect(out.built, 'nothing is laid until the player approves it').toBe(0);
+  });
+
+  test('carrying on dragging replaces the route instead of adding to it', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((fc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const at = eval(fc)(16, 10);
+      if (!at) return { error: 'no clear ground on this map' };
+
+      // Out to a far corner, then change your mind and come back to a near one.
+      const far = g.debugDragPath('dirt', [
+        { x: at.x, y: at.y },
+        { x: at.x + 12, y: at.y + 6 },
+        { x: at.x + 3, y: at.y },
+      ]);
+      const tiles = s.pendingPaths.map((i: number) => ({ x: i % s.w, y: Math.floor(i / s.w) }));
+      return {
+        at,
+        planned: far,
+        pending: s.pendingPaths.length,
+        maxX: Math.max(...tiles.map((t: any) => t.x)),
+        rows: [...new Set(tiles.map((t: any) => t.y))],
+      };
+    }, findClear);
+
+    expect(out.error).toBeUndefined();
+    // Only the last route survives: four tiles along one row, nothing left from the long leg.
+    expect(out.pending).toBe(4);
+    expect(out.maxX).toBe(out.at!.x + 3);
+    expect(out.rows).toEqual([out.at!.y]);
+  });
+
+  test('a road will not route through water without a bridge', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      // Find open ground on each bank of the river, on the same row.
+      for (let y = 4; y < s.h - 4; y++) {
+        let wet = -1;
+        for (let x = 4; x < s.w - 4; x++) if (s.tiles[y * s.w + x].type === 'water') { wet = x; break; }
+        if (wet < 0) continue;
+        let east = -1;
+        for (let x = wet + 1; x < s.w - 4; x++) {
+          if (s.tiles[y * s.w + x].type === 'water') continue;
+          east = x;
+          break;
+        }
+        if (east < 0 || s.tiles[y * s.w + (wet - 1)].type !== 'grass') continue;
+        const route = g.debugRoutePath(wet - 1, y, east, y);
+        // Either there is no way round at all, or the way round does not walk on water.
+        const overWater = route
+          ? route.filter((p: any) => s.tiles[p.y * s.w + p.x].type === 'water').length
+          : 0;
+        return { found: true, blocked: route === null, overWater };
+      }
+      return { found: false };
+    });
+
+    expect(out.found, 'the generated map has a river').toBe(true);
+    expect(out.overWater, 'a road never runs over open water').toBe(0);
+  });
+});
+
 test.describe('demolition is a job', () => {
   /** A village with builders standing by and one finished house singled out. */
   const setup = `(diff) => {

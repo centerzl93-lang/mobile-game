@@ -21,7 +21,8 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **demolition as a job + house upgrades + a delivering market**,
+Latest work: **roads are routed, not traced**,
+**demolition as a job + house upgrades + a delivering market**,
 **a codex + opening caps**, **a HUD/toolbar pass**, **a real app icon**, **build sites show what is in the way**, **merchant docks properly**,
 **stockpile limits**, **workers go where the work is**,
 **five more tree species**,
@@ -35,6 +36,38 @@ Latest work: **demolition as a job + house upgrades + a delivering market**,
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Roads are routed, not traced (this session)
+Drawing a road used to paint whatever tile the finger was over, which meant the road *was* the
+trail: a wobbly drag built a wobbly road, and altering it meant cancelling and starting again. Now
+a drag names two ends. `onPaintStart` anchors, and every pointer move re-plans the **whole stroke**
+from the anchor to wherever the finger is now — the mechanism bridges and tunnels already used for
+their spans, generalised to every tier. Keep dragging and the route keeps changing; nothing is
+committed until the confirm bar is accepted, exactly as before.
+
+`routePath` (`src/game/paths.ts`) finds the line. It is a second A*, deliberately not `findPath`:
+that one answers where a villager can *walk*, this one where a road can *go*, and they differ on
+every tile of forest, every stretch of open water and every unbuilt bridge. Three things shape it:
+
+- **`TURN_COST` (0.45)** — without it, every zig-zag between two points costs exactly what the
+  straight L costs, and A* returns whichever it expanded first. Charging for a change of direction
+  breaks the tie towards long straight runs and a few deliberate corners. Measured: a 12-tile run
+  comes back with 0 turns, a diagonal with 0, and 12-across-3-down with exactly 1.
+- **`ROAD_REUSE` (0.35)** — a tile that already carries a road is cheap, so routes join up the
+  network rather than laying a second road beside the first.
+- **`routable`** is looser than `planPath`: it allows tiles that already carry this road (the
+  stroke simply has a gap there) and built bridges and tunnels, so a road drawn across a river
+  follows the crossing instead of refusing.
+
+If the finger is over water, rock or a building there is no route, and the last good one stays on
+screen rather than blinking away — the preview holds instead of flickering as the pointer crosses
+an obstacle.
+
+**A latent bug came out with it.** `unplanTiles` cleared re-planned tiles to `PATH_NONE` instead of
+the value they held before, and filtered `pendingPaths` without filtering the parallel
+`pendingPrev` — so every tile after a dropped one was paired with the wrong history. Nearly
+harmless when only a bridge drag re-planned, and much less so now that every pointer move does:
+re-routing a stone road away from a dirt one would have scrubbed the dirt. Both fixed.
 
 ### Demolition is a job, houses upgrade, and the market delivers (this session)
 

@@ -21,6 +21,8 @@ import {
   TUNNEL_STONE_COST,
   footprintW,
   footprintH,
+  MAP_W,
+  MAP_H,
 } from '../types';
 import { tileIndex, inBounds, getTile } from './world';
 import { HARVEST_WOOD, HARVEST_STONE, HARVEST_IRON } from '../types';
@@ -138,6 +140,151 @@ export function cancelPendingPaths(s: GameState): number {
 }
 
 /**
+ * Ground a road of this tier could run over — for *routing*, which is a looser question than
+ * whether a tile can be newly planned.
+ *
+ * A tile that already carries this road is perfectly good to route along; `planPath` will decline
+ * to re-plan it and the stroke simply has a gap where the road already exists. Bridges and tunnels
+ * count too: a crossing that has already been built is the obvious way through, and a road drawn
+ * from one bank to the other should follow it rather than refuse to cross.
+ */
+function routable(s: GameState, tx: number, ty: number): boolean {
+  if (!inBounds(tx, ty)) return false;
+  if (tileHasBuilding(s, tx, ty)) return false;
+  const t = getTile(s.tiles, tx, ty)!;
+  const cur = s.paths[tileIndex(tx, ty)];
+  if (t.type === 'water') return cur === PATH_BRIDGE || cur === PATH_BRIDGE_PLAN;
+  if (t.type === 'stone') return cur === PATH_TUNNEL || cur === PATH_TUNNEL_PLAN;
+  return true;
+}
+
+/** Cost of stepping onto a tile: paved ground is cheap, so a route joins up existing roads. */
+function tileCost(s: GameState, tx: number, ty: number): number {
+  return s.paths[tileIndex(tx, ty)] === PATH_NONE ? 1 : ROAD_REUSE;
+}
+
+/**
+ * What a turn costs, relative to a tile of open ground.
+ *
+ * Without it the router is free to stagger diagonally across a field — every zig-zag between two
+ * points is the same length as the L that goes round, and A* returns whichever it happened to
+ * expand first. Charging for a change of direction breaks the tie towards long straight runs and
+ * a couple of deliberate corners, which is what a road looks like. It is well under the cost of a
+ * tile, so it never sends a route the long way round to save a bend.
+ */
+const TURN_COST = 0.45;
+/** Multiplier on a tile that already carries any road, so routes prefer to reuse what is there. */
+const ROAD_REUSE = 0.35;
+
+/**
+ * The route a road should take between two tiles: the cheapest way across ground it can be laid
+ * on, preferring straight runs and existing roads. Includes both ends. Null when there is no way
+ * through (or the finger is over water, rock or a building).
+ *
+ * This is a separate search from `findPath`, which answers a different question — that one is
+ * about where a villager can *walk*, this one about where a road can *go*, and the two differ on
+ * every tile of forest, every unbuilt bridge and every stretch of open water.
+ */
+export function routePath(
+  s: GameState,
+  fx: number,
+  fy: number,
+  tx: number,
+  ty: number,
+): { x: number; y: number }[] | null {
+  fx |= 0;
+  fy |= 0;
+  tx |= 0;
+  ty |= 0;
+  if (!routable(s, fx, fy) || !routable(s, tx, ty)) return null;
+  if (fx === tx && fy === ty) return [{ x: fx, y: fy }];
+
+  const N = MAP_W * MAP_H;
+  const start = tileIndex(fx, fy);
+  const goal = tileIndex(tx, ty);
+  const came = new Int32Array(N).fill(-1);
+  const dir = new Int8Array(N).fill(-1); // which of NEIGHBOURS8 arrived here, for the turn charge
+  const g = new Float32Array(N).fill(Infinity);
+  const seen = new Uint8Array(N);
+  const f = new Float32Array(N).fill(Infinity);
+  g[start] = 0;
+  f[start] = 0;
+
+  const heap: number[] = [start];
+  const push = (v: number): void => {
+    heap.push(v);
+    let i = heap.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (f[heap[i]] < f[heap[p]]) {
+        [heap[i], heap[p]] = [heap[p], heap[i]];
+        i = p;
+      } else break;
+    }
+  };
+  const pop = (): number => {
+    const top = heap[0];
+    const last = heap.pop()!;
+    if (heap.length) {
+      heap[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = i * 2 + 1;
+        const r = l + 1;
+        let m = i;
+        if (l < heap.length && f[heap[l]] < f[heap[m]]) m = l;
+        if (r < heap.length && f[heap[r]] < f[heap[m]]) m = r;
+        if (m === i) break;
+        [heap[i], heap[m]] = [heap[m], heap[i]];
+        i = m;
+      }
+    }
+    return top;
+  };
+
+  while (heap.length) {
+    const cur = pop();
+    if (cur === goal) break;
+    if (seen[cur]) continue;
+    seen[cur] = 1;
+    const cx = cur % MAP_W;
+    const cy = (cur / MAP_W) | 0;
+    for (let d = 0; d < NEIGHBOURS8.length; d++) {
+      const [dx, dy] = NEIGHBOURS8[d];
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (!routable(s, nx, ny)) continue;
+      // No squeezing diagonally through a gap between two blocked tiles.
+      if (dx !== 0 && dy !== 0 && (!routable(s, cx + dx, cy) || !routable(s, cx, cy + dy))) continue;
+      const ni = tileIndex(nx, ny);
+      if (seen[ni]) continue;
+      const step = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1;
+      const turn = dir[cur] >= 0 && dir[cur] !== d ? TURN_COST : 0;
+      const ng = g[cur] + step * tileCost(s, nx, ny) + turn;
+      if (ng < g[ni]) {
+        came[ni] = cur;
+        dir[ni] = d as unknown as number;
+        g[ni] = ng;
+        f[ni] = ng + Math.hypot(nx - tx, ny - ty);
+        push(ni);
+      }
+    }
+  }
+  if (came[goal] < 0) return null;
+  const out: { x: number; y: number }[] = [];
+  for (let at = goal; at >= 0; at = came[at]) {
+    out.push({ x: at % MAP_W, y: (at / MAP_W) | 0 });
+    if (at === start) break;
+  }
+  return out.reverse();
+}
+
+const NEIGHBOURS8: [number, number][] = [
+  [1, 0], [-1, 0], [0, 1], [0, -1],
+  [1, 1], [1, -1], [-1, 1], [-1, -1],
+];
+
+/**
  * Tiers laid as a single span across an obstacle rather than painted tile by tile.
  *
  * A bridge or a tunnel is one crossing, not a freehand scribble — the player drags a straight
@@ -173,20 +320,38 @@ export function spanLine(x0: number, y0: number, x1: number, y1: number): { x: n
 /**
  * Un-plan the given tiles, dropping them from the pending list too.
  *
- * Used while dragging a span: the whole line is re-planned on every pointer move, so the
- * previous frame's line has to be taken back first. Only *planned* tiles are cleared — a tile a
- * villager already finished stays built.
+ * Used while dragging: the whole stroke is re-planned on every pointer move, so the previous
+ * frame's route has to be taken back first. Only *planned* tiles are cleared — a tile a villager
+ * already finished stays built — and each one goes back to whatever it held before the plan went
+ * on it, so re-routing a stone road away from a dirt one does not scrub the dirt.
+ *
+ * `pendingPaths` and `pendingPrev` are parallel arrays, so they have to be filtered together;
+ * dropping an entry from one alone would leave every later tile paired with the wrong history.
  */
 export function unplanTiles(s: GameState, indices: number[]): void {
   if (indices.length === 0) return;
   const drop = new Set(indices);
+  const pending = s.pendingPaths ?? [];
+  const prevs = s.pendingPrev ?? [];
+  const prevOf = new Map<number, number>();
+  for (let k = 0; k < pending.length; k++) {
+    if (drop.has(pending[k])) prevOf.set(pending[k], prevs[k] ?? PATH_NONE);
+  }
   for (const idx of indices) {
     const v = s.paths[idx];
     if (v === PATH_DIRT_PLAN || v === PATH_STONE_PLAN || v === PATH_BRIDGE_PLAN || v === PATH_TUNNEL_PLAN) {
-      s.paths[idx] = PATH_NONE;
+      s.paths[idx] = prevOf.get(idx) ?? PATH_NONE;
     }
   }
-  if (s.pendingPaths) s.pendingPaths = s.pendingPaths.filter((i) => !drop.has(i));
+  const keptPaths: number[] = [];
+  const keptPrev: number[] = [];
+  for (let k = 0; k < pending.length; k++) {
+    if (drop.has(pending[k])) continue;
+    keptPaths.push(pending[k]);
+    keptPrev.push(prevs[k] ?? PATH_NONE);
+  }
+  s.pendingPaths = keptPaths;
+  s.pendingPrev = keptPrev;
 }
 
 /** Whether any building's footprint covers this tile. */

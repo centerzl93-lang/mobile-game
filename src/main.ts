@@ -103,7 +103,7 @@ import {
 } from './game/storage';
 import {
   planPath, markPending, pendingPathCount, confirmPendingPaths, cancelPendingPaths,
-  isSpanTier, spanLine, unplanTiles, demolishPathRect,
+  isSpanTier, spanLine, routePath, unplanTiles, demolishPathRect,
 } from './game/paths';
 import { saveGame, loadGame, hasSave, clearSave, slotInfo, slotName, setSlotName, lastSlot, SLOTS } from './game/save';
 import { InspectRow, InspectControls } from './ui/ui';
@@ -655,46 +655,67 @@ class Game {
     this.persist();
   }
 
-  /** Where a bridge/tunnel drag is anchored, and the tiles that stroke has planned so far. */
-  private spanStart: { x: number; y: number } | null = null;
-  private spanTiles: number[] = [];
+  /** Where the current path drag is anchored, and the tiles that stroke has planned so far. */
+  private strokeStart: { x: number; y: number } | null = null;
+  private strokeTiles: number[] = [];
 
   private onPaintStart(sx: number, sy: number): void {
     if (!this.selectedPath || !this.running || this.state.gameOver) return;
     const [wx, wy] = this.camera.screenToTile(sx, sy, this.cw, this.ch);
-    this.spanStart = { x: Math.floor(wx), y: Math.floor(wy) };
-    this.spanTiles = [];
-    this.onPaint(sx, sy);
+    this.beginStroke(Math.floor(wx), Math.floor(wy));
+  }
+
+  /** Anchor a path drag at a tile and draw its first (single-tile) route. */
+  private beginStroke(tx: number, ty: number): void {
+    this.strokeStart = { x: tx, y: ty };
+    this.strokeTiles = [];
+    this.paintStroke(tx, ty);
   }
 
   private onPaintEnd(): void {
-    this.spanStart = null;
-    this.spanTiles = [];
+    this.strokeStart = null;
+    this.strokeTiles = [];
   }
 
+  /**
+   * Draw the road the finger is asking for. Nothing is committed: the whole stroke is re-planned
+   * from the anchor to wherever the pointer is now, on every move, and it all sits pending until
+   * the confirm bar is accepted.
+   *
+   * The player is not tracing the road tile by tile — they are naming two ends, and `routePath`
+   * finds the sensible way between them, holding a straight line where the ground allows and
+   * joining onto roads that are already there. So dragging around a lake redraws the route
+   * instead of smearing a trail of every tile the finger passed over, and a wobbly drag still
+   * produces a road worth building.
+   *
+   * A bridge or tunnel is the exception and stays a straight span: a crossing is one decision,
+   * from bank to bank, and there is nothing to route around inside it.
+   */
   private onPaint(sx: number, sy: number): void {
     if (!this.selectedPath || !this.running || this.state.gameOver) return;
     const [wx, wy] = this.camera.screenToTile(sx, sy, this.cw, this.ch);
-    const tx = Math.floor(wx);
-    const ty = Math.floor(wy);
-    // Drawn tiles are held pending until the player confirms, so a stray drag can be undone.
-    if (!isSpanTier(this.selectedPath) || !this.spanStart) {
-      const prev = inBounds(tx, ty) ? this.state.paths[tileIndex(tx, ty)] : PATH_NONE;
-      if (planPath(this.state, tx, ty, this.selectedPath)) markPending(this.state, tx, ty, prev);
-      return;
-    }
-    // A bridge or tunnel is one crossing: the player drags a straight line from bank to bank (or
-    // hillside to hillside) and the whole line is re-planned on every move, so the preview
-    // follows the pointer instead of leaving a trail of every tile it passed over. Only the
-    // tiles actually over water / inside the rock take — `planPath` refuses the rest — which is
-    // what lets the drag start and end on ordinary ground.
-    unplanTiles(this.state, this.spanTiles);
-    this.spanTiles = [];
-    for (const p of spanLine(this.spanStart.x, this.spanStart.y, tx, ty)) {
+    this.paintStroke(Math.floor(wx), Math.floor(wy));
+  }
+
+  private paintStroke(tx: number, ty: number): void {
+    if (!this.selectedPath) return;
+    const from = this.strokeStart;
+    if (!from) return;
+    const line = isSpanTier(this.selectedPath)
+      ? spanLine(from.x, from.y, tx, ty)
+      : routePath(this.state, from.x, from.y, tx, ty);
+    // No way through — the finger is over water, rock or a building. Hold the last good route on
+    // screen rather than blinking it away and back as the pointer crosses an obstacle.
+    if (!line) return;
+    unplanTiles(this.state, this.strokeTiles);
+    this.strokeTiles = [];
+    for (const p of line) {
       const prev = inBounds(p.x, p.y) ? this.state.paths[tileIndex(p.x, p.y)] : PATH_NONE;
+      // Tiles the tier cannot take are skipped, not fatal: it is what lets a bridge drag start
+      // and end on dry land, and a road route run through a stretch that is already paved.
       if (!planPath(this.state, p.x, p.y, this.selectedPath)) continue;
       markPending(this.state, p.x, p.y, prev);
-      this.spanTiles.push(tileIndex(p.x, p.y));
+      this.strokeTiles.push(tileIndex(p.x, p.y));
     }
   }
 
@@ -1462,6 +1483,25 @@ class Game {
    * pending pair `onPaint` performs, minus the screen-to-tile conversion. Tests use this so they
    * exercise the real pending flow without depending on where the camera happens to be looking.
    */
+  /**
+   * Debug/testing helper: drive a path drag the way a finger does — press at one tile, move
+   * through the rest, release. Each move re-routes the whole stroke from the anchor.
+   */
+  debugDragPath(tier: PathTier, points: { x: number; y: number }[]): number {
+    if (points.length === 0) return 0;
+    this.selectedPath = tier;
+    this.beginStroke(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) this.paintStroke(points[i].x, points[i].y);
+    const n = this.strokeTiles.length;
+    this.onPaintEnd();
+    return n;
+  }
+
+  /** Debug/testing helper: the route a road would take between two tiles, both ends included. */
+  debugRoutePath(x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[] | null {
+    return routePath(this.state, x0, y0, x1, y1);
+  }
+
   debugPaintPath(tier: PathTier, x: number, y: number): boolean {
     // Capture what the tile held first: `markPending` needs it so a cancelled upgrade restores
     // the road underneath instead of clearing the tile.

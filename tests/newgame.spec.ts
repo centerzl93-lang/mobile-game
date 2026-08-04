@@ -2293,8 +2293,125 @@ test.describe('top HUD', () => {
     );
     expect(ids).not.toContain('stat-pop');
     expect(ids).not.toContain('stat-builders');
-    // The rest of the people row is untouched.
-    expect(ids).toEqual(['stat-ages', 'stat-health', 'stat-happy', 'stat-sick', 'stat-season']);
+    // Season sits beside the ages; the two meters follow it.
+    expect(ids).toEqual(['stat-ages', 'stat-season', 'stat-health', 'stat-happy', 'stat-sick']);
+  });
+
+  test('health and happiness are five pips each, one per 20 points', async ({ page }) => {
+    await open2d(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+
+    const read = (id: string) =>
+      page.evaluate((sel) => {
+        const pips = [...document.querySelectorAll(`#${sel} .pip`)];
+        return {
+          total: pips.length,
+          lit: pips.filter((p) => !p.classList.contains('off')).length,
+          glyphs: new Set(pips.map((p) => p.textContent)).size,
+          title: document.getElementById(sel)!.title,
+        };
+      }, id);
+
+    // Force a known average and let one frame draw it.
+    const set = (health: number, happy: number) =>
+      page.evaluate(
+        ([h, j]) => {
+          const g = (window as any).__village;
+          for (const c of g.state.citizens) {
+            c.health = h;
+            c.happiness = j;
+          }
+        },
+        [health, happy],
+      );
+
+    for (const [value, lit] of [
+      [100, 5],
+      [80, 4],
+      [61, 3],
+      [40, 2],
+      [19, 0],
+      [0, 0],
+    ] as [number, number][]) {
+      await set(value, value);
+      // Wait on the title, not the pip count: 19 and 0 light the same number of hearts, so a
+      // count check would pass on the previous frame's meter.
+      await page.waitForFunction(
+        (want) => document.getElementById('stat-health')!.title === `Average health: ${want}%`,
+        value,
+        { timeout: 3000 },
+      );
+      const h = await read('stat-health');
+      const j = await read('stat-happy');
+      expect(h.total, 'always five hearts, spent ones faded rather than removed').toBe(5);
+      expect(j.total).toBe(5);
+      expect(h.lit).toBe(lit);
+      expect(j.lit).toBe(lit);
+      // One glyph per meter — hearts for health, faces for happiness.
+      expect(h.glyphs).toBe(1);
+      expect(j.glyphs).toBe(1);
+      // The exact figure is still available, just not taking up room in the bar.
+      expect(h.title).toContain(`${value}%`);
+    }
+  });
+
+  test('a resource at its limit turns green with an arrow', async ({ page }) => {
+    await open2d(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+
+    const chip = (icon: string) =>
+      page.evaluate((want) => {
+        const el = [...document.querySelectorAll('#stat-resources .stat')].find(
+          (e) => e.querySelector('.ico')!.textContent === want,
+        ) as HTMLElement;
+        const arrow = el.querySelector('.cap') as HTMLElement;
+        return {
+          full: el.classList.contains('full'),
+          low: el.classList.contains('low'),
+          arrowShown: getComputedStyle(arrow).display !== 'none',
+          arrow: arrow.textContent,
+          title: el.title,
+        };
+      }, icon);
+
+    // Nothing is capped by default.
+    expect((await chip('🪵')).full).toBe(false);
+    expect((await chip('🪵')).arrowShown).toBe(false);
+
+    // Cap wood under what the village already has: it is at its limit immediately.
+    const stock = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.state.limits = { wood: 50 };
+      return g.debugTotalStored('wood');
+    });
+    expect(stock, 'easy start ships more wood than the cap').toBeGreaterThan(50);
+    await page.waitForFunction(
+      () =>
+        !![...document.querySelectorAll('#stat-resources .stat')].find(
+          (e) => e.querySelector('.ico')!.textContent === '🪵' && e.classList.contains('full'),
+        ),
+      undefined,
+      { timeout: 3000 },
+    );
+    const wood = await chip('🪵');
+    expect(wood.arrowShown).toBe(true);
+    expect(wood.arrow).toBe('▲');
+    expect(wood.title).toContain('50');
+
+    // Food is one category, so its combined chip caps the same way.
+    await page.evaluate(() => ((window as any).__village.state.limits = { food: 10 }));
+    await page.waitForFunction(
+      () => document.querySelector('#stat-resources .stat')!.classList.contains('full'),
+      undefined,
+      { timeout: 3000 },
+    );
+    // Raising the cap out of reach clears it again.
+    await page.evaluate(() => ((window as any).__village.state.limits = {}));
+    await page.waitForFunction(
+      () => !document.querySelector('#stat-resources .stat.full'),
+      undefined,
+      { timeout: 3000 },
+    );
   });
 });
 
@@ -2316,6 +2433,87 @@ test.describe('toolbar', () => {
       [...document.querySelectorAll('#toolbar .tool-btn.active')].map((e) => (e as HTMLElement).dataset.tool),
     );
     expect(active).toEqual([]);
+  });
+
+  test('every tool fits two rows with no sideways scroll, and the clock stacks at the right', async ({
+    page,
+  }) => {
+    await open2d(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+
+    const layout = await page.evaluate(() => {
+      const box = (e: Element) => {
+        const b = e.getBoundingClientRect();
+        return { x: Math.round(b.x), y: Math.round(b.y), r: Math.round(b.right), b: Math.round(b.bottom) };
+      };
+      const tools = [...document.querySelectorAll('#toolbar .tool-btn')];
+      const grid = document.querySelector('#tools')!;
+      const bar = document.querySelector('#toolbar')!;
+      const rows = [...new Set(tools.map((t) => box(t).y))].sort((a, b) => a - b);
+      return {
+        count: tools.length,
+        rows: rows.length,
+        perRow: rows.map((y) => tools.filter((t) => box(t).y === y).length),
+        gridScrolls: grid.scrollWidth > grid.clientWidth + 1,
+        barScrolls: bar.scrollWidth > bar.clientWidth + 1,
+        pause: box(document.querySelector('#btn-pause')!),
+        speed: box(document.querySelector('#btn-speed')!),
+        gridRight: box(grid).r,
+        bar: box(bar),
+      };
+    });
+
+    expect(layout.count).toBe(8);
+    expect(layout.rows, 'two rows, not one long scrolling one').toBe(2);
+    expect(layout.perRow).toEqual([4, 4]);
+    expect(layout.gridScrolls, 'nothing is hidden off the side').toBe(false);
+    expect(layout.barScrolls).toBe(false);
+
+    // Pause sits above speed, both to the right of the tools and inside the bar.
+    expect(layout.pause.b).toBeLessThanOrEqual(layout.speed.y);
+    expect(layout.pause.x).toBeGreaterThanOrEqual(layout.gridRight);
+    expect(layout.speed.x).toBe(layout.pause.x);
+    expect(layout.pause.y).toBeGreaterThanOrEqual(layout.bar.y);
+    expect(layout.speed.b).toBeLessThanOrEqual(layout.bar.b);
+
+    // And they still drive the clock from down there.
+    await page.click('#btn-pause');
+    expect(await page.evaluate(() => (window as any).__village.paused)).toBe(true);
+    await page.click('#btn-speed');
+    expect(await page.evaluate(() => (window as any).__village.paused)).toBe(false);
+  });
+
+  test('a build category wraps instead of scrolling, and the log clears it', async ({ page }) => {
+    await open2d(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+    // Resources is the biggest category — eight buildings, the case that used to scroll.
+    await page.click('#toolbar [data-tool="resources"]');
+
+    const out = await page.evaluate(() => {
+      const po = document.querySelector('#popout')!;
+      const btns = [...po.querySelectorAll('.build-btn')];
+      const rows = new Set(btns.map((b) => Math.round(b.getBoundingClientRect().y)));
+      const log = document.querySelector('#log')!.getBoundingClientRect();
+      return {
+        count: btns.length,
+        rows: rows.size,
+        scrolls: po.scrollWidth > po.clientWidth + 1,
+        // Every button is inside the pop-out's own box — none clipped off the edge.
+        inside: btns.every((b) => {
+          const r = b.getBoundingClientRect();
+          const p = po.getBoundingClientRect();
+          return r.left >= p.left - 1 && r.right <= p.right + 1;
+        }),
+        logBottom: Math.round(log.bottom),
+        popTop: Math.round(po.getBoundingClientRect().top),
+      };
+    });
+
+    expect(out.count).toBe(8);
+    expect(out.scrolls, 'the pop-out wraps rather than hiding buildings off-screen').toBe(false);
+    expect(out.inside).toBe(true);
+    // The event log lifts above however many rows the pop-out turned out to need.
+    expect(out.logBottom).toBeLessThanOrEqual(out.popTop);
   });
 
   test('demolish toggles off again', async ({ page }) => {

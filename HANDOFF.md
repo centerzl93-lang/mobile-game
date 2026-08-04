@@ -21,7 +21,7 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **a real app icon**, **build sites show what is in the way**, **merchant docks properly**,
+Latest work: **a HUD/toolbar pass**, **a real app icon**, **build sites show what is in the way**, **merchant docks properly**,
 **stockpile limits**, **workers go where the work is**,
 **five more tree species**,
 **named/deletable save slots**,
@@ -34,6 +34,36 @@ Latest work: **a real app icon**, **build sites show what is in the way**, **mer
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### HUD meters, a two-row toolbar, and a cap indicator (this session)
+Three UI changes in one pass.
+
+**Health and happiness are five pips each**, one lit per 20 points, and they have swapped places
+with the season chip — season now sits beside the ages, the meters follow it. A bare "62" needed
+the player to know the scale it was out of; five hearts read peripherally, which is the point of a
+number you are meant to notice *changing*. `setPips` (`src/ui/ui.ts`) lights `floor(v / 20)` of
+`PIPS`, dims the rest rather than removing them so the row never reflows, and writes the exact
+figure to the chip's `title`. It runs every frame, so it only rewrites DOM when the count moves.
+
+**The toolbar is a 4×2 grid with the clock stacked at its right end.** One row wanted 530px for
+eight tools and a portrait phone has 390, so half the build menu sat behind a sideways swipe most
+players never made. `#tools` is a grid of four `1fr` columns (capped at 520px so a tablet does not
+stretch a 15px icon across a quarter of the screen), each button turned horizontal — icon then
+label — which buys the second row back: the bar went 46→49px in landscape and 58→62px in
+portrait. Pause and speed moved out of the right-hand control column into `#clock` inside the bar,
+which also shortened that column from six buttons to four.
+
+**The build pop-out wraps instead of scrolling** for the same reason (resources holds eight
+buildings). Its height is no longer a constant: `renderPopout` measures it and publishes
+`--popout-h`, and the hint bar, event log and confirm bar all lift by
+`pop-out bottom + --popout-h + 8px` instead of the 158px/148px they used to hard-code. Without
+that the log sat on top of the second row.
+
+**A stock at its limit reads green with a ▲.** `atLimit(s, key)` came out of `cappedOut`, which
+now calls it, so the chip and the workers agree by construction — the arrow means *these trades
+have downed tools*, not merely "this number is large". Green because every other colour in the HUD
+means trouble and a cap is the village doing what it was told; the arrow carries the meaning where
+colour alone would not. `low` is suppressed while `full` is set so a chip can never be both.
 
 ### The app icon is artwork now (this session)
 The player supplied a painted village scene; it replaces the little house-and-pine emblem the old
@@ -1097,12 +1127,20 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   `updateHud` laborers chip); `src/main.ts` (`setBuilders`, placement hint, `debugSetBuilders`);
   `src/game/state.ts`/`save.ts` (`desiredBuilders` init + v12 default); `index.html` (`#stat-builders`
   → 👷).
-- `index.html` — removed `#btn-merchant`. `src/style.css` — `.ranch-size`, `.tp-*`, ranch-picker styles.
+- `index.html` — removed `#btn-merchant`; `#hud-people` order (ages, season, then the two meters);
+  `#toolbar` now wraps `#tools` + `#clock`, and pause/speed moved there out of `#controls`.
+- `src/style.css` — `.ranch-size`, `.tp-*`, ranch-picker styles; `.stat.meter`/`.pip`/`.stat.full`
+  (HUD meters and the cap chip); the `#toolbar`/`#tools`/`#clock` grid; `--popout-h`, which the
+  raised hint/log/confirm offsets are calculated from.
 - `tests/newgame.spec.ts` — merchant, ranch, farm, and **jobs & builders** suites, plus prior
   seed-gate/staffing tests, and this session's **available workers count**, **fireproof buildings**,
   **clearing land before building**, **camera rotate buttons**, **construction stages**,
   **placement controls**, **fishing dock**, **auto-staffing**, **consumption and fuel**,
-  **roads get laid** and **lives run on ticks** suites. The fishing-dock pair scans every tile and
+  **roads get laid**, **lives run on ticks**, **HUD meters/cap chips** and **two-row toolbar**
+  suites. The toolbar pair measures the real boxes — eight buttons in exactly two rows of four,
+  neither the grid nor the pop-out scrolling, the clock stacked inside the bar to the right of the
+  tools, and the event log clear of however many rows the pop-out needed. The fishing-dock pair
+  scans every tile and
   rotation on a generated map and asserts that no accepted site has a dry dock, a floating shack,
   or a work circle sitting on the plot instead of the jetty — plus a count check, so it can't pass
   by finding nowhere to build.

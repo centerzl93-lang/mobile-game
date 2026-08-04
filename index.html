@@ -28,18 +28,19 @@
       <div id="hud-top">
         <div class="hud-row" id="hud-people">
           <div class="stat" id="stat-ages" title="children · students · adults"><span class="val">🧒0 🎓0 🧑0</span></div>
-          <div class="stat" id="stat-health" title="Average health"><span class="ico">❤️</span><span class="val">0</span></div>
-          <div class="stat" id="stat-happy" title="Average happiness"><span class="ico">😊</span><span class="val">0</span></div>
-          <div class="stat hidden" id="stat-sick" title="Sick villagers"><span class="ico">🤒</span><span class="val">0</span></div>
           <div class="stat season" id="stat-season"><span class="val">Spring · Yr 1</span></div>
+          <!-- Health and happiness read as five pips apiece, one per 20 points; the exact
+               figure stays on the title for anyone who wants it. -->
+          <div class="stat meter" id="stat-health" title="Average health"><span class="pips"></span></div>
+          <div class="stat meter" id="stat-happy" title="Average happiness"><span class="pips"></span></div>
+          <div class="stat hidden" id="stat-sick" title="Sick villagers"><span class="ico">🤒</span><span class="val">0</span></div>
         </div>
         <div class="hud-row" id="stat-resources"></div>
       </div>
 
-      <!-- Speed / menu controls -->
+      <!-- Panel / menu controls. Pause and speed are not here: they live at the right end of the
+           bottom bar, next to the thumb that is already down there building things. -->
       <div id="controls">
-        <button class="ctrl" id="btn-pause" title="Pause">⏸</button>
-        <button class="ctrl" id="btn-speed" title="Speed">1×</button>
         <button class="ctrl" id="btn-jobs" title="Job board">📋</button>
         <button class="ctrl" id="btn-limits" title="Stockpile limits">📦</button>
         <button class="ctrl" id="btn-history" title="Village history">📜</button>
@@ -75,8 +76,15 @@
 
       <!-- Build: category buildings pop out above the toolbar -->
       <div id="popout" class="hidden"></div>
-      <!-- Bottom toolbar: tools + build categories -->
-      <div id="toolbar"></div>
+      <!-- Bottom toolbar: build categories and tools in two rows, with the clock stacked at the
+           right end. Two rows so every tool fits a phone's width without a sideways scroll. -->
+      <div id="toolbar">
+        <div id="tools"></div>
+        <div id="clock">
+          <button class="ctrl" id="btn-pause" title="Pause">⏸</button>
+          <button class="ctrl" id="btn-speed" title="Speed">1×</button>
+        </div>
+      </div>
 
       <!-- Overlays -->
       <div id="overlay" class="hidden"></div>

@@ -44,7 +44,7 @@ import {
   limitedOutput,
 } from '../types';
 import { footprintToClear } from '../game/buildings';
-import { cappedOut, limitStock } from '../game/simulation';
+import { atLimit, cappedOut, limitStock } from '../game/simulation';
 import { SLOT_NAME_MAX } from '../game/save';
 import { totalStored, totalStoredAll, totalFoodAvailable, totalInLarders } from '../game/storage';
 import {
@@ -139,6 +139,9 @@ export interface UICallbacks {
   onRotate: (dir: -1 | 0 | 1) => void;
 }
 
+/** Pips in a health/happiness meter. Five of them across 0-100 is one per 20 points. */
+const PIPS = 5;
+
 const LOW_NEED: Partial<Record<ResourceKind, number>> = {
   firewood: HEAT_PER_CITIZEN_WINTER,
   clothing: CLOTHING_PER_CITIZEN_WINTER,
@@ -161,7 +164,7 @@ export class UI {
     log: byId('log'),
     hint: byId('hint'),
     confirm: byId('confirm'),
-    toolbar: byId('toolbar'),
+    tools: byId('tools'),
     popout: byId('popout'),
     inspect: byId('inspect'),
     overlay: byId('overlay'),
@@ -238,17 +241,53 @@ export class UI {
     // One combined food chip (all food types), then a chip per non-food resource.
     const food = document.createElement('div');
     food.className = 'stat mini';
-    food.title = 'Total food (all types)';
-    food.innerHTML = `<span class="ico">${FOOD_ICON}</span><span class="val">0</span>`;
+    // The ▲ only shows while the chip is `full` (see `.stat .cap` in the stylesheet) — it says
+    // the stock has hit the limit set for it and its trades have downed tools, without the
+    // player having to open the stockpile panel to find out.
+    food.innerHTML = `<span class="ico">${FOOD_ICON}</span><span class="val">0</span><span class="cap">▲</span>`;
     this.el.resources.appendChild(food);
     this.foodChip = food;
     for (const kind of HUD_RESOURCES) {
       const chip = document.createElement('div');
       chip.className = 'stat mini';
-      chip.innerHTML = `<span class="ico">${RESOURCE_ICON[kind]}</span><span class="val">0</span>`;
+      chip.innerHTML = `<span class="ico">${RESOURCE_ICON[kind]}</span><span class="val">0</span><span class="cap">▲</span>`;
       this.el.resources.appendChild(chip);
       this.resChips.set(kind, chip);
     }
+  }
+
+  /**
+   * Draw a 0-100 average as five pips, one lit per 20 points.
+   *
+   * A bare "62" said nothing without knowing the scale it was out of; five hearts read at a
+   * glance and, more to the point, read *peripherally* — a pip going dark is visible without
+   * looking straight at the number. The rounded figure stays on the title for anyone who wants
+   * it, and DOM is only rewritten when the count changes so this can run every frame.
+   */
+  private setPips(el: HTMLElement, value: number, glyph: string, label: string): void {
+    const lit = Math.max(0, Math.min(PIPS, Math.floor(value / (100 / PIPS))));
+    const pips = el.querySelector('.pips')!;
+    if (pips.childElementCount !== PIPS) {
+      pips.innerHTML = `<span class="pip">${glyph}</span>`.repeat(PIPS);
+    }
+    for (let i = 0; i < PIPS; i++) {
+      (pips.children[i] as HTMLElement).classList.toggle('off', i >= lit);
+    }
+    el.title = `${label}: ${Math.round(value)}%`;
+    el.classList.toggle('low', lit <= 1);
+  }
+
+  /**
+   * Flag a chip whose stock has reached the limit set on it. A cap is the one "problem" in the
+   * HUD that is not a problem — the village has all it asked for — so it reads green with a ▲
+   * rather than red, and it is worth showing at all because it is *also* the reason a hut full
+   * of workers has stopped producing. Without it the only way to tell a capped trade from an
+   * idle one was to open the stockpile panel and compare the numbers by hand.
+   */
+  private markLimit(chip: HTMLElement, s: GameState, key: LimitKey, base: string): void {
+    const full = atLimit(s, key);
+    chip.classList.toggle('full', full);
+    chip.title = full ? `${base} — at your limit of ${s.limits?.[key]}; its trades have paused` : base;
   }
 
   updateHud(s: GameState, speed: number, paused: boolean): void {
@@ -266,10 +305,8 @@ export class UI {
     }
     const adultCount = pop - childCount - studentCount;
     this.el.ages.querySelector('.val')!.textContent = `🧒${childCount} 🎓${studentCount} 🧑${adultCount}`;
-    this.el.health.querySelector('.val')!.textContent = `${Math.round(avgHealth(s))}`;
-    this.el.happy.querySelector('.val')!.textContent = `${Math.round(avgHappiness(s))}`;
-    this.el.health.classList.toggle('low', avgHealth(s) < 45);
-    this.el.happy.classList.toggle('low', avgHappiness(s) < 45);
+    this.setPips(this.el.health, avgHealth(s), '❤️', 'Average health');
+    this.setPips(this.el.happy, avgHappiness(s), '😊', 'Average happiness');
     const sick = s.citizens.reduce((n, c) => n + (c.sick ? 1 : 0), 0);
     this.el.sick.classList.toggle('hidden', sick === 0);
     this.el.sick.classList.add('low');
@@ -280,16 +317,23 @@ export class UI {
     // exactly what it did: the chip went red while every household had a season's food indoors.
     const food = totalFoodAvailable(s);
     this.foodChip.querySelector('.val')!.textContent = `${Math.floor(food)}`;
-    this.foodChip.title = 'Total food (all types), including household larders';
-    this.foodChip.classList.toggle('low', food < pop * FOOD_PER_CITIZEN_PER_SEASON);
+    this.markLimit(this.foodChip, s, 'food', 'Total food (all types), including household larders');
+    this.foodChip.classList.toggle(
+      'low',
+      !this.foodChip.classList.contains('full') && food < pop * FOOD_PER_CITIZEN_PER_SEASON,
+    );
     for (const kind of HUD_RESOURCES) {
       const chip = this.resChips.get(kind)!;
       // Firewood and clothing live in larders too, and are consumed from there first, so their
       // warnings have to count them for the same reason.
       const v = (totals[kind] ?? 0) + totalInLarders(s, kind);
       chip.querySelector('.val')!.textContent = `${Math.floor(v)}`;
+      this.markLimit(chip, s, kind, LIMIT_META[kind].label);
       if (SURVIVAL_RESOURCES.includes(kind)) {
-        chip.classList.toggle('low', v < pop * (LOW_NEED[kind] ?? 0));
+        chip.classList.toggle(
+          'low',
+          !chip.classList.contains('full') && v < pop * (LOW_NEED[kind] ?? 0),
+        );
       }
     }
     this.el.season.querySelector('.val')!.textContent = `${seasonLabel(s)} · Yr ${s.year}`;
@@ -299,7 +343,7 @@ export class UI {
 
   // ---- Toolbar / categorized build menu ----
   private buildToolbar(): void {
-    const tb = this.el.toolbar;
+    const tb = this.el.tools;
     tb.innerHTML = '';
     // No Inspect button: inspecting is simply "no tool selected", and deselecting whatever is
     // active drops back to it, so a dedicated button would only ever be a second way to do that.
@@ -329,7 +373,7 @@ export class UI {
   }
 
   private refreshToolbar(): void {
-    for (const child of Array.from(this.el.toolbar.children)) {
+    for (const child of Array.from(this.el.tools.children)) {
       const b = child as HTMLElement;
       const key = b.dataset.tool!;
       const active =
@@ -404,6 +448,9 @@ export class UI {
       }
     }
     po.classList.remove('hidden');
+    // The pop-out wraps, so its height depends on the category and the screen. Publish it so the
+    // hint bar, event log and confirm bar lift clear of however many rows it turned out to be.
+    document.documentElement.style.setProperty('--popout-h', `${po.offsetHeight}px`);
     this.raiseHints(true);
   }
 

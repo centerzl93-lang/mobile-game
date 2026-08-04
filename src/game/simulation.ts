@@ -367,6 +367,12 @@ export function limitStock(s: GameState, key: LimitKey): number {
   return key === 'food' ? totalFood(s) : totalStored(s, key);
 }
 
+/** Has this stock reached the limit the player set on it? No limit set is never "at" one. */
+export function atLimit(s: GameState, key: LimitKey): boolean {
+  const cap = s.limits?.[key] ?? 0;
+  return cap > 0 && limitStock(s, key) >= cap;
+}
+
 /**
  * Is this workplace's product at or over the limit the player set for it?
  *
@@ -377,9 +383,7 @@ export function limitStock(s: GameState, key: LimitKey): number {
  */
 export function cappedOut(s: GameState, b: Building): boolean {
   const key = limitedOutput(b);
-  if (!key) return false;
-  const cap = s.limits?.[key] ?? 0;
-  return cap > 0 && limitStock(s, key) >= cap;
+  return !!key && atLimit(s, key);
 }
 
 // ---- lives (ageing, schooling, old age, births) ----

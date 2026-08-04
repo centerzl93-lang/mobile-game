@@ -28,6 +28,7 @@ import {
   BuildCategory,
   CATEGORY_ORDER,
   CATEGORY_META,
+  CODEX_NOTES,
   TRADE_VALUE,
   SEED_COST,
   MERCHANT_CATEGORY_META,
@@ -828,25 +829,22 @@ export class UI {
     head.innerHTML = `Stockpile Limits <button class="close" id="lim-close">×</button>`;
     p.appendChild(head);
     head.querySelector('#lim-close')!.addEventListener('click', () => this.toggleLimits());
-    const sum = document.createElement('div');
-    sum.className = 'summary';
-    sum.textContent = 'At its limit, a workplace stops producing and its workers turn to labouring — they keep the job and pick it back up when the stock drops. Fields and pens carry on regardless.';
-    p.appendChild(sum);
+    // No explainer paragraph here. What a limit *does* is a rule of the game, not news about this
+    // village, and a fixed four lines of it pushed the rows the player came to use off the top of
+    // the panel every time they opened it. It lives in the Codex instead (`CODEX_NOTES`).
 
     for (const r of rows) {
       const row = document.createElement('div');
       row.className = 'job-row';
       const capText = r.cap > 0 ? `${r.have} / ${r.cap}` : `${r.have} · no limit`;
-      const note = r.places === 0
-        ? 'nothing produces this yet'
-        : r.idled > 0
-          ? `${r.idled} of ${r.places} labouring`
-          : `${r.places} working`;
+      // Only say something when there is something to say. "Nothing produces this yet" was on
+      // most rows for most of a village's life and told the player nothing they could act on.
+      const note = r.places === 0 ? '' : r.idled > 0 ? `${r.idled} of ${r.places} labouring` : `${r.places} working`;
       const meta = LIMIT_META[r.key];
       row.innerHTML =
         `<span class="jr-emoji">${meta.icon}</span>` +
         `<div class="jr-main"><div class="jr-name">${meta.label}</div>` +
-        `<div class="jr-sub">${capText} · ${note}</div></div>` +
+        `<div class="jr-sub">${capText}${note ? ` · ${note}` : ''}</div></div>` +
         `<div class="stepper"><button data-step="-1">−</button><span class="count">${r.cap > 0 ? r.cap : '—'}</span><button data-step="1">+</button></div>`;
       row.querySelector('[data-step="-1"]')!.addEventListener('click', () => this.cb.onSetLimit(r.key, -1));
       row.querySelector('[data-step="1"]')!.addEventListener('click', () => this.cb.onSetLimit(r.key, 1));
@@ -1471,11 +1469,20 @@ export class UI {
       const meta = CATEGORY_META[cat];
       return `<h3 class="cx-cat">${meta.emoji} ${meta.label}</h3>${types.map(entry).join('')}`;
     }).join('');
+    // The rules that are not about any one building — they used to sit as paragraphs on top of the
+    // panels they governed, where they were re-read every time and pushed the controls down.
+    const notes =
+      `<h3 class="cx-cat cx-rules">📖 How the village works</h3>` +
+      CODEX_NOTES.map(
+        (n) =>
+          `<div class="cx-note"><div class="cx-head"><span class="cx-emoji">${n.icon}</span>` +
+          `<span class="cx-name">${n.title}</span></div><p class="cx-desc">${n.body}</p></div>`,
+      ).join('');
     this.overlayCard(
       `<h2>Codex</h2>` +
         // What the shorthand on each row means, once, rather than a word per fact on 23 rows.
         `<p class="cx-legend">tiles · cost · 👷 workers · ⭕ work circle</p>` +
-        `<div class="cx-list">${groups}</div>` +
+        `<div class="cx-list">${groups}${notes}</div>` +
         `<div class="menu-list"><button class="ghost" id="cx-back">Back</button></div>`,
       'menu-card codex-card',
     );

@@ -2456,7 +2456,12 @@ test.describe('codex', () => {
       const text = (e: Element, sel: string) => e.querySelector(sel)!.textContent!.trim();
       return {
         names: rows.map((r) => text(r, '.cx-name')),
-        categories: [...document.querySelectorAll('.cx-cat')].length,
+        categories: [...document.querySelectorAll('.cx-cat:not(.cx-rules)')].length,
+        // The rules that belong to no one building, moved here off the panels they govern.
+        notes: [...document.querySelectorAll('.cx-note')].map((n) => ({
+          title: text(n, '.cx-name'),
+          body: text(n, '.cx-desc'),
+        })),
         // Every entry carries its facts and its explanation — that is the whole point of it.
         withoutFacts: rows.filter((r) => text(r, '.cx-facts').length === 0).length,
         withoutDesc: rows.filter((r) => text(r, '.cx-desc').length < 10).length,
@@ -2472,6 +2477,14 @@ test.describe('codex', () => {
       [...all].sort(),
     );
     expect(out.categories).toBe(5);
+    // What a stockpile limit does is explained here, not on top of the limits panel.
+    expect(out.notes!.map((n) => n.title)).toContain('Stockpile limits');
+    expect(out.notes!.find((n) => n.title === 'Stockpile limits')!.body).toContain(
+      'workers turn to labouring',
+    );
+    expect(out.notes!.every((n) => n.body.length > 20), 'every note actually says something').toBe(
+      true,
+    );
     expect(out.withoutFacts).toBe(0);
     expect(out.withoutDesc).toBe(0);
     expect(out.fitsOnScreen).toBe(true);
@@ -4482,6 +4495,25 @@ test.describe('stockpile limits', () => {
     expect(out.capped.farm, 'the field is exempt').toBe(false);
     // Everybody stays on their building's books either way.
     expect(out.workersKept).toBe(true);
+  });
+
+  test('the panel is rows and nothing else', async ({ page }) => {
+    await open2d(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+    await page.click('#btn-limits');
+    await expect(page.locator('#limits .job-row').first()).toBeVisible();
+
+    const out = await page.evaluate(() => ({
+      // The rule about what a limit does lives in the Codex; the panel opens on the controls.
+      blurbs: document.querySelectorAll('#limits .summary').length,
+      subs: [...document.querySelectorAll('#limits .jr-sub')].map((e) => e.textContent!.trim()),
+    }));
+
+    expect(out.blurbs, 'no explainer above the rows').toBe(0);
+    // A row says the stock against its cap, and only mentions workplaces when there are some.
+    expect(out.subs.length).toBe(9);
+    expect(out.subs.some((t) => t.includes('produces this yet')), 'no dead-end note').toBe(false);
+    expect(out.subs[0]).toMatch(/^\d+ \/ \d+$/);
   });
 
   test('the limits panel sets a cap, and it survives a save and reload', async ({ page }) => {

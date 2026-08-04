@@ -1024,6 +1024,40 @@ export const START_LIMITS: Record<Difficulty, Partial<Record<LimitKey, number>>>
   hard: { ...BASE_LIMITS },
 };
 
+/**
+ * Rules of the game that have nowhere else to live, printed in the Codex under their own heading.
+ *
+ * These used to be paragraphs at the top of the panels they applied to, which meant re-reading
+ * them every time the panel was opened and being pushed down the screen by them — a rule you learn
+ * once does not belong above the controls you use constantly. The Codex is where a player goes to
+ * find out how something works, so it is where they go now.
+ */
+export const CODEX_NOTES: { icon: string; title: string; body: string }[] = [
+  {
+    icon: '📦',
+    title: 'Stockpile limits',
+    body:
+      'At its limit, a workplace stops producing and its workers turn to labouring — they keep the ' +
+      'job and pick it back up when the stock drops. Fields and pens carry on regardless.',
+  },
+  {
+    icon: '💥',
+    title: 'Demolition',
+    body:
+      'Marking a building schedules it: builders come and pull it down, and it keeps working and ' +
+      'housing its people until they do, so the order can be called off while the walls are up. ' +
+      'What is salvaged, and whatever the building held, is carried to a barn by hand. Your last ' +
+      'barn cannot be demolished.',
+  },
+  {
+    icon: '⬆️',
+    title: 'Upgrading a house',
+    body:
+      'A wooden house can be traded up to stone from its own panel. A builder razes it and raises ' +
+      'the new one on the same spot; the household is out of doors until the roof is on.',
+  },
+];
+
 /** Player-facing name and icon for a limit row. Food is a category, so it has its own. */
 export const LIMIT_META: Record<LimitKey, { label: string; icon: string }> = {
   food: { label: 'Food (all kinds)', icon: '🍽️' },

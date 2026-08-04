@@ -443,7 +443,8 @@ body {
 .cx-cat:first-child {
   margin-top: 0;
 }
-.cx-row {
+.cx-row,
+.cx-note {
   padding: 7px 0;
   border-top: 1px solid rgba(255, 255, 255, 0.07);
 }

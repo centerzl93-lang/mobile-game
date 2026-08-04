@@ -37,6 +37,17 @@ Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **stora
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
 
+### The rules moved into the Codex (this session)
+The stockpile panel opened with a four-line paragraph explaining what a limit *does*, and every row
+carried "nothing produces this yet" — which was true of most rows for most of a village's life and
+was not something the player could act on. Both are gone: the panel opens on the controls, and a
+row's sub-line is the stock against its cap, mentioning workplaces only when there are some.
+
+The rule itself is now `CODEX_NOTES` (`types.ts`), printed in the Codex under **How the village
+works**, alongside two more that had no home anywhere: what marking a demolition actually does, and
+what upgrading a house involves. A rule you learn once does not belong above the controls you use
+constantly; the Codex is where a player already goes to find out how something works.
+
 ### Roads are routed, not traced (this session)
 Drawing a road used to paint whatever tile the finger was over, which meant the road *was* the
 trail: a wobbly drag built a wobbly road, and altering it meant cancelling and starting again. Now

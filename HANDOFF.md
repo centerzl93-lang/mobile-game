@@ -21,7 +21,7 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **a HUD/toolbar pass**, **a real app icon**, **build sites show what is in the way**, **merchant docks properly**,
+Latest work: **a codex + opening caps**, **a HUD/toolbar pass**, **a real app icon**, **build sites show what is in the way**, **merchant docks properly**,
 **stockpile limits**, **workers go where the work is**,
 **five more tree species**,
 **named/deletable save slots**,
@@ -34,6 +34,33 @@ Latest work: **a HUD/toolbar pass**, **a real app icon**, **build sites show wha
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### A codex, opening caps, and less medicine (this session)
+
+**The placement blurb became a Codex.** Picking a building printed its description in the hint
+bar, which sits exactly where the Build and Rotate buttons appear — four lines of text with the
+controls stamped across the middle, on the one screen where the player needs both. `selectBuild`
+now says nothing, and `showCodex` (`src/ui/ui.ts`) lists every building grouped by category with
+its footprint, cost, worker count and work radius, one legend line explaining the shorthand. It
+hangs off **Codex** on the title screen *and* in the pause menu — "what does a Tailor do" is a
+question you have mid-village, and the answer used to be one tap away on the map. The card claims
+the height it is allowed and scrolls inside itself, since twenty-three entries are taller than any
+phone; the landscape branch spends width to win reading area back. Path hints stay: those are
+instructions ("drag one finger to draw"), not explainers.
+
+**A village is founded with caps set** — `START_LIMITS` in `types.ts`, copied into
+`newGame`: food 2000, wood/stone/iron 500, and 100 each of firewood, medicine, coal, tools and
+clothing. Applied to new villages only; a save from before this had no caps deliberately and
+loading it should not quietly change what its huts are doing.
+
+Two of these bite on day one, which is worth knowing rather than discovering: **Easy starts with
+660 wood against a cap of 500 and 600 firewood against a cap of 100**, so a lumberyard and a
+woodcutter built at the start stand down until stocks fall. The HUD says so — both chips read
+green with a ▲ from the first frame — but firewood is the one to watch: 100 is well under a
+winter's burn for twelve (`HEAT_PER_CITIZEN_WINTER` × 12 ≈ 160), so the cap will hold the
+woodpile below what the season needs unless the player raises it.
+
+**Starting medicine**: Easy 120 → **50**; Normal and Hard get none, as before.
 
 ### HUD meters, a two-row toolbar, and a cap indicator (this session)
 Three UI changes in one pass.
@@ -1112,7 +1139,7 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   through `workCentre`.
 - `src/game/world.ts` — `riverColumnX` (boat's river path).
 - `src/game/state.ts` — `makeBuilding` sizable + ranch init; merchant init; `seeds` seeding;
-  `desiredWorkers 0` defaults.
+  `desiredWorkers 0` defaults; `START_LIMITS` copied onto every new village.
 - `src/game/save.ts` — merchant-shape + `orders` migration; ranch/farm `w/h` + herd defaults; `seeds`
   default + stale-crop reset (all load-time, still v12); per-slot names (`slotName`/`setSlotName`,
   stored beside the save and cleared with it).
@@ -1136,8 +1163,9 @@ grapes, strawberry, melon — each its own food `ResourceKind`.
   seed-gate/staffing tests, and this session's **available workers count**, **fireproof buildings**,
   **clearing land before building**, **camera rotate buttons**, **construction stages**,
   **placement controls**, **fishing dock**, **auto-staffing**, **consumption and fuel**,
-  **roads get laid**, **lives run on ticks**, **HUD meters/cap chips** and **two-row toolbar**
-  suites. The toolbar pair measures the real boxes — eight buttons in exactly two rows of four,
+  **roads get laid**, **lives run on ticks**, **HUD meters/cap chips**, **two-row toolbar** and
+  **codex** suites. Several sim tests now open with `s.limits = {}` — a village is founded capped,
+  and a test about where a forester stands should not be measuring a cap. The toolbar pair measures the real boxes — eight buttons in exactly two rows of four,
   neither the grid nor the pop-out scrolling, the clock stacked inside the bar to the right of the
   tools, and the event log clear of however many rows the pop-out needed. The fishing-dock pair
   scans every tile and

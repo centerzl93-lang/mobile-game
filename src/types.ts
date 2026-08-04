@@ -928,6 +928,28 @@ export const LIMITABLE: LimitKey[] = [
   'food', 'wood', 'firewood', 'stone', 'coal', 'iron', 'tools', 'clothing', 'medicine',
 ];
 
+/**
+ * The caps a village is founded with.
+ *
+ * Starting at "no limits anywhere" meant every trade ran flat out until the player noticed and
+ * went looking for the stockpile panel — usually after a woodcutter had turned half a forest into
+ * firewood nobody could burn fast enough. These are deliberately loose: high enough that a village
+ * has to be doing well to reach one, low enough that runaway production stops before it eats the
+ * map. They are only applied to a *new* village; a save from before this had no caps on purpose,
+ * and loading it should not quietly change what its huts are doing.
+ */
+export const START_LIMITS: Partial<Record<LimitKey, number>> = {
+  food: 2000,
+  wood: 500,
+  stone: 500,
+  iron: 500,
+  firewood: 100,
+  medicine: 100,
+  coal: 100,
+  tools: 100,
+  clothing: 100,
+};
+
 /** Player-facing name and icon for a limit row. Food is a category, so it has its own. */
 export const LIMIT_META: Record<LimitKey, { label: string; icon: string }> = {
   food: { label: 'Food (all kinds)', icon: '🍽️' },
@@ -1555,9 +1577,10 @@ export const TAILOR_CLOTHING_OUT = 6;
  * 48 coats — because they are tuned against the founding twelve rather than against difficulty
  * (see `TOOL_WEAR_PER_WORKER` and `CLOTHING_PER_CITIZEN_WINTER`: roughly a year's worth, so the
  * first winter is survivable and the second is not unless a blacksmith and a tailor are running).
- * What difficulty changes is the leg-up: Easy hands over building materials, medicine and
- * `EASY_START_HOUSES` finished houses; Normal and Hard grant no wood or stone at all, so
- * everything has to be gathered before anything can be raised.
+ * What difficulty changes is the leg-up: Easy hands over building materials, a little medicine and
+ * `EASY_START_HOUSES` finished houses; Normal and Hard grant no wood, stone or medicine at all, so
+ * everything has to be gathered before anything can be raised, and the first illness has to be
+ * ridden out or answered with a herbalist.
  */
 const SURVIVAL_START = {
   fruit: 300, grain: 300, fish: 300, meat: 300, // 1200 food all told
@@ -1566,7 +1589,7 @@ const SURVIVAL_START = {
   clothing: 48,
 } as const;
 export const DIFFICULTY_RESOURCES: Record<Difficulty, Partial<Resources>> = {
-  easy: { ...SURVIVAL_START, wood: 660, stone: 120, medicine: 120 },
+  easy: { ...SURVIVAL_START, wood: 660, stone: 120, medicine: 50 },
   normal: { ...SURVIVAL_START },
   hard: { ...SURVIVAL_START },
 };

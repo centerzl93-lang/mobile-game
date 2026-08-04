@@ -73,7 +73,7 @@ test.describe('difficulties', () => {
     expect(d.easy.houses).toBe(3);
     expect(d.easy.store.wood).toBe(660);
     expect(d.easy.store.stone).toBe(120);
-    expect(d.easy.store.medicine).toBe(120);
+    expect(d.easy.store.medicine).toBe(50);
     // Normal and Hard: no houses and no building materials at all — everything must be gathered.
     for (const name of ['normal', 'hard'] as const) {
       expect(d[name].houses, `${name} houses`).toBe(0);
@@ -1247,7 +1247,10 @@ test.describe('hint bar layering', () => {
   test('the hint stays visible and clear of the build pop-out', async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
-    await page.click('.tool-btn[data-tool="housing"]');
+    // Paths, not buildings: picking a building no longer prints anything (what it is *for* lives
+    // in the Codex now), but a path still says how to draw one — and it opens the same pop-out,
+    // which is the layering this test is about.
+    await page.click('.tool-btn[data-tool="paths"]');
     await page.locator('.build-btn').first().click();
     await expect(page.locator('#hint')).toBeVisible();
 
@@ -2435,6 +2438,72 @@ test.describe('top HUD', () => {
       undefined,
       { timeout: 3000 },
     );
+  });
+});
+
+test.describe('codex', () => {
+  test('the title screen opens a codex holding every building, and Back returns', async ({ page }) => {
+    await open2d(page);
+    await page.click('#mm-codex');
+
+    const out = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.cx-row')];
+      const list = document.querySelector('.cx-list') as HTMLElement;
+      const card = document.querySelector('.codex-card')!.getBoundingClientRect();
+      const text = (e: Element, sel: string) => e.querySelector(sel)!.textContent!.trim();
+      return {
+        names: rows.map((r) => text(r, '.cx-name')),
+        categories: [...document.querySelectorAll('.cx-cat')].length,
+        // Every entry carries its facts and its explanation — that is the whole point of it.
+        withoutFacts: rows.filter((r) => text(r, '.cx-facts').length === 0).length,
+        withoutDesc: rows.filter((r) => text(r, '.cx-desc').length < 10).length,
+        // A card taller than the screen would put the last buildings out of reach.
+        fitsOnScreen: card.top >= -1 && card.bottom <= window.innerHeight + 1,
+        listScrolls: list.scrollHeight > list.clientHeight,
+      };
+    });
+    const all = await page.evaluate(() => (window as any).__village.debugBuildNames());
+
+    // Same membership as the build menu — the codex groups by category, so not the same order.
+    expect([...out.names].sort(), 'every buildable type, none missing and none invented').toEqual(
+      [...all].sort(),
+    );
+    expect(out.categories).toBe(5);
+    expect(out.withoutFacts).toBe(0);
+    expect(out.withoutDesc).toBe(0);
+    expect(out.fitsOnScreen).toBe(true);
+    expect(out.listScrolls, 'the list scrolls rather than overflowing the card').toBe(true);
+
+    await page.click('#cx-back');
+    await expect(page.locator('#mm-new')).toBeVisible();
+  });
+
+  test('it is reachable mid-game from the pause menu, and picking a building explains nothing', async ({
+    page,
+  }) => {
+    await open2d(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+
+    // The blurb used to print here, under the ghost, with Build and Rotate over the top of it.
+    await page.click('#toolbar [data-tool="housing"]');
+    await page.locator('.build-btn').first().click();
+    await expect(page.locator('#hint')).toBeHidden();
+
+    // It is in the pause menu too: "what does a Tailor do" is a mid-village question.
+    await page.click('#btn-menu');
+    await page.click('#pm-codex');
+    await expect(page.locator('.codex-card')).toBeVisible();
+    const tailor = await page.evaluate(() => {
+      const row = [...document.querySelectorAll('.cx-row')].find(
+        (r) => r.querySelector('.cx-name')!.textContent === 'Tailor',
+      )!;
+      return row.querySelector('.cx-desc')!.textContent!.trim();
+    });
+    expect(tailor.length).toBeGreaterThan(10);
+
+    // Back lands on the pause menu it came from, not the title screen.
+    await page.click('#cx-back');
+    await expect(page.locator('#pm-resume')).toBeVisible();
   });
 });
 
@@ -3665,6 +3734,7 @@ test.describe('work happens where the work is', () => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
       const s = g.state; // after the new game: startNewGame replaces the state object wholesale
+      s.limits = {}; // a village starts capped on firewood; this test is about where they stand
       const wc = eval(mk)('woodcutter', 6); // clear of the barn, so walking there is visible
       g.debugAdvance(5);
       let inside = 0;
@@ -3711,6 +3781,7 @@ test.describe('work happens where the work is', () => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
       const s = g.state; // after the new game: startNewGame replaces the state object wholesale
+      s.limits = {}; // easy starts above the wood cap; this test is about where a forester works
       const lum = eval(mk)('lumberyard', 4);
       g.debugAdvance(5);
       const centre = { x: lum.x + 1.5, y: lum.y + 1.5 };
@@ -3740,6 +3811,7 @@ test.describe('work happens where the work is', () => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
       const s = g.state; // after the new game: startNewGame replaces the state object wholesale
+      s.limits = {}; // easy starts above the wood cap; this test is about where a forester works
       const lum = eval(mk)('lumberyard', 4);
       // Seed the circle with deposits, and count only the tiles seeded so natural rock elsewhere
       // cannot muddy the figure.
@@ -3771,12 +3843,63 @@ test.describe('work happens where the work is', () => {
 });
 
 test.describe('stockpile limits', () => {
+  test('a village is founded with caps already set', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const chip = (icon: string) => {
+        const el = [...document.querySelectorAll('#stat-resources .stat')].find(
+          (e) => e.querySelector('.ico')!.textContent === icon,
+        )!;
+        return el.classList.contains('full');
+      };
+      g.ui.updateHud(s, 1, false);
+      return {
+        limits: s.limits,
+        // Easy hands over more wood and firewood than their caps allow, so both read as full
+        // from the first frame — the arrow is doing its job on day one.
+        woodFull: chip('🪵'),
+        firewoodFull: chip('🔥'),
+        stoneFull: chip('🪨'),
+      };
+    });
+
+    expect(out.limits).toEqual({
+      food: 2000,
+      wood: 500,
+      stone: 500,
+      iron: 500,
+      firewood: 100,
+      medicine: 100,
+      coal: 100,
+      tools: 100,
+      clothing: 100,
+    });
+    expect(out.woodFull).toBe(true);
+    expect(out.firewoodFull).toBe(true);
+    expect(out.stoneFull, 'easy starts with 120 stone against a cap of 500').toBe(false);
+
+    // Two villages must not share one limits object.
+    const separate = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.state.limits!.food = 123;
+      g.startNewGame('small', 'easy', false);
+      return g.state.limits!.food;
+    });
+    expect(separate).toBe(2000);
+  });
+
   test('a capped workplace keeps its workers but sets them labouring', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
       const s = g.state;
+      // A village is founded with caps already set (START_LIMITS) — including firewood, which
+      // this test is about. Clear them so the "before" phase is genuinely uncapped.
+      s.limits = {};
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       barn.store.wood = 1000;
       let wc: any = null;
@@ -3915,19 +4038,20 @@ test.describe('stockpile limits', () => {
     await page.click('#btn-limits');
     await expect(page.locator('#limits .job-row').first()).toBeVisible();
 
-    // The first tap up from "no limit" lands on the current stock rounded to a step, not on 0.
     const row = page.locator('#limits .job-row').filter({ hasText: 'Firewood' });
     await expect(page.locator('#limits .job-row').filter({ hasText: 'Food (all kinds)' })).toHaveCount(1);
     // Food is one category, so there is no row per edible thing.
     await expect(page.locator('#limits .job-row').filter({ hasText: 'Fish' })).toHaveCount(0);
+    // A village is founded with caps already set (START_LIMITS).
+    await expect(row.locator('.count')).toHaveText('100');
+    await row.locator('[data-step="1"]').click();
+    await expect(row.locator('.count')).toHaveText('150');
+    // They can be taken off entirely...
+    for (let i = 0; i < 3; i++) await row.locator('[data-step="-1"]').click();
     await expect(row.locator('.count')).toHaveText('—');
+    // ...and the first tap back up lands on the current stock rounded to a step, not on 0.
     await row.locator('[data-step="1"]').click();
     await expect(row.locator('.count')).toHaveText('600');
-    await row.locator('[data-step="1"]').click();
-    await expect(row.locator('.count')).toHaveText('650');
-    // ...and it can be taken back off entirely.
-    for (let i = 0; i < 13; i++) await row.locator('[data-step="-1"]').click();
-    await expect(row.locator('.count')).toHaveText('—');
 
     await row.locator('[data-step="1"]').click();
     await page.evaluate(() => (window as any).__village.persist());
@@ -3935,7 +4059,7 @@ test.describe('stockpile limits', () => {
     await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
     await page.click('#mm-continue');
     await page.waitForTimeout(150);
-    expect(await page.evaluate(() => (window as any).__village.state.limits?.firewood)).toBe(600);
+    expect(await page.evaluate(() => (window as any).__village.state.limits?.firewood)).toBe(650);
   });
 });
 

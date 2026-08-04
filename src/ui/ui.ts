@@ -526,9 +526,12 @@ export class UI {
     this.cb.onCloseInspect();
     this.renderPopout();
     this.refreshToolbar();
-    // What the building is for — not how to place it. The Build button under the ghost says that.
-    if (this.selectedBuild) this.showHint(BUILDING_DEFS[type].desc);
-    else this.hideHint();
+    // No description here. It used to print the building's blurb in the hint bar, which sits
+    // exactly where the Build and Rotate buttons appear — four lines of text with the controls
+    // stamped over the middle of it, on the one screen where the player needs to see both. What
+    // each building is for now lives in the Codex on the title screen, read before you build
+    // rather than over the top of the thing you are building.
+    this.hideHint();
   }
 
   private selectPath(tier: PathTier): void {
@@ -1362,6 +1365,7 @@ export class UI {
     onContinue: () => void;
     onLoad: () => void;
     onSettings: () => void;
+    onCodex: () => void;
   }): void {
     const saved = opts.hasSave
       ? `<button id="mm-continue">Continue</button><button id="mm-load">Load Game</button>`
@@ -1371,6 +1375,7 @@ export class UI {
         `<div class="menu-list">` +
         `<button id="mm-new">New Game</button>` +
         saved +
+        `<button class="ghost" id="mm-codex">Codex</button>` +
         `<button class="ghost" id="mm-settings">Settings</button>` +
         `<button class="ghost" id="mm-account" disabled>Sign In / Create Account — coming soon</button>` +
         `</div>` +
@@ -1384,7 +1389,54 @@ export class UI {
       byId('mm-continue').addEventListener('click', () => opts.onContinue());
       byId('mm-load').addEventListener('click', () => opts.onLoad());
     }
+    byId('mm-codex').addEventListener('click', () => opts.onCodex());
     byId('mm-settings').addEventListener('click', () => opts.onSettings());
+  }
+
+  /**
+   * The Codex: every building, what it is for and what it costs.
+   *
+   * This is where the placement blurb went. Printing it over the map put four lines of text under
+   * the ghost with the Build and Rotate buttons stamped across the middle of them — unreadable
+   * exactly when it mattered. A reference page is the better shape for it anyway: you can compare
+   * two buildings before committing wood to either, which a hint that only ever describes the one
+   * you already picked could never do.
+   */
+  showCodex(opts: { onBack: () => void }): void {
+    const entry = (type: BuildingType): string => {
+      const d = BUILDING_DEFS[type];
+      const cost =
+        (Object.entries(d.cost) as [ResourceKind, number][])
+          .map(([k, a]) => `${RESOURCE_ICON[k]}${a}`)
+          .join(' ') || 'free';
+      // The facts a player weighs before spending: what it occupies, what it costs, who staffs it.
+      const facts = [`${d.w}×${d.h}`, cost];
+      if (d.jobs > 0) facts.push(`👷${d.jobs}`);
+      if (d.workRadius) facts.push(`⭕${d.workRadius}`);
+      return (
+        `<div class="cx-row">` +
+        `<div class="cx-head"><span class="cx-emoji">${d.emoji}</span>` +
+        `<span class="cx-name">${d.name}</span>` +
+        `<span class="cx-facts">${facts.join(' · ')}</span></div>` +
+        `<p class="cx-desc">${d.desc}</p>` +
+        `</div>`
+      );
+    };
+    const groups = CATEGORY_ORDER.map((cat) => {
+      const types = BUILD_ORDER.filter((t) => BUILDING_DEFS[t].category === cat);
+      if (types.length === 0) return '';
+      const meta = CATEGORY_META[cat];
+      return `<h3 class="cx-cat">${meta.emoji} ${meta.label}</h3>${types.map(entry).join('')}`;
+    }).join('');
+    this.overlayCard(
+      `<h2>Codex</h2>` +
+        // What the shorthand on each row means, once, rather than a word per fact on 23 rows.
+        `<p class="cx-legend">tiles · cost · 👷 workers · ⭕ work circle</p>` +
+        `<div class="cx-list">${groups}</div>` +
+        `<div class="menu-list"><button class="ghost" id="cx-back">Back</button></div>`,
+      'menu-card codex-card',
+    );
+    byId('cx-back').addEventListener('click', () => opts.onBack());
   }
 
   /** Map-size chooser reached from New Game. */
@@ -1435,11 +1487,12 @@ export class UI {
     byId('diff-back').addEventListener('click', () => opts.onBack());
   }
 
-  /** In-game pause menu: Resume, Save, Load, Settings, New Game, Main Menu. */
+  /** In-game pause menu: Resume, Save, Load, Codex, Settings, New Game, Main Menu. */
   showPauseMenu(opts: {
     onResume: () => void;
     onSave: () => void;
     onLoad: () => void;
+    onCodex: () => void;
     onSettings: () => void;
     onNewGame: () => void;
     onMainMenu: () => void;
@@ -1450,6 +1503,9 @@ export class UI {
         `<button id="pm-resume">Resume</button>` +
         `<button id="pm-save">Save</button>` +
         `<button id="pm-load">Load</button>` +
+        // Also here, not only on the title screen: "what does a Tailor do" is a question you have
+        // mid-village, and the answer used to be one tap away on the map.
+        `<button id="pm-codex">Codex</button>` +
         `<button id="pm-settings">Settings</button>` +
         `<button id="pm-new">New Game</button>` +
         `<button class="ghost" id="pm-main">Main Menu</button>` +
@@ -1459,6 +1515,7 @@ export class UI {
     byId('pm-resume').addEventListener('click', () => opts.onResume());
     byId('pm-save').addEventListener('click', () => opts.onSave());
     byId('pm-load').addEventListener('click', () => opts.onLoad());
+    byId('pm-codex').addEventListener('click', () => opts.onCodex());
     byId('pm-settings').addEventListener('click', () => opts.onSettings());
     byId('pm-new').addEventListener('click', () => opts.onNewGame());
     byId('pm-main').addEventListener('click', () => opts.onMainMenu());

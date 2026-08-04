@@ -402,6 +402,76 @@ body {
   transform: scale(0.98);
 }
 
+/*
+ * The Codex — every building on one scrolling page.
+ *
+ * It is the one card that cannot be sized by its content: twenty-odd entries are taller than any
+ * phone. So the card claims the height it is allowed and the list scrolls inside it, leaving the
+ * heading and the Back button pinned where a thumb expects them.
+ */
+.codex-card {
+  max-width: 460px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 16px;
+}
+.card .cx-legend {
+  margin: 0;
+  font-size: 11px;
+  opacity: 0.8;
+}
+.cx-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  text-align: left;
+  margin-top: 8px;
+  padding-right: 4px;
+}
+.cx-cat {
+  margin: 14px 0 6px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  position: sticky; /* the category stays put while its buildings scroll past */
+  top: 0;
+  background: var(--panel-solid);
+  padding: 4px 0;
+}
+.cx-cat:first-child {
+  margin-top: 0;
+}
+.cx-row {
+  padding: 7px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.cx-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.cx-emoji {
+  font-size: 16px;
+}
+.cx-name {
+  font-weight: 700;
+  font-size: 14px;
+}
+/* Footprint, cost, workers — pushed to the right so the names line up as a column to scan. */
+.cx-facts {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.card .cx-desc {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
 /* Vertical button column for the menu cards (main menu, size select, pause). */
 .menu-card .menu-list {
   display: flex;
@@ -1448,6 +1518,34 @@ body {
   }
   #hint.raised {
     bottom: auto;
+  }
+
+  /*
+   * The Codex has to earn its reading area back out of a 390px-tall screen. Everything around
+   * the list gives up a few pixels — the overlay's own margin, the card's padding, the heading
+   * and the Back button — and the card spends the width it now has instead, so each entry wraps
+   * to fewer lines and more of them fit.
+   */
+  #overlay {
+    padding: 10px;
+  }
+  .codex-card {
+    max-width: min(560px, 88vw);
+    padding: 12px 14px;
+  }
+  .codex-card h2 {
+    font-size: 18px;
+    margin-bottom: 2px;
+  }
+  .codex-card .menu-list {
+    margin-top: 8px;
+  }
+  .codex-card .menu-list button {
+    padding: 9px;
+    font-size: 14px;
+  }
+  .cx-row {
+    padding: 5px 0;
   }
 
   /* The log stays bottom-left, above a shorter toolbar; it is well clear of the centre. */

@@ -27,6 +27,7 @@ import {
   Difficulty,
   CROPS,
   DIFFICULTY_RESOURCES,
+  START_LIMITS,
   EASY_START_HOUSES,
   START_ADULTS,
   START_CHILDREN,
@@ -129,6 +130,9 @@ export function newGame(
     // Crops the village can plant. Easy starts with one random seed; Normal/Hard start with none
     // and must buy seeds from a merchant before any field will grow.
     seeds: difficulty === 'easy' ? [CROPS[Math.floor(Math.random() * CROPS.length)]] : [],
+    // Loose caps from the start, so nothing runs flat out unwatched. Copied, not shared: the
+    // player edits these in the stockpile panel and two villages must not move together.
+    limits: { ...START_LIMITS },
   };
 
   // A starting barn holds the opening stockpile for the chosen difficulty, scaled up for the

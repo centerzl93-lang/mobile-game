@@ -11,6 +11,7 @@ import {
   Citizen,
   BuildingType,
   BUILDING_DEFS,
+  BUILD_ORDER,
   buildTimeOf,
   autoBuilderDemand,
   FOOD_PER_CITIZEN_PER_SEASON,
@@ -735,8 +736,14 @@ class Game {
       onNew: () => this.openSizeSelect(),
       onContinue: () => this.continueGame(),
       onLoad: () => this.openSlotSelect('load', () => this.openMainMenu()),
+      onCodex: () => this.openCodex(() => this.openMainMenu()),
       onSettings: () => this.openSettings(() => this.openMainMenu()),
     });
+  }
+
+  /** The building reference. `back` returns to whichever menu opened it. */
+  private openCodex(back: () => void): void {
+    this.ui.showCodex({ onBack: back });
   }
 
   /** Map-size chooser, reachable from the main menu or the pause menu's New Game. */
@@ -872,6 +879,7 @@ class Game {
       },
       onSave: () => this.openSlotSelect('save', () => this.openPauseMenu()),
       onLoad: () => this.openSlotSelect('load', () => this.openPauseMenu()),
+      onCodex: () => this.openCodex(() => this.openPauseMenu()),
       onSettings: () => this.openSettings(() => this.openPauseMenu()),
       onNewGame: () => this.openSizeSelect(),
       onMainMenu: () => this.openMainMenu(),
@@ -1245,6 +1253,11 @@ class Game {
    */
   debugBuildTime(type: BuildingType): number {
     return buildTimeOf(type);
+  }
+
+  /** Debug/testing helper: every buildable type, named, in build-menu order. */
+  debugBuildNames(): string[] {
+    return BUILD_ORDER.map((t) => BUILDING_DEFS[t].name);
   }
 
   /**

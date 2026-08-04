@@ -29,6 +29,9 @@ import {
   CATEGORY_ORDER,
   CATEGORY_META,
   CODEX_NOTES,
+  HarvestKind,
+  HARVEST_KINDS,
+  HARVEST_KIND_META,
   SIZABLE,
   WORK_RADIUS_PER_WORKER,
   TRADE_VALUE,
@@ -140,7 +143,8 @@ export interface UICallbacks {
   onDismissMerchant: () => void;
   onAcceptNomads: () => void;
   onRejectNomads: () => void;
-  onSelectHarvest: (active: boolean) => void;
+  /** Turn the harvest tool on with the kind of harvest to mark, or null to turn it off. */
+  onSelectHarvest: (kind: HarvestKind | null) => void;
   /**
    * The inspect sheet was dismissed from its own × button. The game must drop its selection:
    * hiding the sheet alone is not enough, because the frame loop re-renders the sheet every
@@ -195,7 +199,9 @@ export class UI {
   private mode: 'inspect' | 'build' | 'path' | 'demolish' | 'harvest' = 'inspect';
   private selectedBuild: BuildingType | null = null;
   private selectedPath: PathTier | null = null;
-  private openCategory: BuildCategory | 'paths' | null = null;
+  /** Which harvest the drag marks. Sticky, so the tool reopens on whatever was last used. */
+  private harvestKind: HarvestKind = 'all';
+  private openCategory: BuildCategory | 'paths' | 'harvest' | null = null;
   private jobBoardOpen = false;
   private jobSig = '';
   private limitsOpen = false;
@@ -408,7 +414,7 @@ export class UI {
    * Inspect button, since inspecting is simply "no tool selected".
    */
   private toggleCategory(cat: BuildCategory | 'paths'): void {
-    if (this.mode === 'harvest') this.cb.onSelectHarvest(false);
+    if (this.mode === 'harvest') this.cb.onSelectHarvest(null);
     const closing = this.openCategory === cat;
     this.openCategory = closing ? null : cat;
     if (closing) {
@@ -450,6 +456,19 @@ export class UI {
       ] as [PathTier, string, string, string][]) {
         po.appendChild(this.buildBtn(emoji, label, cost, tier === this.selectedPath, () => this.selectPath(tier)));
       }
+    } else if (this.openCategory === 'harvest') {
+      for (const kind of HARVEST_KINDS) {
+        const meta = HARVEST_KIND_META[kind];
+        po.appendChild(
+          this.buildBtn(
+            meta.emoji,
+            meta.label,
+            kind === 'all' ? 'clear it all' : 'leave the rest',
+            kind === this.harvestKind,
+            () => this.selectHarvestKind(kind),
+          ),
+        );
+      }
     } else {
       const types = BUILD_ORDER.filter((t) => BUILDING_DEFS[t].category === this.openCategory);
       for (const type of types) {
@@ -485,7 +504,7 @@ export class UI {
     this.cb.onSelectBuild(null);
     this.cb.onSelectPath(null);
     this.cb.onSetDemolish(false);
-    this.cb.onSelectHarvest(false);
+    this.cb.onSelectHarvest(null);
     this.renderPopout();
     this.refreshToolbar();
     this.hideHint();
@@ -504,7 +523,7 @@ export class UI {
     this.openCategory = null;
     this.cb.onSelectBuild(null);
     this.cb.onSelectPath(null);
-    this.cb.onSelectHarvest(false);
+    this.cb.onSelectHarvest(null);
     this.cb.onSetDemolish(true);
     this.cb.onCloseInspect();
     this.renderPopout();
@@ -512,21 +531,42 @@ export class UI {
     this.showHint('Tap a building or path to select it, then confirm. 25% of materials are refunded.');
   }
 
+  /**
+   * Turn the harvest tool on, with the kind of harvest last chosen, and open the picker so it can
+   * be changed. One tap still marks everything — the choice is there for when it matters, not in
+   * the way of the common case.
+   */
   private setHarvest(): void {
     const activating = this.mode !== 'harvest';
     this.mode = activating ? 'harvest' : 'inspect';
     this.selectedBuild = null;
     this.selectedPath = null;
-    this.openCategory = null;
+    this.openCategory = activating ? 'harvest' : null;
     this.cb.onSelectBuild(null);
     this.cb.onSelectPath(null);
     this.cb.onSetDemolish(false);
-    this.cb.onSelectHarvest(activating);
+    this.cb.onSelectHarvest(activating ? this.harvestKind : null);
     this.cb.onCloseInspect();
     this.renderPopout();
     this.refreshToolbar();
-    if (activating) this.showHint('Drag a square over trees or loose stone to mark them for harvest; pan with two fingers.');
+    if (activating) this.harvestHint();
     else this.hideHint();
+  }
+
+  private selectHarvestKind(kind: HarvestKind): void {
+    this.harvestKind = kind;
+    this.mode = 'harvest';
+    this.openCategory = 'harvest';
+    this.cb.onSelectHarvest(kind);
+    this.renderPopout();
+    this.refreshToolbar();
+    this.harvestHint();
+  }
+
+  private harvestHint(): void {
+    this.showHint(
+      `Drag a square to mark ${HARVEST_KIND_META[this.harvestKind].hint}; pan with two fingers.`,
+    );
   }
 
   private selectBuild(type: BuildingType): void {
@@ -534,7 +574,7 @@ export class UI {
     this.selectedBuild = this.selectedBuild === type ? null : type;
     this.selectedPath = null;
     this.cb.onSetDemolish(false);
-    this.cb.onSelectHarvest(false);
+    this.cb.onSelectHarvest(null);
     this.cb.onSelectPath(null);
     this.cb.onSelectBuild(this.selectedBuild);
     if (!this.selectedBuild) this.mode = 'inspect';
@@ -554,7 +594,7 @@ export class UI {
     this.selectedPath = this.selectedPath === tier ? null : tier;
     this.selectedBuild = null;
     this.cb.onSetDemolish(false);
-    this.cb.onSelectHarvest(false);
+    this.cb.onSelectHarvest(null);
     this.cb.onSelectBuild(null);
     this.cb.onSelectPath(this.selectedPath);
     if (!this.selectedPath) this.mode = 'inspect';

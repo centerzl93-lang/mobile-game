@@ -1090,6 +1090,23 @@ export const HARVEST_WOOD = 1; // a marked forest tile (chop for wood, clear-cut
 export const HARVEST_STONE = 2; // a marked loose-stone tile
 export const HARVEST_IRON = 3; // a marked surface iron-ore tile
 
+/**
+ * What a harvest drag is allowed to mark.
+ *
+ * Dragging a square used to take everything inside it, which is fine for clearing a plot and
+ * wrong for everything else: a village that wants the iron out of a wood does not want the wood
+ * felled to get at it, and one thinning trees for timber does not want its stone picked up and
+ * hauled at the same time. Picking a kind first makes the drag say what it is for.
+ */
+export type HarvestKind = 'all' | 'trees' | 'stone' | 'iron';
+export const HARVEST_KINDS: HarvestKind[] = ['all', 'trees', 'stone', 'iron'];
+export const HARVEST_KIND_META: Record<HarvestKind, { label: string; emoji: string; hint: string }> = {
+  all: { label: 'Everything', emoji: '🪓', hint: 'trees, stone and iron' },
+  trees: { label: 'Trees', emoji: '🌲', hint: 'trees only — stone and iron are left where they lie' },
+  stone: { label: 'Stone', emoji: '🪨', hint: 'loose stone only — the trees are left standing' },
+  iron: { label: 'Iron', emoji: '🔩', hint: 'surface iron only — the trees are left standing' },
+};
+
 /** The single kind of goods a visiting merchant deals in. */
 export type MerchantCategory = 'basics' | 'seeds' | 'animals' | 'foods' | 'goods';
 export const MERCHANT_CATEGORIES: MerchantCategory[] = ['basics', 'seeds', 'animals', 'foods', 'goods'];

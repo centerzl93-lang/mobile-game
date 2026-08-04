@@ -43,6 +43,7 @@ import {
   HARVEST_WOOD,
   HARVEST_STONE,
   HARVEST_IRON,
+  HarvestKind,
   HARVEST_WOOD_PER_TREE,
   FOOD_PER_CITIZEN_PER_SEASON,
   HEAT_PER_CITIZEN_WINTER,
@@ -1588,27 +1589,43 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
 
 // ---- harvest orders (hand-gathering marked wood / loose stone) ----
 
-/** Mark every harvestable tile (trees / loose stone) inside a tile rectangle. */
-export function markHarvestRect(s: GameState, x0: number, y0: number, x1: number, y1: number): number {
+/**
+ * Mark the harvestable tiles inside a rectangle, of the kind the player asked for.
+ *
+ * A tile can hold only one order, and trees are checked first, so on `all` a wooded tile that also
+ * carries ore is marked for felling — the trees have to come off it before the ore can be reached
+ * anyway. Asking for `iron` marks that same tile for the ore and leaves the trees standing, which
+ * is the whole point of being able to choose.
+ */
+export function markHarvestRect(
+  s: GameState,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  want: HarvestKind = 'all',
+): number {
   const lx = Math.max(0, Math.min(x0, x1));
   const hx = Math.min(MAP_W - 1, Math.max(x0, x1));
   const ly = Math.max(0, Math.min(y0, y1));
   const hy = Math.min(MAP_H - 1, Math.max(y0, y1));
+  const wants = (k: HarvestKind): boolean => want === 'all' || want === k;
   let marked = 0;
   for (let ty = ly; ty <= hy; ty++) {
     for (let tx = lx; tx <= hx; tx++) {
       const i = tileIndex(tx, ty);
       const t = s.tiles[i];
-      if (t.type === 'forest' && t.trees > 0.05) {
-        s.harvest[i] = HARVEST_WOOD;
-        marked++;
-      } else if ((t.stone ?? 0) > 0) {
-        s.harvest[i] = HARVEST_STONE;
-        marked++;
-      } else if ((t.iron ?? 0) > 0) {
-        s.harvest[i] = HARVEST_IRON;
-        marked++;
-      }
+      const order =
+        wants('trees') && t.type === 'forest' && t.trees > 0.05
+          ? HARVEST_WOOD
+          : wants('stone') && (t.stone ?? 0) > 0
+            ? HARVEST_STONE
+            : wants('iron') && (t.iron ?? 0) > 0
+              ? HARVEST_IRON
+              : HARVEST_NONE;
+      if (order === HARVEST_NONE) continue;
+      s.harvest[i] = order;
+      marked++;
     }
   }
   return marked;

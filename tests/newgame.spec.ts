@@ -3912,6 +3912,96 @@ test.describe('work happens where the work is', () => {
   });
 });
 
+test.describe('choosing what to harvest', () => {
+  test('the tool opens a picker, and the choice sticks', async ({ page }) => {
+    await open2d(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+
+    await page.click('#toolbar [data-tool="harvest"]');
+    const opened = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const btns = [...document.querySelectorAll('#popout .build-btn')];
+      return {
+        labels: btns.map((b) => b.querySelector('.name')!.textContent),
+        selected: btns.findIndex((b) => b.classList.contains('selected')),
+        on: g.harvestMode,
+        kind: g.harvestKind,
+        hint: document.getElementById('hint')!.textContent!.trim(),
+      };
+    });
+    expect(opened.labels).toEqual(['Everything', 'Trees', 'Stone', 'Iron']);
+    // One tap arms the tool on everything — the choice is there, not in the way.
+    expect(opened.on).toBe(true);
+    expect(opened.kind).toBe('all');
+    expect(opened.selected).toBe(0);
+    expect(opened.hint).toContain('trees, stone and iron');
+
+    // Pick iron; the hint says what the drag will take now.
+    await page.click('#popout button >> nth=3');
+    const iron = await page.evaluate(() => ({
+      kind: (window as any).__village.harvestKind,
+      on: (window as any).__village.harvestMode,
+      hint: document.getElementById('hint')!.textContent!.trim(),
+    }));
+    expect(iron.kind).toBe('iron');
+    expect(iron.on).toBe(true);
+    expect(iron.hint).toContain('iron only');
+
+    // Close the tool and open it again: it comes back on the kind last used.
+    await page.click('#toolbar [data-tool="harvest"]');
+    expect(await page.evaluate(() => (window as any).__village.harvestMode)).toBe(false);
+    await page.click('#toolbar [data-tool="harvest"]');
+    const again = await page.evaluate(() => {
+      const btns = [...document.querySelectorAll('#popout .build-btn')];
+      return {
+        kind: (window as any).__village.harvestKind,
+        selected: btns.findIndex((b) => b.classList.contains('selected')),
+      };
+    });
+    expect(again.kind).toBe('iron');
+    expect(again.selected).toBe(3);
+  });
+
+  test('each choice marks only its own kind', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      // Sweep the whole map with each filter in turn and count what each one marked.
+      const sweep = (want: string) => {
+        s.harvest.fill(0);
+        const n = g.debugHarvestRect(0, 0, s.w - 1, s.h - 1, want);
+        let wood = 0;
+        let stone = 0;
+        let iron = 0;
+        for (let i = 0; i < s.harvest.length; i++) {
+          if (s.harvest[i] === 1) wood++;
+          else if (s.harvest[i] === 2) stone++;
+          else if (s.harvest[i] === 3) iron++;
+        }
+        return { n, wood, stone, iron };
+      };
+      return { all: sweep('all'), trees: sweep('trees'), stone: sweep('stone'), iron: sweep('iron') };
+    });
+
+    // There is something of each kind on a generated map, or this proves nothing.
+    expect(out.trees!.wood).toBeGreaterThan(0);
+    expect(out.stone!.stone).toBeGreaterThan(0);
+    expect(out.iron!.iron).toBeGreaterThan(0);
+    // Each filter marks its own kind and nothing else.
+    expect(out.trees!.stone + out.trees!.iron, 'trees only').toBe(0);
+    expect(out.stone!.wood + out.stone!.iron, 'stone only').toBe(0);
+    expect(out.iron!.wood + out.iron!.stone, 'iron only').toBe(0);
+    // Everything takes the lot, and marks each tile once.
+    expect(out.all!.n).toBe(out.all!.wood + out.all!.stone + out.all!.iron);
+    expect(out.all!.wood).toBe(out.trees!.wood);
+    // A tile can hold one order, so a wooded deposit counts as trees under `all` — which means
+    // `all` can never mark more of the lot than the three filters would separately.
+    expect(out.all!.n).toBeLessThanOrEqual(out.trees!.n + out.stone!.n + out.iron!.n);
+  });
+});
+
 test.describe('drawing a road', () => {
   /** Find a rectangle of open ground with nothing on it, and return its top-left tile. */
   const findClear = `(w, h) => {

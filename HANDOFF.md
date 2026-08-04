@@ -37,6 +37,19 @@ Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **stora
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
 
+### Harvest picks its kind (this session)
+The harvest drag took everything inside the square, which is right for clearing a plot and wrong
+for everything else — a village that wants the ore out of a wood does not want the wood felled to
+reach it. The Harvest tool now opens a picker (the same pop-out buildings and paths use):
+**Everything · Trees · Stone · Iron**, `HARVEST_KINDS` in `types.ts`, and `markHarvestRect` takes
+the kind. One tap still arms it on Everything and the choice is sticky, so the common case costs
+nothing and the tool reopens on whatever was last used.
+
+A tile holds one order and trees are checked first, so under **Everything** a wooded tile that also
+carries ore is marked for felling — the trees have to come off before the ore is reachable anyway.
+Asking for **Iron** marks that same tile for the ore and leaves the trees standing, which is the
+point of choosing.
+
 ### The Codex audited against the code (this session)
 A house advertised room for four; `HOUSING_PER_HOUSE` has been **8** for some time. The capacities
 were raised and the prose was not, which is the failure mode a reference page has — so every

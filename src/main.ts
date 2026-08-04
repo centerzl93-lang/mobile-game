@@ -14,6 +14,8 @@ import {
   BUILD_ORDER,
   demoFraction,
   BARN_CAPACITY,
+  HarvestKind,
+  HARVEST_KIND_META,
   MARKET_CAPACITY,
   buildTimeOf,
   autoBuilderDemand,
@@ -154,6 +156,8 @@ class Game {
   selectedPath: PathTier | null = null;
   demolish = false;
   harvestMode = false;
+  /** What a harvest drag marks: everything, or only trees / stone / iron. */
+  harvestKind: HarvestKind = 'all';
   /** Live harvest-marquee rectangle in world coords while dragging, else null. */
   marquee: { x0: number; y0: number; x1: number; y1: number } | null = null;
   inspectSel: { kind: 'building' | 'citizen'; id: number } | null = null;
@@ -381,8 +385,10 @@ class Game {
     }
   }
 
-  private onSelectHarvest(active: boolean): void {
+  private onSelectHarvest(kind: HarvestKind | null): void {
+    const active = kind !== null;
     this.harvestMode = active;
+    if (kind) this.harvestKind = kind;
     this.marquee = null;
     if (active) {
       this.selectedBuild = null;
@@ -445,8 +451,14 @@ class Game {
     const n = markHarvestRect(
       this.state,
       Math.floor(wx0), Math.floor(wy0), Math.floor(wx1), Math.floor(wy1),
+      this.harvestKind,
     );
-    this.ui.flashHint(n > 0 ? `Marked ${n} tile${n > 1 ? 's' : ''} for harvest` : 'No trees or loose stone there');
+    const meta = HARVEST_KIND_META[this.harvestKind];
+    this.ui.flashHint(
+      n > 0
+        ? `Marked ${n} tile${n > 1 ? 's' : ''} for harvest`
+        : `Nothing to take there — this drag marks ${meta.hint}`,
+    );
     if (n > 0) this.persist();
   }
 
@@ -1466,8 +1478,8 @@ class Game {
   }
 
   /** Debug/testing helper: mark a rectangle for hand-harvesting, as the drag-select does. */
-  debugHarvestRect(x0: number, y0: number, x1: number, y1: number): number {
-    return markHarvestRect(this.state, x0, y0, x1, y1);
+  debugHarvestRect(x0: number, y0: number, x1: number, y1: number, kind: HarvestKind = 'all'): number {
+    return markHarvestRect(this.state, x0, y0, x1, y1, kind);
   }
 
   /** Debug/testing helper: push goods into the nearest storage; returns what wouldn't fit. */

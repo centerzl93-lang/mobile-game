@@ -1140,6 +1140,12 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
         if (total >= limit - 0.01) {
           c.pending = null;
           c.carry = { kind: out.kind, amount: total };
+          // The load is made up, so they are on their way out with it rather than still at the
+          // bench. Without this they stay flagged indoors for the tick that fills the carry — a
+          // villager who is both inside and holding a load, which the renderer draws as nobody at
+          // all. It was always possible and always a one-tick blink; it simply got likelier once
+          // workers stopped breaking off so often.
+          c.inside = false;
         } else {
           c.pending = { kind: out.kind, amount: total };
         }

@@ -30,7 +30,8 @@ import {
   CATEGORY_META,
   CODEX_NOTES,
   tradePosts,
-  tradeWanted,
+  tradeStaff,
+  tradeCapacity,
   tradeWorking,
   Building,
   HarvestKind,
@@ -911,7 +912,7 @@ export class UI {
       trades
         .map((t) => {
           const posts = tradePosts(s, t);
-          return `${t}:${tradeWorking(s, t)}:${tradeWanted(s, t)}:${posts.filter((b: Building) => b.built).length}/${posts.length}`;
+          return `${t}:${tradeWorking(s, t)}:${tradeStaff(s, t)}:${tradeCapacity(s, t)}:${posts.length}`;
         })
         .join('|') + `#${buildersWorking},${laborers},${s.desiredBuilders}`;
     if (sig === this.jobSig) return;
@@ -939,7 +940,7 @@ export class UI {
     brow.innerHTML = `
       <span class="jr-emoji">🔨</span>
       <div class="jr-main"><div class="jr-name">Builders</div>
-        <div class="jr-sub">${buildersWorking} working / ${s.desiredBuilders} wanted · build sites & paths</div></div>
+        <div class="jr-sub">${buildersWorking} working / ${s.desiredBuilders} wanted</div></div>
       <div class="stepper"><button data-step="-1">−</button><span class="count">${s.desiredBuilders}</span><button data-step="1">+</button></div>`;
     brow.querySelector('[data-step="-1"]')!.addEventListener('click', () => this.cb.onSetBuilders(-1));
     brow.querySelector('[data-step="1"]')!.addEventListener('click', () => this.cb.onSetBuilders(1));
@@ -956,21 +957,16 @@ export class UI {
     for (const type of trades) {
       const def = BUILDING_DEFS[type];
       const posts = tradePosts(s, type);
-      const built = posts.filter((b: Building) => b.built).length;
       const row = document.createElement('div');
       row.className = 'job-row' + (posts.length === 0 ? ' muted' : '');
-      const sites = posts.length - built;
-      // Only say where the posts are when there are some. "none built" on a row that already
-      // reads `0 working / 0 wanted` is a third way of saying nothing, and it wrapped every
-      // quiet row onto two lines.
-      const where = [built > 0 ? `${built} built` : '', sites > 0 ? `${sites} going up` : '']
-        .filter(Boolean)
-        .join(' · ');
+      // Working against wanted, where *wanted* is what the trade's finished buildings ask for —
+      // the village's own demand, not a number the player types. The stepper is the other side of
+      // it: how many people are put to the trade.
       row.innerHTML = `
         <span class="jr-emoji">${def.emoji}</span>
         <div class="jr-main"><div class="jr-name">${def.name}</div>
-          <div class="jr-sub">${tradeWorking(s, type)} working / ${tradeWanted(s, type)} wanted${where ? ` · ${where}` : ''}</div></div>
-        <div class="stepper"><button data-step="-1">−</button><span class="count">${tradeWanted(s, type)}</span><button data-step="1">+</button></div>`;
+          <div class="jr-sub">${tradeWorking(s, type)} working / ${tradeCapacity(s, type)} wanted</div></div>
+        <div class="stepper"><button data-step="-1">−</button><span class="count">${tradeStaff(s, type)}</span><button data-step="1">+</button></div>`;
       row.querySelector('[data-step="-1"]')!.addEventListener('click', () => this.cb.onSetTradeWorkers(type, -1));
       row.querySelector('[data-step="1"]')!.addEventListener('click', () => this.cb.onSetTradeWorkers(type, 1));
       p.appendChild(row);

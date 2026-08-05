@@ -735,8 +735,6 @@ test.describe('jobs & builders', () => {
       return document.getElementById('jobboard')!.textContent ?? '';
     });
     expect(text).toContain('Gatherer');
-    // The board is per trade, so a site under way shows as one of that trade's buildings going up.
-    expect(text).toContain('going up');
     expect(text).toContain('Builders');
     expect(text).toContain('Laborers');
   });
@@ -2340,6 +2338,7 @@ test.describe('job board', () => {
       g.debugSetTradeWorkers('gatherer', 1);
       g.debugSetTradeWorkers('gatherer', 1);
       const preOrder = {
+        staff: g.debugTradeStaff('gatherer'),
         wanted: g.debugTradeWanted('gatherer'),
         working: g.debugTradeWorking('gatherer'),
         posted: s.buildings.filter((b: any) => b.type === 'gatherer').length,
@@ -2358,7 +2357,12 @@ test.describe('job board', () => {
       if (!hut) return null;
       g.debugSetBuilders(6);
       for (let i = 0; i < 2000 && !hut.built; i++) g.debugAdvance(0.2);
-      const opened = { built: hut.built, desired: hut.desiredWorkers, wanted: g.debugTradeWanted('gatherer') };
+      const opened = {
+        built: hut.built,
+        desired: hut.desiredWorkers,
+        staff: g.debugTradeStaff('gatherer'),
+        wanted: g.debugTradeWanted('gatherer'),
+      };
       for (let i = 0; i < 300; i++) g.debugAdvance(0.2);
       const staffed = g.debugTradeWorking('gatherer');
 
@@ -2374,24 +2378,30 @@ test.describe('job board', () => {
         staffed,
         afterRaze: {
           gone: !s.buildings.find((x: any) => x.id === hut.id),
+          staff: g.debugTradeStaff('gatherer'),
           wanted: g.debugTradeWanted('gatherer'),
         },
       };
     });
 
     expect(out, 'a gatherer hut could be placed').not.toBeNull();
-    // Wanted with nothing to want it at: the count stands, nobody is working it.
+    // Two people put to the trade with nowhere to work: nobody is wanted and nobody is working
+    // it, but the village's decision stands.
     expect(out!.preOrder.posted).toBe(0);
-    expect(out!.preOrder.wanted).toBe(2);
+    expect(out!.preOrder.staff).toBe(2);
+    expect(out!.preOrder.wanted, 'no hut asks for anybody yet').toBe(0);
     expect(out!.preOrder.working).toBe(0);
-    // The hut opens on the standing order rather than empty.
+    // The hut opens on the standing order rather than empty, and now asks for two.
     expect(out!.opened.built).toBe(true);
     expect(out!.opened.desired).toBe(2);
-    expect(out!.opened.wanted, 'the ask moved into the hut, it did not double').toBe(2);
+    expect(out!.opened.staff, 'the ask moved into the hut, it did not double').toBe(2);
+    expect(out!.opened.wanted).toBe(2);
     expect(out!.staffed).toBe(2);
-    // ...and losing the hut does not quietly cancel the village's plans.
+    // ...and losing the hut does not quietly cancel the village's plans, though nothing wants
+    // those hands any more.
     expect(out!.afterRaze.gone).toBe(true);
-    expect(out!.afterRaze.wanted).toBe(2);
+    expect(out!.afterRaze.staff).toBe(2);
+    expect(out!.afterRaze.wanted).toBe(0);
   });
 
   test('a staffed row is working against wanted, with no third number', async ({ page }) => {
@@ -2435,8 +2445,8 @@ test.describe('job board', () => {
         stepper: !!el.querySelector('.stepper'),
       };
     });
-    // The cap is where the + button stops; printing it as well was a third number to read.
-    expect(row.sub).toMatch(/^\d+ working \/ \d+ wanted · /);
+    // Working against what the trade's finished buildings ask for, and nothing else.
+    expect(row.sub).toMatch(/^\d+ working \/ \d+ wanted$/);
     expect(row.sub).not.toContain('max');
     expect(row.stepper, 'it is still the place you set the number').toBe(true);
   });
@@ -5003,7 +5013,7 @@ test.describe('clearing a build site', () => {
     expect(after).not.toContain('to fell');
   });
 
-  test('the job board says a building of that trade is going up', async ({ page }) => {
+  test('a site under way is not yet a post the trade wants filled', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -5028,7 +5038,8 @@ test.describe('clearing a build site', () => {
     // The board is per trade now, so what it can say about a site is that one is on its way. How
     // much ground is still to clear is a question about that one plot, and is on its own sheet
     // (see the test above).
+    // A site is not a post: until it is finished the trade wants nobody, and the board says so.
     const row = page.locator('#jobboard .job-row').filter({ hasText: 'Gatherer' });
-    await expect(row).toContainText('going up');
+    await expect(row).toContainText('0 working / 0 wanted');
   });
 });

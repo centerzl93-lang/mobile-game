@@ -14,7 +14,8 @@ import {
   BUILD_ORDER,
   demoFraction,
   setTradeWanted,
-  tradeWanted,
+  tradeStaff,
+  tradeCapacity,
   tradeWorking,
   BARN_CAPACITY,
   HarvestKind,
@@ -1495,9 +1496,12 @@ class Game {
     setTradeWanted(this.state, type, delta);
   }
 
-  /** Debug/testing helper: a profession's wanted and working counts. */
+  /** Debug/testing helper: a profession's staffing, its buildings' demand, and who is posted. */
+  debugTradeStaff(type: BuildingType): number {
+    return tradeStaff(this.state, type);
+  }
   debugTradeWanted(type: BuildingType): number {
-    return tradeWanted(this.state, type);
+    return tradeCapacity(this.state, type);
   }
   debugTradeWorking(type: BuildingType): number {
     return tradeWorking(this.state, type);

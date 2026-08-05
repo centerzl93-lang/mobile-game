@@ -40,7 +40,14 @@ overhaul** — further down.
 ### The job board is per profession (this session)
 It listed one row per *building* and a dead "Not built yet" catalogue underneath. Now it lists one
 row per **trade**, whether the village has one of those buildings or not, and every row can be
-staffed: `3 working / 3 wanted · 2 built`.
+staffed: `3 working / 4 wanted`.
+
+**The two sides of a row mean different things.** *Wanted* is `tradeCapacity` — the trade's
+**finished** buildings times the hands each takes, the village's own demand rather than a number
+the player types. Put up a second fishing hut and two more fishermen are wanted; pull one down and
+the figure falls. The stepper is the other side: `tradeStaff`, how many people are put to the
+trade, and it is not bounded by the demand. A site still going up counts for nothing — it cannot
+employ anybody yet.
 
 **A trade can be staffed before it has anywhere to work.** `tradeExtra` on the state holds the part
 of an ask that has nowhere to go — every building of that type is already fully asked for, or there

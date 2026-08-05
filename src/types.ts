@@ -812,11 +812,30 @@ export function tradePosts(s: GameState, type: BuildingType): Building[] {
   return s.buildings.filter((b) => b.type === type && !b.razed);
 }
 
-/** Villagers the village has asked for in a trade: what its buildings want, plus the overflow. */
-export function tradeWanted(s: GameState, type: BuildingType): number {
+/**
+ * Villagers put to a trade: what its buildings have been asked for, plus the overflow.
+ *
+ * This is the number the job board's stepper moves — how many of the village's people are
+ * foresters — and it is not bounded by how many posts exist. Ask for four with two places and two
+ * of them work as laborers until there is somewhere to put them.
+ */
+export function tradeStaff(s: GameState, type: BuildingType): number {
   let n = s.tradeExtra?.[type] ?? 0;
   for (const b of tradePosts(s, type)) n += b.desiredWorkers;
   return n;
+}
+
+/**
+ * Posts a trade actually has: its *finished* buildings times the hands each one takes.
+ *
+ * This is the "wanted" on the board — not something the player sets, but what the village's own
+ * buildings are asking for. Put up a second fishing hut and two more fishermen are wanted; pull
+ * one down and the number falls again. A site still going up is not counted: it cannot employ
+ * anybody yet.
+ */
+export function tradeCapacity(s: GameState, type: BuildingType): number {
+  const jobs = BUILDING_DEFS[type].jobs;
+  return tradePosts(s, type).reduce((n, b) => n + (b.built ? jobs : 0), 0);
 }
 
 /** Villagers actually posted to a building of this type right now. */

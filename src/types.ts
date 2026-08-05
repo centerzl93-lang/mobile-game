@@ -323,9 +323,28 @@ export const DIET_VARIETY_TARGET = 5;
 /** What a ranch raises. Each animal has its own herd (a tradeable resource) and product mix. */
 export type RanchAnimal = 'cattle' | 'pigs' | 'sheep' | 'chickens';
 export const RANCH_ANIMALS: RanchAnimal[] = ['cattle', 'pigs', 'sheep', 'chickens'];
+/**
+ * What a herd gives, split by whether the animal has to die for it.
+ *
+ * `products` is the standing yield — what a rancher collects from living animals on an ordinary
+ * work cycle, every season of the year: a fleece is shorn, a cow is milked, a hen is robbed of her
+ * eggs. `butchered` is what the knife gets, and defaults to `products` when a herd makes no
+ * distinction. Sheep are the reason the split exists: shearing does not kill a sheep, so a flock
+ * clothes the village indefinitely without losing a head, and mutton only ever comes off one that
+ * was culled or born past the pen's cap.
+ */
+export interface AnimalProduct {
+  kind: ResourceKind;
+  chance: number;
+  mult: number;
+}
 export const ANIMAL_META: Record<
   RanchAnimal,
-  { label: string; emoji: string; ideal: number; growth: number; products: { kind: ResourceKind; chance: number; mult: number }[] }
+  {
+    label: string; emoji: string; ideal: number; growth: number;
+    products: AnimalProduct[];
+    butchered?: AnimalProduct[];
+  }
 > = {
   // `chance` weights are cumulative-rolled; `mult` scales that product's load.
   cattle: { label: 'Cattle', emoji: '🐄', ideal: 8, growth: 0.12, products: [
@@ -337,9 +356,12 @@ export const ANIMAL_META: Record<
   // Sheep are the mirror of cattle: a cow is meat that happens to leave a hide, a sheep is a
   // fleece that happens to leave mutton. That inversion is the whole reason to keep both — a
   // clothing economy runs on sheep, a food economy on cattle, and the pens are not interchangeable.
-  sheep: { label: 'Sheep', emoji: '🐑', ideal: 10, growth: 0.15, products: [
-    { kind: 'wool', chance: 0.65, mult: 1 }, { kind: 'mutton', chance: 0.35, mult: 0.8 },
-  ] },
+  // The only herd whose standing yield and butcher's yield are different things. A sheep is shorn
+  // and walks away, so wool comes in all year off the same animals; the pen turns into mutton only
+  // when it is culled or breeds past its cap.
+  sheep: { label: 'Sheep', emoji: '🐑', ideal: 10, growth: 0.15,
+    products: [{ kind: 'wool', chance: 1, mult: 1 }],
+    butchered: [{ kind: 'mutton', chance: 1, mult: 1 }] },
   chickens: { label: 'Chickens', emoji: '🐔', ideal: 12, growth: 0.25, products: [
     { kind: 'eggs', chance: 0.6, mult: 1 }, { kind: 'meat', chance: 0.4, mult: 0.6 },
   ] },
@@ -2063,7 +2085,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   ranch: {
     type: 'ranch', name: 'Ranch', emoji: '🐄', category: 'food', w: 4, h: 4,
     cost: { wood: 16 }, jobs: 2, buildTime: 7,
-    desc: 'A fenced pen for cattle, pigs, sheep or chickens. Drag its size (4×4 up to 8×8) before building — a bigger pen holds a bigger herd. Buy livestock from traders; they breed here. Cattle are mostly meat with some hide; sheep are the reverse, mostly fleece with some mutton.',
+    desc: 'A fenced pen for cattle, pigs, sheep or chickens. Drag its size (4×4 up to 8×8) before building — a bigger pen holds a bigger herd. Buy livestock from traders; they breed here. Cattle are mostly meat with some hide. Sheep are shorn rather than slaughtered: a flock gives wool all year without losing a head, and mutton only when it is culled or breeds past its pen.',
   },
   lumberyard: {
     type: 'lumberyard', name: 'Forester', emoji: '🌲', category: 'resources', w: 3, h: 3,

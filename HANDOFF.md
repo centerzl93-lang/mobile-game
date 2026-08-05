@@ -44,10 +44,26 @@ overhaul** — further down.
 ### Sheep, wool and mutton (this session)
 
 A fourth herd, bought from an animals trader like the other three. Sheep are deliberately the
-**mirror of cattle**: a cow is meat that happens to leave a hide (`meat` 0.7 / `leather` 0.3), a
-sheep is a fleece that happens to leave mutton (`wool` 0.65 / `mutton` 0.35). That inversion is the
-whole reason to keep both — a clothing economy runs on sheep, a food economy on cattle, and the two
+**mirror of cattle**: a cow is meat that happens to leave a hide, a sheep is a fleece that happens
+to leave mutton. That inversion is the whole reason to keep both — a clothing economy runs on sheep, a food economy on cattle, and the two
 pens are not interchangeable. At `ANIMAL_TILES` 2 (against cattle's 3) more sheep fit the same pen.
+
+**Shearing is not slaughter, and the model says so.** `ANIMAL_META` now separates the standing
+yield (`products` — what a rancher collects from *living* animals on an ordinary work cycle) from
+the butcher's yield (`butchered`, defaulting to `products` so the other three herds are unchanged).
+Sheep are the reason the split exists: `products` is wool alone and `butchered` is mutton alone, so
+a flock clothes the village indefinitely without losing a head, and mutton only ever comes off one
+that was culled or born past the pen's cap. Before this, culling a flock produced wool — you got a
+fleece by killing the animal wearing it.
+
+There is no seasonal gate on any of it: a pen is shorn in winter as readily as in spring. Do note
+that a *test* of that has to stock the households first — a rancher whose own hearth is nearly out
+drops the shears and hauls firewood, which is the larder-priority rule below working as intended
+and is otherwise indistinguishable from wool having a closed season.
+
+**Cattle still yield leather without slaughter** (`meat` 0.7 / `leather` 0.3 on the living roll),
+so the contrast is currently one-sided. Making hide slaughter-only would complete it and is a
+balance decision nobody has taken.
 
 Two new `ResourceKind`s. **Mutton is in `FOOD_KINDS`**, so it feeds villagers and counts toward
 diet variety (`DIET_VARIETY_TARGET`); **wool is a material**, and like leather it stays off the HUD

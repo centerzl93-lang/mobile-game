@@ -2619,7 +2619,10 @@ function butcherProducts(s: GameState, b: Building, n: number): void {
   if (n <= 0) return;
   const animal = b.animal ?? 'cattle';
   const at = buildingCenter(b);
-  for (const p of ANIMAL_META[animal].products) {
+  const meta = ANIMAL_META[animal];
+  // What the knife gets, which is not always what the herd gives. Killing a sheep does not
+  // produce a fleece — that comes off it alive — so a culled flock yields mutton and nothing else.
+  for (const p of meta.butchered ?? meta.products) {
     const amount = n * SLAUGHTER_YIELD * p.chance * p.mult;
     if (amount > 0) addNearest(s, at, p.kind, amount);
   }

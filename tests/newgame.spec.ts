@@ -5340,7 +5340,7 @@ test.describe('sheep, wool and mutton', () => {
     return null;
   }`;
 
-  test('a sheep pen yields mostly fleece, and some mutton', async ({ page }) => {
+  test('a flock is shorn, not slaughtered: wool from living sheep, mutton only from the knife', async ({ page }) => {
     test.setTimeout(120_000);
     await open2d(page);
     const out = await page.evaluate((findSrc) => {
@@ -5349,34 +5349,84 @@ test.describe('sheep, wool and mutton', () => {
       Math.random = () => ((x = (1103515245 * x + 12345) & 0x7fffffff) / 0x7fffffff);
       g.startNewGame('small', 'easy', false);
       const s = g.state;
-      const id = eval(findSrc)(g, 'ranch');
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // A cleared shelf well clear of the village, rather than hunting for a gap the generator
+      // happened to leave — a 4x4 pen does not always fit near the founding cluster.
+      const ox = Math.max(2, barn.x - 16), oy = Math.max(2, barn.y - 3);
+      for (let dy = -2; dy < 12; dy++)
+        for (let dx = -2; dx < 12; dx++) {
+          const t = s.tiles[(oy + dy) * s.w + (ox + dx)];
+          if (!t) continue;
+          t.type = 'grass'; t.trees = 0; delete t.stone; delete t.iron;
+        }
+      s.navVersion = (s.navVersion ?? 0) + 1;
+      const id = g.debugPlace('ranch', ox, oy);
       if (id == null) return null;
       const pen = s.buildings.find((b: any) => b.id === id);
       pen.built = true; pen.progress = 999;
-      s.navVersion = (s.navVersion ?? 0) + 1;
       pen.animal = 'sheep';
-      pen.animals = g.debugRanchCapacity(pen.id);
+      // Capacity depends on the animal's size and the pen was created as cattle. The game's own
+      // setter refreshes this; setting `animal` by hand does not, and a stale cap butchers every
+      // birth over it — which would hand this test its mutton for the wrong reason entirely.
+      pen.maxAnimals = g.debugRanchCapacity(pen.id);
+      pen.animals = Math.max(2, Math.floor(g.debugRanchCapacity(pen.id) / 2));
+      const startHead = pen.animals;
       g.debugSetTradeWorkers('ranch', 2);
       for (const b of s.buildings) for (const k of ['wool', 'mutton', 'meat', 'leather']) delete b.store[k];
-      for (let q = 0; q < 8; q++) g.debugAdvance(305);
-      return {
-        capacity: pen.animals,
+
+      // Wool is shorn, not harvested, so it has no season. Winter is the one that would show a
+      // gate if there were one — a field yields nothing then. Measured over a whole year as well,
+      // because a single window can come up empty simply from the rancher spending it hauling.
+      const perSeason: number[] = [];
+      for (let q = 0; q < 4; q++) {
+        const w0 = g.debugTotalStored('wool');
+        g.debugAdvance(305);
+        perSeason.push(g.debugTotalStored('wool') - w0);
+      }
+      // Winter on its own, with every household stocked first. A rancher whose own hearth is
+      // nearly out drops the shears and hauls firewood — correct behaviour, and it would otherwise
+      // be indistinguishable here from wool having a closed season.
+      s.season = 3;
+      for (const h of s.buildings) {
+        if (!h.built || (h.type !== 'house' && h.type !== 'stonehouse')) continue;
+        h.store = { fruit: 400, firewood: 400, clothing: 100, medicine: 100 };
+      }
+      const w0 = g.debugTotalStored('wool');
+      g.debugAdvance(305);
+      const winterWool = g.debugTotalStored('wool') - w0;
+      const shorn = {
+        startHead,
+        head: pen.animals,
         wool: g.debugTotalStored('wool'),
-        // Mutton is food, so the village eats it — what matters is that the pen made some at all.
-        muttonEverMade: (s.events ?? []).length >= 0 && g.debugTotalStored('mutton') >= 0,
         mutton: g.debugTotalStored('mutton'),
-        meat: g.debugTotalStored('meat'),
-        leather: g.debugTotalStored('leather'),
+        winterWool,
+        seasonsWithWool: perSeason.filter((n) => n > 0).length,
+      };
+      // Now put the flock to the knife and see what it actually yields.
+      const before = { wool: g.debugTotalStored('wool'), mutton: g.debugTotalStored('mutton') };
+      g.cullRanch(pen.id); // TS privacy is compile-time only; the method is there at runtime
+      return {
+        shorn,
+        culled: {
+          head: pen.animals,
+          wool: g.debugTotalStored('wool') - before.wool,
+          mutton: g.debugTotalStored('mutton') - before.mutton,
+        },
       };
     }, findPlot);
     expect(out, 'a ranch could be placed').not.toBeNull();
-    // A sheep is a fleece that happens to leave mutton — the inverse of a cow.
-    expect(out!.wool, 'the pen produced wool').toBeGreaterThan(0);
-    // And it is emphatically not a cattle pen: no hides, no beef.
-    expect(out!.leather, 'sheep do not make leather').toBe(0);
-    expect(out!.meat, 'sheep make mutton, not meat').toBe(0);
-    // Sheep are smaller than cattle, so more of them fit the same pen.
-    expect(out!.capacity).toBeGreaterThan(0);
+    // Shearing: wool off living animals, in every season, and the flock is no smaller for it.
+    expect(out!.shorn.wool, 'the flock was shorn').toBeGreaterThan(0);
+    // No seasonal gate: a flock is shorn in winter as readily as in spring, which is what
+    // separates wool from anything that has to be harvested.
+    expect(out!.shorn.winterWool, 'shorn in winter too').toBeGreaterThan(0);
+    expect(out!.shorn.seasonsWithWool, 'and through the rest of the year').toBeGreaterThanOrEqual(3);
+    expect(out!.shorn.head, 'and no sheep was lost to it').toBeGreaterThanOrEqual(out!.shorn.startHead);
+    expect(out!.shorn.mutton, 'nothing died, so there is no mutton').toBe(0);
+    // The knife: mutton, and emphatically not a fleece.
+    expect(out!.culled.head).toBe(0);
+    expect(out!.culled.mutton, 'culling yields mutton').toBeGreaterThan(0);
+    expect(out!.culled.wool, 'killing a sheep does not produce wool').toBe(0);
   });
 
   test('the tailor sews from either hide or fleece, and wool goes further', async ({ page }) => {

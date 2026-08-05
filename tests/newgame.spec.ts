@@ -1875,6 +1875,12 @@ test.describe('villager breeding', () => {
           if (b.type !== 'barn' && b.type !== 'market') continue;
           b.store = { clothing: 1e5, firewood: 1e5, tools: 1e5 };
         }
+        // Food already in a basket, too. Emptying the barns leaves whatever was picked up before
+        // the wipe still walking, and it lands on top of the ration below — one delivered basket
+        // is the whole margin this test measures. How many are in flight at any moment is a
+        // question about walking distances on a freshly generated map, which is exactly the kind
+        // of thing an assertion must not depend on.
+        for (const c of s.citizens) if (c.carry) c.carry = null;
         for (const h of s.buildings) {
           if (h.type !== 'house') continue;
           const residents = s.citizens.filter((c: any) => c.homeId === h.id).length;
@@ -3120,6 +3126,9 @@ test.describe('disasters toggle', () => {
 
 test.describe('villager coats', () => {
   test('a villager wears a coat when their household holds clothing, and not when it does not', async ({ page }) => {
+    // Four polls against a software-rendered 3D scene; see `expectCoats` below for why they get a
+    // generous budget each, which the default 30s test timeout would not cover.
+    test.setTimeout(150_000);
     await open(page);
     // Easy starts with houses already standing, so there are households to stock.
     await page.evaluate(() => {
@@ -3157,10 +3166,14 @@ test.describe('villager coats', () => {
       }, n);
 
     // The coat layer is filled during render, so this is polled rather than read once after a
-    // fixed wait — how soon the next frame lands is not something the test controls.
+    // fixed wait — how soon the next frame lands is not something the test controls. This is one
+    // of the few tests that must run on the 3D renderer, which headless Chromium rasterises in
+    // software at about 2 fps: a 5s budget was ten frames and lost roughly one run in three, on a
+    // machine no busier than usual. The budget is generous because the *frame rate* is what it is
+    // waiting for; the assertion is still exact.
     const expectCoats = (n: number, why: string) =>
       expect
-        .poll(() => page.evaluate(() => (window as any).__village.debugCoatedCount()), { message: why, timeout: 5000 })
+        .poll(() => page.evaluate(() => (window as any).__village.debugCoatedCount()), { message: why, timeout: 25_000 })
         .toBe(n);
 
     expect(await setClothing(0), 'the village has housed villagers to dress').toBeGreaterThan(0);

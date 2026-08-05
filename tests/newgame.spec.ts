@@ -2300,6 +2300,7 @@ test.describe('job board', () => {
       const el = document.getElementById('jobboard')!;
       return {
         muted: el.querySelectorAll('.job-row.muted').length,
+        subs: el.querySelectorAll('.job-row.muted .jr-sub').length,
         hasSection: !!el.querySelector('.jb-section'),
         text: el.innerText,
       };
@@ -2310,6 +2311,57 @@ test.describe('job board', () => {
     for (const job of ['Gatherer', 'Fishing Hut', 'Blacksmith', 'Market']) {
       expect(board.text).toContain(job);
     }
+    // A name and nothing else. What one costs and how many hands it takes are questions for the
+    // build menu and the Codex; the board is about who is working where.
+    expect(board.subs, 'no sub-line on a trade the village does not have').toBe(0);
+    expect(board.text).not.toMatch(/up to \d+ worker/);
+  });
+
+  test('a staffed row is working against wanted, with no third number', async ({ page }) => {
+    await open2d(page);
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      let done = false;
+      for (let r = 4; r < 24 && !done; r++)
+        for (let dy = -r; dy <= r && !done; dy++)
+          for (let dx = -r; dx <= r && !done; dx++) {
+            if (!g.debugCanPlace('gatherer', barn.x + dx, barn.y + dy).ok) continue;
+            const id = g.debugPlace('gatherer', barn.x + dx, barn.y + dy);
+            if (id == null) continue;
+            const b = s.buildings.find((x: any) => x.id === id);
+            b.built = true;
+            b.progress = g.debugBuildTime('gatherer');
+            b.desiredWorkers = 2;
+            done = true;
+          }
+      for (let i = 0; i < 40; i++) g.debugAdvance(0.5);
+    });
+    await page.click('#btn-jobs');
+    // The panel is redrawn on the frame after it opens.
+    await page.waitForFunction(
+      () =>
+        [...document.querySelectorAll('#jobboard .job-row:not(.muted) .jr-name')].some((n) =>
+          n.textContent!.startsWith('Gatherer'),
+        ),
+      undefined,
+      { timeout: 5000 },
+    );
+    const row = await page.evaluate(() => {
+      const el = [...document.querySelectorAll('#jobboard .job-row:not(.muted)')].find((r) =>
+        r.querySelector('.jr-name')!.textContent!.startsWith('Gatherer'),
+      )!;
+      return {
+        sub: el.querySelector('.jr-sub')!.textContent!.trim(),
+        stepper: !!el.querySelector('.stepper'),
+      };
+    });
+    // The cap is where the + button stops; printing it as well was a third number to read.
+    expect(row.sub).toMatch(/^\d+ working \/ \d+ wanted$/);
+    expect(row.sub).not.toContain('max');
+    expect(row.stepper, 'it is still the place you set the number').toBe(true);
   });
 });
 

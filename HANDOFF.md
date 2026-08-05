@@ -37,6 +37,15 @@ Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **stora
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
 
+### The job board says less (this session)
+Two numbers came off it. A staffed row read `2 working / 3 wanted (max 3)` — the cap is already
+where the + button stops moving, so printing it as well made a board about one comparison carry
+three numbers. And the **Not built yet** rows carried `up to 2 workers · 🪵10`, which is a
+build-menu question on a staffing panel; those rows are a name and an emoji now, there to say the
+work exists.
+
+The per-building rows stay per-building: one row per workplace, each with its own stepper.
+
 ### Harvest picks its kind (this session)
 The harvest drag took everything inside the square, which is right for clearing a plot and wrong
 for everything else — a village that wants the ore out of a wood does not want the wood felled to

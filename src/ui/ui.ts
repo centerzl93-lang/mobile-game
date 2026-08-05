@@ -965,15 +965,18 @@ export class UI {
       })();
       // A condemned workplace still lists — it is still staffed and still working — but what the
       // board says about it is that it is on its way out, not how many hands it would like.
+      // Working against wanted, and nothing else. The cap rode along on every row — "(max 2)" —
+      // and it is already the point the + button stops moving at, so printing it as well was a
+      // third number on a board that is about one comparison.
       const status = b.razed
         ? '🧱 rubble · salvage being carted off'
         : b.demolish
           ? `💥 marked for demolition · ${Math.floor(demoFraction(b) * 100)}% pulled down`
           : b.built
-            ? `${b.workers.length} working / ${b.desiredWorkers} wanted (max ${def.jobs})`
+            ? `${b.workers.length} working / ${b.desiredWorkers} wanted`
             : toClear === 0
-              ? `🏗 under construction · ${b.desiredWorkers} wanted (max ${def.jobs})`
-              : `🌲 clearing land · ${toClear} tile${toClear > 1 ? 's' : ''} left · ${b.desiredWorkers} wanted (max ${def.jobs})`;
+              ? `🏗 under construction · ${b.desiredWorkers} wanted`
+              : `🌲 clearing land · ${toClear} tile${toClear > 1 ? 's' : ''} left · ${b.desiredWorkers} wanted`;
       row.innerHTML = `
         <span class="jr-emoji">${def.emoji}</span>
         <div class="jr-main"><div class="jr-name">${escapeAttr(buildingName(b))}</div>
@@ -1004,17 +1007,16 @@ export class UI {
       head2.className = 'jb-section';
       head2.textContent = 'Not built yet';
       p.appendChild(head2);
+      // Names only. What one costs and how many hands it takes are build-menu and Codex
+      // questions; on the job board a trade the village does not have yet has nobody working, no
+      // one wanted and nothing to assign. The row is here to say the work exists, and that is all.
       for (const t of unbuilt) {
         const def = BUILDING_DEFS[t];
         const row = document.createElement('div');
         row.className = 'job-row muted';
-        const cost = (Object.entries(def.cost) as [ResourceKind, number][])
-          .map(([k, a]) => `${RESOURCE_ICON[k]}${a}`)
-          .join(' ');
         row.innerHTML = `
           <span class="jr-emoji">${def.emoji}</span>
-          <div class="jr-main"><div class="jr-name">${def.name}</div>
-            <div class="jr-sub">up to ${def.jobs} worker${def.jobs > 1 ? 's' : ''}${cost ? ` · ${cost}` : ''}</div></div>`;
+          <div class="jr-main"><div class="jr-name">${def.name}</div></div>`;
         p.appendChild(row);
       }
     }

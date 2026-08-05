@@ -16,6 +16,11 @@
      log and confirm bar all clear the pop-out by reading it. The default is one row's worth,
      for the frame before anything has opened. */
   --popout-h: 84px;
+  /* How tall the bottom toolbar stands: two rows of `.tool-btn` plus its own padding. Everything
+     that has to sit clear of the bar — the pop-out, the hint, the log, the confirm bar, the
+     inspect sheet, the placement controls — is measured off this, so making the buttons taller
+     is a one-line change here instead of six offsets that drift apart. */
+  --bar-h: 74px;
 }
 
 * {
@@ -234,7 +239,7 @@ body {
 #log {
   position: absolute;
   left: calc(var(--safe-left) + 8px);
-  bottom: calc(var(--safe-bottom) + 96px);
+  bottom: calc(var(--safe-bottom) + var(--bar-h) + 22px);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -273,7 +278,7 @@ body {
 #hint {
   position: absolute;
   left: 50%;
-  bottom: calc(var(--safe-bottom) + 96px);
+  bottom: calc(var(--safe-bottom) + var(--bar-h) + 22px);
   transform: translateX(-50%);
   background: var(--panel);
   border: 1px solid var(--border);
@@ -291,7 +296,7 @@ body {
    above it (`raiseHints` in ui.ts) rather than sitting on top of the buildings. */
 #hint.raised,
 #log.raised {
-  bottom: calc(var(--safe-bottom) + 74px + var(--popout-h));
+  bottom: calc(var(--safe-bottom) + var(--bar-h) + 16px + var(--popout-h));
 }
 
 /* ---------- Build menu ---------- */
@@ -1163,12 +1168,12 @@ body {
 
 /* ---------- Bottom toolbar (tools + build categories) ---------- */
 /*
- * Eight tools in two rows of four, plus the clock stacked at the right end.
+ * Eight tools in two rows of four, filling the width of the screen.
  *
  * One row meant a sideways scroll on a phone — eight 60px buttons want 530px and a portrait
  * viewport has 390 — so half of the build menu was hidden behind a swipe most players never
- * made. A 4x2 grid of `1fr` columns fits any width without scrolling, and each button turns
- * horizontal (icon then label) so two rows cost no more height than the one tall row did.
+ * made. A 4x2 grid of `1fr` columns fits any width without scrolling, and each button is a wide
+ * horizontal target (icon then label) rather than a small square one.
  */
 #toolbar {
   position: absolute;
@@ -1187,29 +1192,12 @@ body {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
-  /* On a phone the columns divide what there is; on a wide screen they stop growing rather than
-     stretching a 15px icon across a quarter of a tablet. */
-  max-width: 520px;
-}
-/* Pause over speed, filling the bar's height beside the tools. Pinned right whatever the tools
-   grid ends up being. */
-#clock {
-  flex: 0 0 auto;
-  margin-left: auto;
-  display: grid;
-  grid-template-rows: 1fr 1fr;
-  gap: 4px;
-  width: 46px;
-}
-#clock .ctrl {
-  width: 100%;
-  height: 100%;
-  border-radius: 10px;
-  font-size: 15px;
 }
 .tool-btn {
   min-width: 0;
-  min-height: 24px;
+  /* Tall enough to hit without looking. Two rows of these is what `--bar-h` is measured from, so
+     changing it means changing that too. */
+  min-height: 30px;
   border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--panel-solid);
@@ -1251,7 +1239,7 @@ body {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(var(--safe-bottom) + 66px);
+  bottom: calc(var(--safe-bottom) + var(--bar-h) + 8px);
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -1265,7 +1253,7 @@ body {
   position: absolute;
   left: calc(var(--safe-left) + 8px);
   right: calc(var(--safe-right) + 8px);
-  bottom: calc(var(--safe-bottom) + 72px);
+  bottom: calc(var(--safe-bottom) + var(--bar-h) + 10px);
   max-height: 42vh;
   overflow-y: auto;
   background: var(--panel-solid);
@@ -1391,7 +1379,7 @@ body {
 #confirm {
   position: absolute;
   left: 50%;
-  bottom: calc(var(--safe-bottom) + 96px);
+  bottom: calc(var(--safe-bottom) + var(--bar-h) + 22px);
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -1405,7 +1393,7 @@ body {
   z-index: 9; /* above the hint, which shares this strip */
 }
 #confirm.raised {
-  bottom: calc(var(--safe-bottom) + 74px + var(--popout-h));
+  bottom: calc(var(--safe-bottom) + var(--bar-h) + 16px + var(--popout-h));
 }
 #confirm .cf-text {
   font-size: 13px;
@@ -1461,15 +1449,35 @@ body {
     gap: 3px;
   }
 
+  /* Still tall enough for a thumb, but this is the axis that is scarce: two 26px rows and the
+     bar's own padding is `--bar-h` here. */
+  :root {
+    --bar-h: 61px;
+  }
+
+  /*
+   * The control column has to fit between the HUD and the toolbar, and on a 390px screen six
+   * 44px buttons do not: the last one — the menu — ended up half behind the bar, which is
+   * z-index 6 to this column's 5. Smaller buttons and a tighter gap bring the stack to 258px,
+   * which clears the bar with room to spare.
+   */
+  #controls {
+    gap: 6px;
+  }
+  .ctrl {
+    width: 38px;
+    height: 38px;
+    font-size: 15px;
+  }
   .tool-btn {
-    min-height: 20px;
+    min-height: 26px;
     padding: 0 3px;
   }
   .tool-btn .emoji {
-    font-size: 13px;
+    font-size: 14px;
   }
   .tool-btn .tname {
-    font-size: 9px;
+    font-size: 9.5px;
   }
   #toolbar {
     gap: 5px;
@@ -1478,16 +1486,6 @@ body {
   }
   #tools {
     gap: 3px;
-  }
-  #clock {
-    width: 40px;
-    gap: 3px;
-  }
-  #clock .ctrl {
-    font-size: 13px;
-  }
-  #popout {
-    bottom: calc(var(--safe-bottom) + 58px);
   }
 
   /*
@@ -1501,7 +1499,7 @@ body {
        plus its 8px margin) — at `right: 8px` the sheet sat straight on top of it. */
     right: calc(var(--safe-right) + 60px);
     top: calc(var(--safe-top) + 84px);
-    bottom: calc(var(--safe-bottom) + 62px);
+    bottom: calc(var(--safe-bottom) + var(--bar-h) + 4px);
     width: min(340px, 42vw);
     max-height: none;
   }
@@ -1551,10 +1549,10 @@ body {
 
   /* The log stays bottom-left, above a shorter toolbar; it is well clear of the centre. */
   #log {
-    bottom: calc(var(--safe-bottom) + 78px);
+    bottom: calc(var(--safe-bottom) + var(--bar-h) + 18px);
     max-width: 46%;
   }
   #log.raised {
-    bottom: calc(var(--safe-bottom) + 66px + var(--popout-h));
+    bottom: calc(var(--safe-bottom) + var(--bar-h) + 12px + var(--popout-h));
   }
 }

@@ -198,13 +198,19 @@ number you are meant to notice *changing*. `setPips` (`src/ui/ui.ts`) lights `fl
 `PIPS`, dims the rest rather than removing them so the row never reflows, and writes the exact
 figure to the chip's `title`. It runs every frame, so it only rewrites DOM when the count moves.
 
-**The toolbar is a 4×2 grid with the clock stacked at its right end.** One row wanted 530px for
-eight tools and a portrait phone has 390, so half the build menu sat behind a sideways swipe most
-players never made. `#tools` is a grid of four `1fr` columns (capped at 520px so a tablet does not
-stretch a 15px icon across a quarter of the screen), each button turned horizontal — icon then
-label — which buys the second row back: the bar went 46→49px in landscape and 58→62px in
-portrait. Pause and speed moved out of the right-hand control column into `#clock` inside the bar,
-which also shortened that column from six buttons to four.
+**The toolbar is a 4×2 grid filling the width.** One row wanted 530px for eight tools and a
+portrait phone has 390, so half the build menu sat behind a sideways swipe most players never
+made. `#tools` is a grid of four `1fr` columns, each button turned horizontal — icon then label —
+so a tool is a wide target rather than a small square one. The clock briefly lived at the right
+end of the bar and has moved back to the control column down the right edge, where the panel
+buttons are; the tools spread into the space it left.
+
+`--bar-h` is how tall the bar stands (74px, 61px in landscape) and every offset above it —
+pop-out, hint, log, confirm bar, inspect sheet, placement controls — is measured from it, so
+making the buttons taller is one line rather than six offsets drifting apart. Landscape also
+shrinks the control column to 38px buttons: six 44px ones plus their gaps do not fit between the
+HUD and the bar on a 390px screen, and the menu button ended up half behind it (the bar is
+z-index 6 to the column's 5).
 
 **The build pop-out wraps instead of scrolling** for the same reason (resources holds eight
 buildings). Its height is no longer a constant: `renderPopout` measures it and publishes

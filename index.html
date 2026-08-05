@@ -38,9 +38,10 @@
         <div class="hud-row" id="stat-resources"></div>
       </div>
 
-      <!-- Panel / menu controls. Pause and speed are not here: they live at the right end of the
-           bottom bar, next to the thumb that is already down there building things. -->
+      <!-- Clock, panels and menu: one column down the right edge. -->
       <div id="controls">
+        <button class="ctrl" id="btn-pause" title="Pause">⏸</button>
+        <button class="ctrl" id="btn-speed" title="Speed">1×</button>
         <button class="ctrl" id="btn-jobs" title="Job board">📋</button>
         <button class="ctrl" id="btn-limits" title="Stockpile limits">📦</button>
         <button class="ctrl" id="btn-history" title="Village history">📜</button>
@@ -76,14 +77,10 @@
 
       <!-- Build: category buildings pop out above the toolbar -->
       <div id="popout" class="hidden"></div>
-      <!-- Bottom toolbar: build categories and tools in two rows, with the clock stacked at the
-           right end. Two rows so every tool fits a phone's width without a sideways scroll. -->
+      <!-- Bottom toolbar: build categories and tools in two rows across the full width. Two rows
+           so every tool fits a phone's width without a sideways scroll. -->
       <div id="toolbar">
         <div id="tools"></div>
-        <div id="clock">
-          <button class="ctrl" id="btn-pause" title="Pause">⏸</button>
-          <button class="ctrl" id="btn-speed" title="Speed">1×</button>
-        </div>
       </div>
 
       <!-- Overlays -->

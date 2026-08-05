@@ -2592,7 +2592,7 @@ test.describe('toolbar', () => {
     expect(active).toEqual([]);
   });
 
-  test('every tool fits two rows with no sideways scroll, and the clock stacks at the right', async ({
+  test('every tool fits two rows across the full width, with the clock in its own column', async ({
     page,
   }) => {
     await open2d(page);
@@ -2615,8 +2615,10 @@ test.describe('toolbar', () => {
         barScrolls: bar.scrollWidth > bar.clientWidth + 1,
         pause: box(document.querySelector('#btn-pause')!),
         speed: box(document.querySelector('#btn-speed')!),
-        gridRight: box(grid).r,
+        controls: box(document.querySelector('#controls')!),
+        grid: box(grid),
         bar: box(bar),
+        width: window.innerWidth,
       };
     });
 
@@ -2626,14 +2628,19 @@ test.describe('toolbar', () => {
     expect(layout.gridScrolls, 'nothing is hidden off the side').toBe(false);
     expect(layout.barScrolls).toBe(false);
 
-    // Pause sits above speed, both to the right of the tools and inside the bar.
-    expect(layout.pause.b).toBeLessThanOrEqual(layout.speed.y);
-    expect(layout.pause.x).toBeGreaterThanOrEqual(layout.gridRight);
-    expect(layout.speed.x).toBe(layout.pause.x);
-    expect(layout.pause.y).toBeGreaterThanOrEqual(layout.bar.y);
-    expect(layout.speed.b).toBeLessThanOrEqual(layout.bar.b);
+    // The tools fill the bar rather than huddling in the middle of it.
+    expect(layout.grid.r).toBeGreaterThan(layout.width - 20);
 
-    // And they still drive the clock from down there.
+    // Pause sits above speed in the control column down the right edge, clear of the bar — the
+    // whole column has to fit above it, or the last button ends up half behind it.
+    expect(layout.pause.b).toBeLessThanOrEqual(layout.speed.y);
+    expect(layout.speed.x).toBe(layout.pause.x);
+    expect(layout.pause.r).toBeGreaterThan(layout.width - 60);
+    expect(layout.controls.b, 'the control column clears the toolbar').toBeLessThanOrEqual(
+      layout.bar.y,
+    );
+
+    // And they still drive the clock from up there.
     await page.click('#btn-pause');
     expect(await page.evaluate(() => (window as any).__village.paused)).toBe(true);
     await page.click('#btn-speed');

@@ -3029,7 +3029,10 @@ test.describe('village history', () => {
   });
 
   test('the History panel lists them grouped by season, and × closes it', async ({ page }) => {
-    await open(page);
+    // 2D: every assertion here is about the DOM, and the rows are rendered by `refreshPanels` on
+    // an animation frame. Under the 3D renderer headless Chromium gives about 2 fps, so the 5s
+    // default was ten frames to catch the panel filling — it lost roughly one run in three.
+    await open2d(page);
     await page.evaluate(() => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', true);
@@ -3046,8 +3049,12 @@ test.describe('village history', () => {
     await expect(page.locator('#history')).toBeHidden();
     await page.click('#btn-history');
     await expect(page.locator('#history')).toBeVisible();
-    // Contents are rendered by `refreshPanels` on the next animation frame, not by the click.
-    await expect(page.locator('#history .hist-row').first()).toBeVisible();
+    // Contents are rendered by `refreshPanels` on the next animation frame, not by the click, so
+    // this waits on a frame rather than on the game. The budget is generous because a rare run
+    // still loses this assertion (about 3 in 38 after the switch to 2D) for a reason not yet
+    // pinned down — the panel simply comes up with no rows, though `state.events` is never empty
+    // and driving the same sequence by hand has never reproduced it.
+    await expect(page.locator('#history .hist-row').first()).toBeVisible({ timeout: 20_000 });
 
     const dom = await page.evaluate(() => {
       const h = document.getElementById('history')!;

@@ -50,7 +50,7 @@ const RES_DOT: Record<string, string> = {
   carrot: '#e0913a', tomato: '#d6483c', onion: '#c9a9d0', pepper: '#d43f34',
   cabbage: '#7fb05a', beans: '#a5794a', pumpkin: '#e08a34',
   apple: '#8fc04a', grapes: '#8a5ac0', strawberry: '#e0455a', melon: '#8fce6a',
-  fish: '#6fb0d0', meat: '#b5665a',
+  fish: '#6fb0d0', beef: '#b5665a', venison: '#8f5a48',
   wood: '#8a6a3c', firewood: '#d1642f', stone: '#a6a8af', coal: '#333',
   iron: '#9aa0aa', tools: '#c0c4cc', leather: '#8a5a3a', clothing: '#7bb0d8',
   cattle: '#d8b98a', pigs: '#e0a6b0', chickens: '#e6d28a', medicine: '#c98fd8',

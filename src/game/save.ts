@@ -105,17 +105,30 @@ export function loadGame(slot = 0): GameState | null {
     for (const b of s.buildings) {
       if (b.crop && !CROPS.includes(b.crop)) b.crop = undefined;
     }
-    // Migrate the old single 'livestock' herd into 'cattle' (per-animal herds).
-    for (const b of s.buildings) {
-      const store = b.store as Record<string, number>;
-      if (store.livestock) {
-        store.cattle = (store.cattle ?? 0) + store.livestock;
-        delete store.livestock;
+    // Migrate the old single 'livestock' herd into 'cattle' (per-animal herds), and the old
+    // catch-all 'meat' into 'beef' — every cut carries its own name now, and nothing produces the
+    // generic kind any more, so a save left holding it would show a row that could never refill.
+    const RENAMED: [string, string][] = [['livestock', 'cattle'], ['meat', 'beef']];
+    const rename = (bag: Record<string, number> | undefined): void => {
+      if (!bag) return;
+      for (const [from, to] of RENAMED) {
+        if (!bag[from]) continue;
+        bag[to] = (bag[to] ?? 0) + bag[from];
+        delete bag[from];
       }
+    };
+    for (const b of s.buildings) {
+      rename(b.store as Record<string, number>);
+      rename(b.orders as Record<string, number> | undefined);
     }
-    if (s.merchant.stock) {
-      const ms = s.merchant.stock as Record<string, number>;
-      if (ms.livestock) { ms.cattle = (ms.cattle ?? 0) + ms.livestock; delete ms.livestock; }
+    rename(s.merchant.stock as Record<string, number> | undefined);
+    rename(s.limits as Record<string, number> | undefined);
+    // A villager caught mid-haul with a load of the old kind.
+    for (const c of s.citizens) {
+      const carry = c.carry as { kind: string; amount: number } | null;
+      if (!carry) continue;
+      const to = RENAMED.find(([from]) => from === carry.kind)?.[1];
+      if (to) carry.kind = to as typeof carry.kind;
     }
     // The merchant grew a boat, categories, and a stay counter. Upgrade the old
     // { present, timer, stock } shape so a mid-game save loads without a docked ghost merchant.

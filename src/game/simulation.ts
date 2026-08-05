@@ -1466,8 +1466,10 @@ function workOutput(
       return { kind: 'fish', amount: LOAD_FOOD * factorWater(s, b) * tf };
     case 'hunting': {
       const f = factorCircle(s, b) * tf;
+      // Game off the hunt, and the hide that comes with it — the one leather that is not a
+      // ranch's, and still only ever off something killed.
       return Math.random() < 0.7
-        ? { kind: 'meat', amount: LOAD_FOOD * f }
+        ? { kind: 'venison', amount: LOAD_FOOD * f }
         : { kind: 'leather', amount: LOAD_MAT * f };
     }
     case 'ranch': {

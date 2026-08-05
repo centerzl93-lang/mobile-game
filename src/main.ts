@@ -1426,6 +1426,20 @@ class Game {
    * `RESOURCE_ICON` is a `Record<ResourceKind, …>` the compiler will not let you leave short. A
    * kind in the second and not the first is invisible in game and perfectly typed.
    */
+  /** Debug/testing helper: write the current village to a slot, as autosave does. */
+  debugSaveSlot(slot = 0): void {
+    saveGame(this.state, slot);
+  }
+
+  /** Debug/testing helper: load a slot through the same path Continue uses. */
+  debugLoadSlot(slot = 0): boolean {
+    const saved = loadGame(slot);
+    if (!saved) return false;
+    this.currentSlot = slot;
+    this.state = saved;
+    return true;
+  }
+
   debugResourceLists(): { listed: string[]; all: string[] } {
     return { listed: [...RESOURCE_KINDS], all: Object.keys(RESOURCE_ICON) };
   }

@@ -63,7 +63,7 @@ test.describe('difficulties', () => {
     // year of tools and coats. Hard is that halved — which is the whole of what makes it Hard, and
     // for a long time it was not applied at all, leaving Hard and Normal the same game under two
     // names while the picker advertised a difference.
-    const FOODS = ['fruit', 'grain', 'fish', 'meat'];
+    const FOODS = ['fruit', 'grain', 'fish', 'beef'];
     const foodOf = (run: any) => FOODS.reduce((n, k) => n + (run.store[k] ?? 0), 0);
     for (const name of ['easy', 'normal'] as const) {
       expect(foodOf(d[name]), `${name} food`).toBe(1200);
@@ -557,14 +557,15 @@ test.describe('ranch', () => {
       const blocked = (g.setAnimal(id, 'pigs'), b.animal); // stocked pen keeps its species
       g.cullRanch(id);
       const allowed = (g.setAnimal(id, 'pigs'), b.animal); // now empty ⇒ switch works
-      let meat = 0;
-      for (const bl of s.buildings) if (bl.type === 'barn') meat += (bl.store.meat ?? 0) + (bl.store.leather ?? 0);
-      return { blocked, animals: b.animals, allowed, meat };
+      // What the cull actually put in the barns — a cow butchers into beef and hide.
+      let culled = 0;
+      for (const bl of s.buildings) if (bl.type === 'barn') culled += (bl.store.beef ?? 0) + (bl.store.leather ?? 0);
+      return { blocked, animals: b.animals, allowed, culled };
     }, mkRanch);
     expect(out.blocked).toBe('cattle'); // couldn't switch a stocked pen
     expect(out.animals).toBe(0);
     expect(out.allowed).toBe('pigs'); // switched once emptied
-    expect(out.meat).toBeGreaterThan(0);
+    expect(out.culled).toBeGreaterThan(0);
   });
 
   test('split moves half to another ranch; transfer moves the whole herd; both need a target', async ({ page }) => {
@@ -1312,7 +1313,7 @@ test.describe('household larders', () => {
       // Long enough for each household's shopper to run its trips to the barns and back.
       for (let i = 0; i < 2400; i++) g.debugAdvance(0.1);
       const FOODS = ['fruit', 'grain', 'corn', 'potato', 'rice', 'barley', 'carrot', 'tomato', 'onion',
-        'pepper', 'cabbage', 'beans', 'pumpkin', 'apple', 'grapes', 'strawberry', 'melon', 'eggs', 'fish', 'meat'];
+        'pepper', 'cabbage', 'beans', 'pumpkin', 'apple', 'grapes', 'strawberry', 'melon', 'eggs', 'fish', 'beef'];
       return s.buildings
         .filter((b: any) => b.type === 'house' && b.built)
         .map((h: any) => ({
@@ -1340,7 +1341,7 @@ test.describe('household larders', () => {
       g.startNewGame('small', 'easy', false);
       const s = g.state;
       const FOODS = ['fruit', 'grain', 'corn', 'potato', 'rice', 'barley', 'carrot', 'tomato', 'onion',
-        'pepper', 'cabbage', 'beans', 'pumpkin', 'apple', 'grapes', 'strawberry', 'melon', 'eggs', 'fish', 'meat'];
+        'pepper', 'cabbage', 'beans', 'pumpkin', 'apple', 'grapes', 'strawberry', 'melon', 'eggs', 'fish', 'beef'];
       const barnFood = () =>
         s.buildings
           .filter((b: any) => b.built && (b.type === 'barn' || b.type === 'market'))
@@ -1689,7 +1690,7 @@ test.describe('villager breeding', () => {
         for (let n = 0; n < seasons; n++) {
           for (const b of s.buildings) {
             if (b.type !== 'barn') continue;
-            for (const k of ['grain', 'fruit', 'meat', 'fish', 'eggs']) b.store[k] = 1e5;
+            for (const k of ['grain', 'fruit', 'beef', 'fish', 'eggs']) b.store[k] = 1e5;
             for (const k of ['clothing', 'firewood', 'medicine', 'tools']) b.store[k] = 1e5;
           }
           g.debugAdvance(610);
@@ -1933,7 +1934,7 @@ test.describe('villager breeding', () => {
       for (let n = 0; n < 4; n++) {
         for (const b of s.buildings) {
           if (b.type !== 'barn') continue;
-          for (const k of ['grain', 'fruit', 'meat', 'clothing', 'firewood', 'tools']) b.store[k] = 1e5;
+          for (const k of ['grain', 'fruit', 'beef', 'clothing', 'firewood', 'tools']) b.store[k] = 1e5;
         }
         g.debugAdvance(610);
         if (s.gameOver) break;
@@ -3220,7 +3221,7 @@ test.describe('food consumption', () => {
       g.startNewGame('small', 'easy', false);
       const s = g.state;
       const FOODS = ['fruit', 'grain', 'corn', 'potato', 'rice', 'barley', 'carrot', 'tomato', 'onion',
-        'pepper', 'cabbage', 'beans', 'pumpkin', 'apple', 'grapes', 'strawberry', 'melon', 'eggs', 'fish', 'meat'];
+        'pepper', 'cabbage', 'beans', 'pumpkin', 'apple', 'grapes', 'strawberry', 'melon', 'eggs', 'fish', 'beef'];
       const allFood = () =>
         s.buildings.reduce((n: number, b: any) => n + FOODS.reduce((m: number, k: string) => m + (b.store[k] ?? 0), 0), 0);
 
@@ -3344,7 +3345,7 @@ test.describe('birth rate', () => {
       for (let n = 0; n < 8; n++) {
         for (const b of s.buildings) {
           if (b.type !== 'barn') continue;
-          for (const k of ['grain', 'fruit', 'meat', 'fish', 'eggs']) b.store[k] = 4000;
+          for (const k of ['grain', 'fruit', 'beef', 'fish', 'eggs']) b.store[k] = 4000;
           for (const k of ['clothing', 'firewood', 'medicine', 'tools']) b.store[k] = 4000;
         }
         const before = s.citizens.length;
@@ -3900,7 +3901,7 @@ test.describe('lives run on ticks, not seasons', () => {
             h.built = true; h.progress = 9999; added++;
           }
       const stock = () => {
-        for (const k of ['grain', 'fruit', 'meat', 'fish', 'firewood', 'clothing', 'medicine', 'tools']) {
+        for (const k of ['grain', 'fruit', 'beef', 'fish', 'firewood', 'clothing', 'medicine', 'tools']) {
           barn.store[k] = 1e5;
         }
         for (const h of s.buildings) if (h.type === 'house' || h.type === 'stonehouse') h.store.firewood = 500;
@@ -3948,7 +3949,7 @@ test.describe('lives run on ticks, not seasons', () => {
           }
       const startPop = s.citizens.length;
       for (let n = 0; n < 4; n++) {
-        for (const k of ['grain', 'fruit', 'meat', 'fish', 'firewood', 'clothing', 'medicine', 'tools']) {
+        for (const k of ['grain', 'fruit', 'beef', 'fish', 'firewood', 'clothing', 'medicine', 'tools']) {
           barn.store[k] = 1e5;
         }
         for (const h of s.buildings) if (h.type === 'house' || h.type === 'stonehouse') h.store.firewood = 500;
@@ -5372,7 +5373,7 @@ test.describe('sheep, wool and mutton', () => {
       pen.animals = Math.max(2, Math.floor(g.debugRanchCapacity(pen.id) / 2));
       const startHead = pen.animals;
       g.debugSetTradeWorkers('ranch', 2);
-      for (const b of s.buildings) for (const k of ['wool', 'mutton', 'meat', 'leather']) delete b.store[k];
+      for (const b of s.buildings) for (const k of ['wool', 'mutton', 'beef', 'leather']) delete b.store[k];
 
       // Wool is shorn, not harvested, so it has no season. Winter is the one that would show a
       // gate if there were one — a field yields nothing then. Measured over a whole year as well,
@@ -5456,7 +5457,7 @@ test.describe('sheep, wool and mutton', () => {
         pen.maxAnimals = g.debugRanchCapacity(pen.id); // capacity is per animal size; refresh it
         pen.animals = Math.max(2, Math.floor(pen.maxAnimals / 2)); // below cap: nothing overflows
         g.debugSetTradeWorkers('ranch', 2);
-        const KINDS = ['milk', 'meat', 'pork', 'chicken', 'mutton', 'wool', 'leather', 'eggs'];
+        const KINDS = ['milk', 'beef', 'venison', 'pork', 'chicken', 'mutton', 'wool', 'leather', 'eggs'];
         // Households kept stocked so the rancher never downs tools to haul — see the shearing test.
         const stock = () => {
           for (const h of s.buildings)
@@ -5503,10 +5504,10 @@ test.describe('sheep, wool and mutton', () => {
     // And the meat each carries its own name where it has one.
     expect(pigs!.dead.pork).toBeGreaterThan(0);
     expect(sheep!.dead.mutton).toBeGreaterThan(0);
-    expect(cattle!.dead.meat).toBeGreaterThan(0);
+    expect(cattle!.dead.beef).toBeGreaterThan(0);
     // The bird on the plate is `chicken`, not the generic `meat` a cow or the hunt gives.
     expect(hens!.dead.chicken).toBeGreaterThan(0);
-    expect(hens!.dead.meat ?? 0).toBe(0);
+    expect(hens!.dead.beef ?? 0).toBe(0);
   });
 
   test('a pen at its cap butchers the overflow without anyone asking', async ({ page }) => {
@@ -5598,6 +5599,46 @@ test.describe('sheep, wool and mutton', () => {
     expect(perCoat(fleece!)).toBeLessThan(perCoat(hide!));
   });
 
+  test('an old save holding meat loads as beef', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // Write a save, then reach into the stored JSON and put the *old* kind back — exactly the
+      // shape a village saved before beef and venison existed would have on disk.
+      delete barn.store.beef;
+      barn.store.fish = 10;
+      g.debugSaveSlot(0);
+      const key = Object.keys(localStorage).find((k) => /slot0$/.test(k))!;
+      const env = JSON.parse(localStorage.getItem(key)!);
+      let expect0 = false;
+      const savedBarn = env.state.buildings.find((b: any) => b.type === 'barn');
+      savedBarn.store.meat = 120;
+      savedBarn.store.beef = 5; // and some of the new kind, to check they are added not replaced
+      env.state.citizens[0].carry = { kind: 'meat', amount: 4 };
+      localStorage.setItem(key, JSON.stringify(env));
+
+      expect0 = g.debugLoadSlot(0);
+      const after = g.state.buildings.find((b: any) => b.type === 'barn');
+      return {
+        loaded: expect0,
+        beef: after.store.beef ?? 0,
+        meatLeft: (after.store as any).meat ?? 0,
+        carry: g.state.citizens[0]?.carry?.kind ?? null,
+        food: g.debugTotalFood(),
+      };
+    });
+    // The old catch-all is folded into beef rather than dropped on the floor — a village that
+    // saved with a winter's meat in the barn does not load starving.
+    expect(out.loaded, 'the save loaded').toBe(true);
+    expect(out.beef, '120 meat + 5 beef').toBe(125);
+    expect(out.meatLeft, 'and nothing left under the old name').toBe(0);
+    expect(out.carry, 'including a load somebody was carrying at the time').toBe('beef');
+    expect(out.food).toBeGreaterThanOrEqual(125);
+  });
+
   test('every resource appears in the list the player actually reads', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(() => {
@@ -5622,7 +5663,7 @@ test.describe('sheep, wool and mutton', () => {
       g.ui.hideOverlay();
       const barn = g.state.buildings.find((b: any) => b.type === 'barn');
       Object.assign(barn.store, {
-        chicken: 40, chickens: 12, meat: 30, pork: 25, mutton: 20, milk: 60, wool: 50,
+        chicken: 40, chickens: 12, beef: 30, venison: 18, pork: 25, mutton: 20, milk: 60, wool: 50,
       });
       g.inspectSel = { kind: 'building', id: barn.id };
       g.refreshInspect();

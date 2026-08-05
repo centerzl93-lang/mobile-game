@@ -74,7 +74,8 @@ export type ResourceKind =
   | 'melon'
   | 'eggs'
   | 'fish'
-  | 'meat'
+  | 'beef'
+  | 'venison'
   | 'mutton'
   | 'pork'
   | 'chicken'
@@ -117,7 +118,8 @@ export const FOOD_KINDS: ResourceKind[] = [
   'melon',
   'eggs',
   'fish',
-  'meat',
+  'beef',
+  'venison',
   'mutton',
   'pork',
   'chicken',
@@ -151,7 +153,8 @@ export const RESOURCE_KINDS: ResourceKind[] = [
   'melon',
   'eggs',
   'fish',
-  'meat',
+  'beef',
+  'venison',
   'mutton',
   'pork',
   'chicken',
@@ -214,7 +217,8 @@ export const RESOURCE_ICON: Record<ResourceKind, string> = {
   melon: '🍈',
   eggs: '🥚',
   fish: '🐟',
-  meat: '🍖',
+  beef: '🍖',
+  venison: '🦌',
   mutton: '🥩',
   pork: '🥓',
   chicken: '🍗',
@@ -378,7 +382,7 @@ export const ANIMAL_META: Record<
   cattle: { label: 'Cattle', emoji: '🐄', ideal: 8, growth: 0.12,
     products: [{ kind: 'milk', chance: 1, mult: 1 }],
     // The big animal, and the one worth keeping for its hide: more leather per head than a pig.
-    butchered: [{ kind: 'leather', chance: 0.5, mult: 1.4 }, { kind: 'meat', chance: 0.5, mult: 1 }] },
+    butchered: [{ kind: 'leather', chance: 0.5, mult: 1.4 }, { kind: 'beef', chance: 0.5, mult: 1 }] },
   // Pigs give nothing until they are killed — no milk, no fleece, no eggs. A pig pen is a meat
   // pen, and it pays out of the overflow rather than out of a daily round.
   pigs: { label: 'Pigs', emoji: '🐖', ideal: 8, growth: 0.18,
@@ -1558,7 +1562,7 @@ export const RESOURCE_VOLUME: Record<ResourceKind, number> = {
   fruit: 0.25, grain: 0.25, corn: 0.25, potato: 0.25, rice: 0.25, barley: 0.25,
   carrot: 0.25, tomato: 0.25, onion: 0.25, pepper: 0.25, cabbage: 0.25, beans: 0.25,
   pumpkin: 0.25, apple: 0.25, grapes: 0.25, strawberry: 0.25, melon: 0.25,
-  eggs: 0.25, fish: 0.25, meat: 0.25, mutton: 0.25, pork: 0.25, chicken: 0.25, milk: 0.25,
+  eggs: 0.25, fish: 0.25, beef: 0.25, venison: 0.25, mutton: 0.25, pork: 0.25, chicken: 0.25, milk: 0.25,
   // Bulky raw materials — the volume-1 baseline.
   wood: 1, firewood: 1, stone: 1, coal: 1, iron: 1,
   // Worked goods: denser than raw material, so more fit in a load.
@@ -1971,7 +1975,7 @@ export const TAILOR_CLOTHING_OUT = 6;
  * stone, no medicine, no fuel.
  */
 const SURVIVAL_START = {
-  fruit: 300, grain: 300, fish: 300, meat: 300, // 1200 food all told
+  fruit: 300, grain: 300, fish: 300, beef: 300, // 1200 food all told
   tools: 48,
   clothing: 48,
 } as const;
@@ -2016,7 +2020,8 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
   melon: 1.5,
   eggs: 1.5,
   fish: 1,
-  meat: 1.5,
+  beef: 1.5,
+  venison: 1.5,
   mutton: 1.5,
   pork: 1.5,
   chicken: 1.5,
@@ -2068,7 +2073,7 @@ export const MERCHANT_CATEGORY_STOCK: Record<MerchantCategory, Partial<Record<Re
   basics: { wood: 150, stone: 120, coal: 100, iron: 80, firewood: 120 },
   seeds: {},
   animals: { cattle: 6, pigs: 8, sheep: 8, chickens: 12 },
-  foods: { grain: 160, corn: 120, potato: 120, fish: 140, meat: 80, mutton: 70, pork: 70, chicken: 70, milk: 90, eggs: 80 },
+  foods: { grain: 160, corn: 120, potato: 120, fish: 140, beef: 80, venison: 60, mutton: 70, pork: 70, chicken: 70, milk: 90, eggs: 80 },
   goods: { tools: 60, clothing: 60, leather: 90, wool: 80, medicine: 40 },
 };
 

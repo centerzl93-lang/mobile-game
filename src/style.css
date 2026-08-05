@@ -106,6 +106,9 @@ body {
 .stat.mini .ico {
   font-size: 11px;
 }
+.stat.low {
+  border-color: var(--danger);
+}
 .stat.low .val {
   color: var(--danger);
   font-weight: 700;
@@ -159,6 +162,17 @@ body {
   font-weight: 700;
 }
 .stat.full .cap {
+  display: inline;
+}
+/* The ▼ mirror of the ▲ above: red and pointing down is "running out", green and pointing up is
+   "full up". Two shapes as well as two colours, so the pair reads the same to a colour-blind
+   player and at a glance on a phone. */
+.stat .dn {
+  display: none;
+  font-size: 9px;
+  color: var(--danger);
+}
+.stat.low .dn {
   display: inline;
 }
 .hud .spacer {

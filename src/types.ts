@@ -28,7 +28,8 @@ export const DIFFICULTIES: Difficulty[] = ['easy', 'normal', 'hard'];
 export const DIFFICULTY_META: Record<Difficulty, { label: string; desc: string }> = {
   easy: { label: 'Easy', desc: '3 houses and a full stockpile to start' },
   normal: { label: 'Normal', desc: 'No houses, and no wood or stone to build with' },
-  hard: { label: 'Hard', desc: 'No wood or stone, and half the food, fuel and tools' },
+  // "Half the fuel" was in here once, on a setting that starts with none either way.
+  hard: { label: 'Hard', desc: 'No wood or stone, and half the food, tools and coats' },
 };
 /** Built houses granted at the start on Easy. */
 export const EASY_START_HOUSES = 3;
@@ -1189,6 +1190,16 @@ for (const k of RESOURCE_KINDS) {
   LIMIT_META[k] = { label: k[0].toUpperCase() + k.slice(1), icon: RESOURCE_ICON[k] };
 }
 
+/**
+ * Fraction of a resource's own stockpile limit below which the village calls it low.
+ *
+ * Measured against the limit rather than a hand-set number per resource, so the rule means the
+ * same thing for every kind and moves with what the player asked the village to keep: raise the
+ * cap on stone and "low on stone" quietly means more stone. Ten per cent is roughly one building's
+ * worth at the opening caps.
+ */
+export const LOW_STOCK_FRACTION = 0.1;
+
 export function worksIndoors(type: BuildingType): boolean {
   return hasDoor(type) && !CIRCLE_WORK.includes(type) && type !== 'fishing';
 }
@@ -1387,6 +1398,16 @@ export interface GameState {
    * laborers like any other.
    */
   tradeExtra?: Partial<Record<BuildingType, number>>;
+
+  /**
+   * Which stocks the village has already been warned about, so "X is low" fires when it *becomes*
+   * low rather than every season it stays that way.
+   *
+   * Without the latch a village that has never mined iron is told iron is low four times a year
+   * forever, and the one warning that matters — the stock that just fell over the line — is buried
+   * among the standing ones. Cleared per key the moment the stock recovers, which re-arms it.
+   */
+  lowWarned?: Partial<Record<LimitKey, boolean>>;
   /** Bumped when a tile becomes / stops being forest (replanting or clear-cutting), so the
    * renderer knows to rebuild its tree layer to show the new/removed trees. */
   forestVersion?: number;
@@ -1617,6 +1638,22 @@ export const CLOTHING_PER_CITIZEN_WINTER = 2;
  * sixteen workers in tools — the village has to reach that before the opening stock runs dry.
  */
 export const TOOL_WEAR_PER_WORKER = 1;
+
+/**
+ * What one villager gets through in a season, for the goods where that is the real measure.
+ *
+ * A percentage of a cap says nothing useful about food or fuel: what matters is whether the
+ * village can feed and heat the people it has. These floors sit under the fraction above — the
+ * warning fires on whichever is higher — so a big cap cannot hide a village a season from
+ * starving, and a small one does not cry wolf.
+ */
+export const PER_CITIZEN_SEASON_NEED: Partial<Record<LimitKey, number>> = {
+  food: FOOD_PER_CITIZEN_PER_SEASON,
+  firewood: HEAT_PER_CITIZEN_WINTER,
+  clothing: CLOTHING_PER_CITIZEN_WINTER,
+  tools: TOOL_WEAR_PER_WORKER,
+};
+
 export const NO_TOOLS_PENALTY = 0.6; // output multiplier when the tool stockpile is empty
 export const SICKNESS_CHANCE = 0.5; // chance an unclothed villager sickens in winter
 
@@ -1673,11 +1710,22 @@ export const HOUSE_CLOTHING_PER_RESIDENT = CLOTHING_PER_CITIZEN_WINTER * HOUSE_L
 /**
  * Fraction of its target a larder must fall to before the household bothers restocking it.
  *
- * A household has one shopper and checks its goods in a fixed order, so without a threshold the
- * first item to dip by any amount monopolises every trip. Restocking in batches lets one errand
- * run cover food, then fuel, then medicine.
+ * A household checks its goods in a fixed order, so without a threshold the first item to dip by
+ * any amount monopolises every trip. Restocking in batches lets one errand run cover food, then
+ * fuel, then medicine.
  */
 export const LARDER_RESTOCK_AT = 0.6;
+/**
+ * The fraction below which a larder is not merely due a top-up but actually running out.
+ *
+ * A household under this sends every free resident to the barn instead of one, and the errand
+ * outranks both paid work and a leisure break. Set well under `LARDER_RESTOCK_AT` so the ordinary
+ * case is still one villager doing the shopping while everyone else keeps working — this is the
+ * emergency, not the routine.
+ */
+export const LARDER_URGENT_AT = 0.25;
+/** Most residents of one house that may be out on a grocery run at the same time. */
+export const MAX_LARDER_SHOPPERS = 3;
 /** Resources a household keeps at home, in the order a resident restocks them. */
 export const LARDER_KINDS: ResourceKind[] = ['firewood', 'clothing', 'medicine'];
 
@@ -1858,10 +1906,24 @@ const SURVIVAL_START = {
   tools: 48,
   clothing: 48,
 } as const;
+/**
+ * Hard's cut, applied to everything `SURVIVAL_START` hands over.
+ *
+ * Hard and Normal were the same game — identical stock, identical limits, neither with houses —
+ * while the difficulty picker promised Hard came with "half the food, fuel and tools". Two of the
+ * three settings did nothing different. This is the half.
+ *
+ * It bites through the *second* year rather than the first: 600 food is still a comfortable three
+ * seasons for the founding twelve, but 24 tools and 24 coats are half a year's wear rather than a
+ * full one, so a blacksmith and a tailor stop being things to get round to eventually.
+ */
+const HARD_FACTOR = 0.5;
 export const DIFFICULTY_RESOURCES: Record<Difficulty, Partial<Resources>> = {
   easy: { ...SURVIVAL_START, wood: 660, stone: 120, medicine: 50, firewood: 600 },
   normal: { ...SURVIVAL_START },
-  hard: { ...SURVIVAL_START },
+  hard: Object.fromEntries(
+    Object.entries(SURVIVAL_START).map(([k, v]) => [k, Math.round(v * HARD_FACTOR)]),
+  ) as Partial<Resources>,
 };
 
 // ---- Trade (barter by relative value; merchant keeps a margin) ----

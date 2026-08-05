@@ -142,13 +142,16 @@ export function canPlace(
   }
   for (const b of s.buildings) {
     if (!hasDoor(b.type)) continue;
-    // Same rule from the other side: a site may cover one of a building's doors, but not the
-    // last one it has.
-    const doors = entranceTiles(b);
+    // Same rule from the other side, and it protects *every* door, not just the last one left.
+    //
+    // Letting a site take one of a barn's two doors so long as the other was `isWalkable` looked
+    // generous and killed villages: walkable is not the same as *reachable*. A barn backed against
+    // its own buildings had a spare door standing on perfectly good grass that nothing could path
+    // to, the one usable door got built over, and the village then starved and froze solid beside
+    // a full barn nobody could get into. Two doors are two tiles that stay clear.
     const covers = (e: { x: number; y: number }): boolean =>
       e.x >= x && e.x < x + fw && e.y >= y && e.y < y + fh;
-    const left = doors.filter((e) => !covers(e) && isWalkable(s, e.x, e.y));
-    if (doors.some(covers) && left.length === 0) {
+    if (entranceTiles(b).some(covers)) {
       return { ok: false, reason: `Would block the ${BUILDING_DEFS[b.type].name}'s door` };
     }
   }

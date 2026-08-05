@@ -1,8 +1,8 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-08-05 (two-door barn, taller school, per-profession job board, routed roads,
-> demolition as a job, codex; see Current State)
+> Last updated: 2026-08-05 (larder-hauling collapse fixed, real Hard difficulty, low-stock
+> warnings, two-door barn, taller school, per-profession job board; see Current State)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -21,7 +21,9 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **a barn with a door at each end**,
+Latest work: **villages no longer freeze beside a full barn**,
+**a real Hard difficulty**, **low-stock warnings on every resource**,
+**a barn with a door at each end**,
 **roads are routed, not traced**,
 **demolition as a job + house upgrades + a delivering market**,
 **a codex + opening caps**, **a HUD/toolbar pass**, **a real app icon**, **build sites show what is in the way**, **merchant docks properly**,
@@ -37,6 +39,73 @@ Latest work: **a barn with a door at each end**,
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Villages stopped freezing to death beside a full barn (this session)
+
+Playing all six difficulty × map-size combinations turned up a collapse that made the core loop
+self-defeating: **putting buildings down killed the village.** Same seed, same map, only the
+player's action differing — do nothing and the hearths stayed stocked; place four buildings and
+every household but one sat at zero fuel forever while the barn held 552 firewood it never spent.
+The game even logged *"the barns are stocked but nobody is carrying it"* three times, then everyone
+froze. Population went 20 → 3.
+
+Three separate faults, and **two of them were introduced by the two-door barn work above**:
+
+1. **`buildingApproach` picked the nearest *walkable* door, not the nearest *reachable* one.** The
+   dominant cause. A household north of a barn headed for the north door — perfectly good grass
+   with no route to it — and queued there for good. One door, one destination, no way to be wrong;
+   two doors and the choice could be made on distance alone. It now prefers a door it can path to
+   (`reachableFrom`, the component check `reachableTile` already used), whatever the distance.
+2. **`canPlace` let a site cover one of a two-door building's doors** as long as the other was
+   `isWalkable`. Walkable is not reachable — see above — so a barn could lose its only *usable*
+   door to a lumberyard and become unenterable. Every door is protected again; two doors means two
+   tiles stay clear.
+3. **`larderShortfall` asked for goods in a fixed order, food first** (pre-existing, latent until a
+   household got large). Food is eaten continuously, so a big household is always under its food
+   threshold, so every trip fetched food and fuel was never fetched at all. It now ranks gaps by
+   **fill ratio** and returns the emptiest — `larderShortfalls` is the ranked list.
+
+On top of that, two changes the player asked for directly:
+
+- **Any free adult runs the errand.** `larderHauler` used to anoint one resident per household by
+  rank and stick with them; if that villager was tied up the whole house went cold with idle
+  housemates standing around. Now anyone may go, and what is rationed is how many go *at once*.
+- **Housemates fetch different things.** Which gap a villager takes is their index among the
+  household's adults against the ranked list (`wants[slot % wants.length]`) — stateless on purpose.
+  A first attempt used a shared "claimed" set and deadlocked the moment a claim went stale, which
+  made things measurably worse.
+- **A low larder outranks work and leisure.** `larderUrgency` returns `'low'` under
+  `LARDER_URGENT_AT` (0.25 of target); that cuts a leisure break short, blocks a new one, and
+  raises the concurrent-shopper cap to `MAX_LARDER_SHOPPERS`.
+
+Result on the repro, same seed: the worst arm went from a total wipe by Y2S0 to a village growing
+**13 → 25 with no cold households and no warnings at all**.
+
+### Hard is a different game from Normal (this session)
+
+`DIFFICULTY_RESOURCES.normal` and `.hard` were both bare `SURVIVAL_START` — identical stock,
+identical limits, neither with houses. Eight seeded playthroughs produced byte-identical
+season-by-season series and event logs. The picker meanwhile promised Hard came with "half the food,
+fuel and tools". `HARD_FACTOR` (0.5) now applies to everything `SURVIVAL_START` hands over: 600
+food, 24 tools, 24 coats. The blurb lost "fuel", which neither setting has ever started with.
+
+### Every stock warns when it runs low (this session)
+
+`isLowStock`/`lowStockMark` (`simulation.ts`) give one uniform rule for every resource: low is the
+higher of `LOW_STOCK_FRACTION` (10%) of that stock's own cap and, for the goods where it is the
+real measure, what the population gets through in a season (`PER_CITIZEN_SEASON_NEED`). Measured on
+**free barn stock only** — a larder is that family's winter, not stock the village can spend.
+
+The log line is deliberately the same shape every time (`X is low`) rather than a bespoke sentence
+per good, and it is **latched**: `s.lowWarned` fires it when a stock *becomes* low and re-arms when
+it recovers. Without the latch a village that has never mined iron is told so four times a year
+forever. The Autumn fuel/clothing warnings stay as they were — those carry timing, not level, and
+their kinds are skipped that season so nothing is said twice.
+
+The HUD chip mirrors it: `.stat.low` is red with a **▼**, the exact counterpart of `.stat.full`
+green with **▲**. Two shapes as well as two colours, so the pair survives colour-blindness and a
+glance on a phone. The tooltip names the barn figure, because the number on the chip still counts
+larders for firewood and clothing and the two would otherwise look inconsistent.
 
 ### The barn is 3×4 and opens at both ends (this session)
 

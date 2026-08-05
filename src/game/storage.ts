@@ -332,42 +332,63 @@ export function takeFoodFromLarder(house: Building, amount: number): number {
 }
 
 /**
- * The single most pressing gap in a household's larder, or null when it is stocked. Food comes
- * first (eaten every season), then fuel, then medicine.
+ * The single most pressing gap in a household's larder, or null when it is stocked.
+ *
+ * "Most pressing" is the **emptiest relative to its own target**, not a fixed order of kinds. A
+ * fixed order looks reasonable and is a village-killer: food is eaten continuously, so a household
+ * of any size drops below its food threshold again within a season, and if food is always asked
+ * first then every single trip fetches food. Fuel is never fetched at all, and the household
+ * freezes to death with a full pantry and a full woodpile in the barn — which is exactly what
+ * large households did. Ranking by fill ratio means a larder at half its food but *no* firewood
+ * fetches firewood, which is the trip that keeps them alive.
+ *
+ * The `LARDER_RESTOCK_AT` threshold still applies: a good has to have actually fallen before it
+ * counts, so one errand run can top several things up rather than chasing every crumb.
  */
+export function larderShortfalls(
+  s: GameState,
+  house: Building,
+): { kind: ResourceKind; amount: number }[] {
+  const out: { kind: ResourceKind; amount: number; ratio: number }[] = [];
+
+  const consider = (kind: ResourceKind, have: number, target: number, gap: number): void => {
+    if (target <= 0.5 || gap <= 0.5) return;
+    const ratio = have / target;
+    if (ratio >= LARDER_RESTOCK_AT) return;
+    if (totalStored(s, kind) <= 0) return; // nothing in the barns to fetch
+    out.push({ kind, amount: gap, ratio });
+  };
+
+  // Food is one target across every kind the household eats. Pull whichever the barns hold most
+  // of, so households end up with a varied larder.
+  const foodTarget = larderFoodTarget(s, house);
+  const foodHave = larderFood(house);
+  let bestFood: ResourceKind | null = null;
+  let bestHave = 0;
+  for (const k of FOOD_KINDS) {
+    const have = totalStored(s, k);
+    if (have > bestHave) {
+      bestHave = have;
+      bestFood = k;
+    }
+  }
+  if (bestFood) consider(bestFood, foodHave, foodTarget, foodTarget - foodHave);
+
+  for (const kind of LARDER_KINDS) {
+    const target = larderTarget(s, house, kind);
+    const have = house.store[kind] ?? 0;
+    consider(kind, have, target, target - have);
+  }
+  out.sort((a, b) => a.ratio - b.ratio);
+  return out.map(({ kind, amount }) => ({ kind, amount }));
+}
+
+/** The single most pressing gap, or null when the larder is stocked. */
 export function larderShortfall(
   s: GameState,
   house: Building,
 ): { kind: ResourceKind; amount: number } | null {
-  // Restock a good only once it has fallen below a fraction of its target, then fill it right up.
-  //
-  // This threshold is load-bearing now that villagers eat continuously rather than in one lump at
-  // the season boundary. Food is checked first, so with a hair-trigger gap it was *always* the
-  // answer — the household's single shopper spent every trip fetching a few crumbs of food and
-  // never reached firewood, clothing or medicine at all. Households froze with full pantries.
-  const foodTarget = larderFoodTarget(s, house);
-  const foodGap = foodTarget - larderFood(house);
-  if (foodGap > 0.5 && larderFood(house) < foodTarget * LARDER_RESTOCK_AT) {
-    // Pull whichever food the barns hold most of, so households end up with a varied larder.
-    let best: ResourceKind | null = null;
-    let bestHave = 0;
-    for (const k of FOOD_KINDS) {
-      const have = totalStored(s, k);
-      if (have > bestHave) {
-        bestHave = have;
-        best = k;
-      }
-    }
-    if (best) return { kind: best, amount: foodGap };
-  }
-  for (const kind of LARDER_KINDS) {
-    const target = larderTarget(s, house, kind);
-    const have = house.store[kind] ?? 0;
-    if (have >= target * LARDER_RESTOCK_AT) continue;
-    const gap = target - have;
-    if (gap > 0.5 && totalStored(s, kind) > 0) return { kind, amount: gap };
-  }
-  return null;
+  return larderShortfalls(s, house)[0] ?? null;
 }
 
 /** Does storage hold at least the given cost across all nodes? */

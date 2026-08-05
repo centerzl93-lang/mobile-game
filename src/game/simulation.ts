@@ -22,6 +22,9 @@ import {
   BASE_WALK_SPEED,
   carryLimit,
   LARDER_CARRY_VOLUME,
+  LARDER_KINDS,
+  LARDER_URGENT_AT,
+  MAX_LARDER_SHOPPERS,
   FOOD_KINDS,
   WORK_SECONDS,
   LEISURE_CHANCE_PER_SEC,
@@ -89,6 +92,10 @@ import {
   hasDoor,
   limitedOutput,
   LimitKey,
+  LOW_STOCK_FRACTION,
+  PER_CITIZEN_SEASON_NEED,
+  HUD_RESOURCES,
+  LIMIT_META,
   worksIndoors,
   CIRCLE_WORK,
   ADULT_AGE,
@@ -161,6 +168,10 @@ import {
   consumeFood,
   foodVarietyAvailable,
   larderShortfall,
+  larderShortfalls,
+  larderFood,
+  larderFoodTarget,
+  larderTarget,
   takeFromLarder,
   takeFoodFromLarder,
   totalAvailable,
@@ -223,8 +234,13 @@ function ensureNavLabels(s: GameState): void {
 
 /** Is the destination tile in the same walkable component as the citizen? */
 function reachableTile(c: Citizen, tx: number, ty: number): boolean {
+  return reachableFrom(c, tx, ty);
+}
+
+/** `reachableTile` for any position, not just a villager's. */
+function reachableFrom(p: { x: number; y: number }, tx: number, ty: number): boolean {
   if (!navLabels || !inBounds(tx, ty)) return false;
-  const from = navLabels[tileIndex(Math.floor(c.x), Math.floor(c.y))];
+  const from = navLabels[tileIndex(Math.floor(p.x), Math.floor(p.y))];
   const to = navLabels[tileIndex(tx, ty)];
   return from >= 0 && from === to;
 }
@@ -384,6 +400,32 @@ export function limitStock(s: GameState, key: LimitKey): number {
 export function atLimit(s: GameState, key: LimitKey): boolean {
   const cap = s.limits?.[key] ?? 0;
   return cap > 0 && limitStock(s, key) >= cap;
+}
+
+/**
+ * How little of this the village must hold before it counts as running low.
+ *
+ * The higher of a share of its own cap (`LOW_STOCK_FRACTION`) and what the population gets through
+ * in a season (`PER_CITIZEN_SEASON_NEED`), so the rule reads the same for every resource while
+ * still meaning something for the ones that are actually eaten and burned.
+ */
+export function lowStockMark(s: GameState, key: LimitKey): number {
+  const byCap = (s.limits?.[key] ?? 0) * LOW_STOCK_FRACTION;
+  const byNeed = s.citizens.length * (PER_CITIZEN_SEASON_NEED[key] ?? 0);
+  return Math.max(byCap, byNeed);
+}
+
+/**
+ * Is the village running low on this?
+ *
+ * Deliberately counts only what is **free in the barns and markets** (`limitStock`), not what
+ * households have already carried home. A larder is spoken for — it is that family's winter, not
+ * stock the village can build with, trade away or send to anyone else — so a store that reads
+ * healthy only because it is sitting in people's houses is exactly the case worth warning about.
+ */
+export function isLowStock(s: GameState, key: LimitKey): boolean {
+  const mark = lowStockMark(s, key);
+  return mark > 0 && limitStock(s, key) < mark && !atLimit(s, key);
 }
 
 /**
@@ -726,13 +768,20 @@ function buildingApproach(
   if (hasDoor(b.type)) {
     let best: { x: number; y: number } | null = null;
     let bestD = Infinity;
+    let bestReach = false;
     for (const e of entranceTiles(b)) {
       if (!isWalkable(s, e.x, e.y)) continue;
       const p = { x: e.x + 0.5, y: e.y + 0.5 };
       if (!from) return p;
+      // A door you can *get to* beats a nearer one you cannot, however much nearer it is.
+      // Choosing on distance alone sent every household north of a barn to the door on the far
+      // side of it — walkable grass with no route to it — where they queued for good while the
+      // barn stood full and the village starved and froze around them.
+      const reach = reachableFrom(from, e.x, e.y);
       const d = (p.x - from.x) ** 2 + (p.y - from.y) ** 2;
-      if (d < bestD) {
+      if (!best || (reach && !bestReach) || (reach === bestReach && d < bestD)) {
         bestD = d;
+        bestReach = reach;
         best = p;
       }
     }
@@ -799,13 +848,17 @@ function runCitizen(s: GameState, c: Citizen, dt: number, toolFactor: number): v
     wander(s, c, dt); // children play; the sick rest — neither can work or haul
     return;
   }
+  // A house that is nearly out of food or fuel outranks a night at the tavern, and cuts a break
+  // already under way short. Nothing else interrupts leisure — this is the one thing that should.
+  const urgent = homeNeedsStocking(s, c);
+  if (urgent) c.rest = 0;
   // Villagers don't toil non-stop — every so often an adult takes a break (never mid-haul, so no
   // load is stranded) to visit a tavern/chapel or head home before returning to work.
   if ((c.rest ?? 0) > 0) {
     leisure(s, c, dt);
     return;
   }
-  if (!c.carry && Math.random() < dt * LEISURE_CHANCE_PER_SEC) {
+  if (!urgent && !c.carry && Math.random() < dt * LEISURE_CHANCE_PER_SEC) {
     c.rest = LEISURE_MIN_SECONDS + Math.random() * (LEISURE_MAX_SECONDS - LEISURE_MIN_SECONDS);
     leisure(s, c, dt);
     return;
@@ -835,10 +888,17 @@ function runCitizen(s: GameState, c: Citizen, dt: number, toolFactor: number): v
  * The household's designated shopper. A resident tops their own house's larder up from the barns:
  * walk to a barn holding what is short, take a load, carry it home, stock it.
  *
- * Only one resident per house runs errands at a time (`larderHauler`), so a household never pulls
- * its whole workforce off the job, and the errand only starts once something is actually short.
- * Because consumption happens in one lump at season turnover, the shopper does a burst of trips
- * after each season and then goes back to work.
+ * *Any* free adult of the house may go (`larderHauler`), rather than one villager holding the job
+ * for good. The fixed designation was a village-killer: it went to the best-ranked resident, and
+ * the best-ranked resident is an unemployed laborer — who is exactly the villager a construction
+ * site keeps permanently loaded with materials. A shopper who is always carrying never shops, and
+ * because they still held the designation nobody else could either, so every household but one
+ * went cold with the barns full. Whoever is free goes instead, and the household stays fed.
+ *
+ * How many may go at once scales with how short the house is: a routine top-up sends one, so a
+ * household never pulls its whole workforce off the job, while a larder near empty sends everyone
+ * free. Because consumption happens in one lump at season turnover, that means a burst of trips
+ * after each season and then back to work.
  *
  * Returns true while it is handling this tick, so the caller skips the villager's normal work.
  */
@@ -866,8 +926,16 @@ function stockLarder(s: GameState, c: Citizen, dt: number): boolean {
   if (c.carry) return false; // already carrying production — not our errand
   if (!home || !home.built) return false;
   if (!larderHauler(s, home, c)) return false;
-  const want = larderShortfall(s, home);
-  if (!want) return false;
+  // Housemates out at the same time fetch *different* things. Which one this villager gets is
+  // their position in the household against the ranked list of gaps — no shared claim to go stale
+  // and deadlock, and no state to keep: two residents of a house with an empty pantry and an empty
+  // woodpile come back with one of each. Sending both for food (the first gap on the list) is what
+  // froze large households solid, because a big household eats a basket the moment it lands.
+  const wants = larderShortfalls(s, home);
+  if (wants.length === 0) return false;
+  const mates = s.citizens.filter((r) => r.homeId === home.id && isAdult(r) && !r.sick);
+  const slot = Math.max(0, mates.findIndex((r) => r.id === c.id));
+  const want = wants[slot % wants.length];
   const barn = nearestBarnOnlyWith(s, buildingCenter(home), want.kind);
   if (!barn) return false;
 
@@ -887,23 +955,50 @@ function stockLarder(s: GameState, c: Citizen, dt: number): boolean {
 }
 
 /**
- * Whether `c` is the resident currently running their household's errands.
+ * Whether `c` may set off on their household's errands this tick.
  *
- * Idle hands go first: an unemployed laborer is preferred over a builder, and both over someone
- * holding down a job. Picking purely by id would hand the shopping to whoever happened to be
- * lowest-numbered — often a villager staffing a workplace, who then abandons their post for the
- * errand while an idle housemate stands around.
+ * Any adult of the house can go. What is rationed is how many go *at once*: a household that is
+ * merely topping up sends one villager and the rest stay at work, and one that is nearly out sends
+ * everybody who is free. `larderUrgency` is that dial.
+ *
+ * This deliberately does not pick a single villager and stick with them. Doing so cost the village
+ * its life — see `stockLarder`. Whoever is free and closest to hand goes, and if the one who set
+ * off gets tied up, the next free housemate picks the errand up on the following tick.
  */
 function larderHauler(s: GameState, home: Building, c: Citizen): boolean {
   if (!isAdult(c) || c.sick) return false;
-  // 0 = free laborer, 1 = builder, 2 = employed. Lower is a better candidate.
-  const rank = (r: Citizen): number => (r.jobId !== null ? 2 : r.builder ? 1 : 0);
-  let best: Citizen | null = null;
+  const allowed = larderUrgency(s, home) === 'low' ? MAX_LARDER_SHOPPERS : 1;
+  let going = 0;
   for (const r of s.citizens) {
-    if (r.homeId !== home.id || !isAdult(r) || r.sick) continue;
-    if (!best || rank(r) < rank(best) || (rank(r) === rank(best) && r.id < best.id)) best = r;
+    if (r.id === c.id || r.homeId !== home.id) continue;
+    if (r.task.kind === 'toLarder') going++;
   }
-  return best !== null && best.id === c.id;
+  return going < allowed;
+}
+
+/**
+ * How badly a household needs a trip to the barn: 'low' once a larder has fallen to
+ * `LARDER_URGENT_AT` of what it should hold, 'ok' otherwise.
+ *
+ * Drives two things — how many residents may shop at once, and whether the errand outranks paid
+ * work and a leisure break. A village whose houses are nearly empty going into winter cannot
+ * afford anyone standing at a bench or sitting in the tavern.
+ */
+function larderUrgency(s: GameState, home: Building): 'ok' | 'low' {
+  if (larderFood(home) < larderFoodTarget(s, home) * LARDER_URGENT_AT) return 'low';
+  for (const kind of LARDER_KINDS) {
+    const target = larderTarget(s, home, kind);
+    if (target > 0.5 && (home.store[kind] ?? 0) < target * LARDER_URGENT_AT) return 'low';
+  }
+  return 'ok';
+}
+
+/** Whether this villager's own household is running short — checked before work and before rest. */
+function homeNeedsStocking(s: GameState, c: Citizen): boolean {
+  if (c.homeId === null || c.carry) return false;
+  const home = s.buildings.find((b) => b.id === c.homeId);
+  if (!home || !home.built) return false;
+  return larderUrgency(s, home) === 'low' && larderShortfall(s, home) !== null;
 }
 
 /** Spend a leisure break: amble to a tavern/chapel/home and idle there until the break ends. */
@@ -2135,6 +2230,13 @@ function endSeason(s: GameState, log: LogFn): void {
 }
 
 /**
+ * Stocks the village warns about, in the order the HUD shows them: the combined food total, then
+ * each resource with a chip. Everything else (leather, livestock, individual crops) is readable on
+ * a barn's own sheet and would only crowd the log.
+ */
+const WARN_STOCKS: LimitKey[] = ['food', ...HUD_RESOURCES];
+
+/**
  * Emit proactive, one-off warnings so the player can react before a shortfall kills anyone.
  * Called once per season from endSeason (the throttle). Reads current stores after this season's
  * consumption, so a warning means "you are short for what's coming next".
@@ -2158,9 +2260,23 @@ function warnOfShortfalls(s: GameState, season: Season, log: LogFn): void {
     }
   }
 
-  // Any season: less than a full season of food left across the barns and larders.
-  if (totalFoodAvailable(s) < pop * FOOD_PER_CITIZEN_PER_SEASON) {
-    log('🍽️ Food stores are running low', 'bad');
+  // Any season, every resource, one line each and always the same shape: the player learns to read
+  // "X is low" once rather than a different sentence per good. Judged on what is free in the barns
+  // (see `isLowStock`), so goods sitting in household larders do not paper over an empty store.
+  //
+  // Firewood and clothing are skipped in Autumn because the two warnings just above already name
+  // them, with the timing that actually matters — the same shortfall twice in one season is noise.
+  s.lowWarned ??= {};
+  for (const key of WARN_STOCKS) {
+    const low = isLowStock(s, key);
+    if (!low) {
+      delete s.lowWarned[key]; // recovered — say so again if it falls back
+      continue;
+    }
+    if (s.lowWarned[key]) continue; // already told them, and nothing has changed
+    s.lowWarned[key] = true;
+    if (season === 'Autumn' && (key === 'firewood' || key === 'clothing')) continue;
+    log(`${LIMIT_META[key].icon} ${LIMIT_META[key].label} is low`, 'bad');
   }
 
   // Fuel the village owns but cannot deliver. Fuel is only burned in a hearth now, so a household

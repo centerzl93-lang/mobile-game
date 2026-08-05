@@ -13,7 +13,6 @@ import {
   HUD_RESOURCES,
   FOOD_ICON,
   ResourceKind,
-  SURVIVAL_RESOURCES,
   seasonLabel,
   SEASONS,
   isWorkplace,
@@ -42,9 +41,6 @@ import {
   TRADE_VALUE,
   SEED_COST,
   MERCHANT_CATEGORY_META,
-  FOOD_PER_CITIZEN_PER_SEASON,
-  HEAT_PER_CITIZEN_WINTER,
-  CLOTHING_PER_CITIZEN_WINTER,
   ADULT_AGE,
   isInfant,
   isStudent,
@@ -56,7 +52,7 @@ import {
   limitedOutput,
 } from '../types';
 import { footprintToClear } from '../game/buildings';
-import { atLimit, cappedOut, limitStock } from '../game/simulation';
+import { atLimit, cappedOut, isLowStock, limitStock } from '../game/simulation';
 import { SLOT_NAME_MAX } from '../game/save';
 import { totalStored, totalStoredAll, totalFoodAvailable, totalInLarders } from '../game/storage';
 import {
@@ -168,11 +164,6 @@ export interface UICallbacks {
 /** Pips in a health/happiness meter. Five of them across 0-100 is one per 20 points. */
 const PIPS = 5;
 
-const LOW_NEED: Partial<Record<ResourceKind, number>> = {
-  firewood: HEAT_PER_CITIZEN_WINTER,
-  clothing: CLOTHING_PER_CITIZEN_WINTER,
-};
-
 export class UI {
   private el = {
     ages: byId('stat-ages'),
@@ -272,13 +263,13 @@ export class UI {
     // The ▲ only shows while the chip is `full` (see `.stat .cap` in the stylesheet) — it says
     // the stock has hit the limit set for it and its trades have downed tools, without the
     // player having to open the stockpile panel to find out.
-    food.innerHTML = `<span class="ico">${FOOD_ICON}</span><span class="val">0</span><span class="cap">▲</span>`;
+    food.innerHTML = `<span class="ico">${FOOD_ICON}</span><span class="val">0</span><span class="cap">▲</span><span class="dn">▼</span>`;
     this.el.resources.appendChild(food);
     this.foodChip = food;
     for (const kind of HUD_RESOURCES) {
       const chip = document.createElement('div');
       chip.className = 'stat mini';
-      chip.innerHTML = `<span class="ico">${RESOURCE_ICON[kind]}</span><span class="val">0</span><span class="cap">▲</span>`;
+      chip.innerHTML = `<span class="ico">${RESOURCE_ICON[kind]}</span><span class="val">0</span><span class="cap">▲</span><span class="dn">▼</span>`;
       this.el.resources.appendChild(chip);
       this.resChips.set(kind, chip);
     }
@@ -318,6 +309,20 @@ export class UI {
     chip.title = full ? `${base} — at your limit of ${s.limits?.[key]}; its trades have paused` : base;
   }
 
+  /**
+   * Red with a ▼ when the barns are running low on this, the mirror of `markLimit`'s green ▲.
+   *
+   * Counts only free barn stock, which is why the number beside it can look healthy while the chip
+   * is red: firewood and clothing already carried into people's larders are that household's
+   * winter, not stock the village can spend. The tooltip says which is which so the two numbers
+   * never look like a bug.
+   */
+  private markLow(chip: HTMLElement, s: GameState, key: LimitKey): void {
+    const low = isLowStock(s, key);
+    chip.classList.toggle('low', low);
+    if (low) chip.title = `${chip.title} — barns hold ${Math.floor(limitStock(s, key))}, running low`;
+  }
+
   updateHud(s: GameState, speed: number, paused: boolean): void {
     const totals = totalStoredAll(s);
     const pop = s.citizens.length;
@@ -346,10 +351,7 @@ export class UI {
     const food = totalFoodAvailable(s);
     this.foodChip.querySelector('.val')!.textContent = `${Math.floor(food)}`;
     this.markLimit(this.foodChip, s, 'food', 'Total food (all types), including household larders');
-    this.foodChip.classList.toggle(
-      'low',
-      !this.foodChip.classList.contains('full') && food < pop * FOOD_PER_CITIZEN_PER_SEASON,
-    );
+    this.markLow(this.foodChip, s, 'food');
     for (const kind of HUD_RESOURCES) {
       const chip = this.resChips.get(kind)!;
       // Firewood and clothing live in larders too, and are consumed from there first, so their
@@ -357,12 +359,7 @@ export class UI {
       const v = (totals[kind] ?? 0) + totalInLarders(s, kind);
       chip.querySelector('.val')!.textContent = `${Math.floor(v)}`;
       this.markLimit(chip, s, kind, LIMIT_META[kind].label);
-      if (SURVIVAL_RESOURCES.includes(kind)) {
-        chip.classList.toggle(
-          'low',
-          !chip.classList.contains('full') && v < pop * (LOW_NEED[kind] ?? 0),
-        );
-      }
+      this.markLow(chip, s, kind);
     }
     this.el.season.querySelector('.val')!.textContent = `${seasonLabel(s)} · Yr ${s.year}`;
     this.el.pause.textContent = paused ? '▶' : '⏸';

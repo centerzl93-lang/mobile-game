@@ -1591,6 +1591,13 @@ test.describe('seasonal firewood and clothing burn', () => {
       s.season = 3; // winter, the heaviest draw
       s.seasonTimer = 0;
       for (const b of s.buildings) if (b.type === 'barn') b.store.firewood = 500;
+      // Stock the hearths directly. Fuel is burned from a household's own woodpile, so leaving
+      // the houses empty made this a test of how long the walk to the barn happens to be on the
+      // map the generator produced — and on a map where that walk is long, nothing burned inside
+      // the window at all. What is being measured is *when* fuel goes, not who fetched it.
+      for (const b of s.buildings) if (b.built && (b.type === 'house' || b.type === 'stonehouse')) {
+        b.store.firewood = 100;
+      }
       const start = fuel();
       // A fifth of a season, nowhere near a boundary. The old model burned nothing until the
       // season turned over, so this window showed no change at all.

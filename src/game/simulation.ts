@@ -1483,6 +1483,10 @@ function workOutput(
       // remembering to extend a condition — mutton would otherwise have been hauled as if it
       // were a hide.
       const loadFor = (k: ResourceKind): number => (FOOD_KINDS.includes(k) ? LOAD_FOOD : LOAD_MAT);
+      // A herd with nothing to give while it lives — pigs — puts its rancher to work with no load
+      // to show for the cycle. The pen still pays, out of the butcher (see `endSeason`), just not
+      // through this hand.
+      if (meta.products.length === 0) return null;
       let roll = Math.random();
       for (const p of meta.products) {
         if (roll < p.chance) return { kind: p.kind, amount: loadFor(p.kind) * p.mult * f };

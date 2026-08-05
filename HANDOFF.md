@@ -48,6 +48,27 @@ A fourth herd, bought from an animals trader like the other three. Sheep are del
 to leave mutton. That inversion is the whole reason to keep both — a clothing economy runs on sheep, a food economy on cattle, and the two
 pens are not interchangeable. At `ANIMAL_TILES` 2 (against cattle's 3) more sheep fit the same pen.
 
+**Every herd gives one thing alive and another dead.** `ANIMAL_META` carries two lists:
+
+| Herd | Alive (`products`) | Butchered (`butchered`) |
+|---|---|---|
+| Cattle | milk | leather (×1.4 — the hide worth having) + meat |
+| Pigs | *nothing* | pork + leather (×0.7) |
+| Sheep | wool | mutton |
+| Chickens | eggs | meat |
+
+**Hide only ever comes off a carcass.** No pen produces leather while its animals live, which is
+the rule the old model broke — cattle used to shed leather on the living roll, and culling a flock
+of sheep produced wool. A pig pen is the extreme case: it pays *nothing* until something dies, so
+`workOutput` returns null for an empty `products` list and the rancher works a cycle with no load.
+
+What dies is usually not a decision. A pen at its cap keeps breeding and every birth with nowhere
+to go goes straight to the butcher (`endSeason` → `butcherProducts`), so a full pen is a standing
+supply of meat and hide with nobody culling anything. Measured over six seasons, a full pig pen
+turns its overflow into pork and leather on its own.
+
+Per head, from a cull of a half-full pen: cattle 2.0 leather, pigs 0.6.
+
 **Shearing is not slaughter, and the model says so.** `ANIMAL_META` now separates the standing
 yield (`products` — what a rancher collects from *living* animals on an ordinary work cycle) from
 the butcher's yield (`butchered`, defaulting to `products` so the other three herds are unchanged).
@@ -65,7 +86,7 @@ and is otherwise indistinguishable from wool having a closed season.
 so the contrast is currently one-sided. Making hide slaughter-only would complete it and is a
 balance decision nobody has taken.
 
-Two new `ResourceKind`s. **Mutton is in `FOOD_KINDS`**, so it feeds villagers and counts toward
+Four new `ResourceKind`s — `wool`, `mutton`, `pork`, `milk`. **The foods are in `FOOD_KINDS`**, so it feeds villagers and counts toward
 diet variety (`DIET_VARIETY_TARGET`); **wool is a material**, and like leather it stays off the HUD
 chips — those are deliberately a short list. Both got icons, volumes, trade values and merchant
 stock; `sheep` itself is tradeable at 16, between a pig and a cow.

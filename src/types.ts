@@ -76,6 +76,8 @@ export type ResourceKind =
   | 'fish'
   | 'meat'
   | 'mutton'
+  | 'pork'
+  | 'milk'
   | 'wood'
   | 'firewood'
   | 'stone'
@@ -116,6 +118,8 @@ export const FOOD_KINDS: ResourceKind[] = [
   'fish',
   'meat',
   'mutton',
+  'pork',
+  'milk',
 ];
 
 export const RESOURCE_KINDS: ResourceKind[] = [
@@ -197,6 +201,8 @@ export const RESOURCE_ICON: Record<ResourceKind, string> = {
   fish: '🐟',
   meat: '🍖',
   mutton: '🥩',
+  pork: '🥓',
+  milk: '🥛',
   wood: '🪵',
   firewood: '🔥',
   stone: '🪨',
@@ -347,26 +353,31 @@ export const ANIMAL_META: Record<
   }
 > = {
   // `chance` weights are cumulative-rolled; `mult` scales that product's load.
-  cattle: { label: 'Cattle', emoji: '🐄', ideal: 8, growth: 0.12, products: [
-    { kind: 'meat', chance: 0.7, mult: 1 }, { kind: 'leather', chance: 0.3, mult: 1 },
-  ] },
-  pigs: { label: 'Pigs', emoji: '🐖', ideal: 8, growth: 0.18, products: [
-    { kind: 'meat', chance: 0.9, mult: 1.15 }, { kind: 'leather', chance: 0.1, mult: 1 },
-  ] },
-  // Sheep are the mirror of cattle: a cow is meat that happens to leave a hide, a sheep is a
-  // fleece that happens to leave mutton. That inversion is the whole reason to keep both — a
-  // clothing economy runs on sheep, a food economy on cattle, and the pens are not interchangeable.
+  //
+  // Read each herd as a pair: what it gives while it is alive, and what it gives when it is not.
+  // Hide is only ever the second kind — a skin comes off a carcass, so no pen produces leather
+  // without something dying in it. What dies is usually not a decision: a pen at its cap keeps
+  // breeding, and every birth with nowhere to go goes straight to the butcher (see `endSeason`),
+  // so a full pen is a standing supply of meat and hide without the player culling anything.
+  cattle: { label: 'Cattle', emoji: '🐄', ideal: 8, growth: 0.12,
+    products: [{ kind: 'milk', chance: 1, mult: 1 }],
+    // The big animal, and the one worth keeping for its hide: more leather per head than a pig.
+    butchered: [{ kind: 'leather', chance: 0.5, mult: 1.4 }, { kind: 'meat', chance: 0.5, mult: 1 }] },
+  // Pigs give nothing until they are killed — no milk, no fleece, no eggs. A pig pen is a meat
+  // pen, and it pays out of the overflow rather than out of a daily round.
+  pigs: { label: 'Pigs', emoji: '🐖', ideal: 8, growth: 0.18,
+    products: [],
+    butchered: [{ kind: 'pork', chance: 0.7, mult: 1.15 }, { kind: 'leather', chance: 0.3, mult: 0.7 }] },
   // The only herd whose standing yield and butcher's yield are different things. A sheep is shorn
   // and walks away, so wool comes in all year off the same animals; the pen turns into mutton only
   // when it is culled or breeds past its cap.
   sheep: { label: 'Sheep', emoji: '🐑', ideal: 10, growth: 0.15,
     products: [{ kind: 'wool', chance: 1, mult: 1 }],
     butchered: [{ kind: 'mutton', chance: 1, mult: 1 }] },
-  chickens: { label: 'Chickens', emoji: '🐔', ideal: 12, growth: 0.25, products: [
-    { kind: 'eggs', chance: 0.6, mult: 1 }, { kind: 'meat', chance: 0.4, mult: 0.6 },
-  ] },
+  chickens: { label: 'Chickens', emoji: '🐔', ideal: 12, growth: 0.25,
+    products: [{ kind: 'eggs', chance: 1, mult: 1 }],
+    butchered: [{ kind: 'meat', chance: 1, mult: 0.6 }] },
 };
-
 // ---- Ranch sizing & husbandry (all customizable) ----
 /** A pen is a square (or rectangle) between these tile dimensions, chosen at placement. */
 export const RANCH_MIN = 4;
@@ -1531,7 +1542,7 @@ export const RESOURCE_VOLUME: Record<ResourceKind, number> = {
   fruit: 0.25, grain: 0.25, corn: 0.25, potato: 0.25, rice: 0.25, barley: 0.25,
   carrot: 0.25, tomato: 0.25, onion: 0.25, pepper: 0.25, cabbage: 0.25, beans: 0.25,
   pumpkin: 0.25, apple: 0.25, grapes: 0.25, strawberry: 0.25, melon: 0.25,
-  eggs: 0.25, fish: 0.25, meat: 0.25, mutton: 0.25,
+  eggs: 0.25, fish: 0.25, meat: 0.25, mutton: 0.25, pork: 0.25, milk: 0.25,
   // Bulky raw materials — the volume-1 baseline.
   wood: 1, firewood: 1, stone: 1, coal: 1, iron: 1,
   // Worked goods: denser than raw material, so more fit in a load.
@@ -1991,6 +2002,8 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
   fish: 1,
   meat: 1.5,
   mutton: 1.5,
+  pork: 1.5,
+  milk: 1,
   wood: 1,
   firewood: 1.5,
   stone: 2,
@@ -2038,7 +2051,7 @@ export const MERCHANT_CATEGORY_STOCK: Record<MerchantCategory, Partial<Record<Re
   basics: { wood: 150, stone: 120, coal: 100, iron: 80, firewood: 120 },
   seeds: {},
   animals: { cattle: 6, pigs: 8, sheep: 8, chickens: 12 },
-  foods: { grain: 160, corn: 120, potato: 120, fish: 140, meat: 80, mutton: 70, eggs: 80 },
+  foods: { grain: 160, corn: 120, potato: 120, fish: 140, meat: 80, mutton: 70, pork: 70, milk: 90, eggs: 80 },
   goods: { tools: 60, clothing: 60, leather: 90, wool: 80, medicine: 40 },
 };
 
@@ -2085,7 +2098,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   ranch: {
     type: 'ranch', name: 'Ranch', emoji: '🐄', category: 'food', w: 4, h: 4,
     cost: { wood: 16 }, jobs: 2, buildTime: 7,
-    desc: 'A fenced pen for cattle, pigs, sheep or chickens. Drag its size (4×4 up to 8×8) before building — a bigger pen holds a bigger herd. Buy livestock from traders; they breed here. Cattle are mostly meat with some hide. Sheep are shorn rather than slaughtered: a flock gives wool all year without losing a head, and mutton only when it is culled or breeds past its pen.',
+    desc: 'A fenced pen for cattle, pigs, sheep or chickens. Drag its size (4×4 up to 8×8) before building — a bigger pen holds a bigger herd. Buy livestock from traders; they breed here. Each herd gives one thing alive and another dead: cows are milked, sheep shorn, hens robbed of eggs — pigs give nothing until the butcher. Hide only ever comes off a carcass, cattle yielding more of it than pigs. A pen at its cap keeps breeding, and every birth with nowhere to go goes to the butcher, so a full pen pays out on its own.',
   },
   lumberyard: {
     type: 'lumberyard', name: 'Forester', emoji: '🌲', category: 'resources', w: 3, h: 3,

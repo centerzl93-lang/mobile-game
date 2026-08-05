@@ -5429,6 +5429,127 @@ test.describe('sheep, wool and mutton', () => {
     expect(out!.culled.wool, 'killing a sheep does not produce wool').toBe(0);
   });
 
+  test('every herd gives one thing alive and another dead, and hide only ever comes off a carcass', async ({ page }) => {
+    test.setTimeout(180_000);
+    await open2d(page);
+    const yields = (animal: string) =>
+      page.evaluate((animal) => {
+        const g = (window as any).__village;
+        let x = 1000003 + 12345;
+        Math.random = () => ((x = (1103515245 * x + 12345) & 0x7fffffff) / 0x7fffffff);
+        g.startNewGame('small', 'easy', false);
+        const s = g.state;
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        const ox = Math.max(2, barn.x - 16), oy = Math.max(2, barn.y - 3);
+        for (let dy = -2; dy < 12; dy++)
+          for (let dx = -2; dx < 12; dx++) {
+            const t = s.tiles[(oy + dy) * s.w + (ox + dx)];
+            if (!t) continue;
+            t.type = 'grass'; t.trees = 0; delete t.stone; delete t.iron;
+          }
+        s.navVersion = (s.navVersion ?? 0) + 1;
+        const id = g.debugPlace('ranch', ox, oy);
+        if (id == null) return null;
+        const pen = s.buildings.find((b: any) => b.id === id);
+        pen.built = true; pen.progress = 999;
+        pen.animal = animal;
+        pen.maxAnimals = g.debugRanchCapacity(pen.id); // capacity is per animal size; refresh it
+        pen.animals = Math.max(2, Math.floor(pen.maxAnimals / 2)); // below cap: nothing overflows
+        g.debugSetTradeWorkers('ranch', 2);
+        const KINDS = ['milk', 'meat', 'pork', 'mutton', 'wool', 'leather', 'eggs'];
+        // Households kept stocked so the rancher never downs tools to haul — see the shearing test.
+        const stock = () => {
+          for (const h of s.buildings)
+            if (h.built && (h.type === 'house' || h.type === 'stonehouse'))
+              h.store = { fruit: 400, firewood: 400, clothing: 100, medicine: 100 };
+        };
+        for (const b of s.buildings) for (const k of KINDS) delete b.store[k];
+        for (let q = 0; q < 4; q++) { stock(); g.debugAdvance(305); }
+        const T = (k: string) => Math.round(g.debugTotalStored(k));
+        const alive = Object.fromEntries(KINDS.map((k) => [k, T(k)]).filter(([, v]) => (v as number) > 0));
+        const before = Object.fromEntries(KINDS.map((k) => [k, g.debugTotalStored(k)]));
+        const head = Math.round(pen.animals);
+        g.cullRanch(pen.id); // TS privacy is compile-time only
+        const dead = Object.fromEntries(
+          KINDS.map((k) => [k, Math.round(g.debugTotalStored(k) - (before as any)[k])])
+            .filter(([, v]) => (v as number) > 0));
+        return { alive, dead, head };
+      }, animal);
+
+    const cattle = await yields('cattle');
+    const pigs = await yields('pigs');
+    const sheep = await yields('sheep');
+    const hens = await yields('chickens');
+    for (const [name, r] of Object.entries({ cattle, pigs, sheep, hens })) {
+      expect(r, `${name} pen could be placed`).not.toBeNull();
+    }
+
+    // Alive: milked, shorn, robbed of eggs — and a pig gives nothing at all until the butcher.
+    expect(Object.keys(cattle!.alive)).toEqual(['milk']);
+    expect(Object.keys(sheep!.alive)).toEqual(['wool']);
+    expect(Object.keys(hens!.alive)).toEqual(['eggs']);
+    expect(pigs!.alive, 'a pig pen pays nothing while its pigs live').toEqual({});
+
+    // Dead: a skin comes off a carcass, so no living pen ever produced any.
+    for (const [name, r] of Object.entries({ cattle, pigs, sheep, hens })) {
+      expect(r!.alive.leather ?? 0, `${name} made no leather while alive`).toBe(0);
+    }
+    expect(cattle!.dead.leather, 'cattle are skinned').toBeGreaterThan(0);
+    expect(pigs!.dead.leather, 'so are pigs').toBeGreaterThan(0);
+    expect(sheep!.dead.leather ?? 0, 'sheep are not').toBe(0);
+    expect(hens!.dead.leather ?? 0, 'nor are hens').toBe(0);
+    // A cow is worth more hide than a pig, per head.
+    expect(cattle!.dead.leather / cattle!.head).toBeGreaterThan(pigs!.dead.leather / pigs!.head);
+    // And the meat each carries its own name where it has one.
+    expect(pigs!.dead.pork).toBeGreaterThan(0);
+    expect(sheep!.dead.mutton).toBeGreaterThan(0);
+    expect(cattle!.dead.meat).toBeGreaterThan(0);
+    expect(hens!.dead.meat).toBeGreaterThan(0);
+  });
+
+  test('a pen at its cap butchers the overflow without anyone asking', async ({ page }) => {
+    test.setTimeout(120_000);
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      let x = 1000003 + 12345;
+      Math.random = () => ((x = (1103515245 * x + 12345) & 0x7fffffff) / 0x7fffffff);
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      const ox = Math.max(2, barn.x - 16), oy = Math.max(2, barn.y - 3);
+      for (let dy = -2; dy < 12; dy++)
+        for (let dx = -2; dx < 12; dx++) {
+          const t = s.tiles[(oy + dy) * s.w + (ox + dx)];
+          if (!t) continue;
+          t.type = 'grass'; t.trees = 0; delete t.stone; delete t.iron;
+        }
+      s.navVersion = (s.navVersion ?? 0) + 1;
+      const id = g.debugPlace('ranch', ox, oy);
+      if (id == null) return null;
+      const pen = s.buildings.find((b: any) => b.id === id);
+      pen.built = true; pen.progress = 999;
+      pen.animal = 'pigs';
+      pen.maxAnimals = g.debugRanchCapacity(pen.id);
+      pen.animals = pen.maxAnimals; // full from the start: every birth from here is overflow
+      s.navVersion = (s.navVersion ?? 0) + 1;
+      for (const b of s.buildings) for (const k of ['pork', 'leather']) delete b.store[k];
+      for (let q = 0; q < 6; q++) g.debugAdvance(305);
+      return {
+        head: Math.round(pen.animals),
+        cap: pen.maxAnimals,
+        pork: Math.round(g.debugTotalStored('pork')),
+        leather: Math.round(g.debugTotalStored('leather')),
+      };
+    });
+    expect(out, 'a ranch could be placed').not.toBeNull();
+    // Nobody culled anything: the herd is simply breeding past its room, and the overflow is
+    // what a pig pen pays out — which is the only way a pig pen pays at all.
+    expect(out!.head, 'the pen stays at its cap').toBe(out!.cap);
+    expect(out!.pork, 'and turns its overflow into pork').toBeGreaterThan(0);
+    expect(out!.leather, 'and hide').toBeGreaterThan(0);
+  });
+
   test('the tailor sews from either hide or fleece, and wool goes further', async ({ page }) => {
     test.setTimeout(120_000);
     await open2d(page);

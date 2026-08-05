@@ -807,6 +807,79 @@ export function autoBuilderDemand(s: GameState): number {
   return n;
 }
 
+/** Buildings of a type that can hold staff: standing or going up, but not rubble. */
+export function tradePosts(s: GameState, type: BuildingType): Building[] {
+  return s.buildings.filter((b) => b.type === type && !b.razed);
+}
+
+/** Villagers the village has asked for in a trade: what its buildings want, plus the overflow. */
+export function tradeWanted(s: GameState, type: BuildingType): number {
+  let n = s.tradeExtra?.[type] ?? 0;
+  for (const b of tradePosts(s, type)) n += b.desiredWorkers;
+  return n;
+}
+
+/** Villagers actually posted to a building of this type right now. */
+export function tradeWorking(s: GameState, type: BuildingType): number {
+  const ids = new Set(tradePosts(s, type).map((b) => b.id));
+  return s.citizens.reduce((n, c) => n + (c.jobId !== null && ids.has(c.jobId) ? 1 : 0), 0);
+}
+
+/**
+ * Move the trade's wanted count by one, spreading the change across its buildings.
+ *
+ * Hiring fills the emptiest building first and laying off takes from the fullest, so a village
+ * that asks for four foresters across two huts gets two and two rather than three and one. When
+ * every post is spoken for the extra goes to `tradeExtra` and waits there — which is what lets a
+ * trade be staffed before it has anywhere to work.
+ */
+export function setTradeWanted(s: GameState, type: BuildingType, delta: number): void {
+  const jobs = BUILDING_DEFS[type].jobs;
+  if (jobs <= 0) return;
+  const extras = (s.tradeExtra ??= {});
+  const posts = tradePosts(s, type);
+  if (delta > 0) {
+    let best: Building | null = null;
+    for (const b of posts) {
+      if (b.desiredWorkers >= jobs) continue;
+      if (!best || b.desiredWorkers < best.desiredWorkers) best = b;
+    }
+    if (best) best.desiredWorkers++;
+    else extras[type] = (extras[type] ?? 0) + 1;
+    return;
+  }
+  // Give the overflow back first: it is the part of the ask nobody is doing.
+  if ((extras[type] ?? 0) > 0) {
+    extras[type] = (extras[type] ?? 0) - 1;
+    if (extras[type]! <= 0) delete extras[type];
+    return;
+  }
+  let worst: Building | null = null;
+  for (const b of posts) {
+    if (b.desiredWorkers <= 0) continue;
+    if (!worst || b.desiredWorkers > worst.desiredWorkers) worst = b;
+  }
+  if (worst) worst.desiredWorkers--;
+}
+
+/**
+ * Hand a building its opening staff out of the trade's overflow.
+ *
+ * A village that asked for two fishermen before it had a hut gets them the moment the hut is
+ * finished, without having to go back to the board and say it again.
+ */
+export function drawFromTradeExtra(s: GameState, b: Building): void {
+  const jobs = BUILDING_DEFS[b.type].jobs;
+  const extras = s.tradeExtra;
+  const waiting = extras?.[b.type] ?? 0;
+  if (jobs <= 0 || waiting <= 0) return;
+  const take = Math.min(jobs - b.desiredWorkers, waiting);
+  if (take <= 0) return;
+  b.desiredWorkers += take;
+  extras![b.type] = waiting - take;
+  if (extras![b.type]! <= 0) delete extras![b.type];
+}
+
 /** Road tiles the player has confirmed and nobody has laid yet (drawn-but-unconfirmed don't count). */
 export function plannedRoadTiles(s: GameState): number {
   const pending = s.pendingPaths?.length ? new Set(s.pendingPaths) : null;
@@ -1251,6 +1324,19 @@ export interface GameState {
    * is nothing being built (builders lay paths too).
    */
   builderExtra?: number;
+  /**
+   * Villagers wanted in a trade that has nowhere to put them — every building of that type is
+   * already fully asked for, or there is no building of that type at all.
+   *
+   * The job board is per *profession*: a village says it wants four foresters, not that hut #2
+   * wants its second pair of hands. What each building asks for is still its own
+   * `desiredWorkers`, so a building's own panel can still be set by hand, and the trade's total is
+   * their sum plus this. The overflow is real intent, not a rounding error — it is how "I want two
+   * fishermen" survives having no fishing hut yet, and it is what a new hut of that type draws its
+   * opening staff from. Nobody is employed by it: until there is a post, those villagers are
+   * laborers like any other.
+   */
+  tradeExtra?: Partial<Record<BuildingType, number>>;
   /** Bumped when a tile becomes / stops being forest (replanting or clear-cutting), so the
    * renderer knows to rebuild its tree layer to show the new/removed trees. */
   forestVersion?: number;

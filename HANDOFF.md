@@ -37,14 +37,32 @@ Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **stora
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
 
-### The job board says less (this session)
-Two numbers came off it. A staffed row read `2 working / 3 wanted (max 3)` — the cap is already
-where the + button stops moving, so printing it as well made a board about one comparison carry
-three numbers. And the **Not built yet** rows carried `up to 2 workers · 🪵10`, which is a
-build-menu question on a staffing panel; those rows are a name and an emoji now, there to say the
-work exists.
+### The job board is per profession (this session)
+It listed one row per *building* and a dead "Not built yet" catalogue underneath. Now it lists one
+row per **trade**, whether the village has one of those buildings or not, and every row can be
+staffed: `3 working / 3 wanted · 2 built`.
 
-The per-building rows stay per-building: one row per workplace, each with its own stepper.
+**A trade can be staffed before it has anywhere to work.** `tradeExtra` on the state holds the part
+of an ask that has nowhere to go — every building of that type is already fully asked for, or there
+is no building at all. Nobody is employed by it; until there is a post those villagers are laborers
+like any other, which is what `0 working / 2 wanted` says. `drawFromTradeExtra` hands a newly
+finished building its opening staff out of that pool, so "I want two fishermen" survives until
+there is a hut, and `razeBuilding` gives a demolished building's ask *back* to the pool rather than
+quietly shrinking the village's plans.
+
+`b.desiredWorkers` is still the per-building number and still settable on a building's own panel —
+`tradeWanted` is their sum plus the overflow. `setTradeWanted` spreads a change across the trade's
+buildings, filling the emptiest and taking from the fullest, so four foresters across two huts land
+two and two.
+
+Two numbers came off at the same time: a staffed row read `(max 3)` — already where the + button
+stops moving — and the catalogue rows carried `up to 2 workers · 🪵10`, a build-menu question on a
+staffing panel. The top line is now `👷 Laborers: N` in place of the population and mood figures,
+which the HUD already shows the whole time.
+
+**Lost with the per-building rows**: the board's per-site "🌲 clearing land · 3 tiles left", and
+the mine/smith/crop/animal toggles. All of them are per-building decisions and all of them live on
+that building's inspect sheet.
 
 ### Harvest picks its kind (this session)
 The harvest drag took everything inside the square, which is right for clearing a plot and wrong

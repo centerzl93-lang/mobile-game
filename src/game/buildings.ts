@@ -327,6 +327,14 @@ export function razeBuilding(s: GameState, b: Building): void {
   b.razed = true;
   b.demolish = true;
   b.demoProgress = 0;
+  // The village still wants those hands in that trade — it has just lost the place to put them.
+  // Handing the count back to the overflow keeps the ask alive for the next building of the type,
+  // rather than silently shrinking the village's plans every time something is pulled down.
+  if (b.desiredWorkers > 0) {
+    const extras = (s.tradeExtra ??= {});
+    extras[b.type] = (extras[b.type] ?? 0) + b.desiredWorkers;
+    b.desiredWorkers = 0;
+  }
   b.workers = [];
   for (const c of s.citizens) {
     if (c.jobId === b.id) c.jobId = null;

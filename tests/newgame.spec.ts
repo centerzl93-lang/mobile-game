@@ -735,9 +735,8 @@ test.describe('jobs & builders', () => {
       return document.getElementById('jobboard')!.textContent ?? '';
     });
     expect(text).toContain('Gatherer');
-    // An unbuilt site reads as "under construction", or "clearing land" when trees or loose stone
-    // still sit under its footprint. Either proves the unbuilt site is listed.
-    expect(text).toMatch(/under construction|clearing land/);
+    // The board is per trade, so a site under way shows as one of that trade's buildings going up.
+    expect(text).toContain('going up');
     expect(text).toContain('Builders');
     expect(text).toContain('Laborers');
   });
@@ -2291,30 +2290,101 @@ test.describe('workplace names', () => {
 });
 
 test.describe('job board', () => {
-  test('lists every job from the start, including ones not built yet', async ({ page }) => {
-    await open(page);
+  test('every trade gets a row and a stepper, built or not', async ({ page }) => {
+    await open2d(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
     await page.click('#btn-jobs');
     await expect(page.locator('#jobboard .job-row').first()).toBeVisible();
     const board = await page.evaluate(() => {
-      const el = document.getElementById('jobboard')!;
+      const g = (window as any).__village;
+      g.ui.refreshPanels(g.state);
+      const rows = [...document.querySelectorAll('#jobboard .job-row')];
       return {
-        muted: el.querySelectorAll('.job-row.muted').length,
-        subs: el.querySelectorAll('.job-row.muted .jr-sub').length,
-        hasSection: !!el.querySelector('.jb-section'),
-        text: el.innerText,
+        names: rows.map((r) => r.querySelector('.jr-name')!.textContent),
+        withSteppers: rows.filter((r) => r.querySelector('.stepper')).length,
+        // Nothing is built on a fresh map, so every trade row is a quiet one.
+        muted: rows.filter((r) => r.classList.contains('muted')).length,
+        hasSection: !!document.querySelector('#jobboard .jb-section'),
+        trades: g.debugBuildNames(),
       };
     });
-    // Nothing is built on a fresh map, so every workplace shows under "Not built yet".
-    expect(board.hasSection).toBe(true);
-    expect(board.muted).toBeGreaterThan(8);
+
+    // Builders plus one row per profession — no "not built yet" pile at the bottom, because
+    // whether a village has one of those buildings yet is not what the board is about.
+    expect(board.hasSection, 'no separate section for the unbuilt').toBe(false);
+    expect(board.names[0]).toBe('Builders');
     for (const job of ['Gatherer', 'Fishing Hut', 'Blacksmith', 'Market']) {
-      expect(board.text).toContain(job);
+      expect(board.names).toContain(job);
     }
-    // A name and nothing else. What one costs and how many hands it takes are questions for the
-    // build menu and the Codex; the board is about who is working where.
-    expect(board.subs, 'no sub-line on a trade the village does not have').toBe(0);
-    expect(board.text).not.toMatch(/up to \d+ worker/);
+    // Every row can be staffed, including the trades with nowhere to work yet.
+    expect(board.withSteppers).toBe(board.names!.length);
+    expect(board.muted).toBe(board.names!.length - 1); // all but Builders
+  });
+
+  test('a trade can be staffed before it has anywhere to work', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+
+      // Ask for two gatherers with no hut anywhere. Nobody is employed by the wish — they are
+      // still laborers — but the village's intent is recorded.
+      g.debugSetTradeWorkers('gatherer', 1);
+      g.debugSetTradeWorkers('gatherer', 1);
+      const preOrder = {
+        wanted: g.debugTradeWanted('gatherer'),
+        working: g.debugTradeWorking('gatherer'),
+        posted: s.buildings.filter((b: any) => b.type === 'gatherer').length,
+      };
+
+      // Put a hut up. It should open already asking for the two that were waiting.
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      let hut: any = null;
+      for (let r = 4; r < 24 && !hut; r++)
+        for (let dy = -r; dy <= r && !hut; dy++)
+          for (let dx = -r; dx <= r && !hut; dx++) {
+            if (!g.debugCanPlace('gatherer', barn.x + dx, barn.y + dy).ok) continue;
+            const id = g.debugPlace('gatherer', barn.x + dx, barn.y + dy);
+            if (id != null) hut = s.buildings.find((x: any) => x.id === id);
+          }
+      if (!hut) return null;
+      g.debugSetBuilders(6);
+      for (let i = 0; i < 2000 && !hut.built; i++) g.debugAdvance(0.2);
+      const opened = { built: hut.built, desired: hut.desiredWorkers, wanted: g.debugTradeWanted('gatherer') };
+      for (let i = 0; i < 300; i++) g.debugAdvance(0.2);
+      const staffed = g.debugTradeWorking('gatherer');
+
+      // Pull it down and the ask survives: the village still wants two gatherers.
+      g.debugDemolish(hut.id);
+      for (let i = 0; i < 2000; i++) {
+        g.debugAdvance(0.2);
+        if (!s.buildings.find((x: any) => x.id === hut.id)) break;
+      }
+      return {
+        preOrder,
+        opened,
+        staffed,
+        afterRaze: {
+          gone: !s.buildings.find((x: any) => x.id === hut.id),
+          wanted: g.debugTradeWanted('gatherer'),
+        },
+      };
+    });
+
+    expect(out, 'a gatherer hut could be placed').not.toBeNull();
+    // Wanted with nothing to want it at: the count stands, nobody is working it.
+    expect(out!.preOrder.posted).toBe(0);
+    expect(out!.preOrder.wanted).toBe(2);
+    expect(out!.preOrder.working).toBe(0);
+    // The hut opens on the standing order rather than empty.
+    expect(out!.opened.built).toBe(true);
+    expect(out!.opened.desired).toBe(2);
+    expect(out!.opened.wanted, 'the ask moved into the hut, it did not double').toBe(2);
+    expect(out!.staffed).toBe(2);
+    // ...and losing the hut does not quietly cancel the village's plans.
+    expect(out!.afterRaze.gone).toBe(true);
+    expect(out!.afterRaze.wanted).toBe(2);
   });
 
   test('a staffed row is working against wanted, with no third number', async ({ page }) => {
@@ -2359,7 +2429,7 @@ test.describe('job board', () => {
       };
     });
     // The cap is where the + button stops; printing it as well was a third number to read.
-    expect(row.sub).toMatch(/^\d+ working \/ \d+ wanted$/);
+    expect(row.sub).toMatch(/^\d+ working \/ \d+ wanted · /);
     expect(row.sub).not.toContain('max');
     expect(row.stepper, 'it is still the place you set the number').toBe(true);
   });
@@ -4926,7 +4996,7 @@ test.describe('clearing a build site', () => {
     expect(after).not.toContain('to fell');
   });
 
-  test('the job board counts the tiles left on an unbuilt site', async ({ page }) => {
+  test('the job board says a building of that trade is going up', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -4943,25 +5013,15 @@ test.describe('clearing a build site', () => {
             if (id != null) b = s.buildings.find((x: any) => x.id === id);
           }
       if (!b) return null;
-      const f = g.debugFootprint('gatherer');
-      let n = 0;
-      for (let dy = 0; dy < f.h; dy++)
-        for (let dx = 0; dx < f.w; dx++) {
-          const t = s.tiles[(b.y + dy) * s.w + (b.x + dx)];
-          t.type = 'grass';
-          t.trees = 0;
-          delete t.stone;
-          delete t.iron;
-          if (n < 2) { t.type = 'forest'; t.trees = 1; }
-          n++;
-        }
       g.ui.refreshPanels(s);
-      return { name: b.name };
+      return { placed: true };
     });
     expect(out, 'a gatherer site could be placed').not.toBeNull();
     await page.click('#btn-jobs');
-    const row = page.locator('#jobboard .job-row').filter({ hasText: out!.name });
-    await expect(row).toContainText('clearing land');
-    await expect(row).toContainText('2 tiles left');
+    // The board is per trade now, so what it can say about a site is that one is on its way. How
+    // much ground is still to clear is a question about that one plot, and is on its own sheet
+    // (see the test above).
+    const row = page.locator('#jobboard .job-row').filter({ hasText: 'Gatherer' });
+    await expect(row).toContainText('going up');
   });
 });

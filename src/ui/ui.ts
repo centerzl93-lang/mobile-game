@@ -29,6 +29,10 @@ import {
   CATEGORY_ORDER,
   CATEGORY_META,
   CODEX_NOTES,
+  tradePosts,
+  tradeWanted,
+  tradeWorking,
+  Building,
   HarvestKind,
   HARVEST_KINDS,
   HARVEST_KIND_META,
@@ -113,6 +117,8 @@ export interface UICallbacks {
   onNewGame: () => void;
   onOpenMenu: () => void;
   onSetWorkers: (buildingId: number, delta: number) => void;
+  /** Move a whole profession's wanted count by one, spread across whatever buildings it has. */
+  onSetTradeWorkers: (type: BuildingType, delta: number) => void;
   /** Mark this building for demolition, or take the mark back off. */
   onDemolishBuilding: (buildingId: number, on: boolean) => void;
   /** Trade a wooden house up to a stone one: raze in place, then rebuild. */
@@ -896,17 +902,18 @@ export class UI {
   }
 
   private refreshJobBoard(s: GameState): void {
-    // Every workplace, built or not — an unbuilt site still shows so workers can be pre-assigned.
-    const jobs = s.buildings.filter((b) => BUILDING_DEFS[b.type].jobs > 0);
-    const children = s.citizens.reduce((n, c) => n + (isAdult(c) ? 0 : 1), 0);
-    const adults = s.citizens.length - children;
-    const employed = s.citizens.reduce((n, c) => n + (c.jobId !== null ? 1 : 0), 0);
+    // Every trade the village could practise, in build-menu order, whether it has one yet or not.
+    const trades = BUILD_ORDER.filter((t) => BUILDING_DEFS[t].jobs > 0);
     const buildersWorking = s.citizens.reduce((n, c) => n + (c.builder ? 1 : 0), 0);
     // Free laborers are unemployed *adults* only — children have no job but can't be assigned.
     const laborers = s.citizens.reduce((n, c) => n + (isAdult(c) && c.jobId === null && !c.builder ? 1 : 0), 0);
     const sig =
-      jobs.map((b) => `${b.id}:${b.name ?? ''}:${b.built ? 1 : 0}:${b.built ? 0 : footprintToClear(s, b).trees + footprintToClear(s, b).stone + footprintToClear(s, b).iron}:${b.workers.length}:${b.desiredWorkers}:${b.output}:${b.recipe}:${b.crop}:${b.animal}:${b.razed ? 'r' : b.demolish ? Math.floor(demoFraction(b) * 100) : ''}`).join('|') +
-      `#${adults},${children},${employed},${buildersWorking},${laborers},${s.desiredBuilders}#${s.seeds.join(',')}`;
+      trades
+        .map((t) => {
+          const posts = tradePosts(s, t);
+          return `${t}:${tradeWorking(s, t)}:${tradeWanted(s, t)}:${posts.filter((b: Building) => b.built).length}/${posts.length}`;
+        })
+        .join('|') + `#${buildersWorking},${laborers},${s.desiredBuilders}`;
     if (sig === this.jobSig) return;
     this.jobSig = sig;
 
@@ -916,9 +923,13 @@ export class UI {
     head.innerHTML = `Job Board <button class="close" id="jb-close">×</button>`;
     p.appendChild(head);
     head.querySelector('#jb-close')!.addEventListener('click', () => this.toggleJobBoard());
+    // Free hands, at the top, because that is the number every other row on this board is spent
+    // against. The population and mood figures that used to sit here are the HUD's job — they are
+    // on screen the whole time, and repeating them above a staffing panel answered a question
+    // nobody opened it to ask.
     const sum = document.createElement('div');
     sum.className = 'summary';
-    sum.textContent = `${adults} adults · 🧒 ${children} children · ❤️ ${Math.round(avgHealth(s))} · 😊 ${Math.round(avgHappiness(s))}`;
+    sum.textContent = `👷 Laborers: ${laborers}`;
     p.appendChild(sum);
 
     // Builders — a global job (only these villagers construct work buildings). Always shown so the
@@ -934,91 +945,35 @@ export class UI {
     brow.querySelector('[data-step="1"]')!.addEventListener('click', () => this.cb.onSetBuilders(1));
     p.appendChild(brow);
 
-    // Dedicated laborers field — free adults available to assign to any job.
-    const lab = document.createElement('div');
-    lab.className = 'summary';
-    lab.textContent = `👷 Laborers (free adults): ${laborers}`;
-    p.appendChild(lab);
-
-    for (const b of jobs) {
-      const def = BUILDING_DEFS[b.type];
+    // One row per profession, listed whether the village has one of those buildings or not.
+    //
+    // A village thinks in trades — "I want four foresters" — not in which hut wants its second
+    // pair of hands, and a trade with nowhere to work yet is still something you can decide about:
+    // set two fishermen before the hut is up and the hut opens staffed. Until there is a post for
+    // them those villagers are laborers like any other, which is what `0 working / 2 wanted` says.
+    // What a single building decides for itself — which seam a mine digs, what a field sows, how
+    // many hands *that* hut takes — is on that building's own panel.
+    for (const type of trades) {
+      const def = BUILDING_DEFS[type];
+      const posts = tradePosts(s, type);
+      const built = posts.filter((b: Building) => b.built).length;
       const row = document.createElement('div');
-      row.className = 'job-row';
-      let extra = '';
-      if (b.type === 'mine') {
-        extra = `<div class="jr-toggle" data-toggle="mine"><button data-v="coal" class="${b.output === 'coal' ? 'on' : ''}">Coal</button><button data-v="iron" class="${b.output === 'iron' ? 'on' : ''}">Iron</button></div>`;
-      } else if (b.type === 'blacksmith') {
-        extra = `<div class="jr-toggle" data-toggle="smith"><button data-v="iron" class="${b.recipe === 'iron' ? 'on' : ''}">Iron</button><button data-v="steel" class="${b.recipe === 'steel' ? 'on' : ''}">Steel</button></div>`;
-      } else if (b.type === 'farm') {
-        // Only crops the village has seeds for; none owned ⇒ prompt to buy one from a trader.
-        extra = s.seeds.length
-          ? `<div class="jr-toggle" data-toggle="crop">${s.seeds.map((c) => `<button data-v="${c}" class="${b.crop === c ? 'on' : ''}">${CROP_META[c].emoji}</button>`).join('')}</div>`
-          : `<div class="jr-note">🌱 Buy a seed from a trader</div>`;
-      } else if (b.type === 'ranch') {
-        const cur = b.animal ?? 'cattle';
-        extra = `<div class="jr-toggle" data-toggle="animal">${RANCH_ANIMALS.map((a) => `<button data-v="${a}" class="${cur === a ? 'on' : ''}">${ANIMAL_META[a].emoji}</button>`).join('')}</div>`;
-      }
-      // Unbuilt sites still list here so workers can be queued; hiring only starts once built.
-      const toClear = b.built ? 0 : (() => {
-        const l = footprintToClear(s, b);
-        return l.trees + l.stone + l.iron;
-      })();
-      // A condemned workplace still lists — it is still staffed and still working — but what the
-      // board says about it is that it is on its way out, not how many hands it would like.
-      // Working against wanted, and nothing else. The cap rode along on every row — "(max 2)" —
-      // and it is already the point the + button stops moving at, so printing it as well was a
-      // third number on a board that is about one comparison.
-      const status = b.razed
-        ? '🧱 rubble · salvage being carted off'
-        : b.demolish
-          ? `💥 marked for demolition · ${Math.floor(demoFraction(b) * 100)}% pulled down`
-          : b.built
-            ? `${b.workers.length} working / ${b.desiredWorkers} wanted`
-            : toClear === 0
-              ? `🏗 under construction · ${b.desiredWorkers} wanted`
-              : `🌲 clearing land · ${toClear} tile${toClear > 1 ? 's' : ''} left · ${b.desiredWorkers} wanted`;
+      row.className = 'job-row' + (posts.length === 0 ? ' muted' : '');
+      const sites = posts.length - built;
+      // Only say where the posts are when there are some. "none built" on a row that already
+      // reads `0 working / 0 wanted` is a third way of saying nothing, and it wrapped every
+      // quiet row onto two lines.
+      const where = [built > 0 ? `${built} built` : '', sites > 0 ? `${sites} going up` : '']
+        .filter(Boolean)
+        .join(' · ');
       row.innerHTML = `
         <span class="jr-emoji">${def.emoji}</span>
-        <div class="jr-main"><div class="jr-name">${escapeAttr(buildingName(b))}</div>
-          <div class="jr-sub">${status}</div>${extra}</div>
-        <div class="stepper"><button data-step="-1">−</button><span class="count">${b.desiredWorkers}</span><button data-step="1">+</button></div>`;
-      row.querySelector('[data-step="-1"]')!.addEventListener('click', () => this.cb.onSetWorkers(b.id, -1));
-      row.querySelector('[data-step="1"]')!.addEventListener('click', () => this.cb.onSetWorkers(b.id, 1));
-      const toggle = row.querySelector('.jr-toggle');
-      if (toggle)
-        toggle.querySelectorAll('button').forEach((btn) =>
-          btn.addEventListener('click', () => {
-            const v = (btn as HTMLElement).dataset.v!;
-            if (b.type === 'mine') this.cb.onSetMineOutput(b.id, v as MineOutput);
-            else if (b.type === 'blacksmith') this.cb.onSetSmithRecipe(b.id, v as SmithRecipe);
-            else if (b.type === 'farm') this.cb.onSetCrop(b.id, v as Crop);
-            else if (b.type === 'ranch') this.cb.onSetAnimal(b.id, v as RanchAnimal);
-          }),
-        );
+        <div class="jr-main"><div class="jr-name">${def.name}</div>
+          <div class="jr-sub">${tradeWorking(s, type)} working / ${tradeWanted(s, type)} wanted${where ? ` · ${where}` : ''}</div></div>
+        <div class="stepper"><button data-step="-1">−</button><span class="count">${tradeWanted(s, type)}</span><button data-step="1">+</button></div>`;
+      row.querySelector('[data-step="-1"]')!.addEventListener('click', () => this.cb.onSetTradeWorkers(type, -1));
+      row.querySelector('[data-step="1"]')!.addEventListener('click', () => this.cb.onSetTradeWorkers(type, 1));
       p.appendChild(row);
-    }
-
-    // Every remaining kind of work the village could do, listed from the first day so the board
-    // shows the full trade a village has available rather than only what has already been placed.
-    const builtTypes = new Set(jobs.map((b) => b.type));
-    const unbuilt = BUILD_ORDER.filter((t) => isWorkplace(t) && !builtTypes.has(t));
-    if (unbuilt.length > 0) {
-      const head2 = document.createElement('div');
-      head2.className = 'jb-section';
-      head2.textContent = 'Not built yet';
-      p.appendChild(head2);
-      // Names only. What one costs and how many hands it takes are build-menu and Codex
-      // questions; on the job board a trade the village does not have yet has nobody working, no
-      // one wanted and nothing to assign. The row is here to say the work exists, and that is all.
-      for (const t of unbuilt) {
-        const def = BUILDING_DEFS[t];
-        const row = document.createElement('div');
-        row.className = 'job-row muted';
-        row.innerHTML = `
-          <span class="jr-emoji">${def.emoji}</span>
-          <div class="jr-main"><div class="jr-name">${def.name}</div></div>`;
-        p.appendChild(row);
-      }
     }
   }
 

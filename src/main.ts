@@ -13,6 +13,9 @@ import {
   BUILDING_DEFS,
   BUILD_ORDER,
   demoFraction,
+  setTradeWanted,
+  tradeWanted,
+  tradeWorking,
   BARN_CAPACITY,
   HarvestKind,
   HARVEST_KIND_META,
@@ -196,6 +199,7 @@ class Game {
       onNewGame: () => this.openSizeSelect(),
       onOpenMenu: () => this.openPauseMenu(),
       onSetWorkers: (id, d) => this.setWorkers(id, d),
+      onSetTradeWorkers: (type, d) => this.setTradeWorkers(type, d),
       onDemolishBuilding: (id, on) => this.setBuildingDemolish(id, on),
       onUpgradeBuilding: (id) => this.upgradeBuilding(id),
       onRenameBuilding: (id, name) => this.renameBuilding(id, name),
@@ -559,6 +563,15 @@ class Game {
       this.persist();
       if (this.inspectSel) this.refreshInspect();
     }
+  }
+
+  /**
+   * Move a profession's wanted count. The job board is per trade, so this spreads the change over
+   * that trade's buildings — and parks it in `tradeExtra` when there is nowhere for it to go.
+   */
+  private setTradeWorkers(type: BuildingType, delta: number): void {
+    setTradeWanted(this.state, type, delta);
+    this.persist();
   }
 
   /** Mark a building for demolition from its own sheet, or take the mark back off. */
@@ -1475,6 +1488,19 @@ class Game {
     const { w, h } = this.placeSize(type);
     const b = placeBuilding(this.state, type, x, y, w, h, rot);
     return b ? b.id : null;
+  }
+
+  /** Debug/testing helper: move a profession's wanted count, as the job board's stepper does. */
+  debugSetTradeWorkers(type: BuildingType, delta: number): void {
+    setTradeWanted(this.state, type, delta);
+  }
+
+  /** Debug/testing helper: a profession's wanted and working counts. */
+  debugTradeWanted(type: BuildingType): number {
+    return tradeWanted(this.state, type);
+  }
+  debugTradeWorking(type: BuildingType): number {
+    return tradeWorking(this.state, type);
   }
 
   /** Debug/testing helper: mark a rectangle for hand-harvesting, as the drag-select does. */

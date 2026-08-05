@@ -6,6 +6,7 @@ import {
   ResourceKind,
   BUILDING_DEFS,
   buildTimeOf,
+  drawFromTradeExtra,
   demoTimeOf,
   autoBuilderDemand,
   workRadiusOf,
@@ -1789,6 +1790,9 @@ function finishConstruction(s: GameState, b: Building): void {
   // Open its jobs, if the player has asked for that. `assignHomesAndJobs` hires whoever is free
   // on the next tick and picks up the rest as laborers come free, so a hut finished with nobody
   // spare still fills itself later rather than waiting to be noticed.
+  // Staff it from whatever the trade was already asking for and had nowhere to put, then — if
+  // the player wants new workplaces to open themselves — fill the rest of its posts.
+  drawFromTradeExtra(s, b);
   if (s.autoStaff && isWorkplace(b.type)) b.desiredWorkers = BUILDING_DEFS[b.type].jobs;
   // A finished building is a wall villagers must walk around, so routes and reachability have to
   // be recomputed — while it was a site they walked straight over it.

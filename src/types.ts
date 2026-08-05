@@ -75,6 +75,7 @@ export type ResourceKind =
   | 'eggs'
   | 'fish'
   | 'meat'
+  | 'mutton'
   | 'wood'
   | 'firewood'
   | 'stone'
@@ -82,10 +83,12 @@ export type ResourceKind =
   | 'iron'
   | 'tools'
   | 'leather'
+  | 'wool'
   | 'clothing'
   | 'cattle'
   | 'pigs'
   | 'chickens'
+  | 'sheep'
   | 'medicine';
 
 export type Resources = Record<ResourceKind, number>;
@@ -112,6 +115,7 @@ export const FOOD_KINDS: ResourceKind[] = [
   'eggs',
   'fish',
   'meat',
+  'mutton',
 ];
 
 export const RESOURCE_KINDS: ResourceKind[] = [
@@ -192,6 +196,7 @@ export const RESOURCE_ICON: Record<ResourceKind, string> = {
   eggs: '🥚',
   fish: '🐟',
   meat: '🍖',
+  mutton: '🥩',
   wood: '🪵',
   firewood: '🔥',
   stone: '🪨',
@@ -199,10 +204,12 @@ export const RESOURCE_ICON: Record<ResourceKind, string> = {
   iron: '🔩',
   tools: '🛠️',
   leather: '🟫',
+  wool: '🧶',
   clothing: '🧥',
   cattle: '🐄',
   pigs: '🐖',
   chickens: '🐔',
+  sheep: '🐑',
   medicine: '💊',
 };
 
@@ -260,6 +267,8 @@ export type BuildingType =
 
 export type MineOutput = 'coal' | 'iron';
 export type SmithRecipe = 'iron' | 'steel';
+/** What a tailor sews from: hides off the cattle and the hunt, or fleece off a sheep pen. */
+export type TailorRecipe = 'leather' | 'wool';
 
 /**
  * What a farm grows. There are 16 varieties, each harvesting into its own food resource for
@@ -312,8 +321,8 @@ export const SEED_COST = 30;
 export const DIET_VARIETY_TARGET = 5;
 
 /** What a ranch raises. Each animal has its own herd (a tradeable resource) and product mix. */
-export type RanchAnimal = 'cattle' | 'pigs' | 'chickens';
-export const RANCH_ANIMALS: RanchAnimal[] = ['cattle', 'pigs', 'chickens'];
+export type RanchAnimal = 'cattle' | 'pigs' | 'sheep' | 'chickens';
+export const RANCH_ANIMALS: RanchAnimal[] = ['cattle', 'pigs', 'sheep', 'chickens'];
 export const ANIMAL_META: Record<
   RanchAnimal,
   { label: string; emoji: string; ideal: number; growth: number; products: { kind: ResourceKind; chance: number; mult: number }[] }
@@ -325,6 +334,12 @@ export const ANIMAL_META: Record<
   pigs: { label: 'Pigs', emoji: '🐖', ideal: 8, growth: 0.18, products: [
     { kind: 'meat', chance: 0.9, mult: 1.15 }, { kind: 'leather', chance: 0.1, mult: 1 },
   ] },
+  // Sheep are the mirror of cattle: a cow is meat that happens to leave a hide, a sheep is a
+  // fleece that happens to leave mutton. That inversion is the whole reason to keep both — a
+  // clothing economy runs on sheep, a food economy on cattle, and the pens are not interchangeable.
+  sheep: { label: 'Sheep', emoji: '🐑', ideal: 10, growth: 0.15, products: [
+    { kind: 'wool', chance: 0.65, mult: 1 }, { kind: 'mutton', chance: 0.35, mult: 0.8 },
+  ] },
   chickens: { label: 'Chickens', emoji: '🐔', ideal: 12, growth: 0.25, products: [
     { kind: 'eggs', chance: 0.6, mult: 1 }, { kind: 'meat', chance: 0.4, mult: 0.6 },
   ] },
@@ -335,7 +350,7 @@ export const ANIMAL_META: Record<
 export const RANCH_MIN = 4;
 export const RANCH_MAX = 8;
 /** Tiles each head of livestock needs — bigger animals need more room, so fewer fit a pen. */
-export const ANIMAL_TILES: Record<RanchAnimal, number> = { cattle: 3, pigs: 2, chickens: 1 };
+export const ANIMAL_TILES: Record<RanchAnimal, number> = { cattle: 3, pigs: 2, sheep: 2, chickens: 1 };
 /** Baseline births per season for a breeding herd. 0.55 × 2 ≥ 1 ⇒ the "≥1 per 2 seasons" floor. */
 export const RANCH_BREED_PER_SEASON = 0.55;
 /** Chance, each season, of one extra birth on top of the baseline. */
@@ -495,7 +510,12 @@ export interface Building {
   /** Mine: whether it digs coal or iron. */
   output: MineOutput;
   /** Blacksmith: iron tools or steel tools. */
-  recipe: SmithRecipe;
+  /**
+   * Which recipe a converter is set to. One field, two buildings: a blacksmith reads it as
+   * `SmithRecipe`, a tailor as `TailorRecipe`. They never share a building, so they never
+   * disagree about what the value means.
+   */
+  recipe: SmithRecipe | TailorRecipe;
   /**
    * Local inventory. Barn: its stock (cap BARN_CAPACITY). Producer: input/output
    * buffer. Construction site (built=false): materials delivered so far.
@@ -1489,14 +1509,14 @@ export const RESOURCE_VOLUME: Record<ResourceKind, number> = {
   fruit: 0.25, grain: 0.25, corn: 0.25, potato: 0.25, rice: 0.25, barley: 0.25,
   carrot: 0.25, tomato: 0.25, onion: 0.25, pepper: 0.25, cabbage: 0.25, beans: 0.25,
   pumpkin: 0.25, apple: 0.25, grapes: 0.25, strawberry: 0.25, melon: 0.25,
-  eggs: 0.25, fish: 0.25, meat: 0.25,
+  eggs: 0.25, fish: 0.25, meat: 0.25, mutton: 0.25,
   // Bulky raw materials — the volume-1 baseline.
   wood: 1, firewood: 1, stone: 1, coal: 1, iron: 1,
   // Worked goods: denser than raw material, so more fit in a load.
-  tools: 0.5, leather: 0.5, clothing: 0.5,
+  tools: 0.5, leather: 0.5, wool: 0.5, clothing: 0.5,
   medicine: 0.25,
   // Livestock is driven, not carried, and a cow takes rather more room than a log.
-  cattle: 4, pigs: 3, chickens: 0.5,
+  cattle: 4, pigs: 3, sheep: 2, chickens: 0.5,
 };
 
 /** How many whole units of `kind` fit in `volume` of carrying space (always at least one). */
@@ -1948,6 +1968,7 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
   eggs: 1.5,
   fish: 1,
   meat: 1.5,
+  mutton: 1.5,
   wood: 1,
   firewood: 1.5,
   stone: 2,
@@ -1955,9 +1976,11 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
   iron: 4,
   tools: 8,
   leather: 3,
+  wool: 2.5,
   clothing: 6,
   cattle: 20,
   pigs: 14,
+  sheep: 16,
   chickens: 8,
   medicine: 5,
 };
@@ -1992,9 +2015,9 @@ export const MERCHANT_ARRIVAL_CHANCE = 0.5;
 export const MERCHANT_CATEGORY_STOCK: Record<MerchantCategory, Partial<Record<ResourceKind, number>>> = {
   basics: { wood: 150, stone: 120, coal: 100, iron: 80, firewood: 120 },
   seeds: {},
-  animals: { cattle: 6, pigs: 8, chickens: 12 },
-  foods: { grain: 160, corn: 120, potato: 120, fish: 140, meat: 80, eggs: 80 },
-  goods: { tools: 60, clothing: 60, leather: 90, medicine: 40 },
+  animals: { cattle: 6, pigs: 8, sheep: 8, chickens: 12 },
+  foods: { grain: 160, corn: 120, potato: 120, fish: 140, meat: 80, mutton: 70, eggs: 80 },
+  goods: { tools: 60, clothing: 60, leather: 90, wool: 80, medicine: 40 },
 };
 
 /** Label + emoji for each merchant category (shown in the trade UI header). */
@@ -2040,7 +2063,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   ranch: {
     type: 'ranch', name: 'Ranch', emoji: '🐄', category: 'food', w: 4, h: 4,
     cost: { wood: 16 }, jobs: 2, buildTime: 7,
-    desc: 'A fenced pen for cattle, pigs, or chickens. Drag its size (4×4 up to 8×8) before building — a bigger pen holds a bigger herd. Buy livestock from traders; they breed here.',
+    desc: 'A fenced pen for cattle, pigs, sheep or chickens. Drag its size (4×4 up to 8×8) before building — a bigger pen holds a bigger herd. Buy livestock from traders; they breed here. Cattle are mostly meat with some hide; sheep are the reverse, mostly fleece with some mutton.',
   },
   lumberyard: {
     type: 'lumberyard', name: 'Forester', emoji: '🌲', category: 'resources', w: 3, h: 3,
@@ -2073,7 +2096,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   tailor: {
     type: 'tailor', name: 'Tailor', emoji: '🧵', category: 'resources', w: 3, h: 3,
     cost: { wood: 12 }, jobs: 2, buildTime: 6,
-    desc: 'Sews warm clothing from leather to keep villagers healthy in winter.',
+    desc: 'Sews warm clothing to keep villagers healthy in winter. Set it to work either hide — from cattle and the hunt — or fleece off a sheep pen; wool goes a little further per unit.',
   },
   trading: {
     type: 'trading', name: 'Trading Post', emoji: '🚢', category: 'trade', w: 5, h: 9,

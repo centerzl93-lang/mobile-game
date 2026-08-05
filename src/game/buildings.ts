@@ -187,7 +187,9 @@ export function placeBuilding(
     desiredWorkers: 0, // start unstaffed — the player assigns workers with the stepper
     growth: 0,
     output: 'coal',
-    recipe: 'iron',
+    // A blacksmith opens on iron, a tailor on leather — the input each can get without a
+    // dedicated pen behind it. One field, two meanings; see `Building.recipe`.
+    recipe: type === 'tailor' ? 'leather' : 'iron',
     replant: type === 'lumberyard', // new Foresters replant by default
     crop: s.seeds[0], // default to a crop the village can plant (undefined if it owns no seeds)
     animal: 'cattle',

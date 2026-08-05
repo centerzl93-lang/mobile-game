@@ -49,6 +49,7 @@ import {
   MAP_H,
   MineOutput,
   SmithRecipe,
+  TailorRecipe,
   ResourceKind,
   RESOURCE_ICON,
   LARDER_KINDS,
@@ -210,6 +211,7 @@ class Game {
       onSetLimit: (kind, d) => this.setLimit(kind, d),
       onSetMineOutput: (id, o) => this.setMineOutput(id, o),
       onSetSmithRecipe: (id, r) => this.setSmithRecipe(id, r),
+      onSetTailorRecipe: (id, r) => this.setTailorRecipe(id, r),
       onSetForesterReplant: (id, on) => this.setForesterReplant(id, on),
       onSetCrop: (id, crop) => this.setCrop(id, crop),
       onSetAnimal: (id, animal) => this.setAnimal(id, animal),
@@ -534,6 +536,14 @@ class Game {
   }
 
   private setSmithRecipe(id: number, recipe: SmithRecipe): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (b) {
+      b.recipe = recipe;
+      this.persist();
+    }
+  }
+
+  private setTailorRecipe(id: number, recipe: TailorRecipe): void {
     const b = this.state.buildings.find((x) => x.id === id);
     if (b) {
       b.recipe = recipe;
@@ -1167,6 +1177,7 @@ class Game {
         }
         if (b.type === 'mine') rows.push({ label: 'Digging', value: b.output });
         if (b.type === 'blacksmith') rows.push({ label: 'Forging', value: `${b.recipe} tools` });
+        if (b.type === 'tailor') rows.push({ label: 'Sewing from', value: `${b.recipe}` });
         if (b.type === 'farm') {
           rows.push({ label: 'Crop', value: b.crop ? `${CROP_META[b.crop].emoji} ${CROP_META[b.crop].label}` : '🌱 No seed — buy from a trader' });
           rows.push({ label: 'Field', value: `${footprintW(b)}×${footprintH(b)}` });
@@ -1214,6 +1225,11 @@ class Game {
           controls.toggle = { group: 'smith', options: [
             { v: 'iron', label: 'Iron', on: b.recipe === 'iron' },
             { v: 'steel', label: 'Steel', on: b.recipe === 'steel' },
+          ] };
+        } else if (b.type === 'tailor') {
+          controls.toggle = { group: 'tailor', options: [
+            { v: 'leather', label: '🟫 Leather', on: b.recipe !== 'wool' },
+            { v: 'wool', label: '🧶 Wool', on: b.recipe === 'wool' },
           ] };
         } else if (b.type === 'lumberyard') {
           const on = b.replant ?? true;

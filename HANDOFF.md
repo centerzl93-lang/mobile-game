@@ -1,8 +1,8 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-08-05 (larder-hauling collapse fixed, real Hard difficulty, low-stock
-> warnings, two-door barn, taller school, per-profession job board; see Current State)
+> Last updated: 2026-08-05 (sheep/wool/mutton, larder-hauling collapse fixed, real Hard
+> difficulty, low-stock warnings, two-door barn, taller school; see Current State)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -21,7 +21,8 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **villages no longer freeze beside a full barn**,
+Latest work: **sheep, wool and mutton**,
+**villages no longer freeze beside a full barn**,
 **a real Hard difficulty**, **low-stock warnings on every resource**,
 **a barn with a door at each end**,
 **roads are routed, not traced**,
@@ -39,6 +40,33 @@ Latest work: **villages no longer freeze beside a full barn**,
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Sheep, wool and mutton (this session)
+
+A fourth herd, bought from an animals trader like the other three. Sheep are deliberately the
+**mirror of cattle**: a cow is meat that happens to leave a hide (`meat` 0.7 / `leather` 0.3), a
+sheep is a fleece that happens to leave mutton (`wool` 0.65 / `mutton` 0.35). That inversion is the
+whole reason to keep both — a clothing economy runs on sheep, a food economy on cattle, and the two
+pens are not interchangeable. At `ANIMAL_TILES` 2 (against cattle's 3) more sheep fit the same pen.
+
+Two new `ResourceKind`s. **Mutton is in `FOOD_KINDS`**, so it feeds villagers and counts toward
+diet variety (`DIET_VARIETY_TARGET`); **wool is a material**, and like leather it stays off the HUD
+chips — those are deliberately a short list. Both got icons, volumes, trade values and merchant
+stock; `sheep` itself is tradeable at 16, between a pig and a cow.
+
+**The tailor now has a recipe toggle**, mirroring the blacksmith's: `TailorRecipe = 'leather' |
+'wool'`, `TAILOR_LEATHER_IN` 5 vs `TAILOR_WOOL_IN` 4 for the same 4 coats, so wool goes further per
+unit. `Building.recipe` is typed `SmithRecipe | TailorRecipe` — one field, two buildings, and they
+never share a building so they never disagree about what the value means.
+
+**Two things worth knowing if you extend this:**
+
+- `Building.recipe` is defaulted in **two** constructors — `makeBuilding` in `state.ts` *and*
+  `placeBuilding` in `buildings.ts`. Setting only the first left every tailor the player actually
+  built reading "Sewing from iron", which is how this was caught.
+- The ranch product roll used to size a load with `p.kind === 'meat' || p.kind === 'eggs'`. It asks
+  `FOOD_KINDS` now, so a new animal's produce is hauled at the right size without anyone
+  remembering to extend a condition — mutton would otherwise have moved as if it were a hide.
 
 ### Villages stopped freezing to death beside a full barn (this session)
 

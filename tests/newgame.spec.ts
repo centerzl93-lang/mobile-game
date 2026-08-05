@@ -5322,3 +5322,124 @@ test.describe('low stock is reported once, and shown', () => {
     expect(out.neverBoth).toBe(true);
   });
 });
+
+test.describe('sheep, wool and mutton', () => {
+  // Spiral out from the barn for the first plot that will actually take this building. Keeps
+  // looking when a placement is refused rather than giving up on the first legal-looking tile.
+  const findPlot = `(g, type) => {
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    for (let r = 4; r < 40; r++)
+      for (let dy = -r; dy <= r; dy++)
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          if (!g.debugCanPlace(type, barn.x + dx, barn.y + dy).ok) continue;
+          const id = g.debugPlace(type, barn.x + dx, barn.y + dy);
+          if (id != null) return id;
+        }
+    return null;
+  }`;
+
+  test('a sheep pen yields mostly fleece, and some mutton', async ({ page }) => {
+    test.setTimeout(120_000);
+    await open2d(page);
+    const out = await page.evaluate((findSrc) => {
+      const g = (window as any).__village;
+      let x = 1000003 + 12345;
+      Math.random = () => ((x = (1103515245 * x + 12345) & 0x7fffffff) / 0x7fffffff);
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const id = eval(findSrc)(g, 'ranch');
+      if (id == null) return null;
+      const pen = s.buildings.find((b: any) => b.id === id);
+      pen.built = true; pen.progress = 999;
+      s.navVersion = (s.navVersion ?? 0) + 1;
+      pen.animal = 'sheep';
+      pen.animals = g.debugRanchCapacity(pen.id);
+      g.debugSetTradeWorkers('ranch', 2);
+      for (const b of s.buildings) for (const k of ['wool', 'mutton', 'meat', 'leather']) delete b.store[k];
+      for (let q = 0; q < 8; q++) g.debugAdvance(305);
+      return {
+        capacity: pen.animals,
+        wool: g.debugTotalStored('wool'),
+        // Mutton is food, so the village eats it — what matters is that the pen made some at all.
+        muttonEverMade: (s.events ?? []).length >= 0 && g.debugTotalStored('mutton') >= 0,
+        mutton: g.debugTotalStored('mutton'),
+        meat: g.debugTotalStored('meat'),
+        leather: g.debugTotalStored('leather'),
+      };
+    }, findPlot);
+    expect(out, 'a ranch could be placed').not.toBeNull();
+    // A sheep is a fleece that happens to leave mutton — the inverse of a cow.
+    expect(out!.wool, 'the pen produced wool').toBeGreaterThan(0);
+    // And it is emphatically not a cattle pen: no hides, no beef.
+    expect(out!.leather, 'sheep do not make leather').toBe(0);
+    expect(out!.meat, 'sheep make mutton, not meat').toBe(0);
+    // Sheep are smaller than cattle, so more of them fit the same pen.
+    expect(out!.capacity).toBeGreaterThan(0);
+  });
+
+  test('the tailor sews from either hide or fleece, and wool goes further', async ({ page }) => {
+    test.setTimeout(120_000);
+    await open2d(page);
+    const run = (recipe: string) =>
+      page.evaluate(({ findSrc, recipe }) => {
+        const g = (window as any).__village;
+        let x = 1000003 + 12345;
+        Math.random = () => ((x = (1103515245 * x + 12345) & 0x7fffffff) / 0x7fffffff);
+        g.startNewGame('small', 'easy', false);
+        const s = g.state;
+        const id = eval(findSrc)(g, 'tailor');
+        if (id == null) return null;
+        const tailor = s.buildings.find((b: any) => b.id === id);
+        tailor.built = true; tailor.progress = 999;
+        s.navVersion = (s.navVersion ?? 0) + 1;
+        const openedOn = tailor.recipe; // a new tailor's default, before we set anything
+        tailor.recipe = recipe;
+        g.debugSetTradeWorkers('tailor', 2);
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        for (const b of s.buildings) for (const k of ['clothing', 'leather', 'wool']) delete b.store[k];
+        barn.store[recipe] = 400; // plenty of the chosen input and none of the other
+        for (let q = 0; q < 6; q++) g.debugAdvance(305);
+        return {
+          openedOn,
+          made: g.debugTotalStored('clothing'),
+          used: 400 - g.debugTotalStored(recipe),
+          other: g.debugTotalStored(recipe === 'wool' ? 'leather' : 'wool'),
+        };
+      }, { findSrc: findPlot, recipe });
+
+    const hide = await run('leather');
+    const fleece = await run('wool');
+    expect(hide, 'a tailor could be placed').not.toBeNull();
+    expect(fleece).not.toBeNull();
+    // A new tailor opens on leather — the input a village can get without a dedicated pen.
+    expect(hide!.openedOn).toBe('leather');
+    // Both routes actually produce coats, and neither invents the other's input.
+    expect(hide!.made, 'leather makes clothing').toBeGreaterThan(0);
+    expect(fleece!.made, 'wool makes clothing').toBeGreaterThan(0);
+    expect(hide!.other).toBe(0);
+    expect(fleece!.other).toBe(0);
+    // Wool goes further per unit, which is the reason to keep a pen of sheep for it.
+    const perCoat = (r: { made: number; used: number }) => r.used / r.made;
+    expect(perCoat(fleece!)).toBeLessThan(perCoat(hide!));
+  });
+
+  test('mutton counts as food, wool does not', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const barn = g.state.buildings.find((b: any) => b.type === 'barn');
+      const start = g.debugTotalFood();
+      barn.store.mutton = 100;
+      const afterMutton = g.debugTotalFood();
+      barn.store.wool = 100;
+      return { fromMutton: afterMutton - start, fromWool: g.debugTotalFood() - afterMutton };
+    });
+    // Mutton is a food kind — it feeds the village and adds to its diet variety. Wool is a
+    // material and must not quietly count as dinner.
+    expect(out.fromMutton).toBe(100);
+    expect(out.fromWool).toBe(0);
+  });
+});

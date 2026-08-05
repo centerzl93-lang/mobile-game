@@ -19,6 +19,7 @@ import {
   buildingName,
   MineOutput,
   SmithRecipe,
+  TailorRecipe,
   Crop,
   RanchAnimal,
   CROP_META,
@@ -84,7 +85,7 @@ export interface InspectControls {
   /** Worker allocation stepper (current desired vs the job cap). */
   workers?: { value: number; max: number };
   /** A single option toggle (mine output / smith recipe / forester replant / farm crop / ranch animal). */
-  toggle?: { group: 'mine' | 'smith' | 'forester' | 'crop' | 'animal'; options: { v: string; label: string; on: boolean }[] };
+  toggle?: { group: 'mine' | 'smith' | 'tailor' | 'forester' | 'crop' | 'animal'; options: { v: string; label: string; on: boolean }[] };
   /** Trading post: show a button that opens the inventory/trade panel; flags a docked merchant. */
   tradingPost?: { merchantDocked: boolean };
   /**
@@ -127,6 +128,7 @@ export interface UICallbacks {
   onSetLimit: (key: LimitKey, delta: number) => void;
   onSetMineOutput: (buildingId: number, output: MineOutput) => void;
   onSetSmithRecipe: (buildingId: number, recipe: SmithRecipe) => void;
+  onSetTailorRecipe: (buildingId: number, recipe: TailorRecipe) => void;
   onSetForesterReplant: (buildingId: number, on: boolean) => void;
   onSetCrop: (buildingId: number, crop: Crop) => void;
   onSetAnimal: (buildingId: number, animal: RanchAnimal) => void;
@@ -723,6 +725,7 @@ export class UI {
             const v = (btn as HTMLElement).dataset.v!;
             if (tog.group === 'mine') this.cb.onSetMineOutput(id, v as MineOutput);
             else if (tog.group === 'smith') this.cb.onSetSmithRecipe(id, v as SmithRecipe);
+            else if (tog.group === 'tailor') this.cb.onSetTailorRecipe(id, v as TailorRecipe);
             else if (tog.group === 'crop') this.cb.onSetCrop(id, v as Crop);
             else if (tog.group === 'animal') this.cb.onSetAnimal(id, v as RanchAnimal);
             else this.cb.onSetForesterReplant(id, v === 'on');

@@ -207,7 +207,9 @@ const LOAD_MAT = 6; // raw material produced per work cycle (before factor)
 const WCUT_WOOD_IN = 6, WCUT_FW_OUT = 8;
 const SMITH_IRON_IN = 4, SMITH_IRON_OUT = 5;
 const SMITH_STEEL_IRON = 4, SMITH_STEEL_COAL = 3, SMITH_STEEL_OUT = 8;
-const TAILOR_IN = 5, TAILOR_OUT = 4;
+// Two ways to a coat. Wool goes further than hide per unit — a fleece is spun and woven, a hide
+// is cut around — but a pen of sheep is the real difference: see `ANIMAL_META`.
+const TAILOR_LEATHER_IN = 5, TAILOR_WOOL_IN = 4, TAILOR_OUT = 4;
 
 const ARRIVE = 0.25; // tile distance considered "arrived"
 /**
@@ -1044,7 +1046,7 @@ function converterInputs(b: Building): [ResourceKind, number][] {
         ? [['iron', SMITH_STEEL_IRON], ['coal', SMITH_STEEL_COAL]]
         : [['iron', SMITH_IRON_IN]];
     case 'tailor':
-      return [['leather', TAILOR_IN]];
+      return b.recipe === 'wool' ? [['wool', TAILOR_WOOL_IN]] : [['leather', TAILOR_LEATHER_IN]];
     default:
       return [];
   }
@@ -1476,17 +1478,18 @@ function workOutput(
       if ((b.animals ?? 0) <= 0) return null;
       const f = herd * tf;
       // Pick a product from this animal's weighted mix.
+      // Food comes off a pen by the basket, materials by the work-load. Asked of `FOOD_KINDS`
+      // rather than listed by hand, so a new animal's produce is sized right without anyone
+      // remembering to extend a condition — mutton would otherwise have been hauled as if it
+      // were a hide.
+      const loadFor = (k: ResourceKind): number => (FOOD_KINDS.includes(k) ? LOAD_FOOD : LOAD_MAT);
       let roll = Math.random();
       for (const p of meta.products) {
-        if (roll < p.chance) {
-          const base = p.kind === 'meat' || p.kind === 'eggs' ? LOAD_FOOD : LOAD_MAT;
-          return { kind: p.kind, amount: base * p.mult * f };
-        }
+        if (roll < p.chance) return { kind: p.kind, amount: loadFor(p.kind) * p.mult * f };
         roll -= p.chance;
       }
       const last = meta.products[meta.products.length - 1];
-      const base = last.kind === 'meat' || last.kind === 'eggs' ? LOAD_FOOD : LOAD_MAT;
-      return { kind: last.kind, amount: base * last.mult * f };
+      return { kind: last.kind, amount: loadFor(last.kind) * last.mult * f };
     }
     case 'lumberyard': {
       if (b.replant ?? true) plantCircle(s, b); // sow saplings on grass so the forest renews
@@ -1535,7 +1538,10 @@ function workOutput(
       }
       return consumeStore(b, [['iron', SMITH_IRON_IN]]) ? { kind: 'tools', amount: SMITH_IRON_OUT * tf } : null;
     case 'tailor':
-      return consumeStore(b, [['leather', TAILOR_IN]]) ? { kind: 'clothing', amount: TAILOR_OUT * tf } : null;
+      if (b.recipe === 'wool') {
+        return consumeStore(b, [['wool', TAILOR_WOOL_IN]]) ? { kind: 'clothing', amount: TAILOR_OUT * tf } : null;
+      }
+      return consumeStore(b, [['leather', TAILOR_LEATHER_IN]]) ? { kind: 'clothing', amount: TAILOR_OUT * tf } : null;
     case 'farm': {
       if (!b.crop) return null; // an unseeded field grows nothing
       const food = CROP_META[b.crop].food;

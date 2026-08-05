@@ -1419,6 +1419,17 @@ class Game {
     return buildTimeOf(type);
   }
 
+  /**
+   * Debug/testing helper: the display list against the exhaustive one.
+   *
+   * `RESOURCE_KINDS` is hand-written and drives every inventory the player reads, while
+   * `RESOURCE_ICON` is a `Record<ResourceKind, …>` the compiler will not let you leave short. A
+   * kind in the second and not the first is invisible in game and perfectly typed.
+   */
+  debugResourceLists(): { listed: string[]; all: string[] } {
+    return { listed: [...RESOURCE_KINDS], all: Object.keys(RESOURCE_ICON) };
+  }
+
   /** Debug/testing helper: every buildable type, named, in build-menu order. */
   debugBuildNames(): string[] {
     return BUILD_ORDER.map((t) => BUILDING_DEFS[t].name);

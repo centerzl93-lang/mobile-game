@@ -55,7 +55,7 @@ pens are not interchangeable. At `ANIMAL_TILES` 2 (against cattle's 3) more shee
 | Cattle | milk | leather (×1.4 — the hide worth having) + meat |
 | Pigs | *nothing* | pork + leather (×0.7) |
 | Sheep | wool | mutton |
-| Chickens | eggs | meat |
+| Chickens | eggs | chicken |
 
 **Hide only ever comes off a carcass.** No pen produces leather while its animals live, which is
 the rule the old model broke — cattle used to shed leather on the living roll, and culling a flock
@@ -86,7 +86,9 @@ and is otherwise indistinguishable from wool having a closed season.
 so the contrast is currently one-sided. Making hide slaughter-only would complete it and is a
 balance decision nobody has taken.
 
-Four new `ResourceKind`s — `wool`, `mutton`, `pork`, `milk`. **The foods are in `FOOD_KINDS`**, so it feeds villagers and counts toward
+Five new `ResourceKind`s — `wool`, `mutton`, `pork`, `chicken`, `milk`. `chicken` is the bird
+on the plate and `chickens` the bird in the pen; they are one letter apart, so the icons carry the
+difference (🍗 against 🐔) wherever the two could appear in the same list. **The foods are in `FOOD_KINDS`**, so it feeds villagers and counts toward
 diet variety (`DIET_VARIETY_TARGET`); **wool is a material**, and like leather it stays off the HUD
 chips — those are deliberately a short list. Both got icons, volumes, trade values and merchant
 stock; `sheep` itself is tradeable at 16, between a pig and a cow.
@@ -95,6 +97,17 @@ stock; `sheep` itself is tradeable at 16, between a pig and a cow.
 'wool'`, `TAILOR_LEATHER_IN` 5 vs `TAILOR_WOOL_IN` 4 for the same 4 coats, so wool goes further per
 unit. `Building.recipe` is typed `SmithRecipe | TailorRecipe` — one field, two buildings, and they
 never share a building so they never disagree about what the value means.
+
+**`RESOURCE_KINDS` is the trap.** It is a hand-written array — *not* derived from the
+`ResourceKind` union — and it is what the barn sheet, the trade screen and the stockpile panel all
+walk. All five new goods were added to the union, the icons, the volumes, the trade values and the
+merchant tables, typechecked clean, worked in the simulation, and were **invisible in every
+inventory the player reads**, because nothing had added them here. The compiler cannot help: the
+array is `ResourceKind[]`, and a short list is still a valid one.
+
+There is now a test for it. `RESOURCE_ICON` is a `Record<ResourceKind, …>` and so is exhaustive by
+construction; the test asserts `RESOURCE_KINDS` covers everything in it. Add a resource, forget the
+list, and the suite says so.
 
 **Two things worth knowing if you extend this:**
 

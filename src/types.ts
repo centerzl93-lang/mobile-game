@@ -77,6 +77,7 @@ export type ResourceKind =
   | 'meat'
   | 'mutton'
   | 'pork'
+  | 'chicken'
   | 'milk'
   | 'wood'
   | 'firewood'
@@ -119,9 +120,17 @@ export const FOOD_KINDS: ResourceKind[] = [
   'meat',
   'mutton',
   'pork',
+  'chicken',
   'milk',
 ];
 
+/**
+ * Every resource, in display order — the list the barn sheet, the trade screen and the stockpile
+ * panel all walk. Hand-maintained, and *not* derived from `ResourceKind`, so the compiler cannot
+ * tell you when it is short: a kind missing from here simply never appears in the game while
+ * typechecking perfectly. `tests/newgame.spec.ts` asserts it against `RESOURCE_ICON`, which is a
+ * `Record<ResourceKind, …>` and therefore exhaustive by construction.
+ */
 export const RESOURCE_KINDS: ResourceKind[] = [
   'fruit',
   'grain',
@@ -143,6 +152,10 @@ export const RESOURCE_KINDS: ResourceKind[] = [
   'eggs',
   'fish',
   'meat',
+  'mutton',
+  'pork',
+  'chicken',
+  'milk',
   'wood',
   'firewood',
   'stone',
@@ -150,9 +163,11 @@ export const RESOURCE_KINDS: ResourceKind[] = [
   'iron',
   'tools',
   'leather',
+  'wool',
   'clothing',
   'cattle',
   'pigs',
+  'sheep',
   'chickens',
   'medicine',
 ];
@@ -202,6 +217,7 @@ export const RESOURCE_ICON: Record<ResourceKind, string> = {
   meat: '🍖',
   mutton: '🥩',
   pork: '🥓',
+  chicken: '🍗',
   milk: '🥛',
   wood: '🪵',
   firewood: '🔥',
@@ -376,7 +392,7 @@ export const ANIMAL_META: Record<
     butchered: [{ kind: 'mutton', chance: 1, mult: 1 }] },
   chickens: { label: 'Chickens', emoji: '🐔', ideal: 12, growth: 0.25,
     products: [{ kind: 'eggs', chance: 1, mult: 1 }],
-    butchered: [{ kind: 'meat', chance: 1, mult: 0.6 }] },
+    butchered: [{ kind: 'chicken', chance: 1, mult: 0.6 }] },
 };
 // ---- Ranch sizing & husbandry (all customizable) ----
 /** A pen is a square (or rectangle) between these tile dimensions, chosen at placement. */
@@ -1542,7 +1558,7 @@ export const RESOURCE_VOLUME: Record<ResourceKind, number> = {
   fruit: 0.25, grain: 0.25, corn: 0.25, potato: 0.25, rice: 0.25, barley: 0.25,
   carrot: 0.25, tomato: 0.25, onion: 0.25, pepper: 0.25, cabbage: 0.25, beans: 0.25,
   pumpkin: 0.25, apple: 0.25, grapes: 0.25, strawberry: 0.25, melon: 0.25,
-  eggs: 0.25, fish: 0.25, meat: 0.25, mutton: 0.25, pork: 0.25, milk: 0.25,
+  eggs: 0.25, fish: 0.25, meat: 0.25, mutton: 0.25, pork: 0.25, chicken: 0.25, milk: 0.25,
   // Bulky raw materials — the volume-1 baseline.
   wood: 1, firewood: 1, stone: 1, coal: 1, iron: 1,
   // Worked goods: denser than raw material, so more fit in a load.
@@ -2003,6 +2019,7 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
   meat: 1.5,
   mutton: 1.5,
   pork: 1.5,
+  chicken: 1.5,
   milk: 1,
   wood: 1,
   firewood: 1.5,
@@ -2051,7 +2068,7 @@ export const MERCHANT_CATEGORY_STOCK: Record<MerchantCategory, Partial<Record<Re
   basics: { wood: 150, stone: 120, coal: 100, iron: 80, firewood: 120 },
   seeds: {},
   animals: { cattle: 6, pigs: 8, sheep: 8, chickens: 12 },
-  foods: { grain: 160, corn: 120, potato: 120, fish: 140, meat: 80, mutton: 70, pork: 70, milk: 90, eggs: 80 },
+  foods: { grain: 160, corn: 120, potato: 120, fish: 140, meat: 80, mutton: 70, pork: 70, chicken: 70, milk: 90, eggs: 80 },
   goods: { tools: 60, clothing: 60, leather: 90, wool: 80, medicine: 40 },
 };
 

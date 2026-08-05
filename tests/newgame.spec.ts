@@ -5456,7 +5456,7 @@ test.describe('sheep, wool and mutton', () => {
         pen.maxAnimals = g.debugRanchCapacity(pen.id); // capacity is per animal size; refresh it
         pen.animals = Math.max(2, Math.floor(pen.maxAnimals / 2)); // below cap: nothing overflows
         g.debugSetTradeWorkers('ranch', 2);
-        const KINDS = ['milk', 'meat', 'pork', 'mutton', 'wool', 'leather', 'eggs'];
+        const KINDS = ['milk', 'meat', 'pork', 'chicken', 'mutton', 'wool', 'leather', 'eggs'];
         // Households kept stocked so the rancher never downs tools to haul — see the shearing test.
         const stock = () => {
           for (const h of s.buildings)
@@ -5504,7 +5504,9 @@ test.describe('sheep, wool and mutton', () => {
     expect(pigs!.dead.pork).toBeGreaterThan(0);
     expect(sheep!.dead.mutton).toBeGreaterThan(0);
     expect(cattle!.dead.meat).toBeGreaterThan(0);
-    expect(hens!.dead.meat).toBeGreaterThan(0);
+    // The bird on the plate is `chicken`, not the generic `meat` a cow or the hunt gives.
+    expect(hens!.dead.chicken).toBeGreaterThan(0);
+    expect(hens!.dead.meat ?? 0).toBe(0);
   });
 
   test('a pen at its cap butchers the overflow without anyone asking', async ({ page }) => {
@@ -5594,6 +5596,51 @@ test.describe('sheep, wool and mutton', () => {
     // Wool goes further per unit, which is the reason to keep a pen of sheep for it.
     const perCoat = (r: { made: number; used: number }) => r.used / r.made;
     expect(perCoat(fleece!)).toBeLessThan(perCoat(hide!));
+  });
+
+  test('every resource appears in the list the player actually reads', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const { listed, all } = g.debugResourceLists();
+      return { missing: all.filter((k: string) => !listed.includes(k)), listed, all };
+    });
+    // `RESOURCE_KINDS` is hand-written and drives the barn sheet, the trade screen and the
+    // stockpile panel; `RESOURCE_ICON` is a Record over the union and cannot be left short. A kind
+    // in the second and not the first typechecks perfectly and is invisible in game — which is
+    // exactly what happened to wool, mutton, pork, chicken, milk and sheep when they were added.
+    expect(out.missing, 'resources missing from the display list').toEqual([]);
+    expect(out.listed.length).toBe(out.all.length);
+  });
+
+  test('a barn lists the new animal goods, and the two birds are told apart', async ({ page }) => {
+    await open2d(page);
+    const rows = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      g.ui.hideOverlay();
+      const barn = g.state.buildings.find((b: any) => b.type === 'barn');
+      Object.assign(barn.store, {
+        chicken: 40, chickens: 12, meat: 30, pork: 25, mutton: 20, milk: 60, wool: 50,
+      });
+      g.inspectSel = { kind: 'building', id: barn.id };
+      g.refreshInspect();
+      return [...document.querySelectorAll('#inspect .inv-row')]
+        .map((e) => (e as HTMLElement).innerText.replace(/\s+/g, ' ').trim());
+    });
+    const joined = rows.join(' | ');
+    for (const kind of ['chicken', 'pork', 'mutton', 'milk', 'wool']) {
+      expect(joined, `the barn lists ${kind}`).toContain(kind);
+    }
+    // The bird on the plate and the bird in the pen sit in the same list one letter apart, so the
+    // icons have to carry the difference.
+    const plate = rows.find((r) => /\bchicken\b/.test(r) && !/chickens/.test(r));
+    const pen = rows.find((r) => /chickens/.test(r));
+    expect(plate, 'a row for chicken the food').toBeTruthy();
+    expect(pen, 'a row for chickens the livestock').toBeTruthy();
+    expect(plate).toContain('🍗');
+    expect(pen).toContain('🐔');
   });
 
   test('mutton counts as food, wool does not', async ({ page }) => {

@@ -59,15 +59,20 @@ test.describe('difficulties', () => {
       };
       return { easy: setup('easy'), normal: setup('normal'), hard: setup('hard') };
     });
-    // Food, tools and coats are identical on every difficulty — they are tuned against the
-    // founding twelve, not against difficulty. 1200 food and a year of tools and coats.
+    // Easy and Normal share a survival ration tuned against the founding twelve: 1200 food and a
+    // year of tools and coats. Hard is that halved — which is the whole of what makes it Hard, and
+    // for a long time it was not applied at all, leaving Hard and Normal the same game under two
+    // names while the picker advertised a difference.
     const FOODS = ['fruit', 'grain', 'fish', 'meat'];
-    for (const [name, run] of Object.entries(d)) {
-      const food = FOODS.reduce((n, k) => n + ((run.store as any)[k] ?? 0), 0);
-      expect(food, `${name} food`).toBe(1200);
-      expect(run.store.tools, `${name} tools`).toBe(48);
-      expect(run.store.clothing, `${name} coats`).toBe(48);
+    const foodOf = (run: any) => FOODS.reduce((n, k) => n + (run.store[k] ?? 0), 0);
+    for (const name of ['easy', 'normal'] as const) {
+      expect(foodOf(d[name]), `${name} food`).toBe(1200);
+      expect(d[name].store.tools, `${name} tools`).toBe(48);
+      expect(d[name].store.clothing, `${name} coats`).toBe(48);
     }
+    expect(foodOf(d.hard), 'hard food').toBe(600);
+    expect(d.hard.store.tools, 'hard tools').toBe(24);
+    expect(d.hard.store.clothing, 'hard coats').toBe(24);
     // What difficulty actually changes is the leg-up. Easy: building materials, fuel, medicine,
     // houses.
     expect(d.easy.houses).toBe(3);
@@ -1497,6 +1502,13 @@ test.describe('seasonal firewood and clothing burn', () => {
         // still records that the ration happened at all.
         for (const c of s.citizens) c.clothed = dressed;
         picked.b.store.firewood = 1e6; // top back up — the crossing itself burned a little
+        // Land any grocery run that is already walking before the window opens. Households
+        // restock properly now, so a resident who set off before the store was pinned arrives
+        // mid-window and *adds* firewood — which reads as negative burn. What is being measured
+        // is the hearth, not the haulage.
+        for (const c of s.citizens) {
+          if (c.task?.kind === 'toLarder') { c.carry = null; c.task = { kind: 'idle' }; }
+        }
         const fw0 = picked.b.store.firewood;
         // Captured before the window: `rehouseVillagers` runs on a timer and can move a surplus
         // adult out. Counting residents afterwards would undercount the denominator.
@@ -1595,6 +1607,11 @@ test.describe('seasonal firewood and clothing burn', () => {
       // the window at all. What is being measured is *when* fuel goes, not who fetched it.
       for (const b of s.buildings) if (b.built && (b.type === 'house' || b.type === 'stonehouse')) {
         b.store.firewood = 100;
+      }
+      // A load in transit is in nobody's store, so it is outside `start` and lands inside the
+      // window — the total then *rises* and reads as fuel being created. Land it first.
+      for (const c of s.citizens) {
+        if (c.task?.kind === 'toLarder') { c.carry = null; c.task = { kind: 'idle' }; }
       }
       const start = fuel();
       // A fifth of a season, nowhere near a boundary. The old model burned nothing until the
@@ -3688,6 +3705,11 @@ test.describe('consumption and fuel', () => {
       const houses = s.buildings.filter((b: any) =>
         (b.type === 'house' || b.type === 'stonehouse') && b.built);
       for (const h of houses) h.store.firewood = 500;
+      // Same reason as `burnDuring`: a load already in transit would land inside the window and
+      // net off against the burn being measured.
+      for (const c of s.citizens) {
+        if (c.task?.kind === 'toLarder') { c.carry = null; c.task = { kind: 'idle' }; }
+      }
       const roofless = s.citizens.filter((c: any) => c.homeId === null).length;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       barn.store.firewood = 400;
@@ -3748,6 +3770,9 @@ test.describe('consumption and fuel', () => {
         s.citizens.some((c: any) => c.homeId === b.id));
       if (!house) return null;
       house.store.firewood = 500;
+      for (const c of s.citizens) {
+        if (c.task?.kind === 'toLarder') { c.carry = null; c.task = { kind: 'idle' }; }
+      }
       const before = house.store.firewood;
       for (let i = 0; i < 1200; i++) g.debugAdvance(0.1);
       return { burned: before - (house.store.firewood ?? 0) };
@@ -5133,7 +5158,7 @@ test.describe('the barn opens at both ends', () => {
     expect(out.fromNorth).toEqual({ x: out.north.x + 0.5, y: out.north.y + 0.5 });
   });
 
-  test('a site may cover one barn door, but not the last one', async ({ page }) => {
+  test('neither barn door may be built over', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate((clearSrc) => {
       const g = (window as any).__village;
@@ -5149,22 +5174,151 @@ test.describe('the barn opens at both ends', () => {
       const doors = g.debugEntrances(barn.id);
       const south = doors[0].y > doors[1].y ? doors[0] : doors[1];
       const north = south === doors[0] ? doors[1] : doors[0];
-      // A 2x2 house dropped with its top-left on the south door covers that door and nothing else.
-      const first = g.debugCanPlace('house', south.x, south.y);
-      const id = first.ok ? g.debugPlace('house', south.x, south.y) : null;
-      // Stand it up: a site is still a patch of dirt anyone can walk over, and the door underneath
-      // one is not blocked until there are walls on top of it.
-      const built = s.buildings.find((b: any) => b.id === id);
-      if (built) built.built = true;
-      s.navVersion = (s.navVersion ?? 0) + 1;
-      // Now the north door is the barn's last way in, and a second house may not take it. Sit this
-      // one so its bottom-right corner lands on that tile, turned so its own door faces away.
-      const second = g.debugCanPlace('house', north.x - 1, north.y - 1, 2);
-      return { first, placed: id != null, second };
+      // Both ends, each covered by a 2x2 house turned so its own door faces away from the barn.
+      const onSouth = g.debugCanPlace('house', south.x, south.y);
+      const onNorth = g.debugCanPlace('house', north.x - 1, north.y - 1, 2);
+      // And a plot that touches neither door still goes down, so this is a rule about doors and
+      // not a barn that has quietly become unbuildable-around.
+      const clearOfBoth = g.debugCanPlace('house', barn.x + 5, barn.y + 1);
+      return { onSouth, onNorth, clearOfBoth };
     }, clearAround);
-    expect(out.first.ok, JSON.stringify(out.first)).toBe(true);
-    expect(out.placed).toBe(true);
-    expect(out.second.ok, JSON.stringify(out.second)).toBe(false);
-    expect(out.second.reason).toContain("Barn's door");
+    // Giving one door up for a building was allowed once, on the grounds that the other was on
+    // walkable ground. Walkable is not reachable: barns lost their one usable door and villages
+    // starved and froze beside a full barn nobody could get into.
+    expect(out.onSouth.ok, JSON.stringify(out.onSouth)).toBe(false);
+    expect(out.onSouth.reason).toContain("Barn's door");
+    expect(out.onNorth.ok, JSON.stringify(out.onNorth)).toBe(false);
+    expect(out.onNorth.reason).toContain("Barn's door");
+    expect(out.clearOfBoth.ok, JSON.stringify(out.clearOfBoth)).toBe(true);
+  });
+});
+
+test.describe('households keep their hearths stocked', () => {
+  // The village-killer this guards against: putting buildings down stopped households restocking
+  // at all, so every hearth but one sat at zero while the barn held hundreds of firewood and the
+  // whole village froze in its first winter. Three faults fed it — a barn door chosen by distance
+  // rather than by whether it could be walked to, a site allowed to cover a barn's one usable
+  // door, and a larder that always asked for food and so never asked for fuel.
+  test('a village that builds still gets fuel into every hearth', async ({ page }) => {
+    test.setTimeout(120_000);
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      // Seeded: this asserts against a fixed bar, and an unseeded map moves it (see the breeding
+      // tests, which pin the RNG for the same reason).
+      let x = 1000003 + 12345;
+      Math.random = () => ((x = (1103515245 * x + 12345) & 0x7fffffff) / 0x7fffffff);
+      g.startNewGame('small', 'easy', false); // disasters off: a fire is not what is on trial
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      const near = (t: string) => {
+        for (let r = 3; r < 30; r++)
+          for (let dy = -r; dy <= r; dy++)
+            for (let dx = -r; dx <= r; dx++) {
+              if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+              if (g.debugCanPlace(t, barn.x + dx, barn.y + dy).ok)
+                return g.debugPlace(t, barn.x + dx, barn.y + dy);
+            }
+        return null;
+      };
+      // The ordinary opening a player makes: somewhere to work, somewhere to live.
+      for (const t of ['gatherer', 'hunting', 'woodcutter', 'lumberyard']) near(t);
+      for (let i = 0; i < 4; i++) near('house');
+      g.debugSetBuilders(4);
+
+      let worstCold = 0; // most households ever left with no fuel while the barns had some
+      for (let q = 0; q < 6; q++) {
+        g.debugAdvance(610);
+        const roofed = s.buildings.filter(
+          (b: any) => b.built && (b.type === 'house' || b.type === 'stonehouse')
+            && s.citizens.some((c: any) => c.homeId === b.id),
+        );
+        const cold = roofed.filter((b: any) => (b.store.firewood ?? 0) <= 0 && (b.store.coal ?? 0) <= 0);
+        if (g.debugTotalStored('firewood') > 0) worstCold = Math.max(worstCold, cold.length);
+        if (s.citizens.length === 0) break;
+      }
+      return {
+        pop: s.citizens.length,
+        worstCold,
+        stranded: (s.events ?? []).filter((e: any) => /nobody is carrying it/.test(e.text)).length,
+        froze: (s.events ?? []).filter((e: any) => /froze in the cold/.test(e.text)).length,
+      };
+    });
+    // Alive, warm, and the game never had cause to report fuel it could not deliver.
+    expect(out.pop, 'the village survived its first winter').toBeGreaterThan(0);
+    expect(out.stranded, 'no "the barns are stocked but nobody is carrying it"').toBe(0);
+    expect(out.froze, 'nobody froze').toBe(0);
+    expect(out.worstCold, 'no household sat with no fuel while the barns held some').toBe(0);
+  });
+});
+
+test.describe('difficulty actually differs', () => {
+  test('Hard starts on half of what Normal does', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const read = (d: string) => {
+        g.startNewGame('small', d, false);
+        const barn = g.state.buildings.find((b: any) => b.type === 'barn');
+        return {
+          food: Math.round(g.debugTotalFood()),
+          tools: barn.store.tools ?? 0,
+          clothing: barn.store.clothing ?? 0,
+          houses: g.state.buildings.filter((b: any) => b.type === 'house').length,
+        };
+      };
+      return { normal: read('normal'), hard: read('hard'), easy: read('easy') };
+    });
+    // The two settings that used to be the same game.
+    expect(out.hard.food).toBe(Math.round(out.normal.food / 2));
+    expect(out.hard.tools).toBe(out.normal.tools / 2);
+    expect(out.hard.clothing).toBe(out.normal.clothing / 2);
+    // Neither hands over houses; Easy still does.
+    expect(out.normal.houses).toBe(0);
+    expect(out.hard.houses).toBe(0);
+    expect(out.easy.houses).toBeGreaterThan(0);
+  });
+});
+
+test.describe('low stock is reported once, and shown', () => {
+  test('a stock that falls low says so once and turns its chip red', async ({ page }) => {
+    test.setTimeout(120_000);
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', false); // opens with no firewood at all
+      g.ui.hideOverlay();
+      const s = g.state;
+      const lowLines = () =>
+        (s.events ?? []).filter((e: any) => / is low$/.test(e.text)).map((e: any) => e.text);
+      g.debugAdvance(610);
+      const afterFirst = lowLines();
+      for (let q = 0; q < 5; q++) g.debugAdvance(610);
+      const afterMore = lowLines();
+
+      g.ui.updateHud(s, 1, false);
+      const chips = [...document.querySelectorAll('#stat-resources .stat')].map((c: any) => ({
+        low: c.classList.contains('low'),
+        full: c.classList.contains('full'),
+        down: getComputedStyle(c.querySelector('.dn')).display !== 'none',
+        up: getComputedStyle(c.querySelector('.cap')).display !== 'none',
+      }));
+      return {
+        firstFirewood: afterFirst.filter((t: string) => /Firewood/.test(t)).length,
+        laterFirewood: afterMore.filter((t: string) => /Firewood/.test(t)).length,
+        // The message is the same shape for every resource, not a bespoke sentence each.
+        allGeneric: afterMore.every((t: string) => / is low$/.test(t)),
+        anyLow: chips.some((c) => c.low),
+        arrowsMatch: chips.every((c) => c.down === c.low && c.up === c.full),
+        neverBoth: chips.every((c) => !(c.low && c.full)),
+      };
+    });
+    expect(out.firstFirewood, 'the empty woodpile is reported').toBe(1);
+    // Latched: it is news when it happens, not four times a year for the rest of the game.
+    expect(out.laterFirewood, 'and not repeated every season after').toBe(1);
+    expect(out.allGeneric).toBe(true);
+    expect(out.anyLow).toBe(true);
+    expect(out.arrowsMatch, 'red ▼ exactly when low, green ▲ exactly when full').toBe(true);
+    expect(out.neverBoth).toBe(true);
   });
 });

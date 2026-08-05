@@ -18,7 +18,9 @@ import {
   isWorkplace,
   nextBuildingName,
   entranceAt,
+  entrancesAt,
   entranceTile,
+  entranceTiles,
   hasDoor,
 } from '../types';
 import { getTile, inBounds, tileIndex } from './world';
@@ -131,15 +133,22 @@ export function canPlace(
   // and a site dropped across someone else's door strands them just as surely. Turning the
   // building is the fix for both, which is what the rotate control is for.
   if (hasDoor(type)) {
-    const door = entranceAt(x, y, fw, fh, rot);
-    if (!isWalkable(s, door.x, door.y)) {
+    // One way in is enough. A barn has a door at each end, and being backed onto a cliff at one
+    // of them is fine so long as the other opens onto ground somebody can stand on.
+    const doors = entrancesAt(x, y, fw, fh, rot, type);
+    if (!doors.some((d) => isWalkable(s, d.x, d.y))) {
       return { ok: false, reason: 'Its door would be blocked — turn it to face open ground' };
     }
   }
   for (const b of s.buildings) {
     if (!hasDoor(b.type)) continue;
-    const e = entranceTile(b);
-    if (e.x >= x && e.x < x + fw && e.y >= y && e.y < y + fh) {
+    // Same rule from the other side: a site may cover one of a building's doors, but not the
+    // last one it has.
+    const doors = entranceTiles(b);
+    const covers = (e: { x: number; y: number }): boolean =>
+      e.x >= x && e.x < x + fw && e.y >= y && e.y < y + fh;
+    const left = doors.filter((e) => !covers(e) && isWalkable(s, e.x, e.y));
+    if (doors.some(covers) && left.length === 0) {
       return { ok: false, reason: `Would block the ${BUILDING_DEFS[b.type].name}'s door` };
     }
   }

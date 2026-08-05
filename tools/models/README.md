@@ -31,6 +31,15 @@ textures in `public/textures/` rather than packing its own copies. Register it i
 Textures come from `tools/textures/materials.py`; rerun that if you change a material, then
 rebuild the models so they pick up the new maps.
 
+**A bare `build.py` retints the whole village.** The glTF exporter cannot represent the Mix node
+that multiplies a texture by its material colour, so `export_gltf` writes the colour back as
+`baseColorFactor` (see `common.py`). That fix landed after every building had already been
+exported, and only the tree models have been rebuilt since — so rebuilding everything applies
+never-before-shipped tints to all 29 models at once. That is a deliberate visual change, not a
+no-op rebuild. Build the models you actually changed (`python3 tools/models/build.py barn school`),
+and if only their geometry moved, drop the new factor back out of any material that also has a
+`baseColorTexture` so they still match their neighbours.
+
 ## Editing by hand in Blender
 
 These are ordinary Blender scripts. To work on one interactively:

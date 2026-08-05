@@ -434,6 +434,13 @@ export interface BuildingDef {
   workRadius?: number;
   /** Immune to fire — never ignites and fire never spreads to it (wells, stone-built barns). */
   fireproof?: boolean;
+  /**
+   * Doors, when one is not enough. A barn has big doors at both gable ends: the whole village
+   * carries things in and out of it all day, and a single door meant every load queued at the
+   * same corner of the plot however the building was turned. Two means a villager walks to
+   * whichever end is nearer.
+   */
+  doors?: 2;
   desc: string;
 }
 
@@ -988,6 +995,30 @@ export function footprintH(b: Placed): number {
  */
 export function entranceTile(b: Building): { x: number; y: number } {
   return entranceAt(b.x, b.y, footprintW(b), footprintH(b), b.rot ?? 0);
+}
+
+/** Every door of a building, in the order they should be preferred. */
+export function entranceTiles(b: Placed): { x: number; y: number }[] {
+  return entrancesAt(b.x, b.y, footprintW(b), footprintH(b), b.rot ?? 0, b.type);
+}
+
+/**
+ * `entranceTiles` for a footprint that isn't a building yet.
+ *
+ * A second door is simply the first one on the opposite face — a half turn of the same rule — so
+ * a barn always has a way in from both ends whichever way round it was built.
+ */
+export function entrancesAt(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  rot: number,
+  type: BuildingType,
+): { x: number; y: number }[] {
+  const front = entranceAt(x, y, w, h, rot);
+  if (BUILDING_DEFS[type].doors !== 2) return [front];
+  return [front, entranceAt(x, y, w, h, (rot + 2) % 4)];
 }
 
 /** `entranceTile` for a footprint that isn't a building yet — what placement checks against. */
@@ -2028,9 +2059,9 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     desc: 'Stores goods like a barn (2000 units of space to a barn\'s 5000), and its vendors carry food, fuel and coats out to every home inside its circle, so households never have to leave work to shop. Three vendors reach the furthest.',
   },
   barn: {
-    type: 'barn', name: 'Barn', emoji: '🛖', category: 'resources', w: 3, h: 3,
+    type: 'barn', name: 'Barn', emoji: '🛖', category: 'resources', w: 3, h: 4, doors: 2,
     cost: { wood: 16 }, jobs: 0, buildTime: 6, fireproof: true,
-    desc: 'The village store, and it cannot burn down. It holds 5000 units of space rather than 5000 items — a log takes one, a sack of grain a quarter, a cow four. Tap it to see what is inside.',
+    desc: 'The village store, and it cannot burn down. It holds 5000 units of space rather than 5000 items — a log takes one, a sack of grain a quarter, a cow four. Big doors at both ends, so a carrier walks to whichever is nearer. Tap it to see what is inside.',
   },
 };
 

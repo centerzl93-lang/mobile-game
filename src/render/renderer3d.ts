@@ -13,7 +13,7 @@ import {
   footprintH,
   buildStage,
   framedFraction,
-  entranceAt,
+  entrancesAt,
   MAP_W,
   MAP_H,
   ADULT_AGE,
@@ -318,6 +318,7 @@ export class Renderer3D {
   private ghost!: THREE.Group;
   /** Ground arrow on the door tile of the pending building, pointing out from its front. */
   private faceArrow!: THREE.Group;
+  private faceArrowBack!: THREE.Group;
   /** Which building type (and footprint) the ghost currently holds a silhouette for. */
   private ghostKey = '';
   /** Hash of which tiles carry a finished tunnel — a change means the terrain must be recut. */
@@ -611,6 +612,10 @@ export class Renderer3D {
     this.faceArrow = makeFaceArrow();
     this.faceArrow.visible = false;
     this.scene.add(this.faceArrow);
+    // A barn opens at both ends, and both tiles have to stay walkable, so the preview shows both.
+    this.faceArrowBack = makeFaceArrow();
+    this.faceArrowBack.visible = false;
+    this.scene.add(this.faceArrowBack);
     this.selRing = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.06, 6, 20), new THREE.MeshBasicMaterial({ color: 0xffd76b }));
     this.selRing.rotation.x = -Math.PI / 2;
     this.selRing.visible = false;
@@ -1929,10 +1934,15 @@ export class Renderer3D {
       this.ghost.position.set(pv.tx + fw / 2, TOP, pv.ty + fh / 2);
       // The arrow sits on the door tile and points away from the building, so the silhouette
       // reads as having a front rather than being a symmetrical lump.
-      const door = entranceAt(pv.tx, pv.ty, fw, fh, rot);
+      const doors = entrancesAt(pv.tx, pv.ty, fw, fh, rot, pv.type);
       this.faceArrow.visible = true;
-      this.faceArrow.position.set(door.x + 0.5, TOP + 0.05, door.y + 0.5);
+      this.faceArrow.position.set(doors[0].x + 0.5, TOP + 0.05, doors[0].y + 0.5);
       this.faceArrow.rotation.y = -rot * (Math.PI / 2);
+      this.faceArrowBack.visible = doors.length > 1;
+      if (doors[1]) {
+        this.faceArrowBack.position.set(doors[1].x + 0.5, TOP + 0.05, doors[1].y + 0.5);
+        this.faceArrowBack.rotation.y = -((rot + 2) % 4) * (Math.PI / 2);
+      }
       // Green means it will go here, red means it will not. The tint is applied over the
       // silhouette rather than replacing it, so the building stays recognisable either way.
       this.ghost.traverse((o) => {
@@ -1942,6 +1952,7 @@ export class Renderer3D {
     } else {
       this.ghost.visible = false;
       this.faceArrow.visible = false;
+      this.faceArrowBack.visible = false;
     }
 
     let selPos: { x: number; y: number; r: number } | null = null;
@@ -2116,16 +2127,18 @@ export class Renderer3D {
     for (const [, obj] of this.buildingMeshes) this.disposeBuilding(obj);
     this.buildingMeshes.clear();
     for (const o of [this.ghost, this.selRing, this.workRing, this.marquee, this.boat]) this.scene.remove(o);
-    // The facing arrow is rebuilt by `init`, so the old one has to go with the rest of the map.
-    // It draws with `depthTest: false` — a leaked one is not merely still there, it is still
+    // The facing arrows are rebuilt by `init`, so the old ones have to go with the rest of the
+    // map. They draw with `depthTest: false` — a leaked one is not merely still there, it is still
     // there *through the terrain*, pointing at a door on a map that no longer exists.
-    this.scene.remove(this.faceArrow);
-    this.faceArrow.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
-      m.geometry.dispose();
-      (m.material as THREE.Material).dispose();
-    });
+    for (const arrow of [this.faceArrow, this.faceArrowBack]) {
+      this.scene.remove(arrow);
+      arrow.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
+        m.geometry.dispose();
+        (m.material as THREE.Material).dispose();
+      });
+    }
     this.sig = { land: -1, tree: -1, rock: -1, iron: -1, path: -1, mark: -1, bld: '' };
     this.ready = false;
   }

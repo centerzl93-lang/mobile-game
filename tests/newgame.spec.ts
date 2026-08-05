@@ -816,7 +816,7 @@ test.describe('jobs & builders', () => {
       const c = s.citizens[0];
       const cx = Math.floor(c.x), cy = Math.floor(c.y);
       // `b.w` is set only on the ranch and the field; everything else takes its size from the
-      // def, so ask the game rather than assuming 2 — the barn alone is 3x3, and a path planned
+      // def, so ask the game rather than assuming 2 — the barn alone is 3x4, and a path planned
       // under it is one no laborer can ever lay.
       const covers = (b: any, x: number, y: number) => {
         const f = g.debugFootprint(b.type);
@@ -5041,5 +5041,110 @@ test.describe('clearing a build site', () => {
     // A site is not a post: until it is finished the trade wants nobody, and the board says so.
     const row = page.locator('#jobboard .job-row').filter({ hasText: 'Gatherer' });
     await expect(row).toContainText('0 working / 0 wanted');
+  });
+});
+
+test.describe('the barn opens at both ends', () => {
+  // Clear the ground around a building so door tiles are walkable whatever the map dealt, and
+  // tell the nav layer the world changed.
+  const clearAround = `(g, b, pad) => {
+    const s = g.state;
+    const f = g.debugFootprint(b.type);
+    for (let dy = -pad; dy < f.h + pad; dy++)
+      for (let dx = -pad; dx < f.w + pad; dx++) {
+        const x = b.x + dx, y = b.y + dy;
+        if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue;
+        const t = s.tiles[y * s.w + x];
+        t.type = 'grass';
+        t.trees = 0;
+        delete t.stone;
+        delete t.iron;
+      }
+    s.navVersion = (s.navVersion ?? 0) + 1;
+  }`;
+
+  test('two doors, on opposite faces, both off the footprint', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      const f = g.debugFootprint('barn');
+      const doors = g.debugEntrances(barn.id);
+      const inside = (d: any) =>
+        d.x >= barn.x && d.x < barn.x + f.w && d.y >= barn.y && d.y < barn.y + f.h;
+      // A house has one; that is the contract the second door is an exception to.
+      const house = s.buildings.find((b: any) => b.type === 'house');
+      return {
+        f,
+        doors,
+        anyInside: doors.some(inside),
+        houseDoors: house ? g.debugEntrances(house.id).length : null,
+      };
+    });
+    // 3x4, big enough that walking round it to the one door was the long way.
+    expect(out.f).toEqual({ w: 3, h: 4 });
+    expect(out.doors).toHaveLength(2);
+    expect(out.anyInside, 'a door tile is standing room, not part of the building').toBe(false);
+    // Same column, one off each gable end: the two are a footprint's height apart.
+    expect(out.doors[0].x).toBe(out.doors[1].x);
+    expect(Math.abs(out.doors[0].y - out.doors[1].y)).toBe(out.f.h + 1);
+    expect(out.houseDoors).toBe(1);
+  });
+
+  test('a carrier walks to whichever door is nearer', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((clearSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      eval(clearSrc)(g, barn, 3);
+      const doors = g.debugEntrances(barn.id);
+      const south = doors[0].y > doors[1].y ? doors[0] : doors[1];
+      const north = south === doors[0] ? doors[1] : doors[0];
+      // Stand two tiles out from each end in turn and ask where the walk ends.
+      const fromSouth = g.debugApproach(barn.id, south.x + 0.5, south.y + 2.5);
+      const fromNorth = g.debugApproach(barn.id, north.x + 0.5, north.y - 2.5);
+      return { south, north, fromSouth, fromNorth };
+    }, clearAround);
+    expect(out.fromSouth).toEqual({ x: out.south.x + 0.5, y: out.south.y + 0.5 });
+    expect(out.fromNorth).toEqual({ x: out.north.x + 0.5, y: out.north.y + 0.5 });
+  });
+
+  test('a site may cover one barn door, but not the last one', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((clearSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // Nothing but the barn, on clear ground, so the only thing in the way is what we put there.
+      s.buildings = s.buildings.filter((b: any) => b.id === barn.id);
+      s.citizens = [];
+      eval(clearSrc)(g, barn, 5);
+      barn.store.wood = 1000;
+      barn.store.stone = 1000;
+      const doors = g.debugEntrances(barn.id);
+      const south = doors[0].y > doors[1].y ? doors[0] : doors[1];
+      const north = south === doors[0] ? doors[1] : doors[0];
+      // A 2x2 house dropped with its top-left on the south door covers that door and nothing else.
+      const first = g.debugCanPlace('house', south.x, south.y);
+      const id = first.ok ? g.debugPlace('house', south.x, south.y) : null;
+      // Stand it up: a site is still a patch of dirt anyone can walk over, and the door underneath
+      // one is not blocked until there are walls on top of it.
+      const built = s.buildings.find((b: any) => b.id === id);
+      if (built) built.built = true;
+      s.navVersion = (s.navVersion ?? 0) + 1;
+      // Now the north door is the barn's last way in, and a second house may not take it. Sit this
+      // one so its bottom-right corner lands on that tile, turned so its own door faces away.
+      const second = g.debugCanPlace('house', north.x - 1, north.y - 1, 2);
+      return { first, placed: id != null, second };
+    }, clearAround);
+    expect(out.first.ok, JSON.stringify(out.first)).toBe(true);
+    expect(out.placed).toBe(true);
+    expect(out.second.ok, JSON.stringify(out.second)).toBe(false);
+    expect(out.second.reason).toContain("Barn's door");
   });
 });

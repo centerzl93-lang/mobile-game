@@ -2,7 +2,7 @@
 
 School, tavern, chapel, cemetery, herbalist, hospital, well and barn. These are the buildings a
 player looks at rather than through, so each one leans on a single strong silhouette cue — a
-bell cupola, a steeple, a run of headstones, a great pair of barn doors.
+bell cupola, a steeple, a run of headstones, a great pair of barn doors at each gable end.
 """
 
 import math
@@ -16,17 +16,20 @@ from style import THATCH_PITCH, courses, palette, shingled_roof, half_timber
 
 
 def school():
-    """School (3 x 4): a long plaster hall under a bell cupola, with a yard at the door end.
+    """School (3 x 4): a two-storey plaster hall under a bell cupola, with a yard at the door end.
 
     The hall runs the length of the plot with its ridge along it, so from above the school reads
-    as the one *long* civic building — the shape that tells it apart from the tavern's square
-    two-storey block at the same distance.
+    as the one *long* civic building. It now stands two storeys to match — the tallest thing in a
+    village that is otherwise all cottages, which is what a schoolhouse should look like from
+    across the map. A band course marks the floor between them and the upper windows sit above it,
+    so the extra height reads as a second storey rather than one very tall room.
     """
     reset_scene()
     m = palette()
     parts = []
     hw, hd = 2.30, 2.90
-    base_h, wall_h, roof_h = 0.22, 1.16, 0.98
+    base_h, wall_h, roof_h = 0.22, 2.02, 0.98
+    upper_h = 1.06  # height of the band course marking the first floor
     oy = -0.32
 
     footing = box("Footing", (hw + 0.12, hd + 0.12, base_h), (0, oy, base_h / 2), m["stone"])
@@ -39,12 +42,18 @@ def school():
     parts += walls + roof
 
     parts += door("Hall", oy + hd / 2, base_h, m, width=0.46, height=0.76)
+    # The band course: a plate right round the building at first-floor level, which is what makes
+    # two storeys read as two rather than as one wall that got taller.
+    parts.append(box("Band", (hw + 0.10, hd + 0.10, 0.10), (0, oy, base_h + upper_h), m["timber"]))
+    # Windows on both floors of the gable end, and down both long sides — a schoolroom is the one
+    # building that wants daylight.
     for sx in (-1, 1):
         parts += window("Hall", sx * 0.72, oy + hd / 2, base_h + 0.84, m, width=0.34, height=0.34)
-    # Windows down both long sides — a schoolroom is the one building that wants daylight.
+        parts += window("HallUp", sx * 0.72, oy + hd / 2, base_h + upper_h + 0.42, m, width=0.34, height=0.34)
     for dy in (-0.92, 0.0, 0.92):
         for sx in (-1, 1):
             parts += window("Side", oy + dy, sx * (hw / 2), base_h + 0.84, m, width=0.34, height=0.34, axis="x")
+            parts += window("SideUp", oy + dy, sx * (hw / 2), base_h + upper_h + 0.42, m, width=0.34, height=0.34, axis="x")
 
     # Bell cupola straddling the ridge — the one thing that tells a school from a big house.
     cz = base_h + wall_h + roof_h
@@ -399,16 +408,19 @@ def well():
 
 
 def barn():
-    """Storage barn (3 x 3): tall doors on the gable end, boarded walls, a shallower roof.
+    """Storage barn (3 x 4): a long boarded shed with cart doors at *both* gable ends.
 
     Deliberately the plainest big building in the village — no plaster, no windows, just boards
-    and a pair of doors big enough to back a cart through. It is also the one building that
-    should look *full*, so at 3x3 it fills nearly its whole plot rather than sitting in a yard.
+    and doors big enough to back a cart through. The whole village carries things in and out of it
+    all day, so it has an end open at each gable and the simulation sends each villager to
+    whichever is nearer; the model has to show that, or the second door is a lie. It is also the
+    one building that should look *full*, so it fills nearly its whole plot rather than sitting in
+    a yard.
     """
     reset_scene()
     m = palette()
     parts = []
-    bw, bd = 2.42, 2.30
+    bw, bd = 2.42, 3.23  # 3 x 4 tiles
     base_h, wall_h, roof_h = 0.20, 1.34, 0.98
 
     footing = box("Footing", (bw + 0.12, bd + 0.12, base_h), (0, 0, base_h / 2), m["stone_dark"])
@@ -437,22 +449,28 @@ def barn():
     parts += shingled_roof(bw, bd, roof_h, base_h + wall_h, m, overhang=0.16,
                            keys=("shake", "shake_light"))
 
-    # The big doors, with a strap-hinged brace across each leaf.
-    for sx in (-1, 1):
-        leaf = box("Door", (0.52, 0.09, 1.10), (sx * 0.28, bd / 2 - 0.03, base_h + 0.55), m["timber"])
-        parts.append(leaf)
-        for z in (base_h + 0.24, base_h + 0.86):
-            parts.append(box("Strap", (0.50, 0.06, 0.06), (sx * 0.28, bd / 2 - 0.05, z), m["metal"]))
-    parts.append(box("DoorHead", (1.22, 0.11, 0.11), (0, bd / 2 - 0.03, base_h + 1.16), m["timber"]))
-    # A hay hatch high in the gable, a loading ramp at the doors, and goods stacked outside.
-    parts.append(box("Hatch", (0.40, 0.08, 0.34), (0, bd / 2 - 0.02, base_h + wall_h - 0.04), m["timber_dark"]))
+    # The big doors, with a strap-hinged brace across each leaf — the same pair at each gable end.
+    # They stand *proud* of the boarding, and the straps proud of them again: sunk flush the way
+    # they were, a door on a wall of the same timber is a slightly paler rectangle nobody reads as
+    # a way in, which is no good at all when the whole point is that there are two of them.
+    for sy in (-1, 1):
+        for sx in (-1, 1):
+            leaf = box("Door", (0.56, 0.09, 1.10), (sx * 0.30, sy * (bd / 2 + 0.015), base_h + 0.55), m["timber"])
+            parts.append(leaf)
+            for z in (base_h + 0.24, base_h + 0.86):
+                parts.append(box("Strap", (0.54, 0.06, 0.06), (sx * 0.30, sy * (bd / 2 + 0.07), z), m["metal"]))
+        parts.append(box("DoorHead", (1.30, 0.11, 0.11), (0, sy * (bd / 2 + 0.02), base_h + 1.16), m["timber"]))
+        # A hay hatch high in each gable, and a loading ramp down to the ground at each end.
+        parts.append(box("Hatch", (0.40, 0.08, 0.34), (0, sy * (bd / 2 + 0.01), base_h + wall_h - 0.04), m["timber_dark"]))
+        ramp = box("Ramp", (1.40, 0.46, 0.12), (0, sy * (bd / 2 + 0.22), base_h - 0.04), m["timber"])
+        ramp.rotation_euler = (math.radians(14 * sy), 0, 0)
+        parts.append(ramp)
+    # One hoist beam, over the front gable only — two would read as a mirror rather than a barn.
     parts.append(box("Hoist", (0.11, 0.52, 0.11), (0, bd / 2 + 0.20, base_h + wall_h + 0.30), m["timber"]))
-    ramp = box("Ramp", (1.40, 0.46, 0.12), (0, bd / 2 + 0.22, base_h - 0.04), m["timber"])
-    ramp.rotation_euler = (math.radians(14), 0, 0)
-    parts.append(ramp)
-    parts += crate_cluster("Yard", (1.12, 1.24, 0.0), m, count=4)
-    parts += barrel("Yard", (-1.24, 1.28, 0.19), m["timber"])
-    parts += barrel("Yard2", (-1.30, 0.82, 0.19), m["timber_dark"])
+    # Goods stacked along the *sides*: both ends have to stay clear for carts now.
+    parts += crate_cluster("Yard", (1.34, 0.30, 0.0), m, count=4)
+    parts += barrel("Yard", (-1.36, 0.34, 0.19), m["timber"])
+    parts += barrel("Yard2", (-1.38, -0.16, 0.19), m["timber_dark"])
 
     return finish(parts, "Barn")
 

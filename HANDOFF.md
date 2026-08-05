@@ -1,8 +1,8 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-08-03 (seven-item gameplay pass, staged construction, lakes, landscape play,
-> building footprints; see Current State)
+> Last updated: 2026-08-05 (two-door barn, taller school, per-profession job board, routed roads,
+> demolition as a job, codex; see Current State)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -21,7 +21,8 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **roads are routed, not traced**,
+Latest work: **a barn with a door at each end**,
+**roads are routed, not traced**,
 **demolition as a job + house upgrades + a delivering market**,
 **a codex + opening caps**, **a HUD/toolbar pass**, **a real app icon**, **build sites show what is in the way**, **merchant docks properly**,
 **stockpile limits**, **workers go where the work is**,
@@ -36,6 +37,60 @@ Latest work: **roads are routed, not traced**,
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### The barn is 3×4 and opens at both ends (this session)
+
+The barn is where the whole village walks all day — every harvest, every haul, every builder
+fetching materials — and it had one door like a cottage. However the building was turned, every
+load queued at the same corner of the plot. It is now **3×4** with a cart door at each gable.
+
+`BuildingDef.doors?: 2` is the flag (`types.ts`); nothing else sets it yet. `entrancesAt(x, y, w,
+h, rot, type)` returns every door of a footprint — the second is simply `entranceAt(…, (rot + 2) %
+4)`, the same rule half a turn round, so a barn opens at both ends whichever way it is built.
+`entranceTiles(b)` is the placed-building form. `entranceTile`/`entranceAt` still exist and still
+mean "the front one", which is what a one-door building wants.
+
+Three call sites had to learn that a door is now a *set*:
+
+- **`buildingApproach(s, b, from?)`** (`simulation.ts`) picks the nearest **walkable** door to
+  whoever is walking there. `from` is the villager; without it the front door is the answer, which
+  is what layout checks want. Every `goTo(c, buildingApproach(s, X))` now passes `c` — about thirty
+  sites — and so do the distance-ranking ones in `pickSite`, `leisureDestination`,
+  `nearestUnbuiltNeeding` and `workSpot`. **Miss one and it still compiles**: `from` is optional,
+  and the villager silently walks to the far end of the barn.
+- **`canPlace`** (`buildings.ts`) asks that *one* door be walkable, not all of them — a barn backed
+  onto a cliff at one end is fine. From the other side, a site may cover one of a neighbour's doors
+  but never its last one.
+- **The founding layout** (`state.ts`) keeps starter houses off *every* barn door, not just the
+  front one.
+
+The placement ghost draws a second facing arrow for a two-door building (`faceArrowBack` in
+`renderer3d.ts`) so the player can see both tiles that have to stay clear. Both arrows are disposed
+on teardown — they draw with `depthTest: false`, so a leaked one points at a door through the
+terrain of a map that no longer exists.
+
+**Model** (`tools/models/civic.py`): `bw, bd = 2.42, 3.23`, with doors, straps, head, hay hatch and
+loading ramp mirrored `for sy in (-1, 1)`. One hoist beam over the front gable only — two read as a
+mirror rather than a barn — and the yard goods moved to the *sides*, because both ends have to stay
+clear for carts. The door leaves and their strap hinges now stand **proud** of the boarding; sunk
+flush the way they were, a door on a wall of the same timber is a slightly paler rectangle nobody
+reads as a way in.
+
+**Old saves**: footprints come from the def, not the save, so a barn in an existing village grows a
+tile southward on load and may end up overlapping whatever was behind it. That is how the earlier
+footprint pass behaved too and the save version is unchanged (still 12) — the overlap is cosmetic,
+since nothing re-runs `canPlace` on a loaded building.
+
+The school got a second storey in the same pass: `wall_h` 1.16 → 2.02 with a band course at
+first-floor level and a second row of windows, so the hall stands about 3 units where the cottages
+around it stand about 2. Its footprint is unchanged (3×4).
+
+**Careful with `tools/models/build.py`.** Only the tree models have ever shipped the
+`baseColorFactor` tint that `export_gltf` re-attaches (see `common.py`); every building was
+exported before that fix. A plain rebuild therefore retints **the whole village** — 29 files — which
+is a deliberate visual decision, not a no-op. The barn and school were rebuilt with that factor
+stripped back out of their textured materials, so they still match their neighbours. If the retint
+is ever wanted, it is one `python3 tools/models/build.py` away and should be its own change.
 
 ### The job board is per profession (this session)
 It listed one row per *building* and a dead "Not built yet" catalogue underneath. Now it lists one

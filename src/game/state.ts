@@ -8,7 +8,7 @@ import {
   footprintW,
   footprintH,
   entranceAt,
-  entranceTile,
+  entranceTiles,
   hasDoor,
   ranchCapacity,
   SIZABLE,
@@ -207,8 +207,11 @@ function placeStartHouses(s: GameState, start: { x: number; y: number }, count: 
         return false;
       }
       if (!hasDoor(b.type)) continue;
-      const e = entranceTile(b);
-      if (e.x >= x && e.x < x + 2 && e.y >= y && e.y < y + 2) return false;
+      // Every door, not just the front one: the founding barn opens at both ends and a starter
+      // house parked on the back one would waste half of it before the first winter.
+      for (const e of entranceTiles(b)) {
+        if (e.x >= x && e.x < x + 2 && e.y >= y && e.y < y + 2) return false;
+      }
     }
     return true;
   };

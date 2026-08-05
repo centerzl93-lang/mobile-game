@@ -61,6 +61,7 @@ import {
   PATH_STONE,
   PATH_STONE_PLAN,
   PATH_BRIDGE,
+  entranceTiles,
 } from './types';
 import { newGame } from './game/state';
 import {
@@ -85,6 +86,7 @@ import {
   limitStock,
   cappedOut,
   debugWorkSpotFor,
+  debugApproach,
 } from './game/simulation';
 import {
   canPlace,
@@ -1384,6 +1386,12 @@ class Game {
     return this.placeSize(type);
   }
 
+  /** Debug/testing helper: every door tile of a placed building, front first. */
+  debugEntrances(id: number): { x: number; y: number }[] {
+    const b = this.state.buildings.find((x) => x.id === id);
+    return b ? entranceTiles(b) : [];
+  }
+
   /**
    * Debug/testing helper: seconds of work a building takes to put up.
    *
@@ -1455,6 +1463,12 @@ class Game {
     const c = this.state.citizens.find((x) => x.id === citizenId)!;
     const b = this.state.buildings.find((x) => x.id === c.jobId)!;
     return debugWorkSpotFor(this.state, c, b);
+  }
+
+  /** Debug/testing helper: the tile a villager standing at (x, y) would walk to for a building. */
+  debugApproach(id: number, x: number, y: number): { x: number; y: number } {
+    const b = this.state.buildings.find((v) => v.id === id)!;
+    return debugApproach(this.state, b, { x, y });
   }
 
   /** Debug/testing helper: the village total of one resource, as the limits rule measures it. */

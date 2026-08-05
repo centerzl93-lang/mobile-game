@@ -85,6 +85,7 @@ import {
   BIRTH_FOOD_SURPLUS_TARGET,
   isFertile,
   entranceTile,
+  entranceTiles,
   hasDoor,
   limitedOutput,
   LimitKey,
@@ -713,12 +714,29 @@ function goTo(c: Citizen, p: { x: number; y: number }): void {
  * whose centre falls on water (e.g. the trading post) this returns the nearest walkable footprint
  * tile, then a walkable neighbour — so builders and workers can actually reach it.
  */
-function buildingApproach(s: GameState, b: Building): { x: number; y: number } {
+function buildingApproach(
+  s: GameState,
+  b: Building,
+  from?: { x: number; y: number },
+): { x: number; y: number } {
   // The door first: a finished building is walked around, not through, and this is the tile
-  // placement guaranteed would stay clear.
+  // placement guaranteed would stay clear. A barn has one at each end, so `from` — whoever is
+  // walking there — picks the near one; without it the front door is the answer, which is what
+  // every placement and layout check wants.
   if (hasDoor(b.type)) {
-    const e = entranceTile(b);
-    if (isWalkable(s, e.x, e.y)) return { x: e.x + 0.5, y: e.y + 0.5 };
+    let best: { x: number; y: number } | null = null;
+    let bestD = Infinity;
+    for (const e of entranceTiles(b)) {
+      if (!isWalkable(s, e.x, e.y)) continue;
+      const p = { x: e.x + 0.5, y: e.y + 0.5 };
+      if (!from) return p;
+      const d = (p.x - from.x) ** 2 + (p.y - from.y) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    if (best) return best;
   }
   const c = buildingCenter(b);
   if (isWalkable(s, Math.floor(c.x), Math.floor(c.y))) return c;
@@ -836,7 +854,7 @@ function stockLarder(s: GameState, c: Citizen, dt: number): boolean {
       c.task = { kind: 'idle' };
       return false;
     }
-    goTo(c, buildingApproach(s, home));
+    goTo(c, buildingApproach(s, home, c));
     if (stepTo(s, c, dt)) {
       home.store[c.carry.kind] = (home.store[c.carry.kind] ?? 0) + c.carry.amount;
       c.carry = null;
@@ -855,7 +873,7 @@ function stockLarder(s: GameState, c: Citizen, dt: number): boolean {
 
   // First leg: fetch a load from the barn. Groceries come home by the basket
   // (LARDER_CARRY_VOLUME), not the single work-load a labourer shifts.
-  goTo(c, buildingApproach(s, barn));
+  goTo(c, buildingApproach(s, barn, c));
   if (stepTo(s, c, dt)) {
     const take = Math.min(carryLimit(want.kind, LARDER_CARRY_VOLUME), want.amount, barn.store[want.kind] ?? 0);
     if (take > 0) {
@@ -907,7 +925,7 @@ function leisureDestination(s: GameState, c: Citizen): { x: number; y: number } 
     let bestD = Infinity;
     for (const b of s.buildings) {
       if (!b.built || !pred(b)) continue;
-      const p = buildingApproach(s, b);
+      const p = buildingApproach(s, b, c);
       if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) continue;
       const d = (p.x - c.x) ** 2 + (p.y - c.y) ** 2;
       if (d < bestD) { bestD = d; best = p; }
@@ -958,11 +976,11 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
   if (c.carry) {
     const barn = nearestBarnWithRoom(s, { x: c.x, y: c.y });
     if (!barn) {
-      goTo(c, buildingApproach(s, b));
+      goTo(c, buildingApproach(s, b, c));
       stepTo(s, c, dt);
       return;
     }
-    goTo(c, buildingApproach(s, barn));
+    goTo(c, buildingApproach(s, barn, c));
     if (stepTo(s, c, dt)) {
       const left = addNearest(s, { x: c.x, y: c.y }, c.carry.kind, c.carry.amount);
       c.carry = left > 0 ? { kind: c.carry.kind, amount: left } : null;
@@ -974,14 +992,14 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
   const missing = firstMissingInput(b);
   if (missing) {
     if (totalStored(s, missing) <= 0) {
-      goTo(c, buildingApproach(s, b)); // wait at the shop
+      goTo(c, buildingApproach(s, b, c)); // wait at the shop
       stepTo(s, c, dt);
       c.timer = 0;
       return;
     }
     const barn = nearestBarnWith(s, buildingCenter(b), missing);
     if (barn) {
-      goTo(c, buildingApproach(s, barn));
+      goTo(c, buildingApproach(s, barn, c));
       if (stepTo(s, c, dt)) {
         const inputs = converterInputs(b);
         const need = inputs.find(([k]) => k === missing)![1];
@@ -1051,8 +1069,17 @@ export function debugWorkSpotFor(s: GameState, c: Citizen, b: Building): { x: nu
   return workSpot(s, c, b);
 }
 
+/** Debug/testing helper: the tile someone standing at `from` would walk to for `b`. */
+export function debugApproach(
+  s: GameState,
+  b: Building,
+  from?: { x: number; y: number },
+): { x: number; y: number } {
+  return buildingApproach(s, b, from);
+}
+
 function workSpot(s: GameState, c: Citizen, b: Building): { x: number; y: number } {
-  if (!CIRCLE_WORK.includes(b.type)) return buildingApproach(s, b);
+  if (!CIRCLE_WORK.includes(b.type)) return buildingApproach(s, b, c);
   if (c.workAt && reachableTile(c, Math.floor(c.workAt.x), Math.floor(c.workAt.y))) return c.workAt;
 
   const pickFrom = (pred: (t: Tile, tx: number, ty: number) => boolean): { x: number; y: number } | null => {
@@ -1069,7 +1096,7 @@ function workSpot(s: GameState, c: Citizen, b: Building): { x: number; y: number
   }
   spot ??= pickFrom((t) => t.type === 'forest' && t.trees > 0.05);
   spot ??= pickFrom(() => true);
-  c.workAt = spot ?? buildingApproach(s, b);
+  c.workAt = spot ?? buildingApproach(s, b, c);
   return c.workAt;
 }
 
@@ -1125,7 +1152,7 @@ function runVendor(s: GameState, c: Citizen, b: Building, dt: number): void {
   if (c.task.kind === 'toHouse' && c.carry) {
     const house = s.buildings.find((h) => h.id === c.task.targetId);
     if (house?.built) {
-      goTo(c, buildingApproach(s, house));
+      goTo(c, buildingApproach(s, house, c));
       if (stepTo(s, c, dt)) {
         house.store[c.carry.kind] = (house.store[c.carry.kind] ?? 0) + c.carry.amount;
         c.carry = null;
@@ -1136,7 +1163,7 @@ function runVendor(s: GameState, c: Citizen, b: Building, dt: number): void {
     c.task = { kind: 'idle' }; // house gone mid-errand — the load goes back on the shelf below
   }
   if (c.carry) {
-    goTo(c, buildingApproach(s, b));
+    goTo(c, buildingApproach(s, b, c));
     if (stepTo(s, c, dt)) {
       // Free room is volume; how many units that is depends on what is being put down.
       const put = Math.min(c.carry.amount, unitsThatFit(c.carry.kind, barnFree(b)));
@@ -1152,7 +1179,7 @@ function runVendor(s: GameState, c: Citizen, b: Building, dt: number): void {
   // Groceries for a household inside the circle: load up at the stall, walk them to the door.
   const errand = marketErrand(s, b);
   if (errand) {
-    goTo(c, buildingApproach(s, b));
+    goTo(c, buildingApproach(s, b, c));
     if (stepTo(s, c, dt)) {
       const take = Math.min(
         carryLimit(errand.kind, LARDER_CARRY_VOLUME),
@@ -1180,11 +1207,11 @@ function runVendor(s: GameState, c: Citizen, b: Building, dt: number): void {
     }
   }
   if (!want) {
-    goTo(c, buildingApproach(s, b));
+    goTo(c, buildingApproach(s, b, c));
     stepTo(s, c, dt);
     return;
   }
-  goTo(c, buildingApproach(s, want.barn));
+  goTo(c, buildingApproach(s, want.barn, c));
   if (stepTo(s, c, dt)) {
     const need = MARKET_STOCK_TARGET - (b.store[want.kind] ?? 0);
     const take = Math.min(carryLimit(want.kind), need, want.barn.store[want.kind] ?? 0);
@@ -1211,7 +1238,7 @@ function penFromStorage(s: GameState, c: Citizen, b: Building, dt: number): bool
   if (room <= 0) return false;
   const barn = nearestBarnOnlyWith(s, buildingCenter(b), animal);
   if (!barn) return false;
-  goTo(c, buildingApproach(s, barn));
+  goTo(c, buildingApproach(s, barn, c));
   if (stepTo(s, c, dt)) {
     const take = Math.min(PEN_PER_TRIP, room, Math.floor(barn.store[animal] ?? 0));
     if (take > 0) {
@@ -1237,7 +1264,7 @@ function runTrader(s: GameState, c: Citizen, b: Building, dt: number): void {
     const k = c.carry.kind;
     const room = (orders[k] ?? 0) - (b.store[k] ?? 0);
     if (room > 0) {
-      goTo(c, buildingApproach(s, b));
+      goTo(c, buildingApproach(s, b, c));
       if (stepTo(s, c, dt)) {
         const put = Math.min(c.carry.amount, room);
         if (put > 0) b.store[k] = (b.store[k] ?? 0) + put;
@@ -1250,11 +1277,11 @@ function runTrader(s: GameState, c: Citizen, b: Building, dt: number): void {
     } else {
       const barn = nearestBarnWithRoom(s, { x: c.x, y: c.y });
       if (!barn) {
-        goTo(c, buildingApproach(s, b));
+        goTo(c, buildingApproach(s, b, c));
         stepTo(s, c, dt);
         return;
       }
-      goTo(c, buildingApproach(s, barn));
+      goTo(c, buildingApproach(s, barn, c));
       if (stepTo(s, c, dt)) {
         const left = addNearest(s, { x: c.x, y: c.y }, k, c.carry.amount);
         c.carry = left > 0 ? { kind: k, amount: left } : null;
@@ -1269,7 +1296,7 @@ function runTrader(s: GameState, c: Citizen, b: Building, dt: number): void {
     if (need <= 0) continue;
     const barn = nearestBarnOnlyWith(s, buildingCenter(b), k);
     if (!barn) continue;
-    goTo(c, buildingApproach(s, barn));
+    goTo(c, buildingApproach(s, barn, c));
     if (stepTo(s, c, dt)) {
       const take = Math.min(carryLimit(k), need, barn.store[k] ?? 0);
       if (take > 0) {
@@ -1285,7 +1312,7 @@ function runTrader(s: GameState, c: Citizen, b: Building, dt: number): void {
   for (const k of RESOURCE_KINDS) {
     const surplus = (b.store[k] ?? 0) - (orders[k] ?? 0);
     if (surplus <= 0.01) continue;
-    goTo(c, buildingApproach(s, b));
+    goTo(c, buildingApproach(s, b, c));
     if (stepTo(s, c, dt)) {
       const take = Math.min(carryLimit(k), surplus);
       b.store[k] = (b.store[k] ?? 0) - take;
@@ -1296,7 +1323,7 @@ function runTrader(s: GameState, c: Citizen, b: Building, dt: number): void {
   }
 
   // Nothing to move — mind the post.
-  goTo(c, buildingApproach(s, b));
+  goTo(c, buildingApproach(s, b, c));
   stepTo(s, c, dt);
 }
 
@@ -1477,7 +1504,7 @@ function pickSite(s: GameState, c: Citizen): SiteAction | null {
           : null;
     }
     if (!action) continue;
-    const p = buildingApproach(s, b);
+    const p = buildingApproach(s, b, c);
     if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) continue;
     const d = (p.x - c.x) ** 2 + (p.y - c.y) ** 2;
     if (d < bestD) {
@@ -1495,7 +1522,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
     // Only builders supply construction sites; a laborer just stashes whatever it's carrying.
     const site = c.builder ? nearestUnbuiltNeeding(s, c, kind) : null;
     if (site) {
-      goTo(c, buildingApproach(s, site));
+      goTo(c, buildingApproach(s, site, c));
       if (stepTo(s, c, dt)) {
         const cost = BUILDING_DEFS[site.type].cost;
         const need = (cost[kind] ?? 0) - (site.store[kind] ?? 0);
@@ -1508,7 +1535,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
     }
     const barn = nearestBarnWithRoom(s, { x: c.x, y: c.y });
     if (barn) {
-      goTo(c, buildingApproach(s, barn));
+      goTo(c, buildingApproach(s, barn, c));
       if (stepTo(s, c, dt)) {
         const left = addNearest(s, { x: c.x, y: c.y }, kind, c.carry.amount);
         c.carry = left > 0 ? { kind, amount: left } : null;
@@ -1526,7 +1553,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
       const kind = pick.kind!;
       const barn = nearestBarnWith(s, buildingCenter(pick.site), kind);
       if (barn) {
-        goTo(c, buildingApproach(s, barn));
+        goTo(c, buildingApproach(s, barn, c));
         if (stepTo(s, c, dt)) {
           const cost = BUILDING_DEFS[pick.site.type].cost;
           const need = (cost[kind] ?? 0) - (pick.site.store[kind] ?? 0);
@@ -1543,7 +1570,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
     if (pick.action === 'raze') {
       // Stand at the building and pull it down. No materials to fetch first — that is the one way
       // demolition is not construction run backwards.
-      goTo(c, buildingApproach(s, pick.site));
+      goTo(c, buildingApproach(s, pick.site, c));
       if (stepTo(s, c, dt)) {
         pick.site.demoProgress = (pick.site.demoProgress ?? 0) + dt;
         if (pick.site.demoProgress >= demoTimeOf(pick.site.type)) razeBuilding(s, pick.site);
@@ -1554,7 +1581,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
       // Load up from the rubble; the carry branch above walks it to a barn (or straight to a site
       // that needs it). The plot clears the moment the pile is empty.
       const kind = pick.kind!;
-      goTo(c, buildingApproach(s, pick.site));
+      goTo(c, buildingApproach(s, pick.site, c));
       if (stepTo(s, c, dt)) {
         const take = Math.min(carryLimit(kind), pick.site.store[kind] ?? 0);
         if (take > 0) {
@@ -1567,7 +1594,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
       return;
     }
     // build: stand at the site and labour.
-    goTo(c, buildingApproach(s, pick.site));
+    goTo(c, buildingApproach(s, pick.site, c));
     if (stepTo(s, c, dt)) {
       pick.site.progress += dt;
       if (pick.site.progress >= buildTimeOf(pick.site.type)) {
@@ -1767,7 +1794,7 @@ function nearestUnbuiltNeeding(s: GameState, c: Citizen, kind: ResourceKind): Bu
     if (b.built) continue;
     const cost = BUILDING_DEFS[b.type].cost;
     if ((b.store[kind] ?? 0) >= (cost[kind] ?? 0)) continue;
-    const p = buildingApproach(s, b);
+    const p = buildingApproach(s, b, c);
     if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) continue;
     const d = (p.x - c.x) ** 2 + (p.y - c.y) ** 2;
     if (d < bestD) {

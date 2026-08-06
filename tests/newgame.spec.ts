@@ -1121,9 +1121,18 @@ test.describe('clearing land before building', () => {
       const s = g.state;
       const [px, py] = eval(findSpotSrc)(g);
       const { w: fw, h: fh } = g.debugFootprint('barn');
-      // Scatter loose stone on the footprint (the tiles stay grass — stone is a surface deposit).
+      // Scatter loose stone on the footprint, clearing the trees as we go. A tile holds one
+      // harvest order and wood is checked first, so a wooded tile under the plot is marked for
+      // felling instead — which is correct, and made this assertion depend on whether the site
+      // the generator offered happened to have a tree on it. Its sibling above already clears
+      // stone for the same reason.
       for (let dy = 0; dy < fh; dy++)
-        for (let dx = 0; dx < fw; dx++) s.tiles[(py + dy) * s.w + (px + dx)].stone = 10;
+        for (let dx = 0; dx < fw; dx++) {
+          const t = s.tiles[(py + dy) * s.w + (px + dx)];
+          t.type = 'grass';
+          t.trees = 0;
+          t.stone = 10;
+        }
       const id = g.debugPlace('barn', px, py);
       let marked = 0;
       for (let dy = 0; dy < fh; dy++)

@@ -92,10 +92,29 @@ read as a site barely begun. `save.ts` holds a frozen `LEGACY_BUILD_TIME` table 
 rescales each unfinished site by the fraction it had reached, sets standing buildings to their
 full job, and stamps `s.workScale` — the same marker pattern `ageScale` uses.
 
+**Iron is meant to be scarce. Do not "fix" it.** Nine buildings want iron and Normal/Hard open with
+none, so the early game runs on hand-gathered surface ore. A census of generated worlds (6 each):
+
+| | Total on map | Within 20 tiles of the start |
+|---|---|---|
+| Small — stone | 3435 | 560 |
+| Small — iron | 593 | 127 (range 42–193) |
+| Large — stone | 18484 | 797 |
+| Large — iron | 2433 | **60** (range **0**–183) |
+
+A quarry is 180 stone, so stone bootstraps easily by hand. Iron is the tight one: a mine costs 48
+iron and a trading post 120, and a large map often rolls **no iron at all** near the founding barn.
+That reads like a bootstrap deadlock and is not one — map-wide iron (593–2433) is comfortably more
+than the 372 one of each iron building costs. What is scarce is iron *within reach*, so the cost is
+villagers walking, and which building gets the first ore is a real decision. **The player chose
+this deliberately** when it was raised, over cutting the mine's iron cost. Leave it alone.
+
 > **Not yet confirmed with the player:** three rows of the spreadsheet were unreadable — rows 4 and
 > 11 were collapsed and anything past row 23 was cut off — which left **farm, ranch and cemetery**
-> without figures. They currently carry derived values (farm 40/24/12 work 80, ranch 48/16/0 work
-> 80, cemetery 16/24/0 work 40). Two supplied rows also look anomalous against their materials and
+> without figures. They currently carry derived values (farm 40/24/0 work 80, ranch 48/16/0 work
+> 80, cemetery 16/24/0 work 40). The farm briefly carried 12 iron, invented to gate it to mid-game;
+> that contradicted the table's own pattern (every legible food row — fishing, hunting, gatherer —
+> costs no iron) and was dropped. Two supplied rows also look anomalous against their materials and
 > were implemented as given rather than "corrected": **Tavern** (90 logs, 52 stone, but only 20
 > work) and **Market** (100/58/62, 40 work).
 

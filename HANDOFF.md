@@ -1,7 +1,7 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-08-06 (building price list + builder shifts, taller toolbar buttons,
+> Last updated: 2026-08-06 (worker counts, building price list + builder shifts, taller toolbar buttons,
 > ages run 4x the calendar, the full herd model,
 > sheep/wool/mutton, larder-hauling collapse fixed, real Hard difficulty, low-stock warnings,
 > two-door barn, taller school; see Current State)
@@ -23,7 +23,8 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **buildings cost what they are worth**,
+Latest work: **every building's worker count**,
+**buildings cost what they are worth**,
 **construction is a project builders knock off from**,
 **taller toolbar buttons**,
 **ages run four to the calendar year**,
@@ -46,6 +47,50 @@ Latest work: **buildings cost what they are worth**,
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Every building's worker count, from the player's table (this session)
+
+Thirteen changed. The one with teeth is **the mine and the quarry at ten apiece** — two of those is
+twenty villagers, most of a young village's workforce, which pulls the same way the new prices do.
+The food huts (fishing, hunting, gatherer) went to three; the workshops (woodcutter, herbalist,
+blacksmith, tailor, hospital) dropped to one; the market lost a vendor and the trading post gained
+one; the chapel gained its first.
+
+**Worker counts are not labels here** — `workRadiusOf` grows a work circle by
+`WORK_RADIUS_PER_WORKER` (2 tiles) for every worker past the first, capped at `jobs`. So the table
+resized half the map's circles as a side effect:
+
+| | Base | Old max | New max |
+|---|---|---|---|
+| Gatherer / Hunting | 6 | 8 | **10** |
+| Fishing | 4 | 6 | **8** |
+| Herbalist | 6 | 8 | **6** |
+| Market | 8 | 12 | **10** |
+
+The herbalist is the one to watch: a single worker is a double cut, fewer hands *and* less forest
+in reach, so medicine comes in slower from the same building. The market's shorter reach is why
+its `desc` and the comment behind `deliverToHomes` no longer say three vendors.
+
+**A staffed chapel needed no new code.** The school has had one job and no `workOutput` case for
+ages, so a building whose worker produces nothing is a shape the sim already knows. Note the
+chapel's happiness is still paid for *existing*, not for being staffed, unlike the tavern's — if a
+priest should be load-bearing, that is a change nobody has made yet.
+
+**Two things the change exposed, both worth knowing:**
+
+- **A standing order is consumed and then ignored when auto-staffing is on.**
+  `finishConstruction` calls `drawFromTradeExtra` to move the order into `desiredWorkers`, then the
+  very next line overwrites it with the whole job count. It was invisible while a gatherer's usual
+  order of two matched its two posts. It is defensible — filling new workplaces is what the setting
+  is *for* — and is left alone, but it now shows up wherever a job count differs from what was
+  ordered, which after this table is most places. With ten-post mines, placing one claims ten
+  villagers on the spot unless auto-staffing is off.
+- **A site whose footprint still holds loose stone or ore sits at 0% for ever** if nothing clears
+  it. `footprintClear` wants trees, stone and iron all at zero. Placement raises the harvest orders
+  that do the clearing, so real play is fine — but a test that wiped `s.harvest` after placing
+  spent twenty-five simulated minutes with three builders stood beside a fully stocked site doing
+  nothing. If a site ever refuses to start, that is the first thing to check; the inspect sheet
+  shows the counts (`footprintToClear`).
 
 ### Buildings cost what they are worth, and construction is a project (this session)
 

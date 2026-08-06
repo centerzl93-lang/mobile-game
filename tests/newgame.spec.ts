@@ -4645,7 +4645,7 @@ test.describe('demolition is a job', () => {
 });
 
 test.describe('the market delivers', () => {
-  test('it is a 4x4 with three vendors, and its circle grows with them', async ({ page }) => {
+  test('it is a 4x4 with two vendors, and its circle grows with them', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -4663,7 +4663,9 @@ test.describe('the market delivers', () => {
           }
       if (!mk) return { error: 'nowhere to put a market' };
       const radii: number[] = [];
-      for (let n = 1; n <= 3; n++) {
+      // Ask for the whole ladder the game allows rather than a count written out here, so the
+      // shape of the assertion survives the next move of the worker table.
+      for (let n = 1; n <= g.debugJobCount('market'); n++) {
         mk.desiredWorkers = n;
         radii.push(g.debugWorkRadius(mk.id));
       }
@@ -4671,13 +4673,15 @@ test.describe('the market delivers', () => {
     });
 
     expect(out.error).toBeUndefined();
-    expect(out.jobs, 'three vendors').toBe(3);
+    expect(out.jobs, 'two vendors').toBe(2);
     expect(out.footprint).toEqual({ w: 4, h: 4 });
-    // A one-vendor stall serves its own doorstep; the full three reach across a quarter of the
-    // village. Widest at three is what "three workers for the biggest circle" means.
-    expect(out.radii![0]).toBeLessThan(out.radii![1]);
-    expect(out.radii![1]).toBeLessThan(out.radii![2]);
-    expect(out.radii![2]).toBe(12);
+    // A one-vendor stall serves its own doorstep; a full staff reaches further. What matters is
+    // that every extra vendor widens the circle and the last one is the widest it goes.
+    expect(out.radii!.length).toBe(out.jobs);
+    for (let i = 1; i < out.radii!.length; i++) {
+      expect(out.radii![i]).toBeGreaterThan(out.radii![i - 1]);
+    }
+    expect(out.radii![out.radii!.length - 1]).toBe(10);
   });
 
   test('vendors carry groceries from the stall to the homes in the circle', async ({ page }) => {

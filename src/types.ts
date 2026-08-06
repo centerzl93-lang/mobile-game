@@ -2187,7 +2187,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   gatherer: {
     type: 'gatherer', name: 'Gatherer', emoji: '🧺', category: 'food', w: 3, h: 3,
-    cost: { wood: 48, stone: 12 }, jobs: 2, work: 70, workRadius: 6,
+    cost: { wood: 48, stone: 12 }, jobs: 3, work: 70, workRadius: 6,
     desc: 'Collects food from forest in its work circle — more trees, more food.',
   },
   farm: {
@@ -2197,12 +2197,12 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   fishing: {
     type: 'fishing', name: 'Fishing Hut', emoji: '🎣', category: 'food', w: 3, h: 5,
-    cost: { wood: 48, stone: 4 }, jobs: 2, work: 70, dockDepth: 2, workRadius: 4,
+    cost: { wood: 48, stone: 4 }, jobs: 3, work: 70, dockDepth: 2, workRadius: 4,
     desc: 'Catches fish from water in its work circle — more water and more workers, more fish. Its jetty must reach out over the water, so turn it until the dock end is wet and the door is on the bank.',
   },
   hunting: {
     type: 'hunting', name: 'Hunting Cabin', emoji: '🏹', category: 'food', w: 3, h: 3,
-    cost: { wood: 32, stone: 8 }, jobs: 2, work: 50, workRadius: 6,
+    cost: { wood: 32, stone: 8 }, jobs: 3, work: 50, workRadius: 6,
     desc: 'Hunts game in its work circle for food and leather — needs forest.',
   },
   ranch: {
@@ -2217,7 +2217,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   woodcutter: {
     type: 'woodcutter', name: 'Woodcutter', emoji: '🪓', category: 'resources', w: 3, h: 3,
-    cost: { wood: 24, stone: 4 }, jobs: 2, work: 30,
+    cost: { wood: 24, stone: 4 }, jobs: 1, work: 30,
     desc: 'Splits stockpiled wood into firewood to heat homes in winter.',
   },
   quarry: {
@@ -2225,27 +2225,27 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     // hug a mountainside. It is the largest works in the village — a fixed 8×8, not
     // player-sizable — and finding eight clear tiles a side is most of what placing one costs.
     type: 'quarry', name: 'Quarry', emoji: '⛏️', category: 'resources', w: 8, h: 8,
-    cost: { wood: 100, stone: 180 }, jobs: 4, work: 220,
+    cost: { wood: 100, stone: 180 }, jobs: 10, work: 220,
     desc: 'Cuts stone. A large pit that can be dug anywhere — but yields more against a rocky mountainside.',
   },
   mine: {
     type: 'mine', name: 'Mine', emoji: '🕳️', category: 'resources', w: 6, h: 6,
-    cost: { wood: 120, stone: 180, iron: 48 }, jobs: 2, work: 240, requiresTileAny: ['foothill'],
+    cost: { wood: 120, stone: 180, iron: 48 }, jobs: 10, work: 240, requiresTileAny: ['foothill'],
     desc: 'Digs coal or iron — pick which in its own panel or on the job board. Part of it must be cut into a mountain\'s foothills.',
   },
   blacksmith: {
     type: 'blacksmith', name: 'Blacksmith', emoji: '⚒️', category: 'resources', w: 3, h: 3,
-    cost: { wood: 40, stone: 30, iron: 40 }, jobs: 2, work: 90,
+    cost: { wood: 40, stone: 30, iron: 40 }, jobs: 1, work: 90,
     desc: 'Forges tools from iron, or steel tools from iron + coal (lasts longer).',
   },
   tailor: {
     type: 'tailor', name: 'Tailor', emoji: '🧵', category: 'resources', w: 3, h: 3,
-    cost: { wood: 40, stone: 24, iron: 20 }, jobs: 2, work: 80,
+    cost: { wood: 40, stone: 24, iron: 20 }, jobs: 1, work: 80,
     desc: 'Sews warm clothing to keep villagers healthy in winter. Set it to work either hide — from cattle and the hunt — or fleece off a sheep pen; wool goes a little further per unit.',
   },
   trading: {
     type: 'trading', name: 'Trading Post', emoji: '🚢', category: 'trade', w: 5, h: 9,
-    cost: { wood: 62, stone: 80, iron: 120 }, jobs: 1, work: 180, requiresWaterFraction: 1 / 3,
+    cost: { wood: 62, stone: 80, iron: 120 }, jobs: 2, work: 180, requiresWaterFraction: 1 / 3,
     desc: 'A dock for traders arriving by boat — part of it must reach out over the water. Staff it to move goods in and out; boats call either way.',
   },
   school: {
@@ -2260,7 +2260,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   chapel: {
     type: 'chapel', name: 'Chapel', emoji: '⛪', category: 'civic', w: 4, h: 5,
-    cost: { wood: 100, stone: 60, iron: 40 }, jobs: 0, work: 140,
+    cost: { wood: 100, stone: 60, iron: 40 }, jobs: 1, work: 140,
     desc: 'A place of worship and gathering that lifts the spirits of the whole village.',
   },
   cemetery: {
@@ -2270,12 +2270,12 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   herbalist: {
     type: 'herbalist', name: 'Herbalist', emoji: '🌿', category: 'civic', w: 3, h: 3,
-    cost: { wood: 30, stone: 20 }, jobs: 2, work: 60, workRadius: 6,
+    cost: { wood: 30, stone: 20 }, jobs: 1, work: 60, workRadius: 6,
     desc: 'Gathers wild herbs from the forest to brew medicine for the sick.',
   },
   hospital: {
     type: 'hospital', name: 'Hospital', emoji: '🏥', category: 'civic', w: 4, h: 5,
-    cost: { wood: 62, stone: 52, iron: 30 }, jobs: 2, work: 120,
+    cost: { wood: 62, stone: 52, iron: 30 }, jobs: 1, work: 120,
     desc: 'Doctors treat the sick during outbreaks — the ill recover faster and die less.',
   },
   well: {
@@ -2285,8 +2285,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   market: {
     type: 'market', name: 'Market', emoji: '🛒', category: 'resources', w: 4, h: 4,
-    cost: { wood: 100, stone: 58, iron: 62 }, jobs: 3, work: 40, workRadius: MARKET_RADIUS,
-    desc: 'Stores goods like a barn (2000 units of space to a barn\'s 5000), and its vendors carry food, fuel and coats out to every home inside its circle, so households never have to leave work to shop. Three vendors reach the furthest.',
+    cost: { wood: 100, stone: 58, iron: 62 }, jobs: 2, work: 40, workRadius: MARKET_RADIUS,
+    desc: 'Stores goods like a barn (2000 units of space to a barn\'s 5000), and its vendors carry food, fuel and coats out to every home inside its circle, so households never have to leave work to shop. Two vendors reach the furthest.',
   },
   barn: {
     type: 'barn', name: 'Barn', emoji: '🛖', category: 'resources', w: 3, h: 4, doors: 2,

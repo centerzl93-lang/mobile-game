@@ -1263,7 +1263,7 @@ function marketErrand(
  *
  * Delivery comes first. A market that only held goods was a shortcut for households doing their
  * own shopping; a market that *delivers* is the reason to build one — every home inside the circle
- * stops sending a worker off to queue at a barn, and the further the circle reaches (three vendors
+ * stops sending a worker off to queue at a barn, and the further the circle reaches (two vendors
  * take it to `MARKET_RADIUS` + 2 per extra worker) the more of the village that covers.
  */
 function runVendor(s: GameState, c: Citizen, b: Building, dt: number): void {

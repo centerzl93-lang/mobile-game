@@ -3700,10 +3700,21 @@ test.describe('auto-staffing', () => {
     const b = s.buildings.find((x) => x.id === id);
     if (!b) throw new Error('no placeable gatherer site anywhere on this map');
     // Clear the ground and pre-deliver the materials so this measures completion, not hauling.
-    for (const t of s.tiles) if (t.type === 'forest') t.trees = 0;
+    // Asked of the game rather than listed here: a hut wants stone as well as timber now, and
+    // stocking only the wood left the builders fetching the rest — the very thing this avoids.
+    // Loose stone and ore count as ground to clear just as trees do (footprintClear wants all
+    // three at zero), and wiping the harvest layer throws away the clearing orders placement had
+    // just raised. Leave a deposit under the site and no one will ever shift it: the hut sits at
+    // 0% for good. Clear the deposits as well, not only the trees.
+    for (const t of s.tiles) {
+      if (t.type === 'forest') t.trees = 0;
+      t.stone = 0;
+      t.iron = 0;
+    }
     for (let i = 0; i < s.harvest.length; i++) s.harvest[i] = 0;
-    b.store.wood = 999;
-    for (let i = 0; i < 6000 && !b.built; i++) g.debugAdvance(0.1);
+    for (const [k, amt] of Object.entries(g.debugCost('gatherer'))) b.store[k] = amt;
+    // Raising a hut is 70 units of builder-work with a rest in the middle, so give it the room.
+    for (let i = 0; i < 15000 && !b.built; i++) g.debugAdvance(0.1);
     g.debugAdvance(2);
     return b;
   }`;

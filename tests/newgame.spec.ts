@@ -2365,6 +2365,11 @@ test.describe('job board', () => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
       const s = g.state;
+      // Auto-staffing off, or this test cannot see what it is testing: a new workplace opened
+      // with it on is filled to its job count regardless, which would pass whether or not the
+      // standing order carried into the hut. It only looked like it worked before because a
+      // gatherer's order of two and its two posts were the same number.
+      s.autoStaff = false;
 
       // Ask for two gatherers with no hut anywhere. Nobody is employed by the wish — they are
       // still laborers — but the village's intent is recorded.
@@ -2406,6 +2411,7 @@ test.describe('job board', () => {
         if (!s.buildings.find((x: any) => x.id === hut.id)) break;
       }
       return {
+        jobs: g.debugJobCount('gatherer'),
         preOrder,
         opened,
         staffed,
@@ -2424,11 +2430,15 @@ test.describe('job board', () => {
     expect(out!.preOrder.staff).toBe(2);
     expect(out!.preOrder.wanted, 'no hut asks for anybody yet').toBe(0);
     expect(out!.preOrder.working).toBe(0);
-    // The hut opens on the standing order rather than empty, and now asks for two.
+    // The hut opens on the standing order rather than empty, and asks for the two that were
+    // waiting — not for the full complement it could hold.
     expect(out!.opened.built).toBe(true);
     expect(out!.opened.desired).toBe(2);
     expect(out!.opened.staff, 'the ask moved into the hut, it did not double').toBe(2);
-    expect(out!.opened.wanted).toBe(2);
+    // `wanted` is the trade's *capacity*, which is the hut's whole job count whatever was
+    // ordered — a distinct number from the order, and only equal to it by coincidence while a
+    // gatherer had exactly two posts.
+    expect(out!.opened.wanted, 'one hut can employ its full complement').toBe(out!.jobs);
     expect(out!.staffed).toBe(2);
     // ...and losing the hut does not quietly cancel the village's plans, though nothing wants
     // those hands any more.
@@ -2709,7 +2719,7 @@ test.describe('codex', () => {
     expect(out.ranch).toContain(`${n.ranchMin}×${n.ranchMin} up to ${n.ranchMax}×${n.ranchMax}`);
     expect(out.fieldFacts).toContain(`${n.farmMin}×${n.farmMin}–${n.farmMax}×${n.farmMax}`);
     // A work circle is a range too — what one worker reaches, out to what a full staff does.
-    expect(out.marketFacts, 'market: 8 at one vendor, 12 at three').toContain('⭕8–12');
+    expect(out.marketFacts, 'market: 8 at one vendor, 10 at two').toContain('⭕8–10');
     expect(out.foresterFacts).toContain('⭕4–8');
     // ...and a building with no circle at all does not pretend to have one.
     expect(out.wellFacts).not.toContain('⭕');

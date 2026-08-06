@@ -1,4 +1,6 @@
 import {
+  ADULT_AGE,
+  AGE_PER_YEAR,
   GameState, MAP_W, MAP_H, MapSize, setMapSize, CROPS, RANCH_MIN, ranchCapacity, EVENT_LOG_MAX,
   isWorkplace, nextBuildingName, SEASON_LENGTH, Building,
 } from '../types';
@@ -98,6 +100,20 @@ export function loadGame(slot = 0): GameState | null {
         c.parents = undefined;
       }
     }
+    // Ages used to advance in step with the calendar, with childhood the four years from 0 to
+    // adulthood. A save from before that carries no `ageScale`, and its children's ages mean
+    // something different from the same numbers now — a 3 was a child about to start work, and
+    // here it is an infant with nine years to go. Stretch them across the new childhood so they
+    // keep the growing up they had already done. Adults need nothing: 20 to 29 reads the same
+    // either way, and they simply live longer in seasons than they would have.
+    if (typeof s.ageScale !== 'number') {
+      const OLD_ADULT_AGE = 4;
+      for (const c of s.citizens) {
+        if (c.age < OLD_ADULT_AGE) c.age *= ADULT_AGE / OLD_ADULT_AGE;
+      }
+      s.ageScale = AGE_PER_YEAR;
+    }
+
     // Seeds (crop unlocks) were added after this format shipped. Saves without them predate the
     // gate, when every field could grow — grant all crops so old farms keep working.
     if (!Array.isArray(s.seeds)) s.seeds = [...CROPS];

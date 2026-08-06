@@ -35,6 +35,7 @@ import {
   ADULT_MAX_AGE,
   CHILD_MIN_AGE,
   ADULT_AGE,
+  AGE_PER_YEAR,
 } from '../types';
 import { generateWorld, findStartTile, getTile, emptyPaths, emptyHarvest, clearStartArea } from './world';
 import { randomName } from './names';
@@ -136,6 +137,7 @@ export function newGame(
     // difficulty was handed, so no hut stands down on its first day. Copied, not shared: the
     // player edits these in the stockpile panel and two villages must not move together.
     limits: { ...START_LIMITS[difficulty] },
+    ageScale: AGE_PER_YEAR,
   };
 
   // A starting barn holds the opening stockpile for the chosen difficulty, scaled up for the
@@ -162,7 +164,8 @@ export function newGame(
     const sex: Sex = i % 2 === 0 ? 'm' : 'f';
     spawn(sex, ADULT_MIN_AGE + Math.floor(Math.random() * (ADULT_MAX_AGE - ADULT_MIN_AGE + 1)));
   }
-  // Founding children (age 3 up to — but not reaching — adulthood, so they read as "3–4").
+  // Founding children, from `CHILD_MIN_AGE` up to but not reaching adulthood — old enough to be
+  // at school if the village ever builds one.
   for (let i = 0; i < START_CHILDREN; i++) {
     spawn(Math.random() < 0.5 ? 'm' : 'f', CHILD_MIN_AGE + Math.random() * (ADULT_AGE - CHILD_MIN_AGE));
   }

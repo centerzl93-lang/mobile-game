@@ -21,7 +21,8 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **sheep, wool and mutton**,
+Latest work: **ages run four to the calendar year**,
+**sheep, wool and mutton**,
 **villages no longer freeze beside a full barn**,
 **a real Hard difficulty**, **low-stock warnings on every resource**,
 **a barn with a door at each end**,
@@ -40,6 +41,49 @@ Latest work: **sheep, wool and mutton**,
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Ages run four to the calendar year (this session)
+
+Age used to advance in step with the calendar, which forced a choice between ages that read like
+ages and a village that grows inside a session — and it had picked neither. A villager was a
+working adult at **4**, could not have a child until **6**, and the founders were 20. Six years of
+play, twenty-four seasons, before a newborn could have a child of its own.
+
+`AGE_PER_YEAR` (4) uncouples the two. The ladder is in human years and reads like one; divide by
+four for play time.
+
+| | Age | Play time |
+|---|---|---|
+| Enrols at school | 8 | 2 years |
+| Adult, unschooled | 12 | **3 years** |
+| Adult, schooled | 16 | **4 years** (2 of them studying) |
+| Fertile | 12–45 | from adulthood |
+| Old age / death | 60 / 80 | ~15 / 20 years |
+
+**Fertility now opens at adulthood.** The old two-year gap between grown and fertile was the
+single largest part of the wait between generations, and deleting it halves birth→breeding from
+six years to three.
+
+**Adulthood is no longer a fixed age**, which is the part that bites. A child at a staffed school
+keeps growing up to `SCHOOL_LEAVING_AGE`; one without goes to work at `ADULT_AGE`. So a student can
+be *over* `ADULT_AGE` and not an adult — and `isAdult` had always been exactly "over `ADULT_AGE`".
+It now excludes students, and every one of its ~50 call sites depends on that: without it a
+12-year-old at school reads as a member of the workforce. Pairing goes through `isAdult` too, which
+is why a 14-year-old is `isFertile` by age and still cannot have children.
+
+Edge rules, all in `lives()`: a school that loses its teacher turns its pupils back into children,
+and any already past 12 go straight to work with whatever schooling they sat; a child who passes 12
+with no school cannot be enrolled by one built afterwards.
+
+**Measured, all else held equal** — 20 houses, unlimited food and fuel, same seed, eight years:
+
+    before   12 → 92
+    after    12 → 162
+
+**Old saves** carry no `ageScale`, and there is no other way to tell them apart: a child of 3 was
+nearly grown on the old scale and is an infant on this one, and it is the same number. The loader
+stretches pre-change children across the new childhood so they keep the growing up they had done
+(3 → 9), leaves adults alone, and stamps the state.
 
 ### Sheep, wool and mutton (this session)
 

@@ -746,8 +746,12 @@ export interface Citizen {
 }
 
 /** Children can't work; they take a housing slot and grow up at ADULT_AGE. */
-export function isAdult(c: { age: number }): boolean {
-  return c.age >= ADULT_AGE;
+export function isAdult(c: { age: number; student?: boolean }): boolean {
+  // A student is old enough to work and does not: schooling buys one more year of childhood, so
+  // between 12 and 16 an enrolled child is over `ADULT_AGE` and still not a worker. Every caller
+  // asking "is this one of the workforce" needs that exclusion — before schooling could outlast
+  // `ADULT_AGE`, being under it was the whole test.
+  return c.age >= ADULT_AGE && !c.student;
 }
 
 /**
@@ -760,7 +764,7 @@ export function isAdult(c: { age: number }): boolean {
  * schooled and about to join the workforce.
  */
 export function isStudent(c: { age: number; student?: boolean }): boolean {
-  return !!c.student && c.age < ADULT_AGE;
+  return !!c.student && c.age < SCHOOL_LEAVING_AGE;
 }
 
 /** A child who is not enrolled — too young, or with no school to go to. */
@@ -1481,6 +1485,16 @@ export interface GameState {
    * among the standing ones. Cleared per key the moment the stock recovers, which re-arms it.
    */
   lowWarned?: Partial<Record<LimitKey, boolean>>;
+
+  /**
+   * How fast ages ran when this village was last saved (`AGE_PER_YEAR`).
+   *
+   * Absent means a save from before age was uncoupled from the calendar, when childhood was the
+   * four years from 0 to `ADULT_AGE`. There is no other way to tell: a child of 3 is a nearly
+   * grown one on the old scale and an infant on this one, and the same number means both. The
+   * loader reads it, rescales those children, and stamps it — see `save.ts`.
+   */
+  ageScale?: number;
   /** Bumped when a tile becomes / stops being forest (replanting or clear-cutting), so the
    * renderer knows to rebuild its tree layer to show the new/removed trees. */
   forestVersion?: number;
@@ -1817,22 +1831,39 @@ export const LARDER_KINDS: ResourceKind[] = ['firewood', 'clothing', 'medicine']
 export const LARDER_CARRY_VOLUME = CARRY_VOLUME * 3;
 
 // ---- Demographics ----
-export const ADULT_AGE = 4; // children become working adults at this age (years)
 /**
- * Age from which a child can be enrolled: the last year before working age.
+ * How many years a villager ages per year of the calendar.
  *
- * Schooling is one year, taken immediately before adulthood, and only where a staffed school
- * exists — see `isStudent`. Enrolment is what sets `educated`, so a child has to actually attend
- * rather than merely happen to come of age while a school stands somewhere.
+ * Age used to advance in step with the calendar, which forced a choice between ages that read
+ * like ages and a village that grows inside a session — and it had picked neither: a villager was
+ * a working adult at "4", could not have children until "6", and the founders were 20. Six years
+ * of play, twenty-four seasons, before a newborn could have a child of its own.
+ *
+ * Uncoupling the two lets both be true. The ladder below is in human years and reads like one;
+ * divide by this to get the play time. A child is grown in three years, or four with schooling.
  */
-export const SCHOOL_AGE = ADULT_AGE - 1;
-/** Fraction of the school year a child must actually sit to count as educated. */
+export const AGE_PER_YEAR = 4;
+/** Children become working adults at this age — unless they are at school (see `SCHOOL_LEAVING_AGE`). */
+export const ADULT_AGE = 12;
+/**
+ * Enrolment age, and the age a *schooled* child leaves for work.
+ *
+ * Schooling is two years of study for one more year of childhood: an enrolled child keeps growing
+ * up past `ADULT_AGE` instead of going to work at it, and starts adult life at 16 rather than 12.
+ * Only a staffed school will do — enrolment is what sets `educated`, so a child has to actually
+ * attend rather than merely happen to come of age while a school stands somewhere.
+ */
+export const SCHOOL_START_AGE = 8;
+export const SCHOOL_LEAVING_AGE = 16;
+/** Study, in years of the calendar — `SCHOOL_START_AGE` to `SCHOOL_LEAVING_AGE` at `AGE_PER_YEAR`. */
+export const SCHOOL_YEARS = (SCHOOL_LEAVING_AGE - SCHOOL_START_AGE) / AGE_PER_YEAR;
+/** Fraction of the school years a child must actually sit to count as educated. */
 export const SCHOOL_ATTENDANCE = 0.5;
 export const START_ADULTS = 8; // founding adult villagers
 export const START_CHILDREN = 4; // founding children
 export const ADULT_MIN_AGE = 20; // founding adults' age range
 export const ADULT_MAX_AGE = 29;
-export const CHILD_MIN_AGE = 3; // founding children spawn in [CHILD_MIN_AGE, ADULT_AGE)
+export const CHILD_MIN_AGE = 6; // founding children spawn in [CHILD_MIN_AGE, ADULT_AGE)
 
 // ---- Leisure (villagers take occasional breaks from work) ----
 export const LEISURE_CHANCE_PER_SEC = 1 / 90; // ~one break per 90s of work
@@ -1859,16 +1890,21 @@ export const BIRTH_WELLBEING_FLOOR = 0.8;
  * The fertile years. Villagers come of age at ADULT_AGE and can work, but only bear children inside
  * this window — below it they are too young, above it they stop (just before old age sets in).
  */
-export const FERTILE_MIN_AGE = 6;
-export const FERTILE_MAX_AGE = 34;
+/**
+ * Fertility opens at adulthood rather than years after it. The old gap — grown at 4, fertile at 6
+ * — was two years in which a village had mouths it could not turn into more villagers, and it was
+ * the single largest part of the wait between one generation and the next.
+ */
+export const FERTILE_MIN_AGE = ADULT_AGE;
+export const FERTILE_MAX_AGE = 45;
 /**
  * Seasons of food in store that earn the *full* fertility bonus. Below one season's worth no
  * household will bear a child at all; the bonus ramps from there up to this surplus.
  */
 export const BIRTH_FOOD_SURPLUS_TARGET = 2;
 
-export const OLD_AGE_START = 35; // old-age deaths begin at this age
-export const MAX_AGE = 48; // by this age old-age death is near-certain each year
+export const OLD_AGE_START = 60; // old-age deaths begin at this age
+export const MAX_AGE = 80; // by this age old-age death is near-certain each year
 export const EDUCATED_BONUS = 1.3; // production multiplier for educated workers
 export const START_HEALTH = 80;
 export const START_HAPPINESS = 80;

@@ -99,7 +99,10 @@ import {
   worksIndoors,
   CIRCLE_WORK,
   ADULT_AGE,
-  SCHOOL_AGE,
+  SCHOOL_START_AGE,
+  SCHOOL_LEAVING_AGE,
+  SCHOOL_YEARS,
+  AGE_PER_YEAR,
   SCHOOL_ATTENDANCE,
   YEAR_LENGTH,
   OLD_AGE_START,
@@ -483,14 +486,24 @@ function lives(s: GameState, dt: number, log: LogFn): void {
   const cameOfAge: Citizen[] = [];
   const dying: Citizen[] = [];
   for (const c of s.citizens) {
-    const wasChild = c.age < ADULT_AGE;
-    c.age += years;
+    const wasChild = !isAdult(c);
+    c.age += years * AGE_PER_YEAR;
     if (wasChild) {
-      // School is the last year of childhood, and only where there is a staffed school to attend.
-      c.student = schoolStaffed && c.age >= SCHOOL_AGE && c.age < ADULT_AGE;
+      // Enrolment, and the one place adulthood is not a fixed age. A child at a staffed school
+      // keeps growing up to `SCHOOL_LEAVING_AGE`; one without goes to work at `ADULT_AGE`.
+      const canAttend = schoolStaffed && c.age >= SCHOOL_START_AGE && c.age < SCHOOL_LEAVING_AGE;
+      if (c.student || c.age < ADULT_AGE) {
+        // Already enrolled, or still young enough to enrol. A school that loses its teacher turns
+        // its pupils back into children — and any of them already past `ADULT_AGE` go straight to
+        // work below, with whatever schooling they managed to sit.
+        c.student = canAttend;
+      }
+      // Past `ADULT_AGE` with no school to be at: that childhood is over and cannot be extended
+      // by a school built afterwards.
       if (c.student) c.schooling = (c.schooling ?? 0) + dt;
-      if (c.age >= ADULT_AGE) {
-        c.educated = (c.schooling ?? 0) >= YEAR_LENGTH * SCHOOL_ATTENDANCE;
+      const leavingAge = c.student ? SCHOOL_LEAVING_AGE : ADULT_AGE;
+      if (c.age >= leavingAge) {
+        c.educated = (c.schooling ?? 0) >= YEAR_LENGTH * SCHOOL_YEARS * SCHOOL_ATTENDANCE;
         c.student = false;
         cameOfAge.push(c);
       }

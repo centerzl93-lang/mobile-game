@@ -22,6 +22,7 @@ import {
   HARVEST_KIND_META,
   MARKET_CAPACITY,
   buildWorkOf,
+  REFUND_FRACTION,
   BUILDER_SHIFT_WORK,
   autoBuilderDemand,
   FOOD_PER_CITIZEN_PER_SEASON,
@@ -1437,6 +1438,20 @@ class Game {
    * test about *where* a mine may stand should not also have to fund it — without this it fails
    * on the cost and never reaches the terrain rule it exists to check.
    */
+  /**
+   * Debug/testing helper: what pulling a building down hands back to the barns.
+   *
+   * The figure moved when the price list did — a house used to return 3 wood and now returns 4 —
+   * so a test that restates it goes stale silently. Ask the game instead.
+   */
+  debugSalvage(type: BuildingType): Partial<Record<ResourceKind, number>> {
+    const out: Partial<Record<ResourceKind, number>> = {};
+    for (const [k, amt] of Object.entries(BUILDING_DEFS[type].cost) as [ResourceKind, number][]) {
+      out[k] = amt * REFUND_FRACTION;
+    }
+    return out;
+  }
+
   debugAfford(type: BuildingType, times = 1): void {
     const at = this.state.origin ?? { x: this.state.w / 2, y: this.state.h / 2 };
     for (const [k, amt] of Object.entries(BUILDING_DEFS[type].cost) as [ResourceKind, number][]) {

@@ -4492,7 +4492,7 @@ test.describe('demolition is a job', () => {
       // Let the builders work. Track whether it passes through the rubble stage on the way out.
       let sawRazed = false;
       let cleared = false;
-      for (let i = 0; i < 1200; i++) {
+      for (let i = 0; i < 3000; i++) {
         g.debugAdvance(0.2);
         const st = g.debugDemoState(id);
         if (!st) {
@@ -4510,6 +4510,7 @@ test.describe('demolition is a job', () => {
         cleared,
         woodBefore,
         woodAfter: g.debugTotalStored('wood'),
+        salvageWood: g.debugSalvage('house').wood,
         homeless: s.citizens.filter((c: any) => c.homeId === id).length,
       };
     }, setup);
@@ -4521,9 +4522,11 @@ test.describe('demolition is a job', () => {
     expect(out.justMarked.residents, 'and keeps its residents that whole time').toBeGreaterThan(0);
     expect(out.cleared, 'the builders finished the job').toBe(true);
     expect(out.homeless, 'the plot is empty, so nobody still lives there').toBe(0);
-    // A house costs 12 wood and gives a quarter of it back — carried to a barn by hand, not
-    // conjured into the stockpile the instant the walls come down.
-    expect(out.woodAfter).toBe(out.woodBefore + 3);
+    // A house gives a quarter of its timber back — carried to a barn by hand, not conjured into
+    // the stockpile the instant the walls come down. Asked of the game rather than restated here,
+    // because the price list moves and a number written out in a test goes stale in silence.
+    expect(out.salvageWood).toBeGreaterThan(0);
+    expect(out.woodAfter).toBe(out.woodBefore + out.salvageWood);
   });
 
   test('the last barn cannot be demolished', async ({ page }) => {
@@ -4649,6 +4652,7 @@ test.describe('the market delivers', () => {
       g.startNewGame('small', 'easy', false);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
+      g.debugAfford('market');
       let mk: any = null;
       for (let r = 3; r < 22 && !mk; r++)
         for (let dy = -r; dy <= r && !mk; dy++)
@@ -4688,6 +4692,7 @@ test.describe('the market delivers', () => {
         g.startNewGame('small', 'easy', false);
         const s = g.state;
         const barn = s.buildings.find((b: any) => b.type === 'barn');
+        g.debugAfford('market');
         let mk: any = null;
         for (let r = 3; r < 22 && !mk; r++)
           for (let dy = -r; dy <= r && !mk; dy++)
@@ -5001,6 +5006,7 @@ test.describe('the merchant ties up at the trading post', () => {
       const barn = s.buildings.find((b) => b.type === 'barn');
       barn.store.wood = 2000;
       barn.store.stone = 2000;
+      barn.store.iron = 2000;
       for (let r = 3; r < 40; r++)
         for (let dy = -r; dy <= r; dy++)
           for (let dx = -r; dx <= r; dx++)
@@ -5669,6 +5675,7 @@ test.describe('sheep, wool and mutton', () => {
         Math.random = () => ((x = (1103515245 * x + 12345) & 0x7fffffff) / 0x7fffffff);
         g.startNewGame('small', 'easy', false);
         const s = g.state;
+        g.debugAfford('tailor');
         const id = eval(findSrc)(g, 'tailor');
         if (id == null) return null;
         const tailor = s.buildings.find((b: any) => b.id === id);

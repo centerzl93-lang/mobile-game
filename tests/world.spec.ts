@@ -16,11 +16,13 @@ async function startSmall(page: Page): Promise<void> {
   await page.evaluate(() => {
     const g = (window as any).__village;
     g.startNewGame('small');
-    // These tests are about *terrain* rules for placement. Normal starts with no wood or stone, so
-    // without stocking the barn `canPlace` would refuse on cost and mask what is being tested.
+    // These tests are about *terrain* rules for placement. Normal starts with nothing, so without
+    // stocking the barn `canPlace` would refuse on cost and mask what is being tested. Iron counts
+    // here too: it buys buildings now, not just tools, and a mine is one of the things it buys.
     const barn = g.state.buildings.find((b: any) => b.type === 'barn');
     barn.store.wood = (barn.store.wood ?? 0) + 500;
     barn.store.stone = (barn.store.stone ?? 0) + 500;
+    barn.store.iron = (barn.store.iron ?? 0) + 500;
   });
   await page.waitForTimeout(300);
 }
@@ -270,7 +272,11 @@ test.describe('world generation, placement & pathfinding', () => {
         // quarry becomes unaffordable, cp() refuses on cost, and no site is ever found — the
         // retry loop would then guarantee the failure it exists to avoid.
         const b = g.state.buildings.find((bb: any) => bb.type === 'barn');
-        if (b) { b.store.wood = (b.store.wood ?? 0) + 500; b.store.stone = (b.store.stone ?? 0) + 500; }
+        if (b) {
+          b.store.wood = (b.store.wood ?? 0) + 500;
+          b.store.stone = (b.store.stone ?? 0) + 500;
+          b.store.iron = (b.store.iron ?? 0) + 500; // a mine is bought with iron now, not only stone
+        }
       }
       return {
         foot, grassAway, mountain, quarryOpen, worldsTried,

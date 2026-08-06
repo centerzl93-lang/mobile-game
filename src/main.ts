@@ -1431,6 +1431,20 @@ class Game {
   }
 
   /**
+   * Debug/testing helper: put a building's materials in storage so it can be placed.
+   *
+   * Buildings cost real quantities now, and `canPlace` refuses one the village cannot pay for. A
+   * test about *where* a mine may stand should not also have to fund it — without this it fails
+   * on the cost and never reaches the terrain rule it exists to check.
+   */
+  debugAfford(type: BuildingType, times = 1): void {
+    const at = this.state.origin ?? { x: this.state.w / 2, y: this.state.h / 2 };
+    for (const [k, amt] of Object.entries(BUILDING_DEFS[type].cost) as [ResourceKind, number][]) {
+      addNearest(this.state, at, k, amt * times);
+    }
+  }
+
+  /**
    * Debug/testing helper: the display list against the exhaustive one.
    *
    * `RESOURCE_KINDS` is hand-written and drives every inventory the player reads, while

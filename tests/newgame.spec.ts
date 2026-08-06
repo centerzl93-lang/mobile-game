@@ -216,8 +216,7 @@ test.describe('crops and livestock', () => {
       const s = g.state;
       // Normal starts with no building materials, and this test is about *seeds*, not
       // affordability — stock the timber a field costs so placement isn't the thing that fails.
-      const barn0 = s.buildings.find((b: any) => b.type === 'barn');
-      barn0.store.wood = (barn0.store.wood ?? 0) + 200;
+      g.debugAfford('farm');
       const farm = place('farm');
       const out: any = { placed: farm != null, seedCount: s.seeds.length, farmCrop: farm && farm.crop };
       if (farm) { farm.built = true; farm.progress = 99; g.inspectSel = { kind: 'building', id: farm.id }; g.refreshInspect(); const el = document.getElementById('inspect')!; out.text = el.innerText; out.toggleBtns = el.querySelectorAll('.jr-toggle button').length; }
@@ -2094,6 +2093,7 @@ test.describe('quarry', () => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
       let s = g.state;
+      g.debugAfford('quarry');
       const idx = (x: number, y: number) => y * s.w + x;
       // "Open" means clear of rock and water, not treeless — a build site fells what stands on it.
       const isOpen = (x: number, y: number) =>
@@ -3459,6 +3459,7 @@ test.describe('builder shifts', () => {
       g.startNewGame('small', 'easy', false);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
+      g.debugAfford('chapel');
       // A chapel is far more work than one builder can lay down in a single shift, so finishing
       // one *has* to span several of them.
       let id: number | null = null;

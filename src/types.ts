@@ -2192,7 +2192,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   farm: {
     type: 'farm', name: 'Field', emoji: '🌱', category: 'food', w: 4, h: 4,
-    cost: { wood: 40, stone: 24, iron: 12 }, jobs: 2, work: 80,
+    cost: { wood: 40, stone: 24 }, jobs: 2, work: 80,
     desc: 'A fenced field for a chosen crop — you must own that crop\'s seed to plant it. Drag its size (4×4 up to 8×8) before building; a bigger field yields a bigger harvest, reaped each autumn.',
   },
   fishing: {

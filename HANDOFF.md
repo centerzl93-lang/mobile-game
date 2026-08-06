@@ -1,8 +1,9 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-08-05 (sheep/wool/mutton, larder-hauling collapse fixed, real Hard
-> difficulty, low-stock warnings, two-door barn, taller school; see Current State)
+> Last updated: 2026-08-06 (taller toolbar buttons, ages run 4x the calendar, the full herd model,
+> sheep/wool/mutton, larder-hauling collapse fixed, real Hard difficulty, low-stock warnings,
+> two-door barn, taller school; see Current State)
 
 ## Project
 **Little Village** — an original 3D village-builder **PWA**: TypeScript + Three.js (v0.185.1) +
@@ -21,7 +22,8 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **ages run four to the calendar year**,
+Latest work: **taller toolbar buttons**,
+**ages run four to the calendar year**,
 **sheep, wool and mutton**,
 **villages no longer freeze beside a full barn**,
 **a real Hard difficulty**, **low-stock warnings on every resource**,
@@ -41,6 +43,30 @@ Latest work: **ages run four to the calendar year**,
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### The toolbar buttons grow into the home-indicator inset (this session)
+
+`#toolbar` padded its bottom by the full `--safe-bottom`. On an iPhone that is a **39px strip of
+empty bar** below the buttons — as deep as the 30px buttons themselves, and holding nothing. The
+inset exists so nothing important sits under the home indicator, but it was being read as *unusable*
+rather than *reserved*: a button may extend into it as long as a clearance is kept.
+
+So the bar keeps the same height and spends it differently. `--safe-bottom` splits **0.7 into the
+buttons, 0.3 into the clearance under them**; `#tools` gains `grid-auto-rows: 1fr` so both rows
+share the height instead of sizing to content, and a `min-height` of `64px + inset*0.7` (55px in
+landscape). Measured at three shapes:
+
+| | Inset | Bar | Button | Clearance |
+|---|---|---|---|---|
+| Phone portrait | 34px | 108px | 30 → **42px** | 15px |
+| Phone landscape | 21px | 82px | 26 → **33px** | 9px |
+| No inset (desktop) | 0px | 74px | 30px | 5px |
+
+**The bar's total height is unchanged at every one of them**, which is the point: `--bar-h` is a
+contract six other elements measure their offsets from (pop-out, hint, log, confirm bar, inspect
+sheet, placement controls), and none of them moved. A screen with no inset renders byte-identically
+to before — `inset*0.7` is zero there, so the desktop layout is untouched and only devices that
+were actually wasting the space get the taller targets.
 
 ### Ages run four to the calendar year (this session)
 

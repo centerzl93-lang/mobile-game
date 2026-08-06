@@ -1197,7 +1197,11 @@ body {
   display: flex;
   align-items: stretch;
   gap: 6px;
-  padding: 5px calc(var(--safe-right) + 8px) calc(var(--safe-bottom) + 5px) calc(var(--safe-left) + 8px);
+  /* The home-indicator inset used to sit under the buttons as dead padding — on an iPhone that is
+     39px of empty bar, a strip as deep as the buttons themselves. It is reserved space, not
+     unusable space: most of it goes to the buttons and a clearance is kept under them, so the bar
+     is exactly as tall as it ever was (`--bar-h` + the inset) with bigger targets inside it. */
+  padding: 5px calc(var(--safe-right) + 8px) calc(var(--safe-bottom) * 0.3 + 5px) calc(var(--safe-left) + 8px);
   background: linear-gradient(to top, rgba(10, 16, 10, 0.95), rgba(10, 16, 10, 0.55));
   z-index: 6;
 }
@@ -1205,6 +1209,11 @@ body {
   flex: 1 1 auto;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* Both rows share the height rather than sizing to their content, so the space reclaimed from
+     the inset below lands in the buttons. 64px is the two 30px rows and their gap — what the bar
+     was before, and what it stays on any screen with no inset to reclaim. */
+  grid-auto-rows: 1fr;
+  min-height: calc(64px + var(--safe-bottom) * 0.7);
   gap: 4px;
 }
 .tool-btn {
@@ -1496,9 +1505,11 @@ body {
   #toolbar {
     gap: 5px;
     padding-top: 3px;
-    padding-bottom: calc(var(--safe-bottom) + 3px);
+    padding-bottom: calc(var(--safe-bottom) * 0.3 + 3px);
   }
   #tools {
+    /* 55px is two 26px rows and their gap here — the `--bar-h` of 61 less the bar's own padding. */
+    min-height: calc(55px + var(--safe-bottom) * 0.7);
     gap: 3px;
   }
 

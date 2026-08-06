@@ -2819,6 +2819,44 @@ test.describe('toolbar', () => {
     expect(await page.evaluate(() => (window as any).__village.paused)).toBe(false);
   });
 
+  test('the home-indicator inset becomes button height, not empty bar', async ({ page }) => {
+    await open2d(page);
+    await page.setViewportSize({ width: 402, height: 874 }); // a phone, held upright
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+
+    const measure = () =>
+      page.evaluate(() => {
+        const tools = [...document.querySelectorAll('#toolbar .tool-btn')];
+        const bar = document.querySelector('#toolbar')!;
+        const bottom = Math.max(...tools.map((t) => t.getBoundingClientRect().bottom));
+        return {
+          bar: Math.round(bar.getBoundingClientRect().height),
+          button: Math.round(tools[0].getBoundingClientRect().height),
+          // What is left between the lowest button and the edge of the screen — the strip the
+          // home indicator sits on.
+          clearance: Math.round(window.innerHeight - bottom),
+          rows: new Set(tools.map((t) => Math.round(t.getBoundingClientRect().y))).size,
+          overflows: bar.scrollWidth > bar.clientWidth + 1,
+        };
+      });
+
+    const flat = await measure();
+    // Headless reports no safe-area inset, so stand one in: 34px is an iPhone's home indicator.
+    await page.evaluate(() => document.documentElement.style.setProperty('--safe-bottom', '34px'));
+    const inset = await measure();
+
+    // The bar stands exactly as tall as it ever did — `--bar-h` plus the whole inset — so the six
+    // offsets measured off `--bar-h` (pop-out, hint, log, confirm bar, inspect sheet, placement
+    // controls) do not drift.
+    expect(inset.bar - flat.bar, 'the bar grows by the inset and no more').toBe(34);
+    // But the inset is now mostly button rather than empty padding.
+    expect(inset.button, 'the buttons take the reclaimed space').toBeGreaterThan(flat.button + 8);
+    // With a clearance kept under them, so no target sits on the home indicator itself.
+    expect(inset.clearance).toBeGreaterThanOrEqual(10);
+    expect(inset.rows, 'still two rows of four').toBe(2);
+    expect(inset.overflows).toBe(false);
+  });
+
   test('a build category wraps instead of scrolling, and the log clears it', async ({ page }) => {
     await open2d(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));

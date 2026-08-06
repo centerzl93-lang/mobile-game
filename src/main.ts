@@ -21,7 +21,8 @@ import {
   HarvestKind,
   HARVEST_KIND_META,
   MARKET_CAPACITY,
-  buildTimeOf,
+  buildWorkOf,
+  BUILDER_SHIFT_WORK,
   autoBuilderDemand,
   FOOD_PER_CITIZEN_PER_SEASON,
   HEAT_PER_CITIZEN_WINTER,
@@ -1122,7 +1123,7 @@ class Game {
           label: 'Status',
           value: clearing > 0
             ? 'Clearing the ground'
-            : `Building ${Math.floor((b.progress / buildTimeOf(b.type)) * 100)}%`,
+            : `Building ${Math.floor((b.progress / buildWorkOf(b.type)) * 100)}%`,
         });
         if (clearing > 0) {
           rows.push({ label: '—', value: `${clearing} tile${clearing > 1 ? 's' : ''} to clear first` });
@@ -1409,14 +1410,24 @@ class Game {
   }
 
   /**
-   * Debug/testing helper: seconds of work a building takes to put up.
+   * Debug/testing helper: builder-work a building takes to put up.
    *
-   * Same reasoning as `debugFootprint` — `buildTime` in the def is multiplied by
-   * `BUILD_TIME_SCALE` before it means anything, and a test that sets `progress` from the raw
-   * number lands at half the fraction it thinks it does.
+   * Same reasoning as `debugFootprint`: `progress` counts work units, not seconds, so a test that
+   * wants a site three-quarters raised has to ask what the whole job is rather than assume the
+   * number in the def is a duration.
    */
-  debugBuildTime(type: BuildingType): number {
-    return buildTimeOf(type);
+  debugBuildWork(type: BuildingType): number {
+    return buildWorkOf(type);
+  }
+
+  /** Debug/testing helper: what a building costs to place, so a test need not restate the table. */
+  debugCost(type: BuildingType): Partial<Record<ResourceKind, number>> {
+    return { ...BUILDING_DEFS[type].cost };
+  }
+
+  /** Debug/testing helper: work one builder gets through before knocking off. */
+  debugShiftWork(): number {
+    return BUILDER_SHIFT_WORK;
   }
 
   /**

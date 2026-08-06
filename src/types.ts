@@ -479,8 +479,15 @@ export interface BuildingDef {
   cost: Partial<Record<ResourceKind, number>>;
   /** Max workers this building employs (0 = no jobs, e.g. house/barn). */
   jobs: number;
-  /** Seconds of work to finish construction (by builders). */
-  buildTime: number;
+  /**
+   * Builder-work to finish construction, in work units — not seconds.
+   *
+   * A builder lays down `BUILD_WORK_RATE` of these per second while stood at the site, and can
+   * only lay down `BUILDER_SHIFT_WORK` of them before knocking off (see `BUILDER_SHIFT_WORK`), so
+   * this is the honest measure of how big a job a building is: a well is a morning's work and a
+   * mine is a season's.
+   */
+  work: number;
   /** At least one border tile must be one of these types (terrain gating). */
   requiresAdjacent?: TileType[];
   /** At least one footprint tile must be one of these types (e.g. mines touch a foothill). */
@@ -554,7 +561,7 @@ export interface Building {
   x: number; // top-left tile
   y: number;
   built: boolean;
-  progress: number; // 0..buildTime
+  progress: number; // builder-work laid down so far, 0..buildWorkOf(type)
   workers: number[]; // citizen ids currently working here
   /** Player-set target number of workers (0..jobs). */
   desiredWorkers: number;
@@ -738,6 +745,14 @@ export interface Citizen {
    * jobId === null but constructs work buildings; a plain laborer (jobId null, builder false) does
    * not. */
   builder?: boolean;
+  /**
+   * Builder-work laid down in the current shift, against `BUILDER_SHIFT_WORK`.
+   *
+   * Only construction and demolition fill this — swinging a hammer, not carrying for one. A
+   * builder who has run out of shift can still fetch materials to the site, which is what keeps a
+   * half-rested crew from leaving a site with nothing delivered.
+   */
+  effort?: number;
   // ---- transient navigation state (not persisted; recomputed after load) ----
   route?: { x: number; y: number }[]; // cached A* waypoints toward the current destination
   routeI?: number; // index of the next waypoint to reach
@@ -804,15 +819,15 @@ export const BUILD_FRAMING_AT = 0.5;
  * quicker than raising one, but it is not free — that is the whole point of demolition being a job
  * a builder has to walk to rather than something a menu does instantly.
  */
-export const DEMO_TIME_FRACTION = 0.5;
+export const DEMO_WORK_FRACTION = 0.5;
 
-export function demoTimeOf(type: BuildingType): number {
-  return buildTimeOf(type) * DEMO_TIME_FRACTION;
+export function demoWorkOf(type: BuildingType): number {
+  return buildWorkOf(type) * DEMO_WORK_FRACTION;
 }
 
 /** How far a teardown has got, 0..1. */
 export function demoFraction(b: Building): number {
-  const total = demoTimeOf(b.type);
+  const total = demoWorkOf(b.type);
   if (total <= 0) return 1;
   const p = (b.demoProgress ?? 0) / total;
   return p < 0 ? 0 : p > 1 ? 1 : p;
@@ -833,7 +848,7 @@ export function buildStage(b: Building): BuildStage {
   if (b.razed) return 'site'; // rubble waiting to be carted off
   if (b.demolish && b.built) return demoFraction(b) >= DEMO_FRAME_AT ? 'framing' : 'done';
   if (b.built) return 'done';
-  const total = buildTimeOf(b.type);
+  const total = buildWorkOf(b.type);
   return total > 0 && b.progress / total >= BUILD_FRAMING_AT ? 'framing' : 'site';
 }
 
@@ -849,7 +864,7 @@ export function framedFraction(b: Building): number {
     const p = (demoFraction(b) - DEMO_FRAME_AT) / (1 - DEMO_FRAME_AT);
     return 1 - (p < 0 ? 0 : p > 1 ? 1 : p);
   }
-  const total = buildTimeOf(b.type);
+  const total = buildWorkOf(b.type);
   if (total <= 0) return 1;
   const p = (b.progress / total - BUILD_FRAMING_AT) / (1 - BUILD_FRAMING_AT);
   return p < 0 ? 0 : p > 1 ? 1 : p;
@@ -998,8 +1013,8 @@ export function plannedRoadTiles(s: GameState): number {
 }
 
 /** A building's effective construction time in seconds (base time × the pace multiplier). */
-export function buildTimeOf(type: BuildingType): number {
-  return BUILDING_DEFS[type].buildTime * BUILD_TIME_SCALE;
+export function buildWorkOf(type: BuildingType): number {
+  return BUILDING_DEFS[type].work;
 }
 
 /**
@@ -1495,6 +1510,17 @@ export interface GameState {
    * loader reads it, rescales those children, and stamps it — see `save.ts`.
    */
   ageScale?: number;
+
+  /**
+   * How construction was measured when this village was last saved (`BUILD_WORK_RATE`).
+   *
+   * Absent means a save from when `progress` counted *seconds* against a `buildTime` of a handful
+   * of them. It counts builder-work now and the scales differ per building — a house went from 12
+   * to 40 — so the same number means a nearly finished house on one scale and a barely started
+   * one on the other. The loader rescales each site by the fraction it had reached and stamps
+   * this — see `save.ts`.
+   */
+  workScale?: number;
   /** Bumped when a tile becomes / stops being forest (replanting or clear-cutting), so the
    * renderer knows to rebuild its tree layer to show the new/removed trees. */
   forestVersion?: number;
@@ -1592,9 +1618,35 @@ export function carryLimit(kind: ResourceKind, volume: number = CARRY_VOLUME): n
 }
 export const REFUND_FRACTION = 0.25; // fraction of build cost reclaimed on demolish
 export const WORK_SECONDS = 8; // seconds of work to fill/convert one carry-load (slower pace)
-export const BUILD_SECONDS_PER_UNIT = 0.5; // on-site labor seconds per unit of construction
-/** Multiplier on every building's construction time — raising buildings takes this much longer. */
-export const BUILD_TIME_SCALE = 2;
+
+/**
+ * Units of a building's `work` one builder lays down per second stood at the site.
+ *
+ * At 1, a def's `work` reads directly as builder-seconds: a 40-work house is forty seconds of one
+ * man's labour, or twenty of two. This is the dial for the pace of construction as a whole —
+ * halve it and every building in the game takes twice as long without touching the table.
+ */
+export const BUILD_WORK_RATE = 1;
+
+/**
+ * Work one builder gets through before knocking off for a rest.
+ *
+ * This is what makes a building a *project* rather than a progress bar. A well (10 work) is one
+ * short visit; a mine (240) is eight shifts, and with the walk home in the middle of each, where
+ * the builders live starts to matter as much as how many there are. Construction is the one job
+ * that happens away from a workplace, so it is the one where the commute is the player's problem
+ * to solve — put housing near the site or watch the site stand idle half the day.
+ */
+export const BUILDER_SHIFT_WORK = 30;
+
+/**
+ * Seconds off between shifts, spent on the ordinary leisure round (tavern, chapel, else home).
+ *
+ * Longer than an ordinary break — a shift on a building site is harder work than a day at a
+ * bench — and it reuses `Citizen.rest`, so a knocked-off builder walks the same route home as
+ * anyone else on a break and a low larder still cuts it short.
+ */
+export const BUILDER_REST_SECONDS = 30;
 
 // ---- Movement / paths ----
 export const BASE_WALK_SPEED = 0.875; // villagers stroll — half the previous 1.75
@@ -2125,47 +2177,47 @@ export const MERCHANT_CATEGORY_META: Record<MerchantCategory, { label: string; e
 export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   house: {
     type: 'house', name: 'House', emoji: '🏠', category: 'housing', w: 2, h: 2,
-    cost: { wood: 12 }, jobs: 0, buildTime: 6,
+    cost: { wood: 16, stone: 8 }, jobs: 0, work: 40,
     desc: 'Homes up to 8 villagers — a couple and their children — and a household with room to spare is one that can grow.',
   },
   stonehouse: {
     type: 'stonehouse', name: 'Stone House', emoji: '🏡', category: 'housing', w: 2, h: 2,
-    cost: { wood: 8, stone: 16 }, jobs: 0, buildTime: 8,
+    cost: { wood: 8, stone: 30 }, jobs: 0, work: 60,
     desc: 'A warm, sturdy home for up to 10. Masonry holds its heat, so a household here burns 40% less firewood through the winter, and it is half as likely to catch fire. A wooden house can be upgraded to one in place.',
   },
   gatherer: {
     type: 'gatherer', name: 'Gatherer', emoji: '🧺', category: 'food', w: 3, h: 3,
-    cost: { wood: 10 }, jobs: 2, buildTime: 6, workRadius: 6,
+    cost: { wood: 48, stone: 12 }, jobs: 2, work: 70, workRadius: 6,
     desc: 'Collects food from forest in its work circle — more trees, more food.',
   },
   farm: {
     type: 'farm', name: 'Field', emoji: '🌱', category: 'food', w: 4, h: 4,
-    cost: { wood: 6 }, jobs: 2, buildTime: 5,
+    cost: { wood: 40, stone: 24, iron: 12 }, jobs: 2, work: 80,
     desc: 'A fenced field for a chosen crop — you must own that crop\'s seed to plant it. Drag its size (4×4 up to 8×8) before building; a bigger field yields a bigger harvest, reaped each autumn.',
   },
   fishing: {
     type: 'fishing', name: 'Fishing Hut', emoji: '🎣', category: 'food', w: 3, h: 5,
-    cost: { wood: 12 }, jobs: 2, buildTime: 6, dockDepth: 2, workRadius: 4,
+    cost: { wood: 48, stone: 4 }, jobs: 2, work: 70, dockDepth: 2, workRadius: 4,
     desc: 'Catches fish from water in its work circle — more water and more workers, more fish. Its jetty must reach out over the water, so turn it until the dock end is wet and the door is on the bank.',
   },
   hunting: {
     type: 'hunting', name: 'Hunting Cabin', emoji: '🏹', category: 'food', w: 3, h: 3,
-    cost: { wood: 12 }, jobs: 2, buildTime: 6, workRadius: 6,
+    cost: { wood: 32, stone: 8 }, jobs: 2, work: 50, workRadius: 6,
     desc: 'Hunts game in its work circle for food and leather — needs forest.',
   },
   ranch: {
     type: 'ranch', name: 'Ranch', emoji: '🐄', category: 'food', w: 4, h: 4,
-    cost: { wood: 16 }, jobs: 2, buildTime: 7,
+    cost: { wood: 48, stone: 16 }, jobs: 2, work: 80,
     desc: 'A fenced pen for cattle, pigs, sheep or chickens. Drag its size (4×4 up to 8×8) before building — a bigger pen holds a bigger herd. Buy livestock from traders; they breed here. Each herd gives one thing alive and another dead: cows are milked, sheep shorn, hens robbed of eggs — pigs give nothing until the butcher. Hide only ever comes off a carcass, cattle yielding more of it than pigs. A pen at its cap keeps breeding, and every birth with nowhere to go goes to the butcher, so a full pen pays out on its own.',
   },
   lumberyard: {
     type: 'lumberyard', name: 'Forester', emoji: '🌲', category: 'resources', w: 3, h: 3,
-    cost: { wood: 12 }, jobs: 3, buildTime: 6, workRadius: 4,
+    cost: { wood: 32, stone: 16 }, jobs: 3, work: 60, workRadius: 4,
     desc: 'Foresters fell trees for wood out in their work circle, and clear the loose rock and ore they find there. Toggle replanting to sow saplings and keep the woods renewable.',
   },
   woodcutter: {
     type: 'woodcutter', name: 'Woodcutter', emoji: '🪓', category: 'resources', w: 3, h: 3,
-    cost: { wood: 10 }, jobs: 2, buildTime: 6,
+    cost: { wood: 24, stone: 4 }, jobs: 2, work: 30,
     desc: 'Splits stockpiled wood into firewood to heat homes in winter.',
   },
   quarry: {
@@ -2173,72 +2225,72 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     // hug a mountainside. It is the largest works in the village — a fixed 8×8, not
     // player-sizable — and finding eight clear tiles a side is most of what placing one costs.
     type: 'quarry', name: 'Quarry', emoji: '⛏️', category: 'resources', w: 8, h: 8,
-    cost: { wood: 30 }, jobs: 4, buildTime: 14,
+    cost: { wood: 100, stone: 180 }, jobs: 4, work: 220,
     desc: 'Cuts stone. A large pit that can be dug anywhere — but yields more against a rocky mountainside.',
   },
   mine: {
     type: 'mine', name: 'Mine', emoji: '🕳️', category: 'resources', w: 6, h: 6,
-    cost: { wood: 14, stone: 10 }, jobs: 2, buildTime: 8, requiresTileAny: ['foothill'],
+    cost: { wood: 120, stone: 180, iron: 48 }, jobs: 2, work: 240, requiresTileAny: ['foothill'],
     desc: 'Digs coal or iron — pick which in its own panel or on the job board. Part of it must be cut into a mountain\'s foothills.',
   },
   blacksmith: {
     type: 'blacksmith', name: 'Blacksmith', emoji: '⚒️', category: 'resources', w: 3, h: 3,
-    cost: { wood: 14, stone: 8 }, jobs: 2, buildTime: 7,
+    cost: { wood: 40, stone: 30, iron: 40 }, jobs: 2, work: 90,
     desc: 'Forges tools from iron, or steel tools from iron + coal (lasts longer).',
   },
   tailor: {
     type: 'tailor', name: 'Tailor', emoji: '🧵', category: 'resources', w: 3, h: 3,
-    cost: { wood: 12 }, jobs: 2, buildTime: 6,
+    cost: { wood: 40, stone: 24, iron: 20 }, jobs: 2, work: 80,
     desc: 'Sews warm clothing to keep villagers healthy in winter. Set it to work either hide — from cattle and the hunt — or fleece off a sheep pen; wool goes a little further per unit.',
   },
   trading: {
     type: 'trading', name: 'Trading Post', emoji: '🚢', category: 'trade', w: 5, h: 9,
-    cost: { wood: 20, stone: 10 }, jobs: 1, buildTime: 8, requiresWaterFraction: 1 / 3,
+    cost: { wood: 62, stone: 80, iron: 120 }, jobs: 1, work: 180, requiresWaterFraction: 1 / 3,
     desc: 'A dock for traders arriving by boat — part of it must reach out over the water. Staff it to move goods in and out; boats call either way.',
   },
   school: {
     type: 'school', name: 'School', emoji: '🏫', category: 'civic', w: 3, h: 4,
-    cost: { wood: 16, stone: 10 }, jobs: 1, buildTime: 7,
+    cost: { wood: 30, stone: 16 }, jobs: 1, work: 60,
     desc: 'A teacher takes the children for their last year before adulthood. Attend half of it or more and they grow into skilled adults, who work faster for the rest of their lives.',
   },
   tavern: {
     type: 'tavern', name: 'Tavern', emoji: '🍺', category: 'civic', w: 4, h: 4,
-    cost: { wood: 16, stone: 6 }, jobs: 1, buildTime: 7,
+    cost: { wood: 90, stone: 52, iron: 12 }, jobs: 1, work: 20,
     desc: 'A staffed alehouse brews grain into ale each season, keeping the village merry.',
   },
   chapel: {
     type: 'chapel', name: 'Chapel', emoji: '⛪', category: 'civic', w: 4, h: 5,
-    cost: { wood: 14, stone: 14 }, jobs: 0, buildTime: 8,
+    cost: { wood: 100, stone: 60, iron: 40 }, jobs: 0, work: 140,
     desc: 'A place of worship and gathering that lifts the spirits of the whole village.',
   },
   cemetery: {
     type: 'cemetery', name: 'Cemetery', emoji: '🪦', category: 'civic', w: 2, h: 2,
-    cost: { wood: 6, stone: 8 }, jobs: 0, buildTime: 6,
+    cost: { wood: 16, stone: 24 }, jobs: 0, work: 40,
     desc: 'A dignified resting place — villagers grieve less when the dead are honoured.',
   },
   herbalist: {
     type: 'herbalist', name: 'Herbalist', emoji: '🌿', category: 'civic', w: 3, h: 3,
-    cost: { wood: 12 }, jobs: 2, buildTime: 6, workRadius: 6,
+    cost: { wood: 30, stone: 20 }, jobs: 2, work: 60, workRadius: 6,
     desc: 'Gathers wild herbs from the forest to brew medicine for the sick.',
   },
   hospital: {
     type: 'hospital', name: 'Hospital', emoji: '🏥', category: 'civic', w: 4, h: 5,
-    cost: { wood: 16, stone: 12 }, jobs: 2, buildTime: 8,
+    cost: { wood: 62, stone: 52, iron: 30 }, jobs: 2, work: 120,
     desc: 'Doctors treat the sick during outbreaks — the ill recover faster and die less.',
   },
   well: {
     type: 'well', name: 'Well', emoji: '⛲', category: 'civic', w: 1, h: 1,
-    cost: { wood: 6, stone: 8 }, jobs: 0, buildTime: 4, fireproof: true,
+    cost: { wood: 16 }, jobs: 0, work: 10, fireproof: true,
     desc: 'Provides water to fight fires. Buildings nearby rarely burn down.',
   },
   market: {
     type: 'market', name: 'Market', emoji: '🛒', category: 'resources', w: 4, h: 4,
-    cost: { wood: 22, stone: 10 }, jobs: 3, buildTime: 8, workRadius: MARKET_RADIUS,
+    cost: { wood: 100, stone: 58, iron: 62 }, jobs: 3, work: 40, workRadius: MARKET_RADIUS,
     desc: 'Stores goods like a barn (2000 units of space to a barn\'s 5000), and its vendors carry food, fuel and coats out to every home inside its circle, so households never have to leave work to shop. Three vendors reach the furthest.',
   },
   barn: {
     type: 'barn', name: 'Barn', emoji: '🛖', category: 'resources', w: 3, h: 4, doors: 2,
-    cost: { wood: 16 }, jobs: 0, buildTime: 6, fireproof: true,
+    cost: { wood: 48, stone: 12 }, jobs: 0, work: 80, fireproof: true,
     desc: 'The village store, and it cannot burn down. It holds 5000 units of space rather than 5000 items — a log takes one, a sack of grain a quarter, a cow four. Big doors at both ends, so a carrier walks to whichever is nearer. Tap it to see what is inside.',
   },
 };

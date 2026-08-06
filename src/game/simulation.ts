@@ -5,9 +5,12 @@ import {
   Citizen,
   ResourceKind,
   BUILDING_DEFS,
-  buildTimeOf,
+  buildWorkOf,
+  BUILD_WORK_RATE,
+  BUILDER_SHIFT_WORK,
+  BUILDER_REST_SECONDS,
   drawFromTradeExtra,
-  demoTimeOf,
+  demoWorkOf,
   autoBuilderDemand,
   workRadiusOf,
   MAP_W,
@@ -1641,6 +1644,27 @@ function pickSite(s: GameState, c: Citizen): SiteAction | null {
   return best;
 }
 
+/**
+ * One tick of a builder's labour: the work it puts into the site, metered against their shift.
+ *
+ * A builder can only lay down `BUILDER_SHIFT_WORK` before knocking off, so this returns the work
+ * actually done — which is less than a full tick's worth on the tick that runs them out — and
+ * books the rest that follows. The rest goes through `Citizen.rest`, the same field an ordinary
+ * break uses, so a spent builder walks the usual leisure round and `runCitizen` picks the shift up
+ * again afterwards. Deliberately *not* capped to the site's remaining work: a builder who lands
+ * the last blow on a house has still done a shift's labour and should knock off having done it.
+ */
+function labour(c: Citizen, dt: number): number {
+  const left = BUILDER_SHIFT_WORK - (c.effort ?? 0);
+  const done = Math.min(dt * BUILD_WORK_RATE, Math.max(0, left));
+  c.effort = (c.effort ?? 0) + done;
+  if (c.effort >= BUILDER_SHIFT_WORK) {
+    c.effort = 0;
+    c.rest = BUILDER_REST_SECONDS;
+  }
+  return done;
+}
+
 function runBuilder(s: GameState, c: Citizen, dt: number): void {
   // Deliver carried material to a site that needs it, else return it to a barn.
   if (c.carry) {
@@ -1698,8 +1722,8 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
       // demolition is not construction run backwards.
       goTo(c, buildingApproach(s, pick.site, c));
       if (stepTo(s, c, dt)) {
-        pick.site.demoProgress = (pick.site.demoProgress ?? 0) + dt;
-        if (pick.site.demoProgress >= demoTimeOf(pick.site.type)) razeBuilding(s, pick.site);
+        pick.site.demoProgress = (pick.site.demoProgress ?? 0) + labour(c, dt);
+        if (pick.site.demoProgress >= demoWorkOf(pick.site.type)) razeBuilding(s, pick.site);
       }
       return;
     }
@@ -1722,8 +1746,8 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
     // build: stand at the site and labour.
     goTo(c, buildingApproach(s, pick.site, c));
     if (stepTo(s, c, dt)) {
-      pick.site.progress += dt;
-      if (pick.site.progress >= buildTimeOf(pick.site.type)) {
+      pick.site.progress += labour(c, dt);
+      if (pick.site.progress >= buildWorkOf(pick.site.type)) {
         finishConstruction(s, pick.site);
       }
     }
@@ -1939,7 +1963,7 @@ function finishConstruction(s: GameState, b: Building): void {
     if ((b.store[kind] ?? 0) <= 0.001) delete b.store[kind];
   }
   b.built = true;
-  b.progress = BUILDING_DEFS[b.type].buildTime;
+  b.progress = BUILDING_DEFS[b.type].work;
   // Open its jobs, if the player has asked for that. `assignHomesAndJobs` hires whoever is free
   // on the next tick and picks up the rest as laborers come free, so a hut finished with nobody
   // spare still fills itself later rather than waiting to be noticed.

@@ -70,7 +70,7 @@ function makeBuilding(s: { nextId: number }, type: BuildingType, x: number, y: n
     x,
     y,
     built,
-    progress: built ? def.buildTime : 0,
+    progress: built ? def.work : 0,
     workers: [],
     desiredWorkers: 0, // start unstaffed — the player assigns workers with the stepper
     growth: 0,

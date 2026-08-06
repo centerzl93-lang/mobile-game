@@ -1,7 +1,8 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-08-06 (taller toolbar buttons, ages run 4x the calendar, the full herd model,
+> Last updated: 2026-08-06 (building price list + builder shifts, taller toolbar buttons,
+> ages run 4x the calendar, the full herd model,
 > sheep/wool/mutton, larder-hauling collapse fixed, real Hard difficulty, low-stock warnings,
 > two-door barn, taller school; see Current State)
 
@@ -22,7 +23,9 @@ Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
-Latest work: **taller toolbar buttons**,
+Latest work: **buildings cost what they are worth**,
+**construction is a project builders knock off from**,
+**taller toolbar buttons**,
 **ages run four to the calendar year**,
 **sheep, wool and mutton**,
 **villages no longer freeze beside a full barn**,
@@ -43,6 +46,58 @@ Latest work: **taller toolbar buttons**,
 Earlier, **confirm-before-apply, live rehousing, implicit inspect**, the **storage/job-board/naming pass**,
 the **household model**, the **opportunities pass**, the **HUD / UX pass**, then the **jobs board
 overhaul** — further down.
+
+### Buildings cost what they are worth, and construction is a project (this session)
+
+Two changes that go together: a real price list, and builders who tire.
+
+**The cost table came from the player**, as a spreadsheet of Logs / Stone / Iron / BuilderWork. It
+is a large increase across the board — a Wooden House went from 12 wood to **16 wood + 8 stone**,
+a Mine from 14+10 to **120 + 180 + 48**. Three things follow from it:
+
+- **Iron is a building material now**, not only a smithing input. Nine buildings want it, which
+  gates them behind a mine, a trade, or hand-gathering surface ore.
+- **Normal and Hard start with no stone**, so the first house now waits on hand-gathered surface
+  rock. Loose stone *and* loose iron are both harvestable (`runHarvest`), so this is a project
+  rather than a wall — but it is a materially harder opening, and deliberately so.
+- **The Farm went from 6 wood to 40 + 24 + 12.** It was the cheapest building in the game and the
+  best food source by a factor of four (a 4×4 field feeds four villagers per worker; every other
+  food job feeds less than one). Seeds already gate it to mid-game; the price now says so too.
+
+**`buildTime` is gone; `BuildingDef.work` replaces it.** The old field was seconds, multiplied by
+a `BUILD_TIME_SCALE` of 2 before it meant anything — a trap that had already caught one test. The
+new one is builder-work units and `Building.progress` counts the same units, so `progress / work`
+is a true fraction with nothing hidden in between. `buildTimeOf` → `buildWorkOf`, `demoTimeOf` →
+`demoWorkOf`, `BUILD_SECONDS_PER_UNIT` (dead) and `BUILD_TIME_SCALE` deleted.
+
+**A builder only has `BUILDER_SHIFT_WORK` (30) in them before knocking off.** `labour()` meters
+each tick against the shift, returns the work actually done, and at the cap zeroes `effort` and
+sets `Citizen.rest` — *the same field an ordinary break uses*, so a spent builder walks the
+existing leisure round (tavern → chapel → home) and `runCitizen` picks the shift up again after.
+No parallel state machine, and a low larder still cuts a rest short, because that rule already
+reads `c.rest`.
+
+This is what makes a building a project rather than a progress bar. A well (10 work) is one short
+visit; a mine (240) is eight shifts with a walk home in the middle of each — so **where the
+builders live starts to matter as much as how many there are**. Construction is the one job that
+happens away from a workplace, which makes the commute the player's problem to solve.
+
+Hauling deliberately does *not* cost shift: a builder out of effort can still fetch materials to
+the site. Otherwise a half-rested crew leaves a site with nothing delivered and the rest is spent
+twice over.
+
+**Old saves migrate by fraction, not by number.** `progress` meant seconds and now means work, and
+the scales differ per building (a house was 12, is 40), so carrying the raw value across would
+read as a site barely begun. `save.ts` holds a frozen `LEGACY_BUILD_TIME` table for exactly this,
+rescales each unfinished site by the fraction it had reached, sets standing buildings to their
+full job, and stamps `s.workScale` — the same marker pattern `ageScale` uses.
+
+> **Not yet confirmed with the player:** three rows of the spreadsheet were unreadable — rows 4 and
+> 11 were collapsed and anything past row 23 was cut off — which left **farm, ranch and cemetery**
+> without figures. They currently carry derived values (farm 40/24/12 work 80, ranch 48/16/0 work
+> 80, cemetery 16/24/0 work 40). Two supplied rows also look anomalous against their materials and
+> were implemented as given rather than "corrected": **Tavern** (90 logs, 52 stone, but only 20
+> work) and **Market** (100/58/62, 40 work).
 
 ### The toolbar buttons grow into the home-indicator inset (this session)
 

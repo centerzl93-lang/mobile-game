@@ -3,8 +3,24 @@ import {
   AGE_PER_YEAR,
   GameState, MAP_W, MAP_H, MapSize, setMapSize, CROPS, RANCH_MIN, ranchCapacity, EVENT_LOG_MAX,
   isWorkplace, nextBuildingName, SEASON_LENGTH, Building,
+  buildWorkOf, BUILD_WORK_RATE,
 } from '../types';
 import { randomName } from './names';
+
+/**
+ * Construction times as they were before builder-work replaced them, in the raw units the old
+ * defs carried — multiplied by `LEGACY_BUILD_TIME_SCALE` to get the seconds a site actually took.
+ *
+ * Frozen on purpose: it exists only to read old saves, so it must keep saying what the game used
+ * to do however the live table moves. Nothing outside the migration below may use it.
+ */
+const LEGACY_BUILD_TIME: Record<string, number> = {
+  house: 6, stonehouse: 8, gatherer: 6, farm: 5, fishing: 6, hunting: 6, ranch: 7,
+  lumberyard: 6, woodcutter: 6, quarry: 14, mine: 8, blacksmith: 7, tailor: 6, trading: 8,
+  school: 7, tavern: 7, chapel: 8, cemetery: 6, herbalist: 6, hospital: 8, well: 4,
+  market: 8, barn: 6,
+};
+const LEGACY_BUILD_TIME_SCALE = 2;
 
 // Legacy single-slot key (pre-slots). Migrated into slot 0 on first run, then left in place.
 const LEGACY_KEY = 'little-village-save-v12';
@@ -112,6 +128,27 @@ export function loadGame(slot = 0): GameState | null {
         if (c.age < OLD_ADULT_AGE) c.age *= ADULT_AGE / OLD_ADULT_AGE;
       }
       s.ageScale = AGE_PER_YEAR;
+    }
+
+    // Construction used to be counted in seconds: `progress` ran up to a `buildTime` of six or
+    // eight of them. It counts builder-work now, and the two scales differ per building — a house
+    // was 12 and is 40 — so a raw number carried across would read as a site barely begun. Move
+    // each one over at the fraction it had actually reached.
+    if (typeof s.workScale !== 'number') {
+      for (const b of s.buildings) {
+        const total = buildWorkOf(b.type);
+        if (b.built) {
+          b.progress = total; // standing buildings are simply done, however they were measured
+          continue;
+        }
+        const was = (LEGACY_BUILD_TIME[b.type] ?? 6) * LEGACY_BUILD_TIME_SCALE;
+        const frac = was > 0 ? Math.min(1, Math.max(0, (b.progress ?? 0) / was)) : 0;
+        b.progress = frac * total;
+        // A teardown in flight is the same fraction of a job half the size, so it rescales by the
+        // same ratio rather than needing its own table.
+        if (typeof b.demoProgress === 'number') b.demoProgress *= total / (was || total);
+      }
+      s.workScale = BUILD_WORK_RATE;
     }
 
     // Seeds (crop unlocks) were added after this format shipped. Saves without them predate the

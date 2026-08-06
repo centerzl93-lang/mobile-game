@@ -799,7 +799,7 @@ test.describe('jobs & builders', () => {
       for (const id of [first, second]) {
         const b = s.buildings.find((x: any) => x.id === id);
         b.built = true;
-        b.progress = g.debugBuildTime(b.type);
+        b.progress = g.debugBuildWork(b.type);
       }
       g.debugAdvance(1);
       return { idle, one, two, after: s.desiredBuilders, placedSecond: second != null };
@@ -2453,7 +2453,7 @@ test.describe('job board', () => {
             if (id == null) continue;
             const b = s.buildings.find((x: any) => x.id === id);
             b.built = true;
-            b.progress = g.debugBuildTime('gatherer');
+            b.progress = g.debugBuildWork('gatherer');
             b.desiredWorkers = 2;
             done = true;
           }
@@ -3425,10 +3425,10 @@ test.describe('construction stages', () => {
             if (g.debugCanPlace('house', x, y).ok) id = g.debugPlace('house', x, y);
           }
       const b = s.buildings.find((x: any) => x.id === id);
-      // Ask the game for the build time. `buildTime` on the def is multiplied by
-      // BUILD_TIME_SCALE before it means anything, so a "70%" computed from the raw number is
+      // Ask the game for the whole job. `progress` counts builder-work, not seconds, so a "70%"
+      // computed from anything but the total the game itself reports is
       // really 35% — and the frame stage never appears.
-      const total = g.debugBuildTime('house');
+      const total = g.debugBuildWork('house');
       const seen: string[] = [];
       for (const frac of [0.05, 0.3, 0.55, 0.9, 1]) {
         b.built = frac >= 1;
@@ -3448,6 +3448,60 @@ test.describe('construction stages', () => {
     // building itself.
     expect(out.seen).toEqual(['site', 'site', 'frame', 'frame', 'model']);
     expect(out.anyTransparent, 'no placed building is drawn see-through').toBe(false);
+  });
+});
+
+test.describe('builder shifts', () => {
+  test('a builder knocks off after a shift, so a big building takes several', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(async () => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // A chapel is far more work than one builder can lay down in a single shift, so finishing
+      // one *has* to span several of them.
+      let id: number | null = null;
+      for (let r = 3; r < 24 && id == null; r++)
+        for (let dy = -r; dy <= r && id == null; dy++)
+          for (let dx = -r; dx <= r && id == null; dx++) {
+            const x = barn.x + dx, y = barn.y + dy;
+            if (g.debugCanPlace('chapel', x, y).ok) id = g.debugPlace('chapel', x, y);
+          }
+      const site = s.buildings.find((x: any) => x.id === id);
+      // Hand the site its materials outright — this is a test about labour, not about hauling.
+      site.store = { ...g.debugCost('chapel') };
+      g.debugSetBuilders(4);
+      const cap = g.debugShiftWork();
+      const work = g.debugBuildWork('chapel');
+      let maxEffort = 0;
+      let shiftsEnded = 0;
+      let restedMidBuild = false;
+      const prev = new Map<number, number>();
+      for (let i = 0; i < 600 && !site.built; i++) {
+        g.debugAdvance(1);
+        for (const c of s.citizens) {
+          const e = c.effort ?? 0;
+          if (e > maxEffort) maxEffort = e;
+          // `labour` zeroes effort at the cap, so a fall to exactly 0 from a part-done shift is a
+          // shift ending rather than a builder who simply never started one.
+          if ((prev.get(c.id) ?? 0) > 1 && e === 0) shiftsEnded++;
+          prev.set(c.id, e);
+          if (!site.built && c.builder && (c.rest ?? 0) > 0) restedMidBuild = true;
+        }
+      }
+      return { built: site.built, maxEffort, shiftsEnded, restedMidBuild, cap, work, placed: id != null };
+    });
+
+    expect(out.placed).toBe(true);
+    // The contract: nobody lays down more than a shift's work without stopping.
+    expect(out.maxEffort, 'no builder exceeds a shift').toBeLessThanOrEqual(out.cap);
+    // And a job this size cannot be done in one, so the crew knocks off and comes back.
+    expect(out.work).toBeGreaterThan(out.cap);
+    expect(out.shiftsEnded, 'the crew works more than one shift').toBeGreaterThanOrEqual(2);
+    expect(out.restedMidBuild, 'a builder rests while the site still stands unfinished').toBe(true);
+    // It is a project, not a wall: it still finishes.
+    expect(out.built, 'the chapel is finished in the end').toBe(true);
   });
 });
 
@@ -3852,7 +3906,7 @@ test.describe('roads get laid', () => {
             if (id == null) continue;
             const b = s.buildings.find((x: any) => x.id === id);
             b.built = true;
-            b.progress = g.debugBuildTime('gatherer');
+            b.progress = g.debugBuildWork('gatherer');
             b.desiredWorkers = g.debugJobCount('gatherer');
             huts.push(id);
           }
@@ -4034,7 +4088,7 @@ test.describe('work happens where the work is', () => {
           if (id == null) continue;
           const b = s.buildings.find((x) => x.id === id);
           b.built = true;
-          b.progress = g.debugBuildTime(type);
+          b.progress = g.debugBuildWork(type);
           b.desiredWorkers = g.debugJobCount(type);
           return b;
         }
@@ -4491,7 +4545,7 @@ test.describe('demolition is a job', () => {
             if (id == null) continue;
             placed = s.buildings.find((b: any) => b.id === id);
             placed.built = true;
-            placed.progress = g.debugBuildTime('barn');
+            placed.progress = g.debugBuildWork('barn');
           }
       const allowed = placed ? g.debugDemolish(only.id) : null;
       // ...and then the *other* one cannot, because it is the last one left standing.
@@ -4642,7 +4696,7 @@ test.describe('the market delivers', () => {
               if (id == null) continue;
               mk = s.buildings.find((b: any) => b.id === id);
               mk.built = true;
-              mk.progress = g.debugBuildTime('market');
+              mk.progress = g.debugBuildWork('market');
               mk.desiredWorkers = g.debugJobCount('market');
             }
         if (!mk) continue;
@@ -4758,7 +4812,7 @@ test.describe('stockpile limits', () => {
             if (id == null) continue;
             wc = s.buildings.find((x: any) => x.id === id);
             wc.built = true;
-            wc.progress = g.debugBuildTime('woodcutter');
+            wc.progress = g.debugBuildWork('woodcutter');
             wc.desiredWorkers = g.debugJobCount('woodcutter');
           }
       // "At the bench" is the readable signal: a woodcutter working is inside his shop, and a
@@ -4832,7 +4886,7 @@ test.describe('stockpile limits', () => {
               if (id == null) continue;
               const b = s.buildings.find((x: any) => x.id === id);
               b.built = true;
-              b.progress = g.debugBuildTime(type);
+              b.progress = g.debugBuildWork(type);
               b.desiredWorkers = g.debugJobCount(type);
               return b;
             }
@@ -4955,7 +5009,7 @@ test.describe('the merchant ties up at the trading post', () => {
               if (id == null) continue;
               const b = s.buildings.find((x) => x.id === id);
               b.built = true;
-              b.progress = g.debugBuildTime('trading');
+              b.progress = g.debugBuildWork('trading');
               return b;
             }
     }

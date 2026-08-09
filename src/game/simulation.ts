@@ -55,6 +55,11 @@ import {
   PATH_DIRT,
   PATH_STONE,
   PATH_BRIDGE,
+  BRIDGE_FIRE_CHANCE,
+  BRIDGE_STONE_STONE_COST,
+  BRIDGE_STONE_WOOD_COST,
+  PATH_BRIDGE_STONE_PLAN,
+  PATH_BRIDGE_STONE,
   PATH_BRIDGE_PLAN,
   PATH_TUNNEL,
   PATH_TUNNEL_PLAN,
@@ -1216,6 +1221,22 @@ export function debugWorkSpotFor(s: GameState, c: Citizen, b: Building): { x: nu
   return workSpot(s, c, b);
 }
 
+/**
+ * Debug/testing helper: could someone standing at `from` walk to this tile?
+ *
+ * The connectivity labels are rebuilt here rather than assumed, so a test can ask the question
+ * before it has advanced the clock even once.
+ */
+export function debugReachable(
+  s: GameState,
+  from: { x: number; y: number },
+  tx: number,
+  ty: number,
+): boolean {
+  ensureNavLabels(s);
+  return reachableFrom(from, tx, ty);
+}
+
 /** Debug/testing helper: the tile someone standing at `from` would walk to for `b`. */
 export function debugApproach(
   s: GameState,
@@ -2047,7 +2068,7 @@ function buildPath(s: GameState, c: Citizen, dt: number, maxD2 = Infinity): bool
       // instead of collecting it. `planPath` queues the order; this waits for it.
       if (s.harvest[i] !== HARVEST_NONE) continue;
       stand = { x: tx + 0.5, y: ty + 0.5 };
-    } else if (v === PATH_BRIDGE_PLAN || v === PATH_TUNNEL_PLAN) {
+    } else if (v === PATH_BRIDGE_PLAN || v === PATH_BRIDGE_STONE_PLAN || v === PATH_TUNNEL_PLAN) {
       // Bridges and tunnels are worked from a walkable neighbour — the tile itself is water or
       // solid rock until the moment it is finished.
       stand = adjacentStand(s, c, tx, ty);
@@ -2079,6 +2100,14 @@ function buildPath(s: GameState, c: Citizen, dt: number, maxD2 = Infinity): bool
         takeNearest(s, bestStand, 'wood', BRIDGE_WOOD_COST);
         s.paths[bestIdx] = PATH_BRIDGE;
         s.navVersion = (s.navVersion ?? 0) + 1; // a new bridge changed walkability
+      }
+    } else if (v === PATH_BRIDGE_STONE_PLAN) {
+      // Both materials, or the tile stays unworked — the same rule a tunnel follows.
+      if (totalStored(s, 'wood') >= BRIDGE_STONE_WOOD_COST && totalStored(s, 'stone') >= BRIDGE_STONE_STONE_COST) {
+        takeNearest(s, bestStand, 'wood', BRIDGE_STONE_WOOD_COST);
+        takeNearest(s, bestStand, 'stone', BRIDGE_STONE_STONE_COST);
+        s.paths[bestIdx] = PATH_BRIDGE_STONE;
+        s.navVersion = (s.navVersion ?? 0) + 1;
       }
     } else if (v === PATH_TUNNEL_PLAN) {
       // Timber to prop the roof and stone to line it — both, or the tile stays unworked.
@@ -2371,6 +2400,7 @@ function endSeason(s: GameState, log: LogFn): void {
 
   diseaseSeason(s, log);
   fireSeason(s, log);
+  bridgeFireSeason(s, log);
 
   // Tally deaths so far this season (old age, starvation, cold, illness) — they weigh
   // on morale unless the village keeps a cemetery.
@@ -3395,6 +3425,29 @@ export function fireSeason(s: GameState, log: LogFn): void {
   // distributed ones.
   if (isStoneBuilt(b.type) && rand(s) >= STONE_FIRE_FACTOR) return;
   tryIgnite(s, b, log, true);
+}
+
+/**
+ * A timber bridge burns down, taking the crossing with it.
+ *
+ * Rolled separately from the buildings' fire, because a bridge is not a building: nobody lives on
+ * it to notice, it stands over water far from any well, and losing one does something no burnt
+ * house does — it cuts the map in half again until somebody rebuilds. That is the whole reason a
+ * stone bridge is worth its masonry, so masonry is simply not a candidate here.
+ *
+ * The tile goes straight back to open water rather than smouldering: there is nothing left to
+ * stand on the moment the deck is gone.
+ */
+export function bridgeFireSeason(s: GameState, log: LogFn): void {
+  if (!s.disasters) return;
+  const timber: number[] = [];
+  for (let i = 0; i < s.paths.length; i++) if (s.paths[i] === PATH_BRIDGE) timber.push(i);
+  if (timber.length === 0) return;
+  if (rand(s) >= BRIDGE_FIRE_CHANCE) return;
+  const idx = timber[(rand(s) * timber.length) | 0];
+  s.paths[idx] = PATH_NONE;
+  s.navVersion = (s.navVersion ?? 0) + 1; // the crossing is gone; routes have to be recomputed
+  log('A timber bridge burned down', 'bad');
 }
 
 /** Testing/debug: attempt to set a building alight (respecting well protection). */

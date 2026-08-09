@@ -3,6 +3,7 @@ import {
   MAP_W,
   MAP_H,
   PATH_BRIDGE,
+  PATH_BRIDGE_STONE,
   PATH_TUNNEL,
   blocksMovement,
   footprintW,
@@ -74,7 +75,7 @@ export function isWalkable(s: GameState, tx: number, ty: number): boolean {
   const type = s.tiles[idx].type;
   if (type === 'stone') return s.paths[idx] === PATH_TUNNEL;
   if (type !== 'water') return true;
-  return s.paths[idx] === PATH_BRIDGE;
+  return s.paths[idx] === PATH_BRIDGE || s.paths[idx] === PATH_BRIDGE_STONE;
 }
 
 export interface Point {

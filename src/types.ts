@@ -1038,7 +1038,7 @@ export function plannedRoadTiles(s: GameState): number {
   let n = 0;
   for (let i = 0; i < s.paths.length; i++) {
     const v = s.paths[i];
-    if (v !== PATH_DIRT_PLAN && v !== PATH_STONE_PLAN && v !== PATH_BRIDGE_PLAN && v !== PATH_TUNNEL_PLAN) continue;
+    if (!isPlannedPath(v)) continue;
     if (pending?.has(i)) continue;
     n++;
   }
@@ -1342,6 +1342,32 @@ export const PATH_BRIDGE_PLAN = 5;
 export const PATH_BRIDGE = 6; // a built bridge — the only walkable water tile
 export const PATH_TUNNEL_PLAN = 7;
 export const PATH_TUNNEL = 8; // a driven tunnel — the only walkable mountain tile
+/**
+ * A stone bridge: the masonry upgrade of a timber one, exactly as a stone road upgrades a track.
+ *
+ * Kept as new values rather than by re-using the timber ones, so every existing save's bridges
+ * stay timber and stay standing. 9 and 10 have never been written by any build before this.
+ */
+export const PATH_BRIDGE_STONE_PLAN = 9;
+export const PATH_BRIDGE_STONE = 10;
+
+/**
+ * Is this tile drawn but not yet laid?
+ *
+ * A predicate rather than the run of `!==` comparisons it replaces: the same list was written out
+ * at four call sites, and adding the stone bridge to the path layer meant every one of them had
+ * to be found and widened. One of them being missed is exactly the sort of silence that leaves a
+ * tier planned forever with nobody to build it.
+ */
+export function isPlannedPath(v: number): boolean {
+  return (
+    v === PATH_DIRT_PLAN ||
+    v === PATH_STONE_PLAN ||
+    v === PATH_BRIDGE_PLAN ||
+    v === PATH_BRIDGE_STONE_PLAN ||
+    v === PATH_TUNNEL_PLAN
+  );
+}
 
 // Harvest layer values (per tile): what unemployed villagers should gather here.
 export const HARVEST_NONE = 0;
@@ -1733,9 +1759,24 @@ export const BUILDER_REST_SECONDS = 30;
 export const BASE_WALK_SPEED = 0.875; // villagers stroll — half the previous 1.75
 export const PATH_DIRT_MULT = 1.5;
 export const PATH_STONE_MULT = 2.0;
-export const PATH_BRIDGE_MULT = 1.5; // crossing a built bridge (like a dirt path)
+/**
+ * Crossing a bridge. Timber is a plank walkway you pick your way over; masonry is a road that
+ * happens to be above water, and matches `PATH_STONE_MULT` so a paved street does not slow to a
+ * crawl the moment it reaches the river.
+ */
+export const PATH_BRIDGE_MULT = 1.25;
+export const PATH_BRIDGE_STONE_MULT = 2.0;
 export const STONE_PATH_COST = 1; // stone per stone-path tile
-export const BRIDGE_WOOD_COST = 3; // wood per bridge tile
+export const BRIDGE_WOOD_COST = 3; // wood per timber bridge tile
+/** A stone bridge: less timber than the plank one, and the masonry that replaces it. */
+export const BRIDGE_STONE_WOOD_COST = 2;
+export const BRIDGE_STONE_STONE_COST = 4;
+/**
+ * Seasonal chance a standing timber bridge catches. Planks over water, far from any well, and
+ * nobody living on them to notice — the one piece of infrastructure that can simply be lost.
+ * Masonry does not burn, which is half the reason to build it.
+ */
+export const BRIDGE_FIRE_CHANCE = 0.04;
 /**
  * A tunnel is the mountain counterpart of a bridge: the only way through rock that villagers
  * otherwise have to walk the whole length of a range to get around.

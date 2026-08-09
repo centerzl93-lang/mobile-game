@@ -23,6 +23,8 @@ import {
   PATH_STONE,
   PATH_STONE_PLAN,
   PATH_BRIDGE,
+  PATH_BRIDGE_STONE_PLAN,
+  PATH_BRIDGE_STONE,
   PATH_BRIDGE_PLAN,
   PATH_TUNNEL,
   PATH_TUNNEL_PLAN,
@@ -481,6 +483,9 @@ export class Renderer3D {
       ['dirt', 'path_dirt', 0xffffff],
       ['stone', 'path_stone', 0xffffff],
       ['bridge', 'path_plank', 0xffffff],
+      // Masonry over water: the stone road's own surface, so a paved street crossing a river
+      // reads as one continuous road rather than changing material at the bank.
+      ['stonebridge', 'path_stone', 0xffffff],
       // A tunnel's floor is the same lining stone as its walls, kept dark: it is underground.
       ['tunnel', 'path_stone', 0x8d8f96],
     ] as [PathSurface, string, number][]) {
@@ -1325,9 +1330,10 @@ export class Renderer3D {
     if (sig === this.sig.path) return;
     this.sig.path = sig;
 
-    const n: Record<PathSurface, number> = { dirt: 0, stone: 0, bridge: 0, tunnel: 0 };
+    const n: Record<PathSurface, number> = { dirt: 0, stone: 0, bridge: 0, stonebridge: 0, tunnel: 0 };
     let portals = 0;
-    const built = (v: number) => v === PATH_DIRT || v === PATH_STONE || v === PATH_BRIDGE || v === PATH_TUNNEL;
+    const built = (v: number) =>
+      v === PATH_DIRT || v === PATH_STONE || v === PATH_BRIDGE || v === PATH_BRIDGE_STONE || v === PATH_TUNNEL;
     for (let i = 0; i < s.paths.length; i++) {
       const v = s.paths[i];
       if (!v) continue;
@@ -1338,6 +1344,9 @@ export class Renderer3D {
       if (v === PATH_BRIDGE || v === PATH_BRIDGE_PLAN) {
         surf = 'bridge';
         y = 0.14 + 0.03; // decking sits just over the water plane
+      } else if (v === PATH_BRIDGE_STONE || v === PATH_BRIDGE_STONE_PLAN) {
+        surf = 'stonebridge';
+        y = 0.14 + 0.05; // masonry rides a little higher than planks
       } else if (v === PATH_TUNNEL || v === PATH_TUNNEL_PLAN) {
         surf = 'tunnel';
         // A planned tunnel has to be visible while it is still solid rock, so its marker rides on
@@ -1406,7 +1415,7 @@ export class Renderer3D {
         }
       }
     }
-    for (const key of ['dirt', 'stone', 'bridge', 'tunnel'] as PathSurface[]) {
+    for (const key of ['dirt', 'stone', 'bridge', 'stonebridge', 'tunnel'] as PathSurface[]) {
       const layer = this.pathLayers[key];
       layer.count = n[key];
       layer.instanceMatrix.needsUpdate = true;
@@ -2149,7 +2158,7 @@ function clamp01(v: number): number {
 }
 
 /** The four path surfaces, each drawn by its own instanced layer with its own texture. */
-type PathSurface = 'dirt' | 'stone' | 'bridge' | 'tunnel';
+type PathSurface = 'dirt' | 'stone' | 'bridge' | 'stonebridge' | 'tunnel';
 
 /**
  * How solid a building looks before it exists — both the placement ghost and a site under

@@ -3461,6 +3461,91 @@ test.describe('construction stages', () => {
   });
 });
 
+test.describe('bridges come in timber and stone', () => {
+  test('stone is laid over timber as an upgrade, and both carry villagers', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      for (const k of ['wood', 'stone']) barn.store[k] = 4000;
+      // A water tile the village can actually get to. The nearest bit of water is not enough:
+      // the first one found by scanning the map is usually on the far bank of the river, where
+      // no builder can ever stand, and the crossing would sit planned forever.
+      let anchor: { x: number; y: number } | null = null; // a villager stands on the barn's tile
+      for (let r = 1; r < 12 && !anchor; r++)
+        for (let dy = -r; dy <= r && !anchor; dy++)
+          for (let dx = -r; dx <= r && !anchor; dx++)
+            if (g.debugIsWalkable(barn.x + dx, barn.y + dy)) anchor = { x: barn.x + dx, y: barn.y + dy };
+      const near = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+      let wet: { x: number; y: number } | null = null;
+      let bestD = Infinity;
+      for (let y = 2; y < s.h - 2; y++)
+        for (let x = 2; x < s.w - 2; x++) {
+          if (s.tiles[y * s.w + x].type !== 'water') continue;
+          if (!near.some(([dx, dy]) => g.debugReachable(anchor!.x, anchor!.y, x + dx, y + dy))) continue;
+          const d = (x - barn.x) ** 2 + (y - barn.y) ** 2;
+          if (d < bestD) {
+            bestD = d;
+            wet = { x, y };
+          }
+        }
+
+      const plannedTimber = g.debugPlanPath('bridge', wet!.x, wet!.y);
+      const timberAgain = g.debugPlanPath('bridge', wet!.x, wet!.y); // already this tier
+      const upgrade = g.debugPlanPath('stonebridge', wet!.x, wet!.y); // masonry over planks
+      // Build it out.
+      g.debugSetBuilders(4);
+      for (let i = 0; i < 4000 && s.paths[wet!.y * s.w + wet!.x] !== g.debugPathValue('stonebridge'); i++) {
+        g.debugAdvance(0.2);
+      }
+      const built = s.paths[wet!.y * s.w + wet!.x] === g.debugPathValue('stonebridge');
+      const walkable = g.debugIsWalkable(wet!.x, wet!.y);
+      const speed = g.debugPathSpeed(wet!.x, wet!.y);
+      const downgrade = g.debugPlanPath('bridge', wet!.x, wet!.y); // planks back over masonry
+      return { plannedTimber, timberAgain, upgrade, built, walkable, speed, downgrade };
+    });
+
+    expect(out.plannedTimber, 'a timber bridge can be planned over water').toBe(true);
+    expect(out.timberAgain, 'planning the same tier twice does nothing').toBe(false);
+    expect(out.upgrade, 'stone can be laid over timber, as stone road over dirt').toBe(true);
+    expect(out.built, 'and the builders finish it').toBe(true);
+    expect(out.walkable, 'a stone bridge carries villagers like a timber one').toBe(true);
+    expect(out.speed, 'and carries them at the stone road speed').toBe(2);
+    expect(out.downgrade, 'timber can go back over masonry, as dirt over stone').toBe(true);
+  });
+
+  test('a timber bridge can burn down; a stone one cannot', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const run = (tier: string) => {
+        g.startNewGame('small', 'easy', true, 0, 4242); // disasters on
+        const s = g.state;
+        let wet: { x: number; y: number } | null = null;
+        for (let y = 2; y < s.h - 2 && !wet; y++)
+          for (let x = 2; x < s.w - 2 && !wet; x++)
+            if (s.tiles[y * s.w + x].type === 'water') wet = { x, y };
+        const i = wet!.y * s.w + wet!.x;
+        s.paths[i] = g.debugPathValue(tier);
+        // Force the roll: a fire starts, and it picks this crossing.
+        g.debugPinRandom([0, 0]);
+        try {
+          g.debugBridgeFireSeason();
+        } finally {
+          g.debugPinRandom(null);
+        }
+        return s.paths[i];
+      };
+      return { timberAfter: run('bridge'), stoneAfter: run('stonebridge'), none: 0 };
+    });
+
+    expect(out.timberAfter, 'the planks burned and the crossing is gone').toBe(out.none);
+    expect(out.stoneAfter, 'masonry does not burn').not.toBe(out.none);
+  });
+});
+
 test.describe('a field is priced by its size', () => {
   test('an 8x8 costs four times a 4x4, and gives back more when pulled down', async ({ page }) => {
     await open2d(page);
@@ -4964,7 +5049,9 @@ test.describe('drawing a road', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false);
+      // Seeded: the test needs a row where the river has open ground on both banks, and on an
+      // unlucky map there is none — it was failing on the map, not on the router.
+      g.startNewGame('small', 'easy', false, 0, 4242);
       const s = g.state;
       // Find open ground on each bank of the river, on the same row.
       for (let y = 4; y < s.h - 4; y++) {

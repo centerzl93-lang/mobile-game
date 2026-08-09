@@ -8,9 +8,15 @@ import {
   PATH_STONE,
   PATH_STONE_PLAN,
   PATH_BRIDGE,
+  BRIDGE_STONE_STONE_COST,
+  BRIDGE_STONE_WOOD_COST,
+  PATH_BRIDGE_STONE_MULT,
+  PATH_BRIDGE_STONE_PLAN,
+  PATH_BRIDGE_STONE,
   PATH_BRIDGE_PLAN,
   PATH_TUNNEL,
   PATH_TUNNEL_PLAN,
+  isPlannedPath,
   PATH_DIRT_MULT,
   PATH_STONE_MULT,
   PATH_BRIDGE_MULT,
@@ -28,7 +34,7 @@ import { tileIndex, inBounds, getTile } from './world';
 import { HARVEST_WOOD, HARVEST_STONE, HARVEST_IRON } from '../types';
 import { totalStored } from './storage';
 
-export type PathTier = 'dirt' | 'stone' | 'bridge' | 'tunnel';
+export type PathTier = 'dirt' | 'stone' | 'bridge' | 'stonebridge' | 'tunnel';
 
 /**
  * Plan a path tile of the given tier. Returns true if a tile was newly planned.
@@ -42,11 +48,22 @@ export function planPath(s: GameState, tx: number, ty: number, tier: PathTier): 
   const idx = tileIndex(tx, ty);
   const cur = s.paths[idx];
   if (tileHasBuilding(s, tx, ty)) return false; // paths don't run underneath buildings
-  if (tier === 'bridge') {
+  if (tier === 'bridge' || tier === 'stonebridge') {
     if (t.type !== 'water') return false; // bridges only span water
-    if (cur === PATH_BRIDGE || cur === PATH_BRIDGE_PLAN) return false;
-    if (totalStored(s, 'wood') < BRIDGE_WOOD_COST) return false;
-    s.paths[idx] = PATH_BRIDGE_PLAN;
+    const stone = tier === 'stonebridge';
+    // Already this tier (or planned as it) — nothing to do. The *other* tier is allowed over the
+    // top, which is what makes a timber crossing upgradeable to masonry and back again, exactly
+    // as a track can be paved and a paved street returned to a track.
+    if (stone ? cur === PATH_BRIDGE_STONE || cur === PATH_BRIDGE_STONE_PLAN : cur === PATH_BRIDGE || cur === PATH_BRIDGE_PLAN) {
+      return false;
+    }
+    if (stone) {
+      if (totalStored(s, 'wood') < BRIDGE_STONE_WOOD_COST) return false;
+      if (totalStored(s, 'stone') < BRIDGE_STONE_STONE_COST) return false;
+    } else if (totalStored(s, 'wood') < BRIDGE_WOOD_COST) {
+      return false;
+    }
+    s.paths[idx] = stone ? PATH_BRIDGE_STONE_PLAN : PATH_BRIDGE_PLAN;
     return true;
   }
   if (tier === 'tunnel') {
@@ -127,7 +144,7 @@ export function cancelPendingPaths(s: GameState): number {
     const idx = pending[k];
     const v = s.paths[idx];
     // Only un-plan: a tile a villager already finished while this sat pending stays built.
-    if (v === PATH_DIRT_PLAN || v === PATH_STONE_PLAN || v === PATH_BRIDGE_PLAN || v === PATH_TUNNEL_PLAN) {
+    if (isPlannedPath(v)) {
       // Put back whatever was there before, so cancelling an upgrade leaves the old road intact
       // rather than scrubbing the tile to bare ground.
       s.paths[idx] = prevs[k] ?? PATH_NONE;
@@ -153,7 +170,13 @@ function routable(s: GameState, tx: number, ty: number): boolean {
   if (tileHasBuilding(s, tx, ty)) return false;
   const t = getTile(s.tiles, tx, ty)!;
   const cur = s.paths[tileIndex(tx, ty)];
-  if (t.type === 'water') return cur === PATH_BRIDGE || cur === PATH_BRIDGE_PLAN;
+  if (t.type === 'water')
+    return (
+      cur === PATH_BRIDGE ||
+      cur === PATH_BRIDGE_PLAN ||
+      cur === PATH_BRIDGE_STONE ||
+      cur === PATH_BRIDGE_STONE_PLAN
+    );
   if (t.type === 'stone') return cur === PATH_TUNNEL || cur === PATH_TUNNEL_PLAN;
   return true;
 }
@@ -292,7 +315,7 @@ const NEIGHBOURS8: [number, number][] = [
  * the rock get planned (`planPath` refuses the rest).
  */
 export function isSpanTier(tier: PathTier): boolean {
-  return tier === 'bridge' || tier === 'tunnel';
+  return tier === 'bridge' || tier === 'stonebridge' || tier === 'tunnel';
 }
 
 /**
@@ -339,7 +362,7 @@ export function unplanTiles(s: GameState, indices: number[]): void {
   }
   for (const idx of indices) {
     const v = s.paths[idx];
-    if (v === PATH_DIRT_PLAN || v === PATH_STONE_PLAN || v === PATH_BRIDGE_PLAN || v === PATH_TUNNEL_PLAN) {
+    if (isPlannedPath(v)) {
       s.paths[idx] = prevOf.get(idx) ?? PATH_NONE;
     }
   }
@@ -384,7 +407,8 @@ export function clearPathsUnder(s: GameState, x: number, y: number, w: number, h
       if (s.paths[idx] === PATH_NONE) continue;
       // Bridges and tunnels are the only walkable water and mountain tiles, so removing one
       // changes connectivity.
-      const wasCrossing = s.paths[idx] === PATH_BRIDGE || s.paths[idx] === PATH_TUNNEL;
+      const wasCrossing =
+        s.paths[idx] === PATH_BRIDGE || s.paths[idx] === PATH_BRIDGE_STONE || s.paths[idx] === PATH_TUNNEL;
       s.paths[idx] = PATH_NONE;
       cleared++;
       if (wasCrossing) s.navVersion = (s.navVersion ?? 0) + 1;
@@ -410,7 +434,8 @@ export function demolishPathRect(s: GameState, x0: number, y0: number, x1: numbe
       if (s.paths[idx] === PATH_NONE) continue;
       // Bridges and tunnels are the only walkable water and mountain tiles, so pulling one
       // changes where villagers can go.
-      const wasCrossing = s.paths[idx] === PATH_BRIDGE || s.paths[idx] === PATH_TUNNEL;
+      const wasCrossing =
+        s.paths[idx] === PATH_BRIDGE || s.paths[idx] === PATH_BRIDGE_STONE || s.paths[idx] === PATH_TUNNEL;
       s.paths[idx] = PATH_NONE;
       removed++;
       if (wasCrossing) s.navVersion = (s.navVersion ?? 0) + 1;
@@ -428,6 +453,7 @@ export function pathSpeedMult(s: GameState, x: number, y: number): number {
   if (v === PATH_STONE) return PATH_STONE_MULT;
   if (v === PATH_DIRT) return PATH_DIRT_MULT;
   if (v === PATH_BRIDGE) return PATH_BRIDGE_MULT;
+  if (v === PATH_BRIDGE_STONE) return PATH_BRIDGE_STONE_MULT;
   if (v === PATH_TUNNEL) return PATH_TUNNEL_MULT;
   return 1;
 }

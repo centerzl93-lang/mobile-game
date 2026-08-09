@@ -70,7 +70,7 @@ import {
   avgHappiness,
 } from '../game/simulation';
 
-export type PathTier = 'dirt' | 'stone' | 'bridge' | 'tunnel';
+export type PathTier = 'dirt' | 'stone' | 'bridge' | 'stonebridge' | 'tunnel';
 
 /** Version / commit / build date, injected at build time — see `__BUILD_STAMP__`. */
 export const BUILD_STAMP = __BUILD_STAMP__;
@@ -480,7 +480,8 @@ export class UI {
       for (const [tier, emoji, label, cost] of [
         ['dirt', '🟤', 'Dirt Path', 'free'],
         ['stone', '⬜', 'Stone Path', '🪨1/tile'],
-        ['bridge', '🌉', 'Bridge', '🪵3/tile'],
+        ['bridge', '🌉', 'Timber Bridge', '🪵3/tile'],
+        ['stonebridge', '🏛️', 'Stone Bridge', '🪵2 🪨4/tile'],
         ['tunnel', '⛰️', 'Tunnel', '🪵6 🪨4/tile'],
       ] as [PathTier, string, string, string][]) {
         po.appendChild(this.buildBtn(emoji, label, cost, tier === this.selectedPath, () => this.selectPath(tier)));
@@ -634,8 +635,10 @@ export class UI {
     if (this.selectedPath) {
       const hint =
         tier === 'bridge'
-          ? 'Drag one finger over water to plan a bridge; villagers build it out from the bank.'
-          : 'Drag one finger to draw a path; pan with two fingers.';
+          ? 'Drag over water to plan a timber bridge. Quick and cheap — but it can burn.'
+          : tier === 'stonebridge'
+            ? 'Masonry over water: as fast as a stone road, and it cannot burn. Lay it over a timber bridge to upgrade.'
+            : 'Drag one finger to draw a path; pan with two fingers.';
       this.showHint(hint);
     } else this.hideHint();
   }

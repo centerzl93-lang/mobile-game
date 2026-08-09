@@ -21,6 +21,8 @@ import {
   PATH_STONE,
   PATH_STONE_PLAN,
   PATH_BRIDGE,
+  PATH_BRIDGE_STONE_PLAN,
+  PATH_BRIDGE_STONE,
   PATH_BRIDGE_PLAN,
   HARVEST_WOOD,
   HARVEST_STONE,
@@ -38,7 +40,7 @@ export interface PlacementView {
   prot?: 0 | 1 | 2 | 3;
   valid: boolean;
   /** True while in path-drawing mode (shows a hint reticle at screen centre). */
-  pathTier?: 'dirt' | 'stone' | 'bridge' | 'tunnel' | null;
+  pathTier?: 'dirt' | 'stone' | 'bridge' | 'stonebridge' | 'tunnel' | null;
   selBuildingId?: number | null;
   selCitizenId?: number | null;
   /** Live harvest-marquee rectangle in world coords while dragging, else null. */
@@ -122,14 +124,15 @@ export class Renderer {
         const pv = s.paths[tileIndex(tx, ty)];
         if (!pv) continue;
         const [sx, sy] = this.camera.worldToScreen(tx, ty, w, h);
-        const built = pv === PATH_DIRT || pv === PATH_STONE || pv === PATH_BRIDGE;
+        const built = pv === PATH_DIRT || pv === PATH_STONE || pv === PATH_BRIDGE || pv === PATH_BRIDGE_STONE;
         ctx.globalAlpha = built ? 1 : 0.4;
-        if (pv === PATH_BRIDGE || pv === PATH_BRIDGE_PLAN) {
-          // Wooden deck spanning the whole water tile, with plank lines.
-          ctx.fillStyle = '#7a5230';
+        if (pv === PATH_BRIDGE || pv === PATH_BRIDGE_PLAN || pv === PATH_BRIDGE_STONE || pv === PATH_BRIDGE_STONE_PLAN) {
+          // A deck spanning the whole water tile: planks for timber, courses of ashlar for stone.
+          const masonry = pv === PATH_BRIDGE_STONE || pv === PATH_BRIDGE_STONE_PLAN;
+          ctx.fillStyle = masonry ? '#9a9ca4' : '#7a5230';
           ctx.fillRect(sx, sy, p + 1, p + 1);
           if (p > 6) {
-            ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+            ctx.strokeStyle = masonry ? 'rgba(0,0,0,0.18)' : 'rgba(0,0,0,0.28)';
             ctx.lineWidth = 1;
             for (let k = 1; k < 3; k++) {
               ctx.beginPath();

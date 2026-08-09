@@ -70,9 +70,15 @@ import {
   RESOURCE_KINDS,
   ADULT_AGE,
   PATH_NONE,
+  PATH_DIRT,
   PATH_STONE,
   PATH_STONE_PLAN,
+  PATH_TUNNEL,
   PATH_BRIDGE,
+  BRIDGE_STONE_STONE_COST,
+  BRIDGE_STONE_WOOD_COST,
+  PATH_BRIDGE_STONE_PLAN,
+  PATH_BRIDGE_STONE,
   entranceTiles,
 } from './types';
 import { newGame } from './game/state';
@@ -94,6 +100,7 @@ import {
   eligibleRanchTargets,
   igniteBuilding,
   fireSeason,
+  bridgeFireSeason,
   acceptNomads,
   rejectNomads,
   markHarvestRect,
@@ -103,6 +110,7 @@ import {
   cappedOut,
   debugWorkSpotFor,
   debugApproach,
+  debugReachable,
 } from './game/simulation';
 import {
   canPlace,
@@ -115,7 +123,7 @@ import {
   footprintClear,
   footprintToClear,
 } from './game/buildings';
-import { findPath } from './game/pathfind';
+import { findPath, isWalkable } from './game/pathfind';
 import { tileIndex, inBounds } from './game/world';
 import {
   addNearest,
@@ -131,7 +139,7 @@ import {
 } from './game/storage';
 import {
   planPath, markPending, pendingPathCount, confirmPendingPaths, cancelPendingPaths,
-  isSpanTier, spanLine, routePath, unplanTiles, demolishPathRect,
+  isSpanTier, spanLine, routePath, unplanTiles, demolishPathRect, pathSpeedMult,
 } from './game/paths';
 import { saveGame, loadGame, hasSave, clearSave, slotInfo, slotName, setSlotName, lastSlot, SLOTS } from './game/save';
 import { InspectRow, InspectControls } from './ui/ui';
@@ -823,11 +831,17 @@ class Game {
       const idx = target.ids[0];
       const v = this.state.paths[idx];
       const wasStone = v === PATH_STONE || v === PATH_STONE_PLAN;
-      const wasBridge = v === PATH_BRIDGE;
+      const wasBridge = v === PATH_BRIDGE || v === PATH_BRIDGE_STONE;
       this.state.paths[idx] = PATH_NONE;
       const tx = idx % MAP_W;
       const ty = Math.floor(idx / MAP_W);
       if (wasStone) addNearest(this.state, { x: tx, y: ty }, 'stone', 0.25);
+      // Masonry pulled out of a bridge comes back at the same quarter rate a stone road does —
+      // the tile just holds four times as much of it.
+      if (v === PATH_BRIDGE_STONE) {
+        addNearest(this.state, { x: tx, y: ty }, 'stone', 0.25 * BRIDGE_STONE_STONE_COST);
+        addNearest(this.state, { x: tx, y: ty }, 'wood', 0.25 * BRIDGE_STONE_WOOD_COST);
+      }
       if (wasBridge) this.state.navVersion = (this.state.navVersion ?? 0) + 1; // walkability changed
     }
     this.clearInspect();
@@ -1560,6 +1574,30 @@ class Game {
     return slotName(slot);
   }
 
+  /** Debug/testing helper: the tile value a path tier writes when built. */
+  debugPathValue(tier: PathTier): number {
+    return tier === 'dirt' ? PATH_DIRT
+      : tier === 'stone' ? PATH_STONE
+      : tier === 'bridge' ? PATH_BRIDGE
+      : tier === 'stonebridge' ? PATH_BRIDGE_STONE
+      : PATH_TUNNEL;
+  }
+
+  /** Debug/testing helper: can a villager stand on this tile? */
+  debugIsWalkable(x: number, y: number): boolean {
+    return isWalkable(this.state, x, y);
+  }
+
+  /** Debug/testing helper: the movement multiplier of whatever is on this tile. */
+  debugPathSpeed(x: number, y: number): number {
+    return pathSpeedMult(this.state, x, y);
+  }
+
+  /** Debug/testing helper: roll the season's timber-bridge fire. */
+  debugBridgeFireSeason(): void {
+    bridgeFireSeason(this.state, this.log);
+  }
+
   /** Debug/testing helper: the seed this village was founded from, and its live stream state. */
   debugSeed(): { seed: number; rng: number } {
     return { seed: this.state.seed, rng: this.state.rng };
@@ -1683,6 +1721,11 @@ class Game {
     const c = this.state.citizens.find((x) => x.id === citizenId)!;
     const b = this.state.buildings.find((x) => x.id === c.jobId)!;
     return debugWorkSpotFor(this.state, c, b);
+  }
+
+  /** Debug/testing helper: can a villager standing at (fx, fy) walk to the tile (x, y)? */
+  debugReachable(fx: number, fy: number, x: number, y: number): boolean {
+    return debugReachable(this.state, { x: fx, y: fy }, x, y);
   }
 
   /** Debug/testing helper: the tile a villager standing at (x, y) would walk to for a building. */

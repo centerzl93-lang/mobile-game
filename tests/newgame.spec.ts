@@ -4439,7 +4439,11 @@ test.describe('work happens where the work is', () => {
     await open2d(page);
     const out = await page.evaluate((mk) => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false);
+      // A fixed seed. Whether a forester reaches the seeded deposits depends on where the hut
+      // lands and what lies between, which varies map to map — this failed about one run in six on
+      // a random world, always for want of a reachable circle rather than a broken forester. The
+      // simulation is reproducible now, so the map can simply be held still.
+      g.startNewGame('small', 'easy', false, 0, 20260809);
       const s = g.state; // after the new game: startNewGame replaces the state object wholesale
       s.limits = {}; // easy starts above the wood cap; this test is about where a forester works
       const lum = eval(mk)('lumberyard', 4);

@@ -4,7 +4,6 @@ import {
   BUILD_ORDER,
   BUILDING_DEFS,
   MapSize,
-  MAP_SIZES,
   Difficulty,
   DIFFICULTIES,
   DIFFICULTY_META,
@@ -1520,7 +1519,7 @@ export class UI {
     const seg = (id: string, on: boolean, label: string, sub?: string) =>
       `<button class="seg${on ? ' on' : ''}" id="${id}">${label}${sub ? `<span class="sub">${sub}</span>` : ''}</button>`;
     const sizes = (['small', 'large'] as MapSize[])
-      .map((z) => seg(`ng-size-${z}`, opts.size === z, z === 'small' ? 'Small' : 'Large', `${MAP_SIZES[z]}²`))
+      .map((z) => seg(`ng-size-${z}`, opts.size === z, z === 'small' ? 'Small' : 'Large'))
       .join('');
     const diffs = DIFFICULTIES.map((d) =>
       seg(`ng-diff-${d}`, opts.difficulty === d, DIFFICULTY_META[d].label),
@@ -1540,7 +1539,9 @@ export class UI {
         `<button id="ng-reroll" title="Reroll the seed" aria-label="Reroll the seed">🎲</button>` +
         `<button id="ng-copy" title="Copy the seed" aria-label="Copy the seed">📋</button>` +
         `</div>` +
-        `<p class="ng-hint" id="ng-hint">The same seed builds the same map, and the same founders.</p>` +
+        // Empty until something happens to it. The line stays in the layout so confirming a copy
+        // does not shove the Start button down the card.
+        `<p class="ng-hint" id="ng-hint"></p>` +
         `<button id="ng-start">Start</button>` +
         `<button class="ghost" id="ng-back">Back</button>` +
         `</div>`,

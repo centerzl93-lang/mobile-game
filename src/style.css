@@ -637,6 +637,9 @@ body {
 .menu-card.newgame-card .ng-desc {
   min-height: 2.7em; /* holds its height across difficulties so the card does not jump */
 }
+.menu-card.newgame-card .ng-hint {
+  min-height: 1.35em; /* reserved, so a copy confirmation does not move the Start button */
+}
 .menu-card.newgame-card .ng-seed {
   display: flex;
   gap: 6px;

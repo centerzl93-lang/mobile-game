@@ -93,6 +93,32 @@ export function totalStoredAll(s: GameState): Record<ResourceKind, number> {
   return out;
 }
 
+/**
+ * Everything the village holds, of every kind: the stores *and* the household larders.
+ *
+ * The books are kept on this rather than on `totalStoredAll`, because a household shopping at the
+ * barn is not the village spending anything — it is a sack moving from one shelf to another. Read
+ * on the stores alone, that move looked like a loss with no matching consumption, and the ledger's
+ * own arithmetic (`gained = net + spent`) then reported food *gained* as a negative number.
+ */
+export function totalHeldAll(s: GameState): Record<ResourceKind, number> {
+  const out = totalStoredAll(s);
+  for (const h of houseNodes(s)) {
+    for (const k in h.store) {
+      const kind = k as ResourceKind;
+      out[kind] = (out[kind] ?? 0) + (h.store[kind] ?? 0);
+    }
+  }
+  // And whatever is on someone's back. A sack between the barn and the larder is still the
+  // village's, and leaving it out made the books show goods *gained* as a negative number
+  // whenever the season happened to close while a hauler was mid-walk.
+  for (const c of s.citizens) {
+    if (!c.carry) continue;
+    out[c.carry.kind] = (out[c.carry.kind] ?? 0) + c.carry.amount;
+  }
+  return out;
+}
+
 export function freeCapacity(s: GameState): number {
   let n = 0;
   for (const b of storageNodes(s)) n += barnFree(b);
@@ -187,11 +213,10 @@ export function consume(s: GameState, kind: ResourceKind, amount: number): numbe
     if ((b.store[kind] ?? 0) <= 0) delete b.store[kind];
     need -= take;
   }
-  // The Town Hall's books: this is the one way anything leaves the stores to be used up rather
-  // than moved, so it is the only place the season's spending has to be counted. A household
-  // eating out of its own larder does not pass through here, and should not — those goods left
-  // the stores when they were shopped for, and counting them twice would say the village ate
-  // everything twice.
+  // The Town Hall's books. Counted here *and* in `takeFromLarder`, because the books are kept on
+  // everything the village holds — stores and larders together — so shopping is not a change and
+  // eating is, wherever the food was eaten from. (Keeping them on the stores alone was tried
+  // first, and made a household walking home with a sack look like the village losing it.)
   const took = amount - need;
   if (took > 0) {
     const spent = (s.spent ??= {});
@@ -321,22 +346,31 @@ export function foodVarietyAvailable(s: GameState): number {
 }
 
 /** Take up to `amount` of `kind` out of one larder. Returns the shortfall. */
-export function takeFromLarder(house: Building, kind: ResourceKind, amount: number): number {
+export function takeFromLarder(
+  s: GameState,
+  house: Building,
+  kind: ResourceKind,
+  amount: number,
+): number {
   const have = house.store[kind] ?? 0;
   const take = Math.min(have, amount);
   if (take > 0) {
     house.store[kind] = have - take;
     if ((house.store[kind] ?? 0) <= 0.0001) delete house.store[kind];
+    // A larder is where most of what the village eats is actually eaten, so this is where most of
+    // the books' consumption column comes from. See the note in `consume`.
+    const spent = (s.spent ??= {});
+    spent[kind] = (spent[kind] ?? 0) + take;
   }
   return amount - take;
 }
 
 /** Eat `amount` from a larder, drawn across whatever food kinds it holds. Returns the shortfall. */
-export function takeFoodFromLarder(house: Building, amount: number): number {
+export function takeFoodFromLarder(s: GameState, house: Building, amount: number): number {
   let need = amount;
   for (const k of FOOD_KINDS) {
     if (need <= 0) break;
-    need = takeFromLarder(house, k, need);
+    need = takeFromLarder(s, house, k, need);
   }
   return need;
 }

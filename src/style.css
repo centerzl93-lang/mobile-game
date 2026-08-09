@@ -1655,3 +1655,132 @@ body {
     bottom: calc(var(--safe-bottom) + var(--bar-h) + 12px + var(--popout-h));
   }
 }
+
+
+/* ---- Town Hall: the books and the rules ---- */
+/* Both live in the inspect sheet rather than the HUD, because they are what the building is for. */
+.th-sec {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.03em;
+}
+.th-sec small {
+  font-weight: 500;
+  opacity: 0.75;
+}
+.th-none {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.th-ledger {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* A row per resource: what is held, what moved, and the net. Tabular figures so the columns line
+   up down the sheet — a ledger that does not line up is a list. */
+.th-row {
+  display: grid;
+  grid-template-columns: 22px minmax(38px, auto) 1fr auto;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 0;
+}
+.th-kind {
+  font-size: 14px;
+}
+.th-held {
+  font-weight: 600;
+}
+.th-flow {
+  color: var(--muted);
+  opacity: 0.85;
+}
+.th-net {
+  font-weight: 700;
+}
+.th-net.up {
+  color: var(--good, #8fd07a);
+}
+.th-net.down {
+  color: var(--danger);
+}
+/* "Seasons left" only appears on a resource that is actually draining, and turns urgent when the
+   store would not see the year out. */
+.th-left {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+}
+.th-left.warn {
+  color: var(--danger);
+}
+
+.th-policies {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* Each rule states its own trade, because that is the whole decision. */
+.th-policy {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+}
+.th-policy .th-pname {
+  font-size: 13px;
+  font-weight: 600;
+}
+.th-policy .th-pgain,
+.th-policy .th-pcost {
+  font-size: 11px;
+  color: var(--muted);
+}
+.th-policy .th-pcost {
+  text-align: right;
+}
+.th-policy.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #10240c;
+}
+.th-policy.on .th-pgain,
+.th-policy.on .th-pcost {
+  color: #10240c;
+  opacity: 0.8;
+}
+/* Enacted but unstaffed: the village chose it and cannot keep it. Shown, not hidden, or the
+   player would think the rule was still working. */
+.th-policy.lapsed {
+  border-style: dashed;
+  opacity: 0.7;
+}
+.th-policy .th-lapsed {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--danger);
+}
+
+/* The HUD strip. Same chip shape as a resource so it reads as part of the same row. */
+#hud-policies {
+  margin-top: 3px;
+}
+.stat.policy .val {
+  font-size: 11px;
+  font-weight: 600;
+}

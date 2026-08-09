@@ -181,6 +181,7 @@ import { rand } from './rng';
 import {
   totalStored,
   totalStoredAll,
+  totalHeldAll,
   addNearest,
   takeNearest,
   consume,
@@ -336,7 +337,7 @@ function eat(s: GameState, dt: number, log: LogFn): void {
       rate *
       (policyActive(s, 'rationing') ? POLICY_RATION_FOOD : 1);
     const home = c.homeId !== null ? homeById.get(c.homeId) : undefined;
-    if (home) need = takeFoodFromLarder(home, need);
+    if (home) need = takeFoodFromLarder(s, home, need);
     if (need > 0.000001) need = consumeFood(s, need);
     if (need > 0.000001) {
       c.starve = (c.starve ?? 0) + dt;
@@ -395,7 +396,7 @@ function heat(s: GameState, dt: number, log: LogFn): void {
         if (need <= 0.000001) break;
         const fromLarder = Math.min(need / heat, home.store[kind] ?? 0);
         if (fromLarder > 0) {
-          takeFromLarder(home, kind, fromLarder);
+          takeFromLarder(s, home, kind, fromLarder);
           need -= fromLarder * heat;
         }
       }
@@ -2173,7 +2174,9 @@ function wander(s: GameState, c: Citizen, dt: number): void {
  * surfaced as a season of coats going missing between the books and the barn.
  */
 function closeLedger(s: GameState): void {
-  const now = totalStoredAll(s);
+  // Everything the village *holds*, larders included — see `totalHeldAll`. Kept on the stores
+  // alone, a household walking home with a sack read as the village losing it.
+  const now = totalHeldAll(s);
   const prev = s.lastTotals;
   const out = s.spent ?? {};
   if (prev) {
@@ -2246,7 +2249,7 @@ export function ledgerFor(
   const last = rows[rows.length - 1];
   const out = last.out[kind] ?? 0;
   const net = last.net[kind] ?? 0;
-  const stock = totalStored(s, kind);
+  const stock = totalAvailable(s, kind);
   // Only a village that is *losing* this resource has a number of seasons left; one that is
   // holding steady or growing has none, and saying "999 seasons" would be noise.
   const seasonsLeft = net < -0.0001 ? Math.max(0, stock / -net) : null;
@@ -2337,7 +2340,7 @@ function endSeason(s: GameState, log: LogFn): void {
       if (home && need > 0) {
         const fromLarder = Math.min(need, home.store['clothing'] ?? 0);
         if (fromLarder > 0) {
-          takeFromLarder(home, 'clothing', fromLarder);
+          takeFromLarder(s, home, 'clothing', fromLarder);
           need -= fromLarder;
         }
       }
@@ -3358,7 +3361,7 @@ function diseaseSeason(s: GameState, log: LogFn): void {
     // Reach for the medicine kept at home first, then the village stock.
     const home = c.homeId !== null ? s.buildings.find((b) => b.id === c.homeId) : null;
     if (home && (home.store['medicine'] ?? 0) >= 1) {
-      takeFromLarder(home, 'medicine', 1);
+      takeFromLarder(s, home, 'medicine', 1);
       chance += SICK_RECOVER_MEDICINE;
     } else if (totalStored(s, 'medicine') >= 1) {
       consume(s, 'medicine', 1);

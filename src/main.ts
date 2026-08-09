@@ -22,6 +22,9 @@ import {
   HARVEST_KIND_META,
   MARKET_CAPACITY,
   buildWorkOf,
+  FESTIVAL_FOOD,
+  POLICY_META,
+  POLICIES,
   policyCapacity,
   activePolicies,
   PolicyId,
@@ -115,6 +118,7 @@ import { tileIndex, inBounds } from './game/world';
 import {
   addNearest,
   totalStored,
+  totalFoodAvailable,
   barnLoad,
   capacityOf,
   houseFuelPerSeason,
@@ -207,6 +211,15 @@ class Game {
     this.ui = new UI({
       onSelectBuild: (t) => this.onSelectBuild(t),
       onSelectPath: (tier) => this.onSelectPath(tier),
+      onTogglePolicy: (id) => {
+        const on = !(this.state.policies ?? []).includes(id);
+        setPolicy(this.state, id, on);
+        this.refreshInspect();
+      },
+      onFestival: () => {
+        holdFestival(this.state, this.log);
+        this.refreshInspect();
+      },
       onSetDemolish: (a) => this.onSetDemolish(a),
       onPauseToggle: () => this.togglePause(),
       onSpeedCycle: () => this.cycleSpeed(),
@@ -1265,6 +1278,31 @@ class Game {
       }
       if (b.built && def.jobs > 0) {
         controls = { ...controls, buildingId: b.id, workers: { value: b.desiredWorkers, max: def.jobs } };
+        // The books and the rules are what a Town Hall is *for*, so they arrive with the building
+        // and are found by tapping it rather than taking up room in the HUD.
+        if (b.type === 'townhall' && b.built) {
+          const enacted = this.state.policies ?? [];
+          const active = activePolicies(this.state);
+          const capacity = policyCapacity(this.state);
+          controls = {
+            ...controls,
+            townhall: {
+              // One row per resource the village actually holds or moved last season — asking for
+              // all thirty would bury the four that matter under a wall of zeroes.
+              ledger: RESOURCE_KINDS.map((kind) => ({ kind, row: ledgerFor(this.state, kind) }))
+                .filter(({ row }) => row && (row.stock > 0.01 || Math.abs(row.net) > 0.01))
+                .map(({ kind, row }) => ({ kind, ...row! })),
+              policies: POLICIES.map((id) => ({
+                id,
+                ...POLICY_META[id],
+                enacted: enacted.includes(id),
+                active: active.includes(id),
+              })),
+              capacity,
+              canFestival: capacity >= 1 && totalFoodAvailable(this.state) >= FESTIVAL_FOOD,
+            },
+          };
+        }
         if (b.type === 'mine') {
           controls.toggle = { group: 'mine', options: [
             { v: 'coal', label: 'Coal', on: b.output === 'coal' },

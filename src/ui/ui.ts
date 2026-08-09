@@ -2,6 +2,9 @@ import {
   GameState,
   BuildingType,
   BUILD_ORDER,
+  POLICY_META,
+  activePolicies,
+  PolicyId,
   BUILDING_DEFS,
   MapSize,
   Difficulty,
@@ -104,6 +107,20 @@ export interface InspectControls {
     canTransfer: boolean;
     targets: { id: number; label: string }[];
   };
+  /**
+   * Town Hall: the books and the rules. Both live here rather than in the HUD on purpose — they
+   * are what this building is *for*, so they arrive when it is built and are found by tapping it.
+   */
+  townhall?: {
+    /** One row per resource the village holds, as the books recorded it last season. */
+    ledger: { kind: ResourceKind; stock: number; inn: number; out: number; net: number; seasonsLeft: number | null }[];
+    /** Every standing rule, whether it is enacted, and whether a clerk is actually keeping it. */
+    policies: { id: PolicyId; label: string; emoji: string; gain: string; cost: string; enacted: boolean; active: boolean }[];
+    /** Clerks at their desks, and how many rules that allows. */
+    capacity: number;
+    /** Whether a festival could be held right now (a clerk free, and the food for it). */
+    canFestival: boolean;
+  };
 }
 
 export interface UICallbacks {
@@ -123,6 +140,10 @@ export interface UICallbacks {
   onUpgradeBuilding: (buildingId: number) => void;
   /** Rename a workplace. An empty or blank name restores the automatic default. */
   onRenameBuilding: (buildingId: number, name: string) => void;
+  /** Enact a standing rule, or repeal one already in force. */
+  onTogglePolicy: (id: PolicyId) => void;
+  /** Hold a festival, at the Town Hall's expense. */
+  onFestival: () => void;
   onSetBuilders: (delta: number) => void;
   /** Nudge a resource's stockpile cap by one step (see `LIMIT_STEP`); a cap of 0 means none. */
   onSetLimit: (key: LimitKey, delta: number) => void;
@@ -173,6 +194,7 @@ export class UI {
     happy: byId('stat-happy'),
     sick: byId('stat-sick'),
     resources: byId('stat-resources'),
+    policies: byId('hud-policies'),
     season: byId('stat-season'),
     pause: byId('btn-pause'),
     speed: byId('btn-speed'),
@@ -326,6 +348,7 @@ export class UI {
   }
 
   updateHud(s: GameState, speed: number, paused: boolean): void {
+    this.updatePolicyStrip(s);
     const totals = totalStoredAll(s);
     const pop = s.citizens.length;
     // Children, students, adults. Old age used to have its own tally, but it told the player
@@ -662,6 +685,48 @@ export class UI {
           <button class="ranch-btn" id="insp-transfer"${r.canTransfer ? '' : ' disabled'}>Transfer all</button>
         </div>`;
     }
+    if (controls?.townhall) {
+      const t = controls.townhall;
+      // The books. One row a resource: what is held, what last season brought in and took out,
+      // and how long the store lasts at that rate. Measured, never modelled — see `ledgerFor`.
+      const num = (n: number) => (Math.abs(n) >= 10 ? Math.round(n) : Math.round(n * 10) / 10);
+      const rows = t.ledger
+        .map((r) => {
+          const cls = r.net > 0.05 ? 'up' : r.net < -0.05 ? 'down' : '';
+          const left =
+            r.seasonsLeft === null
+              ? ''
+              : `<span class="th-left${r.seasonsLeft <= 4 ? ' warn' : ''}">${Math.floor(r.seasonsLeft)} left</span>`;
+          return (
+            `<div class="th-row"><span class="th-kind">${RESOURCE_ICON[r.kind]}</span>` +
+            `<span class="th-held">${num(r.stock)}</span>` +
+            `<span class="th-flow">+${num(r.inn)} / −${num(r.out)}</span>` +
+            `<span class="th-net ${cls}">${r.net >= 0 ? '+' : ''}${num(r.net)}</span>${left}</div>`
+          );
+        })
+        .join('');
+      ctrlHtml +=
+        `<div class="th-sec">Last season's books</div>` +
+        (rows ? `<div class="th-ledger">${rows}</div>` : `<p class="th-none">The clerks have not closed a season yet.</p>`);
+
+      // The rules. Every one shows what it gives and what it costs, because that is the decision.
+      const pol = t.policies
+        .map((p) => {
+          const state = p.active ? ' on' : p.enacted ? ' lapsed' : '';
+          const note = p.enacted && !p.active ? '<span class="th-lapsed">No clerk — lapsed</span>' : '';
+          return (
+            `<button class="th-policy${state}" data-policy="${p.id}">` +
+            `<span class="th-pname">${p.emoji} ${p.label}</span>` +
+            `<span class="th-pgain">${p.gain}</span>` +
+            `<span class="th-pcost">${p.cost}</span>${note}</button>`
+          );
+        })
+        .join('');
+      ctrlHtml +=
+        `<div class="th-sec">Policies <small>${t.policies.filter((p) => p.active).length}/${t.capacity} clerks</small></div>` +
+        `<div class="th-policies">${pol}</div>` +
+        `<div class="inv-ctrl"><button class="ranch-btn" id="insp-festival"${t.canFestival ? '' : ' disabled'}>🎉 Hold a festival</button></div>`;
+    }
     if (controls?.upgrade) {
       const u = controls.upgrade;
       ctrlHtml += `<div class="inv-ctrl"><button class="ranch-btn" id="insp-upgrade">⬆️ Upgrade to ${u.to} <small>${u.cost}</small></button></div>`;
@@ -717,6 +782,14 @@ export class UI {
         this.el.inspect.querySelector('#insp-cull')?.addEventListener('click', () => this.cb.onCullRanch(id));
         this.el.inspect.querySelector('#insp-split')?.addEventListener('click', () => this.openRanchPicker(id, 'split', rc.targets));
         this.el.inspect.querySelector('#insp-transfer')?.addEventListener('click', () => this.openRanchPicker(id, 'transfer', rc.targets));
+      }
+      if (controls.townhall) {
+        this.el.inspect.querySelectorAll('[data-policy]').forEach((btn) =>
+          btn.addEventListener('click', () =>
+            this.cb.onTogglePolicy((btn as HTMLElement).dataset.policy as PolicyId),
+          ),
+        );
+        this.el.inspect.querySelector('#insp-festival')?.addEventListener('click', () => this.cb.onFestival());
       }
       const tog = controls.toggle;
       if (tog) {
@@ -814,6 +887,31 @@ export class UI {
       row.textContent = e.text;
       p.appendChild(row);
     }
+  }
+
+  /**
+   * The strip of rules in force, across the top of the HUD.
+   *
+   * Only the ones a clerk is actually keeping: a rule the player enacted but that has lapsed for
+   * want of staff is not in force, and showing it here would be a lie the player acts on. The row
+   * takes no space at all when nothing is enacted, which is most villages most of the time.
+   */
+  private policySig = '';
+  private updatePolicyStrip(s: GameState): void {
+    const active = activePolicies(s);
+    const sig = active.join(',');
+    if (sig === this.policySig) return;
+    this.policySig = sig;
+    const el = this.el.policies;
+    if (!el) return;
+    el.classList.toggle('hidden', active.length === 0);
+    el.innerHTML = active
+      .map(
+        (id) =>
+          `<div class="stat policy" title="${POLICY_META[id].label}: ${POLICY_META[id].gain}; ${POLICY_META[id].cost}">` +
+          `<span class="ico">${POLICY_META[id].emoji}</span><span class="val">${POLICY_META[id].label}</span></div>`,
+      )
+      .join('');
   }
 
   refreshPanels(s: GameState): void {

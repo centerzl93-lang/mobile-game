@@ -3373,7 +3373,11 @@ test.describe('birth rate', () => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false);
+      // Seeded: this is the most expensive test in the suite, and how long it takes depends on the
+      // map — it scans outward for thirty house plots and then runs years of simulation over
+      // whatever population that produced. On a cramped village it ran past a three-minute budget
+      // it clears in forty seconds on a roomy one.
+      g.startNewGame('small', 'easy', false, 0, 4242);
       const s = g.state;
       for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
       // Room to grow into, so housing is never the thing capping births.

@@ -1658,19 +1658,17 @@ test.describe('villager breeding', () => {
       ({ seasons, extraHouses }) => {
         // Pin the randomness for the whole scenario — map, pairing, birth rolls and all.
         //
-        // Growth is a pile of coin flips, and asserting a fixed bar against a random process
-        // meant the suite's colour was partly luck: the same test came back with 21 villagers on
-        // one run and 16 on the next, one side of `startPop * 1.5` each. Seeding before
-        // `startNewGame` makes the run reproducible, so a failure here is a change in the
-        // breeding rules rather than a bad afternoon. Any linear congruential generator will do;
-        // this is the Numerical Recipes one.
-        let seed = 20260804;
-        Math.random = () => {
-          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-          return seed / 4294967296;
-        };
+        // Growth is a pile of coin flips, and asserting a fixed bar against a random process meant
+        // the suite's colour was partly luck: the same test came back with 21 villagers on one run
+        // and 16 on the next, one side of `startPop * 1.5` each. A seeded village makes the run
+        // reproducible, so a failure here is a change in the breeding rules rather than a bad
+        // afternoon.
+        //
+        // This used to replace `Math.random` instead, which stopped seeding anything the moment
+        // the simulation began drawing from its own stream — the test went on believing it was
+        // pinned while every run played out a different village.
         const g = (window as any).__village;
-        g.startNewGame('small', 'easy', false);
+        g.startNewGame('small', 'easy', false, 0, 20260804);
         const s = g.state;
         for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
         const barn = s.buildings.find((b: any) => b.type === 'barn');
@@ -5854,11 +5852,10 @@ test.describe('households keep their hearths stocked', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      // Seeded: this asserts against a fixed bar, and an unseeded map moves it (see the breeding
-      // tests, which pin the RNG for the same reason).
-      let x = 1000003 + 12345;
-      Math.random = () => ((x = (1103515245 * x + 12345) & 0x7fffffff) / 0x7fffffff);
-      g.startNewGame('small', 'easy', false); // disasters off: a fire is not what is on trial
+      // Seeded through the game rather than by replacing Math.random: the simulation
+      // draws from its own stream now, so overriding Math.random seeded nothing and left
+      // this test quietly running on a different village every time.
+      g.startNewGame('small', 'easy', false, 0, 20260809); // disasters off: a fire is not what is on trial
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       const near = (t: string) => {
@@ -5995,9 +5992,10 @@ test.describe('sheep, wool and mutton', () => {
     await open2d(page);
     const out = await page.evaluate((findSrc) => {
       const g = (window as any).__village;
-      let x = 1000003 + 12345;
-      Math.random = () => ((x = (1103515245 * x + 12345) & 0x7fffffff) / 0x7fffffff);
-      g.startNewGame('small', 'easy', false);
+      // Seeded through the game rather than by replacing Math.random: the simulation draws
+      // from its own stream now, so overriding Math.random seeded nothing and left this
+      // test quietly running on a different village every time.
+      g.startNewGame('small', 'easy', false, 0, 20260809);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       // A cleared shelf well clear of the village, rather than hunting for a gap the generator
@@ -6085,9 +6083,10 @@ test.describe('sheep, wool and mutton', () => {
     const yields = (animal: string) =>
       page.evaluate((animal) => {
         const g = (window as any).__village;
-        let x = 1000003 + 12345;
-        Math.random = () => ((x = (1103515245 * x + 12345) & 0x7fffffff) / 0x7fffffff);
-        g.startNewGame('small', 'easy', false);
+        // Seeded through the game rather than by replacing Math.random: the simulation draws
+        // from its own stream now, so overriding Math.random seeded nothing and left this
+        // test quietly running on a different village every time.
+        g.startNewGame('small', 'easy', false, 0, 20260809);
         const s = g.state;
         const barn = s.buildings.find((b: any) => b.type === 'barn');
         const ox = Math.max(2, barn.x - 16), oy = Math.max(2, barn.y - 3);
@@ -6164,9 +6163,10 @@ test.describe('sheep, wool and mutton', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      let x = 1000003 + 12345;
-      Math.random = () => ((x = (1103515245 * x + 12345) & 0x7fffffff) / 0x7fffffff);
-      g.startNewGame('small', 'easy', false);
+      // Seeded through the game rather than by replacing Math.random: the simulation draws
+      // from its own stream now, so overriding Math.random seeded nothing and left this
+      // test quietly running on a different village every time.
+      g.startNewGame('small', 'easy', false, 0, 20260809);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       const ox = Math.max(2, barn.x - 16), oy = Math.max(2, barn.y - 3);
@@ -6208,9 +6208,10 @@ test.describe('sheep, wool and mutton', () => {
     const run = (recipe: string) =>
       page.evaluate(({ findSrc, recipe }) => {
         const g = (window as any).__village;
-        let x = 1000003 + 12345;
-        Math.random = () => ((x = (1103515245 * x + 12345) & 0x7fffffff) / 0x7fffffff);
-        g.startNewGame('small', 'easy', false);
+        // Seeded through the game rather than by replacing Math.random: the simulation draws
+        // from its own stream now, so overriding Math.random seeded nothing and left this
+        // test quietly running on a different village every time.
+        g.startNewGame('small', 'easy', false, 0, 20260809);
         const s = g.state;
         g.debugAfford('tailor');
         const id = eval(findSrc)(g, 'tailor');

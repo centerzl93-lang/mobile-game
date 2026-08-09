@@ -119,6 +119,7 @@ import {
   addNearest,
   totalStored,
   totalFoodAvailable,
+  totalHeldAll,
   barnLoad,
   capacityOf,
   houseFuelPerSeason,
@@ -1537,6 +1538,14 @@ class Game {
   /** Debug/testing helper: hold a festival. */
   debugFestival(): boolean {
     return holdFestival(this.state, this.log);
+  }
+
+  /**
+   * Debug/testing helper: everything the village holds of one kind — stores, larders and whatever
+   * is being carried. The basis the Town Hall's books are kept on.
+   */
+  debugTotalHeld(kind: ResourceKind): number {
+    return totalHeldAll(this.state)[kind] ?? 0;
   }
 
   /** Debug/testing helper: the Town Hall books for one resource. */

@@ -3606,15 +3606,16 @@ test.describe('the Town Hall books', () => {
       // Watch one season go by, taking the stock ourselves at both ends. Whatever the ledger says
       // moved has to be what really moved — that is the whole claim it makes.
       const kinds = ['grain', 'fish', 'wood', 'firewood', 'stone', 'tools', 'clothing'];
+      // Sampled on the same basis the books are kept on: everything the village holds, larders
+      // and goods in transit included. Taken on the stores alone — as this first did — a
+      // household walking home with a sack counts as a change here and rightly does not in the
+      // books, and every food row disagrees by however much shopping happened that season.
       const sample = () => {
         const o: Record<string, number> = {};
-        for (const k of kinds) o[k] = g.debugTotalStored(k);
+        for (const k of kinds) o[k] = g.debugTotalHeld(k);
         return o;
       };
-      // Step finely and keep the previous sample, so `before` is never more than half a second
-      // stale at the turnover. Coarse steps are not good enough here: a household carrying coats
-      // home moves them out of the *stores* mid-season, which is a real change the books record,
-      // and sampling ten seconds late misses whatever moved in between.
+      // Step finely so `before` is never more than half a second stale at the turnover.
       // `before` is taken once, here, and left alone: it is the far end of the window. Sampling it
       // inside the loop (as this first did) leaves it half a second before the *next* turnover,
       // which measures the turnover itself rather than the season leading up to it.

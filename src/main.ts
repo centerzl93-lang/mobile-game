@@ -873,11 +873,18 @@ class Game {
    * What the New Village screen currently has selected. Kept on the app rather than in the card so
    * the settings survive the card being re-rendered, which every toggle does.
    */
-  private newGameOpts: { size: MapSize; difficulty: Difficulty; disasters: boolean; seed: number } = {
+  private newGameOpts: {
+    size: MapSize;
+    difficulty: Difficulty;
+    disasters: boolean;
+    seed: number;
+    name: string;
+  } = {
     size: 'small',
     difficulty: 'normal',
     disasters: true,
     seed: newSeed(),
+    name: '',
   };
   /** Whether New Village was opened mid-game, so Back knows which menu it came from. */
   private newGameFromGame = false;
@@ -893,18 +900,27 @@ class Game {
     if (fresh) {
       this.newGameFromGame = this.running;
       this.newGameOpts.seed = newSeed();
+      this.newGameOpts.name = '';
     }
     this.running = false;
+    const slot = this.firstEmptySlot();
     this.ui.showNewGameSetup({
       ...this.newGameOpts,
+      // What the save list would call this village if it went unnamed, shown as the placeholder so
+      // the field reads as optional rather than as something that must be filled in.
+      slotLabel: `Slot ${slot + 1}`,
       onChange: (patch) => {
         Object.assign(this.newGameOpts, patch);
         this.openNewGameSetup(); // re-render with the new selection
       },
-      onStart: (seed) => {
+      onStart: ({ seed, name }) => {
         this.newGameOpts.seed = seed;
+        this.newGameOpts.name = name;
         const { size, difficulty, disasters } = this.newGameOpts;
-        this.startNewGame(size, difficulty, disasters, this.firstEmptySlot(), seed);
+        this.startNewGame(size, difficulty, disasters, slot, seed);
+        // Named after the village is founded, because the slot is what carries the name and
+        // `startNewGame` is what decides the village is in it.
+        setSlotName(slot, name);
       },
       onBack: () => (this.newGameFromGame ? this.openPauseMenu() : this.openMainMenu()),
     });
@@ -1458,6 +1474,11 @@ class Game {
    */
   debugPinRandom(v: number | number[] | null, after = 0.5): void {
     pinRandom(v, after);
+  }
+
+  /** Debug/testing helper: the name stored against a save slot, or null if it is unnamed. */
+  debugSlotName(slot: number): string | null {
+    return slotName(slot);
   }
 
   /** Debug/testing helper: the seed this village was founded from, and its live stream state. */

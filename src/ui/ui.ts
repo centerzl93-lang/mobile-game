@@ -1512,8 +1512,10 @@ export class UI {
     difficulty: Difficulty;
     disasters: boolean;
     seed: number;
+    name: string;
+    slotLabel: string;
     onChange: (patch: { size?: MapSize; difficulty?: Difficulty; disasters?: boolean }) => void;
-    onStart: (seed: number) => void;
+    onStart: (setup: { seed: number; name: string }) => void;
     onBack: () => void;
   }): void {
     const seg = (id: string, on: boolean, label: string, sub?: string) =>
@@ -1529,6 +1531,9 @@ export class UI {
     this.overlayCard(
       `<h2>New Village</h2>` +
         `<div class="menu-list ng-list">` +
+        `<div class="set-label">Name</div>` +
+        `<input id="ng-name" class="ng-name" type="text" maxlength="${SLOT_NAME_MAX}" autocomplete="off"` +
+        ` value="${escapeAttr(opts.name)}" placeholder="${escapeAttr(opts.slotLabel)}" aria-label="Village name">` +
         `<div class="set-label">Map size</div><div class="seg-row">${sizes}</div>` +
         `<div class="set-label">Difficulty</div><div class="seg-row">${diffs}</div>` +
         `<p class="ng-desc">${DIFFICULTY_META[opts.difficulty].desc}</p>` +
@@ -1549,6 +1554,7 @@ export class UI {
     );
 
     const field = byId('ng-seed') as HTMLInputElement;
+    const nameField = byId('ng-name') as HTMLInputElement;
     const hint = byId('ng-hint');
     /** A seed is an unsigned 32-bit number; anything else in the box falls back to what we had. */
     const readSeed = (): number => {
@@ -1583,7 +1589,9 @@ export class UI {
       }
     });
 
-    byId('ng-start').addEventListener('click', () => opts.onStart(readSeed()));
+    byId('ng-start').addEventListener('click', () =>
+      opts.onStart({ seed: readSeed(), name: nameField.value.trim().slice(0, SLOT_NAME_MAX) }),
+    );
     byId('ng-back').addEventListener('click', () => opts.onBack());
   }
 

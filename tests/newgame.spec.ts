@@ -3467,8 +3467,9 @@ test.describe('the New Village screen', () => {
     await expect(page.locator('#ng-seed')).toBeVisible();
 
     // One card: no clicking through to reach any of it.
-    for (const id of ['ng-size-small', 'ng-size-large', 'ng-diff-easy', 'ng-diff-normal', 'ng-diff-hard',
-                      'ng-dis-on', 'ng-dis-off', 'ng-seed', 'ng-reroll', 'ng-copy', 'ng-start']) {
+    for (const id of ['ng-name', 'ng-size-small', 'ng-size-large', 'ng-diff-easy', 'ng-diff-normal',
+                      'ng-diff-hard', 'ng-dis-on', 'ng-dis-off', 'ng-seed', 'ng-reroll', 'ng-copy',
+                      'ng-start']) {
       await expect(page.locator(`#${id}`), `${id} is on the setup card`).toBeVisible();
     }
 
@@ -3531,6 +3532,45 @@ test.describe('the New Village screen', () => {
     expect(Number.isFinite(out.seed), 'it falls back to the seed on the card').toBe(true);
     expect(out.pop).toBeGreaterThan(0);
     expect(out.running).toBe(true);
+  });
+});
+
+test.describe('naming a village at the start', () => {
+  test('the name typed on the setup card is what the save list calls it', async ({ page }) => {
+    await open2d(page);
+    await page.click('#mm-new');
+    await page.fill('#ng-name', 'Ashford Vale');
+    await page.click('#ng-start');
+    await page.waitForTimeout(200);
+
+    // The name is on the slot the village was founded into, which is what the save list reads.
+    const named = await page.evaluate(() => {
+      const g = (window as any).__village;
+      return { slot: g.currentSlot, name: g.debugSlotName(g.currentSlot) };
+    });
+    expect(named.name).toBe('Ashford Vale');
+
+    // And it is what the player actually sees when they go looking for the village.
+    await page.click('#btn-menu');
+    await page.click('#pm-load');
+    await expect(page.locator(`#slot-${named.slot}`)).toContainText('Ashford Vale');
+  });
+
+  test('leaving the name blank falls back to the slot, it does not save an empty name', async ({ page }) => {
+    await open2d(page);
+    await page.click('#mm-new');
+    // The placeholder says what it will be called if nothing is typed.
+    expect(await page.getAttribute('#ng-name', 'placeholder')).toMatch(/Slot \d/);
+    await page.click('#ng-start');
+    await page.waitForTimeout(200);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      return { slot: g.currentSlot, name: g.debugSlotName(g.currentSlot) };
+    });
+    expect(out.name, 'no name stored, so the list shows its own fallback').toBeNull();
+    await page.click('#btn-menu');
+    await page.click('#pm-load');
+    await expect(page.locator(`#slot-${out.slot}`)).toContainText(`Slot ${out.slot + 1}`);
   });
 });
 

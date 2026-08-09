@@ -645,6 +645,7 @@ body {
   gap: 6px;
   align-items: stretch;
 }
+.menu-card.newgame-card .ng-name,
 .menu-card.newgame-card .ng-seed input {
   flex: 1;
   min-width: 0; /* or the field's content width pushes the two buttons off the card */
@@ -658,9 +659,18 @@ body {
   letter-spacing: 0.04em;
   padding: 8px 10px;
 }
+.menu-card.newgame-card .ng-name:focus,
 .menu-card.newgame-card .ng-seed input:focus {
   outline: none;
   border-color: var(--accent);
+}
+.menu-card.newgame-card .ng-name {
+  width: 100%;
+  letter-spacing: normal; /* a name is prose; the tabular spacing belongs to the seed */
+  font-variant-numeric: normal;
+}
+.menu-card.newgame-card .ng-name::placeholder {
+  color: var(--muted);
 }
 .menu-card.newgame-card .ng-seed button {
   margin-top: 0;

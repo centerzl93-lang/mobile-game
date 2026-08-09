@@ -449,7 +449,9 @@ test.describe('trading post & merchant', () => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', true); // easy has a full barn (incl. wood)
+      // Seeded: how far the barn sits from the post's site is the map's decision, and on a long
+      // walk the first load had not arrived inside the 400s budget.
+      g.startNewGame('small', 'easy', true, 0, 4242); // easy has a full barn (incl. wood)
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       const woodBefore = barn.store.wood ?? 0;
@@ -4505,7 +4507,9 @@ test.describe('roads get laid', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false);
+      // Seeded: the village has to fill five gatherer huts and then walk a builder out to the
+      // road, and on an awkward map that ran past the 30s test budget.
+      g.startNewGame('small', 'easy', false, 0, 4242);
       const s = g.state;
       const PATH_DIRT_PLAN = 1, PATH_DIRT = 2;
       const barn = s.buildings.find((b: any) => b.type === 'barn');

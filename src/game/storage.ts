@@ -187,6 +187,16 @@ export function consume(s: GameState, kind: ResourceKind, amount: number): numbe
     if ((b.store[kind] ?? 0) <= 0) delete b.store[kind];
     need -= take;
   }
+  // The Town Hall's books: this is the one way anything leaves the stores to be used up rather
+  // than moved, so it is the only place the season's spending has to be counted. A household
+  // eating out of its own larder does not pass through here, and should not — those goods left
+  // the stores when they were shopped for, and counting them twice would say the village ate
+  // everything twice.
+  const took = amount - need;
+  if (took > 0) {
+    const spent = (s.spent ??= {});
+    spent[kind] = (spent[kind] ?? 0) + took;
+  }
   return need;
 }
 

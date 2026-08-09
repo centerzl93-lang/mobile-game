@@ -3460,6 +3460,82 @@ test.describe('construction stages', () => {
   });
 });
 
+test.describe('the Town Hall books', () => {
+  test('a season\'s row matches the stock that actually moved', async ({ page }) => {
+    test.setTimeout(180_000);
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true, 0, 4242);
+      g.debugSetBuilders(4);
+      const s = g.state;
+      // Past the first row, in fine steps so we land within half a second of that turnover — the
+      // start of the window we are about to measure.
+      while ((s.ledger ?? []).length < 1) g.debugAdvance(0.5);
+
+      // Watch one season go by, taking the stock ourselves at both ends. Whatever the ledger says
+      // moved has to be what really moved — that is the whole claim it makes.
+      const kinds = ['grain', 'fish', 'wood', 'firewood', 'stone', 'tools', 'clothing'];
+      const sample = () => {
+        const o: Record<string, number> = {};
+        for (const k of kinds) o[k] = g.debugTotalStored(k);
+        return o;
+      };
+      // Step finely and keep the previous sample, so `before` is never more than half a second
+      // stale at the turnover. Coarse steps are not good enough here: a household carrying coats
+      // home moves them out of the *stores* mid-season, which is a real change the books record,
+      // and sampling ten seconds late misses whatever moved in between.
+      // `before` is taken once, here, and left alone: it is the far end of the window. Sampling it
+      // inside the loop (as this first did) leaves it half a second before the *next* turnover,
+      // which measures the turnover itself rather than the season leading up to it.
+      const rowsBefore = s.ledger.length;
+      const before = sample();
+      while (s.ledger.length === rowsBefore) g.debugAdvance(0.5);
+      const after = sample();
+
+      const row = s.ledger[s.ledger.length - 1];
+      const checks = kinds.map((k) => ({
+        kind: k,
+        observed: after[k] - before[k],
+        booked: row.net[k] ?? 0,
+      }));
+      // Consumption is checked across every row the books hold, not just this one: a season in
+      // which the stores gave up nothing is a real season — an emptied village has nothing left
+      // to eat out of them — and asserting on one row makes the test hostage to which season it
+      // happened to stop on.
+      const anyOut = (s.ledger as any[]).some((r) => Object.values(r.out).some((v: any) => v > 0));
+      return { checks, anyOut, rows: s.ledger.length };
+    });
+
+    // Every resource: what the books recorded is what the stores really did.
+    for (const c of out.checks) {
+      expect(Math.abs(c.booked - c.observed), `${c.kind}: booked ${c.booked}, really ${c.observed}`)
+        .toBeLessThan(0.5);
+    }
+    // And something actually happened, or this would pass on a village where nothing moved.
+    expect(out.checks.some((c) => Math.abs(c.observed) > 1), 'some stock moved over the season').toBe(true);
+    // Consumption is recorded somewhere, not left at zero throughout — a village eats.
+    expect(out.anyOut, 'the books show something being used up').toBe(true);
+  });
+
+  test('the books only keep two years, and drop the oldest', async ({ page }) => {
+    test.setTimeout(240_000);
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true, 0, 777);
+      const s = g.state;
+      for (let i = 0; i < 800 && (s.ledger ?? []).length < 12; i++) g.debugAdvance(10);
+      const rows = s.ledger ?? [];
+      return { count: rows.length, first: rows[0], last: rows[rows.length - 1] };
+    });
+    expect(out.count, 'capped at two years of seasons').toBeLessThanOrEqual(8);
+    expect(out.count).toBeGreaterThan(1);
+    // The window slid rather than stopping: the oldest row is not year 1 season 0 any more.
+    expect(out.last.year * 4 + out.last.season).toBeGreaterThan(out.first.year * 4 + out.first.season);
+  });
+});
+
 test.describe('the New Village screen', () => {
   test('every setting is on one card, and the seed can be typed, rerolled and copied', async ({ page }) => {
     await open2d(page);

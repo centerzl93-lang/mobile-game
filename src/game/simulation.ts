@@ -6,6 +6,8 @@ import {
   ResourceKind,
   BUILDING_DEFS,
   buildWorkOf,
+  LedgerRow,
+  LEDGER_SEASONS,
   BUILD_WORK_RATE,
   BUILDER_SHIFT_WORK,
   BUILDER_REST_SECONDS,
@@ -164,6 +166,7 @@ import { findPath, isWalkable, labelComponents } from './pathfind';
 import { rand } from './rng';
 import {
   totalStored,
+  totalStoredAll,
   addNearest,
   takeNearest,
   consume,
@@ -2135,6 +2138,57 @@ function wander(s: GameState, c: Citizen, dt: number): void {
 }
 
 // ---- season turnover ----
+/**
+ * Close the season's books: what the stores hold now against what they held a season ago.
+ *
+ * Runs at the very *end* of the turnover, after the harvest is in and the village has eaten,
+ * burned and worn out its share. Closing at the start looked tidier and was wrong: the baseline
+ * it left was the stock *before* that turnover's consumption, while anyone reading the stores a
+ * moment later saw the stock after it — so every row was short by one turnover's eating. It
+ * surfaced as a season of coats going missing between the books and the barn.
+ */
+function closeLedger(s: GameState): void {
+  const now = totalStoredAll(s);
+  const prev = s.lastTotals;
+  const out = s.spent ?? {};
+  if (prev) {
+    const net: Partial<Record<ResourceKind, number>> = {};
+    // Every resource either side has seen, so a stock that ran out still gets its final row.
+    for (const k of new Set([...Object.keys(now), ...Object.keys(prev), ...Object.keys(out)])) {
+      const kind = k as ResourceKind;
+      const d = (now[kind] ?? 0) - (prev[kind] ?? 0);
+      if (d !== 0 || (out[kind] ?? 0) !== 0) net[kind] = d;
+    }
+    const rows = (s.ledger ??= []);
+    rows.push({ year: s.year, season: s.season, net, out: { ...out } });
+    if (rows.length > LEDGER_SEASONS) rows.splice(0, rows.length - LEDGER_SEASONS);
+  }
+  s.lastTotals = now;
+  s.spent = {};
+}
+
+/**
+ * What the books say about one resource: last season's flow, and how long the stock lasts at it.
+ *
+ * `inn` is derived (`net + out`) rather than measured separately, so the three figures always
+ * reconcile — a ledger whose columns did not add up would be worse than no ledger.
+ */
+export function ledgerFor(
+  s: GameState,
+  kind: ResourceKind,
+): { inn: number; out: number; net: number; stock: number; seasonsLeft: number | null; trend: number[] } | null {
+  const rows = s.ledger ?? [];
+  if (rows.length === 0) return null;
+  const last = rows[rows.length - 1];
+  const out = last.out[kind] ?? 0;
+  const net = last.net[kind] ?? 0;
+  const stock = totalStored(s, kind);
+  // Only a village that is *losing* this resource has a number of seasons left; one that is
+  // holding steady or growing has none, and saying "999 seasons" would be noise.
+  const seasonsLeft = net < -0.0001 ? Math.max(0, stock / -net) : null;
+  return { inn: net + out, out, net, stock, seasonsLeft, trend: rows.map((r) => r.net[kind] ?? 0) };
+}
+
 function endSeason(s: GameState, log: LogFn): void {
   const popStart = s.citizens.length; // for tallying deaths (affects morale)
   s.season = (s.season + 1) % SEASONS.length;
@@ -2278,6 +2332,8 @@ function endSeason(s: GameState, log: LogFn): void {
 
   // Well-being drifts toward conditions (food/variety -> health; space/goods/amenities -> happiness).
   updateWellbeing(s, shortFood > 0, deaths, tavernActive);
+
+  closeLedger(s); // last, so a row covers everything this turnover did
 
   if (s.citizens.length === 0) {
     s.gameOver = true;

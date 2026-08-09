@@ -1537,6 +1537,25 @@ export interface GameState {
    * this — see `save.ts`.
    */
   workScale?: number;
+  /**
+   * The books the Town Hall's clerks keep: one row per season, newest last, `LEDGER_SEASONS` long.
+   *
+   * Measured, never modelled. A forecast built by adding up what every worker *ought* to produce
+   * would be a second copy of the simulation — forest density, herd sizes, tool wear, capped-out
+   * workplaces, staffing gaps, walking time — and it would drift from the real economy the first
+   * time either changed, which is exactly when the player needs it most. These are the totals that
+   * actually happened.
+   */
+  ledger?: LedgerRow[];
+  /**
+   * What the stores have given up so far this season, per resource — the accumulator behind each
+   * row's `out`. Filled in by `consume`, which is the single way anything leaves the stores to be
+   * used up, and cleared at every turnover.
+   */
+  spent?: Partial<Record<ResourceKind, number>>;
+  /** Stock at the last turnover, so the next one can tell what changed. */
+  lastTotals?: Partial<Record<ResourceKind, number>>;
+
   /** Bumped when a tile becomes / stops being forest (replanting or clear-cutting), so the
    * renderer knows to rebuild its tree layer to show the new/removed trees. */
   forestVersion?: number;
@@ -1943,6 +1962,25 @@ export const ADULT_MAX_AGE = 29;
 export const CHILD_MIN_AGE = 6; // founding children spawn in [CHILD_MIN_AGE, ADULT_AGE)
 
 // ---- Leisure (villagers take occasional breaks from work) ----
+/**
+ * A season's entry in the Town Hall books.
+ *
+ * `net` is the change in the stores across the season, taken by comparing the totals themselves,
+ * so it cannot drift. `out` is what was consumed out of them. What came *in* is `net + out` — a
+ * derived figure rather than a third measurement, which is what makes the three reconcile exactly
+ * instead of nearly.
+ */
+export interface LedgerRow {
+  year: number;
+  /** The season that just ended (index into `SEASONS`). */
+  season: number;
+  net: Partial<Record<ResourceKind, number>>;
+  out: Partial<Record<ResourceKind, number>>;
+}
+
+/** Seasons of books the hall keeps — two years, enough to read a trend off. */
+export const LEDGER_SEASONS = 8;
+
 export const LEISURE_CHANCE_PER_SEC = 1 / 90; // ~one break per 90s of work
 export const LEISURE_MIN_SECONDS = 12;
 export const LEISURE_MAX_SECONDS = 24;

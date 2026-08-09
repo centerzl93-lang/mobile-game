@@ -71,6 +71,7 @@ import { newGame } from './game/state';
 import { pinRandom, newSeed } from './game/rng';
 import {
   update,
+  ledgerFor,
   LogKind,
   recordEvent,
   basketTrade,
@@ -1474,6 +1475,11 @@ class Game {
    */
   debugPinRandom(v: number | number[] | null, after = 0.5): void {
     pinRandom(v, after);
+  }
+
+  /** Debug/testing helper: the Town Hall books for one resource. */
+  debugLedger(kind: ResourceKind) {
+    return ledgerFor(this.state, kind);
   }
 
   /** Debug/testing helper: the name stored against a save slot, or null if it is unnamed. */

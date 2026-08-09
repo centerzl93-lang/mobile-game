@@ -6,6 +6,7 @@ import {
   buildWorkOf, BUILD_WORK_RATE,
 } from '../types';
 import { randomName } from './names';
+import { newSeed } from './rng';
 
 /**
  * Construction times as they were before builder-work replaced them, in the raw units the old
@@ -24,7 +25,61 @@ const LEGACY_BUILD_TIME_SCALE = 2;
 
 // Legacy single-slot key (pre-slots). Migrated into slot 0 on first run, then left in place.
 const LEGACY_KEY = 'little-village-save-v12';
-const VERSION = 12;
+
+/**
+ * The format the game writes today.
+ *
+ * **Bumping this is now safe**, which it very much was not before: `loadGame` used to demand
+ * `env.v === VERSION` and return null otherwise, so raising the number silently threw away every
+ * save on every device — the game would simply offer a new village. That is why every change to
+ * the state's shape so far has been smuggled in as a "is this field missing?" test rather than a
+ * version bump, and why the slot keys still say v12: the number was unusable, so nothing dared
+ * touch it.
+ *
+ * To change the shape of a save now: bump this, and add a step to `MIGRATIONS` keyed by the
+ * version it upgrades *from*.
+ */
+const VERSION = 13;
+
+/**
+ * The oldest envelope the loader will still take. Below this a save is too old to reason about and
+ * is refused rather than guessed at.
+ */
+const MIN_VERSION = 12;
+
+/**
+ * One step per version, keyed by the version it upgrades **from**. Each mutates the state in place
+ * to the shape the next version expects, and the loader walks them in order, so a v12 save passes
+ * through every step between there and `VERSION`.
+ *
+ * Keep each step narrow and never make it reach for a live constant that might move underneath it
+ * — a migration has to keep describing the change it made, not the game as it is today.
+ * `LEGACY_BUILD_TIME` above is the example to follow.
+ */
+const MIGRATIONS: Record<number, (s: GameState) => void> = {
+  // v12 → v13: the simulation got a seeded random stream. Saves before it have neither number, and
+  // there is no recovering the map's original seed, so record one this village will report from
+  // here on and open a stream from it. The field-presence checks in `loadGame` handle the older
+  // shapes that were also written as v12.
+  12: (s) => {
+    if (typeof s.seed !== 'number') s.seed = newSeed();
+    if (typeof s.rng !== 'number') s.rng = (s.seed ^ 0x5bf03635) | 0;
+  },
+};
+
+/**
+ * Bring a save envelope up to `VERSION`, or return null if it cannot be.
+ *
+ * Refuses saves from the future (a newer build wrote them; this one cannot know what changed) and
+ * from before `MIN_VERSION`.
+ */
+function migrateEnvelope(env: SaveEnvelope): GameState | null {
+  if (!env || typeof env.v !== 'number' || !env.state) return null;
+  if (env.v > VERSION || env.v < MIN_VERSION) return null;
+  for (let v = env.v; v < VERSION; v++) MIGRATIONS[v]?.(env.state);
+  env.v = VERSION;
+  return env.state;
+}
 
 /** Number of fixed save slots the player can use. */
 export const SLOTS = 3;
@@ -67,8 +122,8 @@ export function loadGame(slot = 0): GameState | null {
     const raw = localStorage.getItem(slotKey(slot));
     if (!raw) return null;
     const env = JSON.parse(raw) as SaveEnvelope;
-    if (!env || env.v !== VERSION || !env.state) return null;
-    const s = env.state;
+    const s = migrateEnvelope(env);
+    if (!s) return null;
     // Restore the map dimensions this save was made at before validating lengths, so a
     // Medium/Large save is checked against its own size (older saves default to 48).
     const w = typeof s.w === 'number' ? s.w : 48;
@@ -101,7 +156,7 @@ export function loadGame(slot = 0): GameState | null {
     if (!Array.isArray(s.harvest) || s.harvest.length !== MAP_W * MAP_H) return null;
     if (!s.merchant || typeof s.pathProgress !== 'number') return null;
     // Backfill names for citizens saved before villagers had names.
-    for (const c of s.citizens) if (!c.name) c.name = randomName(c.sex);
+    for (const c of s.citizens) if (!c.name) c.name = randomName(c.sex, s);
     // Partnerships and parentage came in after this format shipped. Saves without them load as a
     // village of singles and pair off at the next season turnover. Drop any link that isn't
     // mutual or points at someone who is gone, so a stale id can't wedge the household logic.
@@ -281,8 +336,8 @@ export function slotInfo(slot: number): { year: number; pop: number; size: MapSi
     const raw = localStorage.getItem(slotKey(slot));
     if (!raw) return null;
     const env = JSON.parse(raw) as SaveEnvelope;
-    if (!env || env.v !== VERSION || !env.state) return null;
-    const s = env.state;
+    const s = migrateEnvelope(env);
+    if (!s) return null;
     const w = typeof s.w === 'number' ? s.w : 48;
     // Anything wider than Small is Large now, including saves made on the retired 192 map.
     const size: MapSize = w > 72 ? 'large' : 'small';

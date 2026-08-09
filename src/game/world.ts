@@ -1,4 +1,5 @@
 import { MAP_W, MAP_H, Tile, TileType, PATH_NONE, HARVEST_NONE, LOOSE_STONE_MIN, LOOSE_STONE_MAX, LOOSE_IRON_MIN, LOOSE_IRON_MAX, DEPOSIT_SPACING, DEPOSIT_CLUSTER_MIN, DEPOSIT_CLUSTER_MAX, DEPOSIT_FILL, DEPOSIT_WATER_MARGIN, STONE_CLUSTER_DENSITY, IRON_CLUSTER_DENSITY, FOREST_MOISTURE, START_CLEARING_RADIUS, FOOTHILL_RADIUS } from '../types';
+import { mulberry32, newSeed } from './rng';
 
 export function tileIndex(x: number, y: number): number {
   return y * MAP_W + x;
@@ -51,7 +52,7 @@ export function riverColumnX(tiles: Tile[], y: number): number {
  * meandering north–south river down the middle plus lakes bleeding off the left/right edges.
  * Loose stone is scattered on grass so villagers have something to hand-harvest.
  */
-export function generateWorld(seed = Math.floor(Math.random() * 1e9)): Tile[] {
+export function generateWorld(seed = newSeed()): Tile[] {
   const rand = mulberry32(seed);
   const elev = valueNoise(MAP_W, MAP_H, rand, 6);
   // Moisture drives where forest grows. A single low-frequency field spans about a tenth of the
@@ -300,15 +301,6 @@ export function findStartTile(tiles: Tile[]): { x: number; y: number } {
 }
 
 // ---- noise helpers ----
-function mulberry32(a: number): () => number {
-  return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 function valueNoise(w: number, h: number, rand: () => number, cells: number): Float32Array {
   // Random lattice, bilinearly interpolated and normalised to 0..1.

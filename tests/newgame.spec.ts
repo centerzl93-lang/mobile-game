@@ -3461,6 +3461,134 @@ test.describe('construction stages', () => {
   });
 });
 
+test.describe('save versioning', () => {
+  test('an older save is migrated forward, not thrown away', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.debugSaveSlot(1);
+
+      const key = 'little-village-save-v12-slot1';
+      const written = JSON.parse(localStorage.getItem(key)!);
+      const currentVersion = written.v;
+
+      // Wind the envelope back to v12 and strip what v12 did not have, which is exactly the state
+      // a save written before the stream existed is in.
+      const pop = written.state.citizens.length;
+      const year = written.state.year;
+      written.v = 12;
+      delete written.state.seed;
+      delete written.state.rng;
+      localStorage.setItem(key, JSON.stringify(written));
+
+      const listed = g.debugSlotInfo ? g.debugSlotInfo(1) : null;
+      const loaded = g.debugLoadSlot(1);
+      const after = loaded ? { pop: g.state.citizens.length, year: g.state.year, seed: g.debugSeed() } : null;
+
+      // A save from a build newer than this one is refused rather than guessed at.
+      const future = JSON.parse(localStorage.getItem(key)!);
+      future.v = currentVersion + 5;
+      localStorage.setItem(key, JSON.stringify(future));
+      const loadedFuture = g.debugLoadSlot(1);
+
+      return { currentVersion, pop, year, listed, loaded, after, loadedFuture };
+    });
+
+    // The bump actually happened — if VERSION were still 12 this test would prove nothing.
+    expect(out.currentVersion, 'the format has moved past v12').toBeGreaterThan(12);
+    // The old save loads, with its village intact.
+    expect(out.loaded, 'a v12 save still loads').toBe(true);
+    expect(out.after!.pop).toBe(out.pop);
+    expect(out.after!.year).toBe(out.year);
+    // ...and comes out the other side with the fields the current format needs.
+    expect(typeof out.after!.seed.seed).toBe('number');
+    expect(typeof out.after!.seed.rng).toBe('number');
+    // A save from the future is refused, because this build cannot know what changed in it.
+    expect(out.loadedFuture, 'a newer save is refused, not misread').toBe(false);
+  });
+});
+
+test.describe('a seeded village', () => {
+  test('the same seed founds the same village, and a different one does not', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      // A fingerprint of everything the founding rolls decided: the map, who was born, and where
+      // they were put down. If any of it still came off Math.random these would not match.
+      const fingerprint = () => {
+        const s = g.state;
+        const tiles = s.tiles.map((t: any) => t.type[0]).join('');
+        const folk = s.citizens
+          .map((c: any) => `${c.name}/${c.sex}/${c.age.toFixed(3)}/${c.x.toFixed(4)},${c.y.toFixed(4)}`)
+          .join('|');
+        return { tiles, folk, seeds: [...s.seeds].join(','), seed: g.debugSeed().seed };
+      };
+      g.startNewGame('small', 'easy', true, 0, 12345);
+      const a = fingerprint();
+      g.startNewGame('small', 'easy', true, 0, 12345);
+      const b = fingerprint();
+      g.startNewGame('small', 'easy', true, 0, 999);
+      const c = fingerprint();
+      return { a, b, c };
+    });
+
+    expect(out.a.seed).toBe(12345);
+    expect(out.a.tiles, 'the same seed carves the same map').toBe(out.b.tiles);
+    expect(out.a.folk, 'and founds the same people, named and placed alike').toBe(out.b.folk);
+    expect(out.a.seeds).toBe(out.b.seeds);
+    // ...and it is a real seed, not a constant: another number gives another village.
+    expect(out.c.tiles).not.toBe(out.a.tiles);
+    expect(out.c.folk).not.toBe(out.a.folk);
+  });
+
+  test('the simulation itself is deterministic, and survives a save and load', async ({ page }) => {
+    test.setTimeout(180_000); // three playthroughs of the same village, run back to back
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      // Everything the *running* sim rolls for — births, deaths, sickness, fires, merchants.
+      const state = () => {
+        const s = g.state;
+        return [
+          s.citizens.length,
+          s.citizens.filter((c: any) => c.sick).length,
+          Math.round(g.debugTotalFood()),
+          s.year,
+          s.season,
+          s.events.length,
+          g.debugSeed().rng,
+        ].join('|');
+      };
+      const play = () => {
+        g.startNewGame('small', 'easy', true, 0, 777);
+        g.debugSetBuilders(4);
+        for (let i = 0; i < 150; i++) g.debugAdvance(5);
+        return state();
+      };
+      const first = play();
+      const second = play();
+
+      // And the stream has to survive the round trip: a village put down and picked back up
+      // should carry on the same, not re-roll its luck.
+      g.startNewGame('small', 'easy', true, 0, 777);
+      g.debugSetBuilders(4);
+      for (let i = 0; i < 75; i++) g.debugAdvance(5);
+      g.debugSaveSlot(2);
+      for (let i = 0; i < 75; i++) g.debugAdvance(5);
+      const straight = state();
+      g.debugLoadSlot(2);
+      for (let i = 0; i < 75; i++) g.debugAdvance(5);
+      const reloaded = state();
+
+      return { first, second, straight, reloaded };
+    });
+
+    expect(out.first, 'two runs of the same seed agree').toBe(out.second);
+    expect(out.reloaded, 'a save and load resumes the same stream').toBe(out.straight);
+  });
+});
+
 test.describe('builder shifts', () => {
   test('a builder knocks off after a shift, so a big building takes several', async ({ page }) => {
     await open2d(page);

@@ -1,4 +1,5 @@
 import { Sex } from '../types';
+import { HasRng, randPick } from './rng';
 
 // Village-flavoured given names, split by sex, for naming villagers. Kept deliberately simple
 // and pastoral to match the setting. Add freely — `randomName` just picks from the matching pool.
@@ -18,8 +19,13 @@ export const FEMALE_NAMES: string[] = [
   'Linnet', 'Maren', 'Odile', 'Rosalind', 'Sibyl', 'Tamsin', 'Winifred', 'Bess',
 ];
 
-/** A random given name appropriate to the villager's sex. */
-export function randomName(sex: Sex): string {
+/**
+ * A random given name appropriate to the villager's sex.
+ *
+ * Drawn from the village's own stream rather than `Math.random`, so the same seed founds the same
+ * people — a village is not reproducible if its inhabitants are strangers each time.
+ */
+export function randomName(sex: Sex, r: HasRng): string {
   const pool = sex === 'm' ? MALE_NAMES : FEMALE_NAMES;
-  return pool[(Math.random() * pool.length) | 0];
+  return randPick(r, pool);
 }

@@ -22,6 +22,7 @@ import {
   HARVEST_KIND_META,
   MARKET_CAPACITY,
   buildWorkOf,
+  UI_REFRESH_MS,
   REFUND_FRACTION,
   BUILDER_SHIFT_WORK,
   autoBuilderDemand,
@@ -822,9 +823,15 @@ class Game {
   }
 
   /** Start a fresh game in a slot. Directly startable (difficulty-select + headless drivers). */
-  startNewGame(size: MapSize = 'small', difficulty: Difficulty = 'normal', disasters = true, slot = 0): void {
+  startNewGame(
+    size: MapSize = 'small',
+    difficulty: Difficulty = 'normal',
+    disasters = true,
+    slot = 0,
+    seed?: number,
+  ): void {
     this.currentSlot = slot;
-    this.state = newGame(size, difficulty, disasters);
+    this.state = newGame(size, difficulty, disasters, seed);
     this.state.autoStaff = autoStaffPref();
     this.centreOnVillage();
     this.paused = false;
@@ -1426,6 +1433,11 @@ class Game {
     return { ...BUILDING_DEFS[type].cost };
   }
 
+  /** Debug/testing helper: the seed this village was founded from, and its live stream state. */
+  debugSeed(): { seed: number; rng: number } {
+    return { seed: this.state.seed, rng: this.state.rng };
+  }
+
   /** Debug/testing helper: work one builder gets through before knocking off. */
   debugShiftWork(): number {
     return BUILDER_SHIFT_WORK;
@@ -1787,6 +1799,9 @@ class Game {
     this.ui.log(msg, kind);
   };
 
+  /** Last time the HUD and panels were rebuilt (ms, the animation-frame clock). */
+  private lastUiAt = -Infinity;
+
   private frame(t: number): void {
     // Before anything is drawn: the canvas may have changed shape since the last frame (a phone
     // rotating is the case that matters) and no event we could have listened for reports that
@@ -1845,10 +1860,22 @@ class Game {
     } else {
       (this.renderer as Renderer3D).render(this.state, this.camera as Camera3D, placement);
     }
-    this.ui.updateHud(this.state, SPEEDS[this.speedIndex], this.paused);
-    this.ui.refreshPanels(this.state);
+    // The HUD and the open panels are recomputed on a clock of their own rather than once per
+    // animation frame. Measured on a village of 220 across 70 buildings with the job board open,
+    // that was 0.49ms in `updateHud` and 0.59ms in `refreshPanels` *every frame* — about 6.5% of
+    // wall time on a desktop, and a phone's CPU is several times slower. Nothing in either
+    // changes fast enough to be worth 60Hz: a season is ten minutes long.
+    //
+    // The interval is short on purpose. Panels are only ever redrawn from here — no tap handler
+    // refreshes its own panel — so this is also how quickly the job board answers a stepper being
+    // pressed. At 100ms that reads as instant while still skipping five frames in six.
+    if (t - this.lastUiAt >= UI_REFRESH_MS) {
+      this.lastUiAt = t;
+      this.ui.updateHud(this.state, SPEEDS[this.speedIndex], this.paused);
+      this.ui.refreshPanels(this.state);
+      if (this.inspectSel) this.refreshInspect();
+    }
     this.refreshConfirmBar();
-    if (this.inspectSel) this.refreshInspect();
 
     requestAnimationFrame((next) => this.frame(next));
   }

@@ -161,6 +161,7 @@ import {
 import { getTile, tileIndex, inBounds, riverColumnX } from './world';
 import { pathSpeedMult, hasPath } from './paths';
 import { findPath, isWalkable, labelComponents } from './pathfind';
+import { rand } from './rng';
 import {
   totalStored,
   addNearest,
@@ -517,7 +518,7 @@ function lives(s: GameState, dt: number, log: LogFn): void {
     if (c.age < OLD_AGE_START) continue;
     const base = clamp((c.age - OLD_AGE_START) / (MAX_AGE - OLD_AGE_START), 0, 1);
     const perYear = Math.min(1, base * (1 + (1 - c.health / 100)));
-    if (Math.random() < chanceOver(perYear, dt, YEAR_LENGTH)) dying.push(c);
+    if (rand(s) < chanceOver(perYear, dt, YEAR_LENGTH)) dying.push(c);
   }
 
   // New adults leave the family home for a house of their own where one is free. This is what
@@ -576,7 +577,7 @@ function births(s: GameState, elapsed: number, log: LogFn): void {
     if (residentsOf(s, h).length >= houseCapacityOf(h.type)) continue;
     const couple = householdCouple(s, h);
     if (!couple || !isFertile(couple[0]) || !isFertile(couple[1])) continue;
-    if (Math.random() < chance) {
+    if (rand(s) < chance) {
       spawnChild(s, h, couple);
       born++;
     }
@@ -876,8 +877,8 @@ function runCitizen(s: GameState, c: Citizen, dt: number, toolFactor: number): v
     leisure(s, c, dt);
     return;
   }
-  if (!urgent && !c.carry && Math.random() < dt * LEISURE_CHANCE_PER_SEC) {
-    c.rest = LEISURE_MIN_SECONDS + Math.random() * (LEISURE_MAX_SECONDS - LEISURE_MIN_SECONDS);
+  if (!urgent && !c.carry && rand(s) < dt * LEISURE_CHANCE_PER_SEC) {
+    c.rest = LEISURE_MIN_SECONDS + rand(s) * (LEISURE_MAX_SECONDS - LEISURE_MIN_SECONDS);
     leisure(s, c, dt);
     return;
   }
@@ -1484,7 +1485,7 @@ function workOutput(
       const f = factorCircle(s, b) * tf;
       // Game off the hunt, and the hide that comes with it — the one leather that is not a
       // ranch's, and still only ever off something killed.
-      return Math.random() < 0.7
+      return rand(s) < 0.7
         ? { kind: 'venison', amount: LOAD_FOOD * f }
         : { kind: 'leather', amount: LOAD_MAT * f };
     }
@@ -1505,7 +1506,7 @@ function workOutput(
       // to show for the cycle. The pen still pays, out of the butcher (see `endSeason`), just not
       // through this hand.
       if (meta.products.length === 0) return null;
-      let roll = Math.random();
+      let roll = rand(s);
       for (const p of meta.products) {
         if (roll < p.chance) return { kind: p.kind, amount: loadFor(p.kind) * p.mult * f };
         roll -= p.chance;
@@ -2115,8 +2116,8 @@ function wander(s: GameState, c: Citizen, dt: number): void {
     const centre = loiterPoint(s, c);
     let set = false;
     for (let k = 0; k < 6; k++) {
-      const tx = clampTile(centre.x + (Math.random() - 0.5) * 8);
-      const ty = clampTile(centre.y + (Math.random() - 0.5) * 8);
+      const tx = clampTile(centre.x + (rand(s) - 0.5) * 8);
+      const ty = clampTile(centre.y + (rand(s) - 0.5) * 8);
       if (reachableTile(c, Math.floor(tx), Math.floor(ty))) {
         c.tx = tx;
         c.ty = ty;
@@ -2128,7 +2129,7 @@ function wander(s: GameState, c: Citizen, dt: number): void {
       c.tx = c.x;
       c.ty = c.y;
     }
-    c.timer = 2 + Math.random() * 3;
+    c.timer = 2 + rand(s) * 3;
   }
   stepTo(s, c, dt);
 }
@@ -2170,7 +2171,7 @@ function endSeason(s: GameState, log: LogFn): void {
     if (!b.built || b.type !== 'ranch') continue;
     if ((b.animals ?? 0) < 2) continue;
     let progress = (b.breedProgress ?? 0) + RANCH_BREED_PER_SEASON;
-    if (Math.random() < RANCH_BREED_BONUS_CHANCE) progress += 1;
+    if (rand(s) < RANCH_BREED_BONUS_CHANCE) progress += 1;
     let births = Math.floor(progress);
     b.breedProgress = progress - births;
     if (births <= 0) continue;
@@ -2234,7 +2235,7 @@ function endSeason(s: GameState, log: LogFn): void {
       // Only the villagers who actually went without warm clothing are at risk.
       const sickChance = Math.min(1, SICKNESS_CHANCE * (1 + (1 - avgHealth(s) / 100)));
       const fallen: Citizen[] = [];
-      for (const c of unclothed) if (Math.random() < sickChance) fallen.push(c);
+      for (const c of unclothed) if (rand(s) < sickChance) fallen.push(c);
       if (fallen.length > 0) {
         killFrom(s, fallen, fallen.length);
         log(`${fallen.length} villager${fallen.length > 1 ? 's' : ''} fell ill without warm clothing`, 'bad');
@@ -2394,7 +2395,7 @@ function updateMerchant(s: GameState, dt: number, log: LogFn): void {
   }
 
   if (!s.buildings.some((b) => b.built && b.type === 'trading')) return;
-  if (Math.random() < MERCHANT_ARRIVAL_CHANCE * (dt / SEASON_LENGTH)) spawnMerchant(s, log);
+  if (rand(s) < MERCHANT_ARRIVAL_CHANCE * (dt / SEASON_LENGTH)) spawnMerchant(s, log);
 }
 
 /** Roll a merchant category, stock its goods, and launch its boat from the top of the river. */
@@ -2403,7 +2404,7 @@ function spawnMerchant(s: GameState, log: LogFn): void {
   let cats = MERCHANT_CATEGORIES.slice();
   // A seed merchant has nothing to sell once every crop is unlocked — drop it then.
   if (CROPS.every((c) => s.seeds.includes(c))) cats = cats.filter((c) => c !== 'seeds');
-  const category = cats[Math.floor(Math.random() * cats.length)];
+  const category = cats[Math.floor(rand(s) * cats.length)];
 
   m.category = category;
   m.stock = {};
@@ -3078,7 +3079,7 @@ export function coupleNeedsAHome(s: GameState, c: Citizen): boolean {
 /** A new child, born to `couple` and raised in their house until they come of age. */
 function spawnChild(s: GameState, house: Building, couple: [Citizen, Citizen]): void {
   const at = buildingCenter(house);
-  const c = makeCitizen(s, Math.random() < 0.5 ? 'm' : 'f', 0, at.x + (Math.random() - 0.5), at.y + (Math.random() - 0.5));
+  const c = makeCitizen(s, rand(s) < 0.5 ? 'm' : 'f', 0, at.x + (rand(s) - 0.5), at.y + (rand(s) - 0.5));
   c.homeId = house.id;
   c.parents = [couple[0].id, couple[1].id];
   s.citizens.push(c);
@@ -3158,11 +3159,11 @@ function immigrate(s: GameState, log: LogFn): void {
   // the new one are the same amount of food. Left at 1.5 a founding village cleared it three
   // times over on day one, and nomads knocked every single season from the start.
   if (totalFoodAvailable(s) <= pop * FOOD_PER_CITIZEN_PER_SEASON * NOMAD_SURPLUS_SEASONS) return;
-  if (Math.random() >= IMMIGRATION_CHANCE) return;
+  if (rand(s) >= IMMIGRATION_CHANCE) return;
 
-  const count = IMMIGRATION_MIN + Math.floor(Math.random() * (IMMIGRATION_MAX - IMMIGRATION_MIN + 1));
+  const count = IMMIGRATION_MIN + Math.floor(rand(s) * (IMMIGRATION_MAX - IMMIGRATION_MIN + 1));
   let sick = 0;
-  for (let i = 0; i < count; i++) if (Math.random() < IMMIGRANT_SICK_CHANCE) sick++;
+  for (let i = 0; i < count; i++) if (rand(s) < IMMIGRANT_SICK_CHANCE) sick++;
   s.pendingNomads = { count, sick };
   log(`${count} nomads ask to join your village`, 'info');
 }
@@ -3175,13 +3176,13 @@ export function acceptNomads(s: GameState, log: LogFn): void {
   const centre = centreOfVillage(s);
   let placedSick = 0;
   for (let i = 0; i < offer.count; i++) {
-    const age = Math.floor(ADULT_AGE + 2 + Math.random() * (OLD_AGE_START - ADULT_AGE - 4));
+    const age = Math.floor(ADULT_AGE + 2 + rand(s) * (OLD_AGE_START - ADULT_AGE - 4));
     const c = makeCitizen(
       s,
-      Math.random() < 0.5 ? 'm' : 'f',
+      rand(s) < 0.5 ? 'm' : 'f',
       age,
-      centre.x + (Math.random() - 0.5) * 2,
-      centre.y + (Math.random() - 0.5) * 2,
+      centre.x + (rand(s) - 0.5) * 2,
+      centre.y + (rand(s) - 0.5) * 2,
     );
     if (placedSick < offer.sick) {
       c.sick = true;
@@ -3212,9 +3213,9 @@ function diseaseSeason(s: GameState, log: LogFn): void {
   // Outbreak: infect a share of the healthy (likelier when the village is unwell). Skipped when
   // disasters are turned off — but the recovery loop below still runs so villagers who arrived
   // sick with a nomad band can heal.
-  if (s.disasters && pop >= 4 && Math.random() < DISEASE_CHANCE) {
+  if (s.disasters && pop >= 4 && rand(s) < DISEASE_CHANCE) {
     const healthy = s.citizens.filter((c) => !c.sick);
-    healthy.sort(() => Math.random() - 0.5);
+    healthy.sort(() => rand(s) - 0.5);
     const n = Math.min(healthy.length, Math.max(1, Math.floor(healthy.length * DISEASE_INFECT_FRACTION)));
     for (let i = 0; i < n; i++) healthy[i].sick = true;
     if (n > 0) log('A sickness spreads through the village', 'bad');
@@ -3236,12 +3237,12 @@ function diseaseSeason(s: GameState, log: LogFn): void {
       chance += SICK_RECOVER_MEDICINE;
     }
     if (hospital) chance += SICK_RECOVER_HOSPITAL;
-    if (Math.random() < chance) {
+    if (rand(s) < chance) {
       c.sick = false;
       c.health = Math.min(100, c.health + 15);
     } else {
       c.health -= 15;
-      if (c.health <= 0 || Math.random() < SICK_DEATH_CHANCE) {
+      if (c.health <= 0 || rand(s) < SICK_DEATH_CHANCE) {
         removeCitizen(s, c);
         died++;
       }
@@ -3254,13 +3255,13 @@ export function fireSeason(s: GameState, log: LogFn): void {
   if (!s.disasters) return; // disasters toggled off — no fires ignite
   const flammable = s.buildings.filter((b) => b.built && !isFireproof(b.type) && !b.fireTimer);
   if (flammable.length === 0) return;
-  if (Math.random() >= FIRE_CHANCE) return;
-  const b = flammable[(Math.random() * flammable.length) | 0];
+  if (rand(s) >= FIRE_CHANCE) return;
+  const b = flammable[(rand(s) * flammable.length) | 0];
   // Masonry is half as likely to be the building that goes up. Picking the candidate first and
   // then rolling its resistance keeps the village-wide fire rate unchanged while shifting which
   // buildings bear it — a village that rebuilds in stone sees fewer fires, not differently
   // distributed ones.
-  if (isStoneBuilt(b.type) && Math.random() >= STONE_FIRE_FACTOR) return;
+  if (isStoneBuilt(b.type) && rand(s) >= STONE_FIRE_FACTOR) return;
   tryIgnite(s, b, log, true);
 }
 
@@ -3275,7 +3276,7 @@ function tryIgnite(s: GameState, b: Building, log: LogFn, announce: boolean): vo
   const wellNear = s.buildings.some(
     (w) => w.built && w.type === 'well' && dist2c(buildingCenter(w), c) <= WELL_RADIUS * WELL_RADIUS,
   );
-  if (wellNear && Math.random() < WELL_DOUSE_CHANCE) {
+  if (wellNear && rand(s) < WELL_DOUSE_CHANCE) {
     if (announce) log('A well doused a fire before it spread', 'info');
     return;
   }
@@ -3295,7 +3296,7 @@ function processFires(s: GameState, dt: number, log: LogFn): void {
       for (const { building: n, gap } of neighbours) {
         let chance = gap === 0 ? FIRE_SPREAD_ADJACENT : FIRE_SPREAD_NEAR;
         if (isStoneBuilt(n.type)) chance *= STONE_FIRE_FACTOR;
-        if (Math.random() < chance) tryIgnite(s, n, log, false);
+        if (rand(s) < chance) tryIgnite(s, n, log, false);
       }
     }
   }
@@ -3349,7 +3350,7 @@ function removeBuilding(s: GameState, b: Building): void {
 function regrowForest(s: GameState, dt: number): void {
   const n = s.tiles.length;
   for (let i = 0; i < 40; i++) {
-    const idx = (Math.random() * n) | 0;
+    const idx = (rand(s) * n) | 0;
     const t = s.tiles[idx];
     // Nothing grows back through a path — it is trodden or paved surface.
     if (s.paths[idx] !== PATH_NONE) continue;
@@ -3416,7 +3417,7 @@ function scatteredCircleSpots(
     }
   }
   for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rand(s) * (i + 1));
     [out[i], out[j]] = [out[j], out[i]];
   }
   return out;
@@ -3438,7 +3439,7 @@ function scatteredCircleTiles(s: GameState, b: Building, pred: (t: Tile, tx: num
     }
   }
   for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rand(s) * (i + 1));
     [out[i], out[j]] = [out[j], out[i]];
   }
   return out;

@@ -1512,6 +1512,21 @@ export interface GameState {
   ageScale?: number;
 
   /**
+   * The seed this village's map was carved from. Shareable: the same seed rebuilds the same world.
+   */
+  seed: number;
+  /**
+   * The simulation's random stream, as a single 32-bit integer (see `game/rng.ts`).
+   *
+   * Not the same thing as `seed`. The map is a pure function of the seed and is generated once;
+   * this is the *running* state of everything the sim rolls for afterwards — births, deaths, fires,
+   * disease, merchant arrivals, animal breeding. It is a plain number so it saves and restores with
+   * the rest of the state, which is the point: a village put down and picked back up carries on the
+   * same stream instead of re-rolling its luck from scratch.
+   */
+  rng: number;
+
+  /**
    * How construction was measured when this village was last saved (`BUILD_WORK_RATE`).
    *
    * Absent means a save from when `progress` counted *seconds* against a `buildTime` of a handful
@@ -1617,6 +1632,15 @@ export function carryLimit(kind: ResourceKind, volume: number = CARRY_VOLUME): n
   return Math.max(1, Math.floor(volume / RESOURCE_VOLUME[kind]));
 }
 export const REFUND_FRACTION = 0.25; // fraction of build cost reclaimed on demolish
+/**
+ * How often the HUD and any open panel are rebuilt, in milliseconds.
+ *
+ * Not once per animation frame: none of what they show — stock totals, worker counts, the season —
+ * moves fast enough to be worth 60Hz when a season lasts ten minutes. Short enough that a tap on a
+ * stepper still looks instant, because panels are redrawn from the frame loop and nowhere else.
+ */
+export const UI_REFRESH_MS = 100;
+
 export const WORK_SECONDS = 8; // seconds of work to fill/convert one carry-load (slower pace)
 
 /**

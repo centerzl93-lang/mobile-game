@@ -39,11 +39,12 @@ import {
 } from '../types';
 import { generateWorld, findStartTile, getTile, emptyPaths, emptyHarvest, clearStartArea } from './world';
 import { randomName } from './names';
+import { HasRng, rand, randInt, randRange, newSeed } from './rng';
 
-export function makeCitizen(s: { nextId: number }, sex: Sex, age: number, x: number, y: number): Citizen {
+export function makeCitizen(s: { nextId: number } & HasRng, sex: Sex, age: number, x: number, y: number): Citizen {
   return {
     id: s.nextId++,
-    name: randomName(sex),
+    name: randomName(sex, s),
     x,
     y,
     tx: x,
@@ -102,8 +103,14 @@ export function newGame(
 ): GameState {
   const dim = MAP_SIZES[size];
   setMapSize(dim, dim); // must run before generateWorld so the world fills the chosen size
-  const tiles = generateWorld(seed);
+  // One seed carves the map and opens the simulation's stream, so a village is reproducible end to
+  // end from a single number. The stream starts somewhere else in the sequence than the map did
+  // (`^ 0x5bf03635`) so the two are not correlated — the founding roll should not be a function of
+  // where the river went.
+  const worldSeed = seed ?? newSeed();
+  const tiles = generateWorld(worldSeed);
   const start = findStartTile(tiles);
+  const roll: HasRng = { rng: (worldSeed ^ 0x5bf03635) | 0 };
 
   const state: GameState = {
     w: MAP_W,
@@ -132,12 +139,14 @@ export function newGame(
     origin: { x: start.x + 1, y: start.y + 1 },
     // Crops the village can plant. Easy starts with one random seed; Normal/Hard start with none
     // and must buy seeds from a merchant before any field will grow.
-    seeds: difficulty === 'easy' ? [CROPS[Math.floor(Math.random() * CROPS.length)]] : [],
+    seeds: difficulty === 'easy' ? [CROPS[randInt(roll, CROPS.length)]] : [],
     // Loose caps from the start, so nothing runs flat out unwatched — and pitched at what this
     // difficulty was handed, so no hut stands down on its first day. Copied, not shared: the
     // player edits these in the stockpile panel and two villages must not move together.
     limits: { ...START_LIMITS[difficulty] },
     ageScale: AGE_PER_YEAR,
+    seed: worldSeed,
+    rng: roll.rng,
   };
 
   // A starting barn holds the opening stockpile for the chosen difficulty, scaled up for the
@@ -162,12 +171,12 @@ export function newGame(
   // Founding adults (20–29), balanced men/women so couples can form.
   for (let i = 0; i < START_ADULTS; i++) {
     const sex: Sex = i % 2 === 0 ? 'm' : 'f';
-    spawn(sex, ADULT_MIN_AGE + Math.floor(Math.random() * (ADULT_MAX_AGE - ADULT_MIN_AGE + 1)));
+    spawn(sex, ADULT_MIN_AGE + randInt(state, ADULT_MAX_AGE - ADULT_MIN_AGE + 1));
   }
   // Founding children, from `CHILD_MIN_AGE` up to but not reaching adulthood — old enough to be
   // at school if the village ever builds one.
   for (let i = 0; i < START_CHILDREN; i++) {
-    spawn(Math.random() < 0.5 ? 'm' : 'f', CHILD_MIN_AGE + Math.random() * (ADULT_AGE - CHILD_MIN_AGE));
+    spawn(rand(state) < 0.5 ? 'm' : 'f', randRange(state, CHILD_MIN_AGE, ADULT_AGE));
   }
   return state;
 }
@@ -179,7 +188,7 @@ function grassSpawnNear(s: GameState, x: number, y: number): { x: number; y: num
       for (let dx = -r; dx <= r; dx++) {
         const t = getTile(s.tiles, x + dx, y + dy);
         if (t && t.type === 'grass') {
-          return { x: x + dx + 0.2 + Math.random() * 0.6, y: y + dy + 0.2 + Math.random() * 0.6 };
+          return { x: x + dx + 0.2 + rand(s) * 0.6, y: y + dy + 0.2 + rand(s) * 0.6 };
         }
       }
     }

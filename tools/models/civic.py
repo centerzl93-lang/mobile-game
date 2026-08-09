@@ -140,87 +140,117 @@ def tavern():
 
 
 def townhall():
-    """Town Hall (5 x 5): four storeys of dressed stone under a clock stage — the village landmark.
+    """Town Hall (5 x 5): a pale stone hall of crossed gables under a spired tower.
 
-    Everything else in the village is one or two storeys, so height is what this building is for:
-    it should be recognisable from across the map at any zoom, and from the far side of a large
-    map it is mostly a silhouette. That argues for a square tower rather than a long hall — a
-    footprint this size laid out flat would read as another barn.
+    Re-authored against a reference the player supplied. The first attempt was a banded four-storey
+    box, which read as a keep — a fortification, not a civic building. What makes the reference
+    read as a *hall* is not height alone but the silhouette: steep slate gables crossing at a
+    centre, a tower with a needle spire pushing out of the crossing, and pale walls broken up by
+    timber-framed openings rather than courses of masonry.
 
-    The storeys are made legible three ways, because a plain four-storey box reads as one very
-    tall room: a band course at every floor, windows ranked between the bands, and the walls step
-    in slightly as they rise so the mass tapers. The top stage carries the clock, which is the
-    detail that says *town hall* and not *keep*.
+    So the mass is cruciform. A main range runs along Y, a cross wing along X, and the tower sits
+    over the crossing where the two ridges meet, which is what gives the roofline its steps instead
+    of one long slab. Walls are plaster with stone piers at the corners and stone buttresses down
+    the flanks: white walls, grey dressings, warm timber round every opening.
     """
     reset_scene()
     m = palette()
     parts = []
-    oy = -0.20
-
+    oy = -0.10
     base_h = 0.30
-    floor_h = 1.15          # each storey, band to band
-    floors = 4
-    hw0, hd0 = 2.10, 2.10   # ground-floor half-extents; each storey steps in by `step`
-    step = 0.09
 
-    # A broad plinth, so four storeys look founded rather than balanced on the grass.
-    footing = box("Footing", (hw0 * 2 + 0.34, hd0 * 2 + 0.34, base_h), (0, oy, base_h / 2), m["stone"])
+    # Plinth. Broad, because everything above it is tall and a tall thing on a thin base looks
+    # balanced there rather than founded.
+    footing = box("Footing", (4.86, 4.86, base_h), (0, oy, base_h / 2), m["stone_dark"])
     bevel(footing, 0.03)
     parts.append(footing)
 
-    z = base_h
-    for i in range(floors):
-        hw = hw0 - step * i
-        hd = hd0 - step * i
-        # `stone_walls` builds centred on the origin, so shift the storey onto the plot like the
-        # other civic models do with their walls.
-        storey = stone_walls(f"Storey{i}", hw * 2, hd * 2, floor_h, z, m, quoins=(i < 2))
-        for ob in storey:
-            ob.location.y += oy
-        parts += storey
-        # The band course closing each storey: a stone plate a little proud of the wall below.
-        band = box(f"Band{i}", (hw * 2 + 0.16, hd * 2 + 0.16, 0.12), (0, oy, z + floor_h), m["stone_dark"])
-        bevel(band, 0.02)
-        parts.append(band)
-        # Ranked windows: three a side on the two lower storeys, two above where the walls narrow.
-        xs = [-0.78, 0.0, 0.78] if i < 2 else [-0.52, 0.52]
-        for x in xs:
-            parts += window(f"Front{i}", x, oy + hd, z + floor_h * 0.52, m, width=0.30, height=0.40)
-            parts += window(f"Back{i}", x, oy - hd, z + floor_h * 0.52, m, width=0.30, height=0.40)
-            parts += window(f"SideL{i}", oy + x, -hw, z + floor_h * 0.52, m, width=0.30, height=0.40, axis="x")
-            parts += window(f"SideR{i}", oy + x, hw, z + floor_h * 0.52, m, width=0.30, height=0.40, axis="x")
-        z += floor_h + 0.12
+    wall_h = 2.55
+    # --- main range, ridge along Y ---
+    mw, md = 2.30, 4.30
+    parts.append(box("MainWall", (mw, md, wall_h), (0, oy, base_h + wall_h / 2), m["plaster"]))
+    # `shingled_roof` builds centred on the origin, so shift it onto the plot like the wing below.
+    main_roof = shingled_roof(mw, md, 1.45, base_h + wall_h, m, overhang=0.16, name="MainRoof")
+    for ob in main_roof:
+        ob.location.y += oy
+    parts += main_roof
+    # --- cross wing, ridge along X ---
+    cw, cd = 4.30, 2.10
+    parts.append(box("WingWall", (cw, cd, wall_h), (0, oy, base_h + wall_h / 2), m["plaster"]))
+    wing = _ridge_x(cw, cd, 1.30, base_h + wall_h, m)
+    for ob in wing:
+        ob.location.y += oy
+    parts += wing
 
-    # Doors big enough to read at this scale, under a timber porch on the approach side.
-    hd_ground = hd0
-    parts += door("Hall", oy + hd_ground, base_h, m, width=0.62, height=1.00)
-    porch_z = base_h + 1.06
-    parts.append(box("PorchRoof", (1.30, 0.62, 0.10), (0, oy + hd_ground + 0.26, porch_z), m["timber"]))
-    parts += posts("Porch", [(-0.52, oy + hd_ground + 0.48), (0.52, oy + hd_ground + 0.48)],
-                   porch_z - base_h, 0.10, base_h, m["timber_dark"])
-    # Steps up to it, since the plinth puts the door a stride above the ground.
-    for i, w in enumerate((1.50, 1.26)):
-        parts.append(box("Step", (w, 0.26, base_h / 2),
-                         (0, oy + hd_ground + 0.30 + i * 0.24, base_h / 2 - i * (base_h / 2)), m["stone"]))
+    # Stone piers at the four corners and buttresses down the flanks — the grey dressings that
+    # keep a white building from reading as a plaster box.
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            pier = box("Pier", (0.40, 0.40, wall_h + 0.10),
+                       (sx * (cw / 2 - 0.16), oy + sy * (cd / 2 - 0.16), base_h + (wall_h + 0.10) / 2), m["stone"])
+            bevel(pier, 0.02)
+            parts.append(pier)
+        for dy in (-1.62, 1.62):
+            but = box("Buttress", (0.30, 0.46, wall_h * 0.80),
+                      (sx * (mw / 2 + 0.10), oy + dy, base_h + wall_h * 0.40), m["stone"])
+            bevel(but, 0.02)
+            parts.append(but)
+            parts.append(box("ButtressCap", (0.36, 0.52, 0.12),
+                             (sx * (mw / 2 + 0.10), oy + dy, base_h + wall_h * 0.80), m["stone_dark"]))
 
-    # The clock stage: a shallow drum on the top storey, then a low pyramid cap and a finial.
-    hw_top = hw0 - step * (floors - 1)
-    stage = hw_top * 1.30
-    parts.append(box("ClockStage", (stage, stage, 0.46), (0, oy, z + 0.23), m["stone"]))
-    for sy, face in ((1, oy + stage / 2), (-1, oy - stage / 2)):
-        parts.append(box("ClockFace", (0.44, 0.06, 0.44), (0, face, z + 0.23), m["plaster"]))
-        parts.append(box("ClockHand", (0.26, 0.08, 0.05), (0, face + sy * 0.02, z + 0.23), m["timber_dark"]))
-        parts.append(box("ClockHandM", (0.05, 0.08, 0.30), (0, face + sy * 0.02, z + 0.29), m["timber_dark"]))
-    bpy.ops.mesh.primitive_cone_add(radius1=hw_top * 0.98, radius2=0.0, depth=0.62, vertices=4,
-                                    location=(0, oy, z + 0.46 + 0.31))
-    cap = bpy.context.active_object
-    cap.name = "Cap"
-    cap.rotation_euler = (0, 0, math.radians(45))
-    cap.data.materials.append(m["slate"])
-    parts.append(cap)
-    parts += posts("Finial", [(0, oy)], 0.30, 0.07, z + 0.46 + 0.58, m["metal"])
+    # --- tower over the crossing, with the spire that carries the height ---
+    tw = 1.46
+    tower_h = 4.30
+    parts.append(box("Tower", (tw, tw, tower_h), (0, oy, base_h + tower_h / 2), m["stone"]))
+    parts.append(box("TowerBand", (tw + 0.14, tw + 0.14, 0.14), (0, oy, base_h + tower_h * 0.62), m["stone_dark"]))
+    parts.append(box("Parapet", (tw + 0.20, tw + 0.20, 0.22), (0, oy, base_h + tower_h + 0.11), m["stone"]))
+    # Belfry openings under the parapet, timber-framed like everything else that opens.
+    for sx, sy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+        parts.append(box("Belfry", (0.40 if sy else 0.10, 0.10 if sy else 0.40, 0.62),
+                         (sx * (tw / 2 - 0.02), oy + sy * (tw / 2 - 0.02), base_h + tower_h - 0.58), m["window"]))
+        parts.append(box("BelfryFrame", (0.52 if sy else 0.13, 0.13 if sy else 0.52, 0.10),
+                         (sx * (tw / 2 - 0.02), oy + sy * (tw / 2 - 0.02), base_h + tower_h - 0.24), m["timber"]))
+    bpy.ops.mesh.primitive_cone_add(radius1=tw * 0.74, radius2=0.0, depth=2.60, vertices=4,
+                                    location=(0, oy, base_h + tower_h + 0.22 + 1.30))
+    spire = bpy.context.active_object
+    spire.name = "Spire"
+    spire.rotation_euler = (0, 0, math.radians(45))
+    spire.data.materials.append(m["slate"])
+    parts.append(spire)
+    parts.append(box("Finial", (0.08, 0.08, 0.44), (0, oy, base_h + tower_h + 2.74), m["metal"]))
+    parts.append(box("Vane", (0.34, 0.05, 0.20), (0.14, oy, base_h + tower_h + 2.92), m["metal"]))
 
-    finish(parts, "townhall")
+    # --- openings: a rose over the door, tall timber-framed lancets everywhere else ---
+    face = oy + md / 2
+    parts += door("Hall", face, base_h, m, width=0.72, height=1.20)
+    parts.append(box("DoorArch", (1.00, 0.12, 0.22), (0, face - 0.04, base_h + 1.28), m["timber"]))
+    parts.append(box("Rose", (0.62, 0.09, 0.62), (0, face - 0.03, base_h + 1.92), m["window"]))
+    parts.append(box("RoseFrame", (0.76, 0.06, 0.76), (0, face - 0.01, base_h + 1.92), m["timber"]))
+    # Gable-end lancets on the main range front, and down both flanks of the wing.
+    for sx in (-1, 1):
+        parts.append(box("FrontLancet", (0.22, 0.10, 1.10), (sx * 0.82, face - 0.02, base_h + 1.10), m["window"]))
+        parts.append(box("FrontLancetFrame", (0.32, 0.06, 1.22), (sx * 0.82, face, base_h + 1.10), m["timber"]))
+        for dy in (-0.62, 0.62):
+            parts.append(box("SideLancet", (0.10, 0.22, 1.10), (sx * (cw / 2 - 0.02), oy + dy, base_h + 1.10), m["window"]))
+            parts.append(box("SideLancetFrame", (0.06, 0.32, 1.22), (sx * (cw / 2), oy + dy, base_h + 1.10), m["timber"]))
+
+    # --- dormers on the main roof slopes, the detail that breaks up a long roof ---
+    for sx in (-1, 1):
+        for dy in (-1.30, 1.30):
+            parts.append(box("Dormer", (0.52, 0.46, 0.56),
+                             (sx * (mw / 2 - 0.30), oy + dy, base_h + wall_h + 0.36), m["plaster"]))
+            parts.append(box("DormerGlass", (0.10, 0.28, 0.34),
+                             (sx * (mw / 2 - 0.06), oy + dy, base_h + wall_h + 0.36), m["window"]))
+            parts.append(box("DormerRoof", (0.62, 0.10, 0.10),
+                             (sx * (mw / 2 - 0.30), oy + dy, base_h + wall_h + 0.66), m["slate"]))
+
+    # --- broad steps up to the door, and the flagpole from the reference ---
+    for i, (w, d, z) in enumerate(((2.20, 0.30, 0.20), (2.50, 0.26, 0.10))):
+        parts.append(box("Step", (w, d, z), (0, face + 0.20 + i * 0.26, z / 2), m["stone"] if i == 0 else m["stone_dark"]))
+    parts += posts("Flag", [(-1.72, face - 0.30)], 2.40, 0.07, base_h, m["timber_dark"])
+    parts.append(box("Flag", (0.46, 0.05, 0.30), (-1.49, face - 0.30, base_h + 2.28), m["plaster"]))
+
+    return finish(parts, "Town Hall")
 
 
 def chapel():

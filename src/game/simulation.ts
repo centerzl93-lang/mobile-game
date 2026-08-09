@@ -6,6 +6,7 @@ import {
   ResourceKind,
   BUILDING_DEFS,
   buildWorkOf,
+  costOf,
   PolicyId,
   policyCapacity,
   FESTIVAL_FOOD,
@@ -1642,7 +1643,7 @@ function pickSite(s: GameState, c: Citizen): SiteAction | null {
     } else if (b.demolish) {
       action = { site: b, action: 'raze' };
     } else if (!b.built) {
-      const cost = BUILDING_DEFS[b.type].cost;
+      const cost = costOf(b);
       let fetchKind: ResourceKind | null = null;
       let fully = true;
       for (const k in cost) {
@@ -1704,7 +1705,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
     if (site) {
       goTo(c, buildingApproach(s, site, c));
       if (stepTo(s, c, dt)) {
-        const cost = BUILDING_DEFS[site.type].cost;
+        const cost = costOf(site);
         const need = (cost[kind] ?? 0) - (site.store[kind] ?? 0);
         const put = Math.min(c.carry.amount, Math.max(0, need));
         site.store[kind] = (site.store[kind] ?? 0) + put;
@@ -1735,7 +1736,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
       if (barn) {
         goTo(c, buildingApproach(s, barn, c));
         if (stepTo(s, c, dt)) {
-          const cost = BUILDING_DEFS[pick.site.type].cost;
+          const cost = costOf(pick.site);
           const need = (cost[kind] ?? 0) - (pick.site.store[kind] ?? 0);
           const want = Math.min(carryLimit(kind), need, barn.store[kind] ?? 0);
           if (want > 0) {
@@ -1972,7 +1973,7 @@ function nearestUnbuiltNeeding(s: GameState, c: Citizen, kind: ResourceKind): Bu
   let bestD = Infinity;
   for (const b of s.buildings) {
     if (b.built) continue;
-    const cost = BUILDING_DEFS[b.type].cost;
+    const cost = costOf(b);
     if ((b.store[kind] ?? 0) >= (cost[kind] ?? 0)) continue;
     const p = buildingApproach(s, b, c);
     if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) continue;
@@ -1986,7 +1987,7 @@ function nearestUnbuiltNeeding(s: GameState, c: Citizen, kind: ResourceKind): Bu
 }
 
 function finishConstruction(s: GameState, b: Building): void {
-  const cost = BUILDING_DEFS[b.type].cost;
+  const cost = costOf(b);
   for (const k in cost) {
     const kind = k as ResourceKind;
     b.store[kind] = (b.store[kind] ?? 0) - (cost[kind] ?? 0);

@@ -3460,6 +3460,66 @@ test.describe('construction stages', () => {
   });
 });
 
+test.describe('a field is priced by its size', () => {
+  test('an 8x8 costs four times a 4x4, and gives back more when pulled down', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const small = g.debugCost('farm');
+      const big = g.debugCost('farm', 8, 8);
+      const mid = g.debugCost('farm', 6, 4);
+      return { small, big, mid };
+    });
+
+    // The yield already scales with the area; the price now does too, or the biggest field costs
+    // what the smallest does and there is no reason to build a small one.
+    expect(out.small.wood).toBeGreaterThan(0);
+    expect(out.big.wood).toBe(out.small.wood * 4);
+    expect(out.big.stone).toBe(out.small.stone * 4);
+    // And in between, by area rather than by width.
+    expect(out.mid.wood).toBe(Math.ceil(out.small.wood * 1.5));
+  });
+
+  test('a big field cannot be placed on a small field\'s materials', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', false, 0, 4242); // normal: the barn starts bare
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+
+      // Find ground an 8x8 genuinely fits on, with the materials to pay for it — so that when the
+      // materials go away, cost is the only thing that has changed about the answer.
+      for (const [k, amt] of Object.entries(g.debugCost('farm', 8, 8))) barn.store[k] = (amt as number) * 4;
+      g.sizeW = 8;
+      g.sizeH = 8;
+      let at: { x: number; y: number } | null = null;
+      for (let r = 3; r < 20 && !at; r++)
+        for (let dy = -r; dy <= r && !at; dy++)
+          for (let dx = -r; dx <= r && !at; dx++)
+            if (g.debugCanPlace('farm', barn.x + dx, barn.y + dy).ok) at = { x: barn.x + dx, y: barn.y + dy };
+      if (!at) return null;
+      const richBig = g.debugCanPlace('farm', at.x, at.y);
+
+      // Now leave exactly a 4x4's worth in the barn and ask again at the same spot.
+      barn.store = {};
+      for (const [k, amt] of Object.entries(g.debugCost('farm'))) barn.store[k] = amt as number;
+      const poorBig = g.debugCanPlace('farm', at.x, at.y);
+      g.sizeW = 4;
+      g.sizeH = 4;
+      const poorSmall = g.debugCanPlace('farm', at.x, at.y);
+      return { richBig, poorBig, poorSmall };
+    });
+
+    expect(out, 'an 8x8 field had somewhere to go').not.toBeNull();
+    expect(out!.richBig.ok, 'the ground takes an 8x8 when it is paid for').toBe(true);
+    expect(out!.poorBig.ok, 'the same ground refuses it on a 4x4 budget').toBe(false);
+    expect(out!.poorBig.reason ?? '', 'and refuses it on cost, not terrain').toMatch(/Need/);
+    expect(out!.poorSmall.ok, 'while a 4x4 is affordable there').toBe(true);
+  });
+});
+
 test.describe('policies', () => {
   /** A standing, staffed Town Hall with `n` clerks at their desks. */
   const hall = `(g, n) => {

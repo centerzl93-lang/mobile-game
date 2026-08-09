@@ -22,6 +22,8 @@ import {
   HARVEST_KIND_META,
   MARKET_CAPACITY,
   buildWorkOf,
+  buildCost,
+  costOf,
   FESTIVAL_FOOD,
   POLICY_META,
   POLICIES,
@@ -1193,7 +1195,7 @@ class Game {
           if (left.stone > 0) rows.push({ label: `${RESOURCE_ICON.stone} Stone`, value: `${left.stone} to gather` });
           if (left.iron > 0) rows.push({ label: `${RESOURCE_ICON.iron} Iron`, value: `${left.iron} to gather` });
         }
-        for (const [k, amt] of Object.entries(def.cost) as [ResourceKind, number][]) {
+        for (const [k, amt] of Object.entries(costOf(b)) as [ResourceKind, number][]) {
           rows.push({ label: `${RESOURCE_ICON[k]} ${k}`, value: `${Math.floor(b.store[k] ?? 0)}/${amt} delivered` });
         }
       } else {
@@ -1508,8 +1510,8 @@ class Game {
   }
 
   /** Debug/testing helper: what a building costs to place, so a test need not restate the table. */
-  debugCost(type: BuildingType): Partial<Record<ResourceKind, number>> {
-    return { ...BUILDING_DEFS[type].cost };
+  debugCost(type: BuildingType, w?: number, h?: number): Partial<Record<ResourceKind, number>> {
+    return buildCost(type, w, h);
   }
 
   /**

@@ -3,6 +3,8 @@ import {
   Building,
   BuildingType,
   BUILDING_DEFS,
+  costOf,
+  buildCost,
   ResourceKind,
   TileType,
   REFUND_FRACTION,
@@ -155,8 +157,9 @@ export function canPlace(
       return { ok: false, reason: `Would block the ${BUILDING_DEFS[b.type].name}'s door` };
     }
   }
-  // Materials must exist in storage (consumed later, on delivery — not now).
-  for (const [kind, amount] of Object.entries(def.cost) as [ResourceKind, number][]) {
+  // Materials must exist in storage (consumed later, on delivery — not now). Priced at the size
+  // actually being dragged out, so an 8x8 field is checked against an 8x8 field's bill.
+  for (const [kind, amount] of Object.entries(buildCost(type, fw, fh)) as [ResourceKind, number][]) {
     if (totalStored(s, kind) < amount) {
       return { ok: false, reason: `Need ${amount} ${kind} in storage` };
     }
@@ -273,9 +276,8 @@ export function footprintToClear(s: GameState, b: Building): { trees: number; st
 }
 
 /** True if storage holds the materials to start this building. */
-export function canAfford(s: GameState, type: BuildingType): boolean {
-  const def = BUILDING_DEFS[type];
-  for (const [kind, amount] of Object.entries(def.cost) as [ResourceKind, number][]) {
+export function canAfford(s: GameState, type: BuildingType, w?: number, h?: number): boolean {
+  for (const [kind, amount] of Object.entries(buildCost(type, w, h)) as [ResourceKind, number][]) {
     if (totalStored(s, kind) < amount) return false;
   }
   return true;
@@ -332,8 +334,7 @@ export function cancelDemolish(b: Building): void {
  * job right up to the moment it stops existing.
  */
 export function razeBuilding(s: GameState, b: Building): void {
-  const def = BUILDING_DEFS[b.type];
-  for (const [kind, amount] of Object.entries(def.cost) as [ResourceKind, number][]) {
+  for (const [kind, amount] of Object.entries(costOf(b)) as [ResourceKind, number][]) {
     const refund = Math.floor(amount * REFUND_FRACTION);
     if (refund > 0) b.store[kind] = (b.store[kind] ?? 0) + refund;
   }
@@ -407,7 +408,7 @@ export function demolishBuilding(s: GameState, b: Building): void {
     const amt = b.store[kind] ?? 0;
     if (amt > 0) addNearest(s, at, kind, amt);
   }
-  for (const [kind, amount] of Object.entries(def.cost) as [ResourceKind, number][]) {
+  for (const [kind, amount] of Object.entries(costOf(b)) as [ResourceKind, number][]) {
     const refund = Math.floor(amount * REFUND_FRACTION);
     if (refund > 0) addNearest(s, at, kind, refund);
   }

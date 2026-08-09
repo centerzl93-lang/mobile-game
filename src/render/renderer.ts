@@ -4,6 +4,7 @@ import {
   Building,
   Tile,
   BUILDING_DEFS,
+  costOf,
   BuildingType,
   workRadiusOf,
   footprintW,
@@ -207,7 +208,7 @@ export class Renderer {
         ctx.setLineDash([]);
         this.glyph('🔨', sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.5);
         // Delivered-materials bar.
-        const cost = def.cost;
+        const cost = costOf(b);
         let need = 0;
         let have = 0;
         for (const k in cost) {

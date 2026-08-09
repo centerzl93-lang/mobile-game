@@ -427,6 +427,38 @@ export const SIZABLE: Partial<Record<BuildingType, { min: number; max: number }>
   farm: { min: RANCH_MIN, max: RANCH_MAX },
 };
 
+/**
+ * What a building costs at the size it is actually being built.
+ *
+ * Fields and pens are dragged out between 4x4 and 8x8, and their yield already scales with the
+ * area — a field four times the size reaps four times the harvest. The price did not, so the
+ * biggest field cost exactly what the smallest did and there was no reason on earth to build a
+ * small one. Fence and furrow scale with the ground they cover, so the cost does too.
+ *
+ * Everything else has one size and is returned unchanged.
+ */
+export function buildCost(
+  type: BuildingType,
+  w?: number,
+  h?: number,
+): Partial<Record<ResourceKind, number>> {
+  const def = BUILDING_DEFS[type];
+  if (!SIZABLE[type] || w === undefined || h === undefined) return { ...def.cost };
+  const factor = (w * h) / (def.w * def.h);
+  if (factor === 1) return { ...def.cost };
+  const out: Partial<Record<ResourceKind, number>> = {};
+  for (const k of Object.keys(def.cost) as ResourceKind[]) {
+    // Rounded up: a bigger field should never come out cheaper per tile through rounding.
+    out[k] = Math.ceil((def.cost[k] ?? 0) * factor);
+  }
+  return out;
+}
+
+/** What this building cost to raise, at the size it was actually raised. */
+export function costOf(b: Placed): Partial<Record<ResourceKind, number>> {
+  return buildCost(b.type, footprintW(b), footprintH(b));
+}
+
 // ---- Farming ----
 /** Baseline field area (a 4×4 field) that `FARM_FOOD_PER_WORKER` is tuned against; harvest scales
  * with `footprint / FARM_BASE_AREA`, so a bigger field yields proportionally more. */
@@ -2386,7 +2418,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   tavern: {
     type: 'tavern', name: 'Tavern', emoji: '🍺', category: 'civic', w: 4, h: 4,
-    cost: { wood: 90, stone: 52, iron: 12 }, jobs: 1, work: 20,
+    cost: { wood: 90, stone: 52, iron: 12 }, jobs: 1, work: 200,
     desc: 'A staffed alehouse brews grain into ale each season, keeping the village merry.',
   },
   townhall: {
@@ -2421,7 +2453,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   market: {
     type: 'market', name: 'Market', emoji: '🛒', category: 'resources', w: 4, h: 4,
-    cost: { wood: 100, stone: 58, iron: 62 }, jobs: 2, work: 40, workRadius: MARKET_RADIUS,
+    cost: { wood: 100, stone: 58, iron: 62 }, jobs: 2, work: 140, workRadius: MARKET_RADIUS,
     desc: 'Stores goods like a barn (2000 units of space to a barn\'s 5000), and its vendors carry food, fuel and coats out to every home inside its circle, so households never have to leave work to shop. Two vendors reach the furthest.',
   },
   barn: {

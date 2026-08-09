@@ -6,6 +6,20 @@ import {
   ResourceKind,
   BUILDING_DEFS,
   buildWorkOf,
+  PolicyId,
+  policyCapacity,
+  FESTIVAL_FOOD,
+  FESTIVAL_HAPPY,
+  policyActive,
+  activePolicies,
+  POLICY_RATION_FOOD,
+  POLICY_RATION_HAPPY,
+  POLICY_HOURS_PROD,
+  POLICY_HOURS_HEALTH,
+  POLICY_CONSERVE_REGROW,
+  POLICY_CONSERVE_LUMBER,
+  POLICY_GATES_IMMIGRATION,
+  POLICY_GATES_SICK,
   LedgerRow,
   LEDGER_SEASONS,
   BUILD_WORK_RATE,
@@ -264,7 +278,11 @@ export function update(s: GameState, dt: number, log: LogFn): void {
   reconcileWorkers(s);
   assignHomesAndJobs(s);
   const toolFactor = totalStored(s, 'tools') > 0 ? 1 : NO_TOOLS_PENALTY;
-  for (const c of s.citizens) runCitizen(s, c, dt, toolFactor);
+  // Long Hours rides along with the tool factor because they are the same kind of number: how
+  // well a pair of hands is working, as opposed to what the building around them is for. Renamed
+  // from `toolFactor` on the way through, since it is no longer only about tools.
+  const workFactor = toolFactor * (policyActive(s, 'longHours') ? POLICY_HOURS_PROD : 1);
+  for (const c of s.citizens) runCitizen(s, c, dt, workFactor);
   processFires(s, dt, log);
   regrowForest(s, dt);
   updateMerchant(s, dt, log);
@@ -312,7 +330,11 @@ function eat(s: GameState, dt: number, log: LogFn): void {
 
   const starved: Citizen[] = [];
   for (const c of s.citizens) {
-    let need = FOOD_PER_CITIZEN_PER_SEASON * (isAdult(c) ? 1 : CHILD_FOOD_FACTOR) * rate;
+    let need =
+      FOOD_PER_CITIZEN_PER_SEASON *
+      (isAdult(c) ? 1 : CHILD_FOOD_FACTOR) *
+      rate *
+      (policyActive(s, 'rationing') ? POLICY_RATION_FOOD : 1);
     const home = c.homeId !== null ? homeById.get(c.homeId) : undefined;
     if (home) need = takeFoodFromLarder(home, need);
     if (need > 0.000001) need = consumeFood(s, need);
@@ -861,7 +883,7 @@ function stepOutOfWalls(s: GameState, c: Citizen): void {
 }
 
 // ---- per-citizen behaviour ----
-function runCitizen(s: GameState, c: Citizen, dt: number, toolFactor: number): void {
+function runCitizen(s: GameState, c: Citizen, dt: number, workFactor: number): void {
   stepOutOfWalls(s, c);
   // Out of the building unless this tick puts them back at their bench, so a worker who breaks off
   // to haul, shop or rest reappears rather than staying invisible on the doorstep.
@@ -902,7 +924,7 @@ function runCitizen(s: GameState, c: Citizen, dt: number, toolFactor: number): v
       runBuilder(s, c, dt);
       return;
     }
-    runWorker(s, c, job, dt, toolFactor);
+    runWorker(s, c, job, dt, workFactor);
   } else runBuilder(s, c, dt);
 }
 
@@ -1079,7 +1101,7 @@ function firstMissingInput(b: Building): ResourceKind | null {
   return null;
 }
 
-function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor: number): void {
+function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workFactor: number): void {
   if (b.type === 'market') {
     runVendor(s, c, b, dt);
     return;
@@ -1144,7 +1166,7 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, toolFactor
     c.timer += dt;
     if (c.timer >= WORK_SECONDS) {
       c.timer = 0;
-      const out = workOutput(s, b, dt, toolFactor, c);
+      const out = workOutput(s, b, dt, workFactor, c);
       c.workAt = undefined; // next cycle picks somewhere new
       if (out && out.amount > 0.01) {
         // Healthier, happier, and educated workers produce more.
@@ -1539,7 +1561,10 @@ function workOutput(
       } else {
         depleteCircleTrees(s, b, 0.25 * f);
       }
-      return { kind: 'wood', amount: LOAD_MAT * f * tf };
+      return {
+        kind: 'wood',
+        amount: LOAD_MAT * f * tf * (policyActive(s, 'conservation') ? POLICY_CONSERVE_LUMBER : 1),
+      };
     }
     case 'herbalist':
       return { kind: 'medicine', amount: MED_LOAD * factorCircle(s, b) * tf };
@@ -2173,6 +2198,45 @@ function closeLedger(s: GameState): void {
  * `inn` is derived (`net + out`) rather than measured separately, so the three figures always
  * reconcile — a ledger whose columns did not add up would be worse than no ledger.
  */
+/**
+ * Enact or repeal a standing rule, returning whether the village now lives under it.
+ *
+ * Enacting beyond the clerks is refused rather than silently queued: a rule the player thinks is
+ * in force but is not would be worse than a button that declines. Repealing always works, and
+ * keeps the order of the rest so nothing else lapses as a side effect.
+ */
+export function setPolicy(s: GameState, id: PolicyId, on: boolean): boolean {
+  const list = (s.policies ??= []);
+  const at = list.indexOf(id);
+  if (!on) {
+    if (at >= 0) list.splice(at, 1);
+    return false;
+  }
+  if (at >= 0) return policyActive(s, id);
+  if (list.length >= policyCapacity(s)) return false; // no clerk free to keep it
+  list.push(id);
+  return true;
+}
+
+/**
+ * Throw a festival: a night the village pays for in food and remembers in good spirits.
+ *
+ * An act rather than a rule, so it holds no clerk's desk afterwards — but it takes one to
+ * organise, and it takes the food up front. Returns false if either is missing.
+ */
+export function holdFestival(s: GameState, log?: LogFn): boolean {
+  if (policyCapacity(s) < 1) return false;
+  if (totalFoodAvailable(s) < FESTIVAL_FOOD) return false;
+  let need = FESTIVAL_FOOD;
+  for (const k of FOOD_KINDS) {
+    if (need <= 0) break;
+    need = consume(s, k, need);
+  }
+  for (const c of s.citizens) c.happiness = Math.min(100, c.happiness + FESTIVAL_HAPPY);
+  log?.('The village held a festival', 'good');
+  return true;
+}
+
 export function ledgerFor(
   s: GameState,
   kind: ResourceKind,
@@ -3192,9 +3256,15 @@ function updateWellbeing(s: GameState, foodShort: boolean, deaths: number, taver
   if (chapel) happyTarget += HAPPY_CHAPEL;
   if (cemetery) happyTarget += HAPPY_CEMETERY;
   if (deaths > 0 && !cemetery) happyTarget -= DEATH_UNREST; // grief when the dead lie unhonoured
+  // What the standing rules cost. Charged against the *targets* rather than docked from the
+  // running figures, so a policy settles the village at a lower level instead of grinding it down
+  // a little more every season it stays in force.
+  if (policyActive(s, 'rationing')) happyTarget -= POLICY_RATION_HAPPY;
+  const healthPenalty = policyActive(s, 'longHours') ? POLICY_HOURS_HEALTH : 0;
   happyTarget = clamp(happyTarget, 0, 100);
+  const healthAim = clamp(healthTarget - healthPenalty, 0, 100);
   for (const c of s.citizens) {
-    c.health += (healthTarget - c.health) * 0.25;
+    c.health += (healthAim - c.health) * 0.25;
     c.happiness += (happyTarget - c.happiness) * 0.25;
   }
 }
@@ -3215,11 +3285,13 @@ function immigrate(s: GameState, log: LogFn): void {
   // the new one are the same amount of food. Left at 1.5 a founding village cleared it three
   // times over on day one, and nomads knocked every single season from the start.
   if (totalFoodAvailable(s) <= pop * FOOD_PER_CITIZEN_PER_SEASON * NOMAD_SURPLUS_SEASONS) return;
-  if (rand(s) >= IMMIGRATION_CHANCE) return;
+  const gates = policyActive(s, 'openGates');
+  if (rand(s) >= IMMIGRATION_CHANCE * (gates ? POLICY_GATES_IMMIGRATION : 1)) return;
 
   const count = IMMIGRATION_MIN + Math.floor(rand(s) * (IMMIGRATION_MAX - IMMIGRATION_MIN + 1));
   let sick = 0;
-  for (let i = 0; i < count; i++) if (rand(s) < IMMIGRANT_SICK_CHANCE) sick++;
+  const sickChance = IMMIGRANT_SICK_CHANCE * (gates ? POLICY_GATES_SICK : 1);
+  for (let i = 0; i < count; i++) if (rand(s) < sickChance) sick++;
   s.pendingNomads = { count, sick };
   log(`${count} nomads ask to join your village`, 'info');
 }
@@ -3405,6 +3477,7 @@ function removeBuilding(s: GameState, b: Building): void {
 // ---- forest upkeep ----
 function regrowForest(s: GameState, dt: number): void {
   const n = s.tiles.length;
+  if (policyActive(s, 'conservation')) dt *= POLICY_CONSERVE_REGROW;
   for (let i = 0; i < 40; i++) {
     const idx = (rand(s) * n) | 0;
     const t = s.tiles[idx];

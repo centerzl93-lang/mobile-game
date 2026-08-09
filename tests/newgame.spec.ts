@@ -3460,6 +3460,136 @@ test.describe('construction stages', () => {
   });
 });
 
+test.describe('policies', () => {
+  /** A standing, staffed Town Hall with `n` clerks at their desks. */
+  const hall = `(g, n) => {
+    const s = g.state;
+    g.debugAfford('townhall');
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    let th = null;
+    for (let r = 3; r < 26 && !th; r++)
+      for (let dy = -r; dy <= r && !th; dy++)
+        for (let dx = -r; dx <= r && !th; dx++)
+          if (g.debugCanPlace('townhall', barn.x + dx, barn.y + dy).ok) {
+            const id = g.debugPlace('townhall', barn.x + dx, barn.y + dy);
+            if (id != null) th = s.buildings.find((b) => b.id === id);
+          }
+    th.built = true;
+    th.progress = g.debugBuildWork('townhall');
+    th.desiredWorkers = n;
+    // Sit clerks at the desks directly: this is about the rule, not about hiring.
+    th.workers = s.citizens.filter((c) => c.age >= 12).slice(0, n).map((c) => c.id);
+    return th;
+  }`;
+
+  test('a rule needs a clerk to keep it, and lapses when the desk empties', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const th = eval(mk)(g, 1);
+
+      // No hall, no rules — checked before the hall is staffed at all.
+      const withOneClerk = {
+        first: g.debugSetPolicy('rationing', true),
+        second: g.debugSetPolicy('longHours', true), // one clerk, one rule
+        state: g.debugPolicies(),
+      };
+
+      th.workers = th.workers.concat(
+        g.state.citizens.filter((c: any) => !th.workers.includes(c.id) && c.age >= 12).slice(0, 1).map((c: any) => c.id),
+      );
+      const withTwo = { second: g.debugSetPolicy('longHours', true), state: g.debugPolicies() };
+
+      // Send both clerks away: the rules are remembered but no longer in force.
+      th.workers = [];
+      const empty = g.debugPolicies();
+
+      // And they come back when someone takes the desk again, without being re-chosen.
+      th.workers = g.state.citizens.filter((c: any) => c.age >= 12).slice(0, 2).map((c: any) => c.id);
+      const restaffed = g.debugPolicies();
+
+      return { withOneClerk, withTwo, empty, restaffed };
+    }, hall);
+
+    expect(out.withOneClerk.first, 'one clerk keeps one rule').toBe(true);
+    expect(out.withOneClerk.second, 'and refuses a second').toBe(false);
+    expect(out.withOneClerk.state.capacity).toBe(1);
+    expect(out.withOneClerk.state.active).toEqual(['rationing']);
+
+    expect(out.withTwo.second, 'a second clerk allows a second rule').toBe(true);
+    expect(out.withTwo.state.active).toEqual(['rationing', 'longHours']);
+
+    expect(out.empty.capacity, 'an empty hall keeps nothing').toBe(0);
+    expect(out.empty.active).toEqual([]);
+    expect(out.empty.enacted, 'but the village has not forgotten what it chose').toEqual([
+      'rationing',
+      'longHours',
+    ]);
+
+    expect(out.restaffed.active, 'staffing the desks brings them back').toEqual([
+      'rationing',
+      'longHours',
+    ]);
+  });
+
+  test('rationing really does cut what the village eats', async ({ page }) => {
+    test.setTimeout(180_000);
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      // Same seed and the same span either side, so the only difference is the rule.
+      const run = (ration: boolean) => {
+        g.startNewGame('small', 'easy', false, 0, 31415);
+        eval(mk)(g, 2);
+        if (ration) g.debugSetPolicy('rationing', true);
+        const before = g.debugTotalFood();
+        while ((g.state.ledger ?? []).length < 3) g.debugAdvance(5);
+        // How much food the village got through, larders included. Not the ledger's `out`: early
+        // on, food leaves the stores by being *shopped for* — a transfer into a household larder,
+        // which is where it is actually eaten — so the books' consumption column is rightly zero
+        // while the barns are still stocking the houses.
+        return { eaten: before - g.debugTotalFood(), pop: g.state.citizens.length };
+      };
+      const plain = run(false);
+      const rationed = run(true);
+      return { plain, rationed };
+    }, hall);
+
+    // Per head, because the two villages do not stay the same size: eating less changes who
+    // survives and who is born, so the streams diverge — which is the policy working, not a flaw
+    // in the comparison. What has to hold is that each mouth is fed less.
+    const perHead = (r: { eaten: number; pop: number }) => r.eaten / Math.max(1, r.pop);
+    expect(out.plain.eaten, 'the village got through some food to compare against').toBeGreaterThan(0);
+    expect(perHead(out.rationed), 'a rationed village feeds each mouth less').toBeLessThan(
+      perHead(out.plain),
+    );
+  });
+
+  test('a festival costs food and needs a clerk', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const th = eval(mk)(g, 0); // built, but nobody at a desk
+      const unstaffed = g.debugFestival();
+
+      th.workers = g.state.citizens.filter((c: any) => c.age >= 12).slice(0, 1).map((c: any) => c.id);
+      const foodBefore = g.debugTotalFood();
+      const happyBefore = g.state.citizens.reduce((t: number, c: any) => t + c.happiness, 0) / g.state.citizens.length;
+      const held = g.debugFestival();
+      const foodAfter = g.debugTotalFood();
+      const happyAfter = g.state.citizens.reduce((t: number, c: any) => t + c.happiness, 0) / g.state.citizens.length;
+      return { unstaffed, held, ate: foodBefore - foodAfter, happyBefore, happyAfter };
+    }, hall);
+
+    expect(out.unstaffed, 'nobody to organise it').toBe(false);
+    expect(out.held, 'one clerk is enough').toBe(true);
+    expect(out.ate, 'it was paid for in food').toBeGreaterThan(50);
+    expect(out.happyAfter, 'and the village enjoyed it').toBeGreaterThan(out.happyBefore);
+  });
+});
+
 test.describe('the Town Hall books', () => {
   test('a season\'s row matches the stock that actually moved', async ({ page }) => {
     test.setTimeout(180_000);

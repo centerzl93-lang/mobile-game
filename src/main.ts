@@ -22,6 +22,9 @@ import {
   HARVEST_KIND_META,
   MARKET_CAPACITY,
   buildWorkOf,
+  policyCapacity,
+  activePolicies,
+  PolicyId,
   UI_REFRESH_MS,
   REFUND_FRACTION,
   BUILDER_SHIFT_WORK,
@@ -72,6 +75,8 @@ import { pinRandom, newSeed } from './game/rng';
 import {
   update,
   ledgerFor,
+  setPolicy,
+  holdFestival,
   LogKind,
   recordEvent,
   basketTrade,
@@ -1475,6 +1480,25 @@ class Game {
    */
   debugPinRandom(v: number | number[] | null, after = 0.5): void {
     pinRandom(v, after);
+  }
+
+  /** Debug/testing helper: enact or repeal a standing rule; returns whether it is now in force. */
+  debugSetPolicy(id: PolicyId, on: boolean): boolean {
+    return setPolicy(this.state, id, on);
+  }
+
+  /** Debug/testing helper: the rules enacted, those actually in force, and how many clerks allow. */
+  debugPolicies(): { enacted: PolicyId[]; active: PolicyId[]; capacity: number } {
+    return {
+      enacted: [...(this.state.policies ?? [])],
+      active: activePolicies(this.state),
+      capacity: policyCapacity(this.state),
+    };
+  }
+
+  /** Debug/testing helper: hold a festival. */
+  debugFestival(): boolean {
+    return holdFestival(this.state, this.log);
   }
 
   /** Debug/testing helper: the Town Hall books for one resource. */

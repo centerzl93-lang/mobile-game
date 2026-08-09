@@ -1548,6 +1548,11 @@ export interface GameState {
    */
   ledger?: LedgerRow[];
   /**
+   * The standing rules the player has enacted, in the order they were chosen. How many of them are
+   * actually in force depends on the clerks — see `activePolicies`.
+   */
+  policies?: PolicyId[];
+  /**
    * What the stores have given up so far this season, per resource — the accumulator behind each
    * row's `out`. Filled in by `consume`, which is the single way anything leaves the stores to be
    * used up, and cleared at every turnover.
@@ -1980,6 +1985,69 @@ export interface LedgerRow {
 
 /** Seasons of books the hall keeps — two years, enough to read a trend off. */
 export const LEDGER_SEASONS = 8;
+
+// ---- Policies (enacted at the Town Hall) ------------------------------------------------------
+/**
+ * A standing rule the village lives under. Every one is a trade: something gained paid for with
+ * something given up, so enacting one is a decision rather than an upgrade.
+ *
+ * How many can stand at once is not a constant — it is how many clerks are actually working the
+ * Town Hall, so a policy costs a pair of hands to keep as well as a price to run. Lose the clerk
+ * and the rule lapses until someone takes the desk again.
+ */
+export type PolicyId = 'rationing' | 'longHours' | 'conservation' | 'openGates';
+
+export const POLICIES: PolicyId[] = ['rationing', 'longHours', 'conservation', 'openGates'];
+
+export const POLICY_META: Record<PolicyId, { label: string; emoji: string; gain: string; cost: string }> = {
+  rationing: { label: 'Rationing', emoji: '🥣', gain: 'Eats 20% less food', cost: 'Happiness −8' },
+  longHours: { label: 'Long Hours', emoji: '⏳', gain: 'Produces 12% more', cost: 'Health −6' },
+  conservation: { label: 'Conservation', emoji: '🌱', gain: 'Woods regrow 50% faster', cost: 'Foresters fell 15% less' },
+  openGates: { label: 'Open Gates', emoji: '🚪', gain: 'Twice as many newcomers', cost: 'Half again as likely to arrive sick' },
+};
+
+export const POLICY_RATION_FOOD = 0.8;
+export const POLICY_RATION_HAPPY = 8;
+export const POLICY_HOURS_PROD = 1.12;
+export const POLICY_HOURS_HEALTH = 6;
+export const POLICY_CONSERVE_REGROW = 1.5;
+export const POLICY_CONSERVE_LUMBER = 0.85;
+export const POLICY_GATES_IMMIGRATION = 2;
+export const POLICY_GATES_SICK = 1.5;
+
+/** A festival is an act, not a rule: paid for once, felt once. Needs a clerk to organise it. */
+export const FESTIVAL_FOOD = 60;
+export const FESTIVAL_HAPPY = 20;
+
+/** True if `id` is one of the village's standing rules *and* a clerk is free to keep it. */
+export function policyActive(
+  s: { policies?: PolicyId[]; buildings: Building[] },
+  id: PolicyId,
+): boolean {
+  return activePolicies(s).includes(id);
+}
+
+/**
+ * The rules actually in force: those the player has enacted, capped by the clerks at their desks.
+ *
+ * Capped rather than culled on purpose. A hall that loses a clerk suspends its last rule instead
+ * of forgetting the player ever chose it, so staffing the desk again brings the rule back rather
+ * than making them go and find it.
+ */
+export function activePolicies(s: { policies?: PolicyId[]; buildings: Building[] }): PolicyId[] {
+  const want = s.policies ?? [];
+  if (want.length === 0) return [];
+  return want.slice(0, policyCapacity(s));
+}
+
+/** How many rules the village can keep: one per clerk at work in a standing Town Hall. */
+export function policyCapacity(s: { buildings: Building[] }): number {
+  let n = 0;
+  for (const b of s.buildings) {
+    if (b.built && b.type === 'townhall') n += Math.min(b.workers.length, BUILDING_DEFS.townhall.jobs);
+  }
+  return n;
+}
 
 export const LEISURE_CHANCE_PER_SEC = 1 / 90; // ~one break per 90s of work
 export const LEISURE_MIN_SECONDS = 12;

@@ -49,11 +49,12 @@ test.describe('main menu', () => {
     expect(await page.evaluate(() => (document.getElementById('mm-account') as HTMLButtonElement).disabled)).toBe(true);
   });
 
-  test('New Game → size select → difficulty → Large starts a 144 game', async ({ page }) => {
+  test('New Game → one setup screen → Large starts a 144 game', async ({ page }) => {
     await open(page);
     await page.click('#mm-new');
-    await page.click('#sz-large');
-    await page.click('#diff-normal'); // difficulty screen now sits between size and start
+    await page.click('#ng-size-large');
+    await page.click('#ng-diff-normal');
+    await page.click('#ng-start'); // every setting on one card, then Start
     await page.waitForTimeout(150);
     const started = await page.evaluate(() => ({ w: (window as any).__village.state.w, running: (window as any).__village.running, hidden: document.getElementById('overlay')!.classList.contains('hidden') }));
     expect(started.w).toBe(144);
@@ -199,11 +200,12 @@ test.describe('pause menu', () => {
     await expect(page.locator('#set-gfx-low')).toBeVisible();
     await page.click('#set-back');
 
-    // New Game → size select → difficulty.
+    // New Game → the one setup screen.
     await page.click('#pm-new');
-    await expect(page.locator('#sz-small')).toBeVisible();
-    await page.click('#sz-large');
-    await page.click('#diff-easy');
+    await expect(page.locator('#ng-size-small')).toBeVisible();
+    await page.click('#ng-size-large');
+    await page.click('#ng-diff-easy');
+    await page.click('#ng-start');
     await page.waitForTimeout(120);
     expect(await page.evaluate(() => (window as any).__village.state.w)).toBe(144);
 

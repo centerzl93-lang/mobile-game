@@ -3187,12 +3187,12 @@ test.describe('village history', () => {
 test.describe('disasters toggle', () => {
   test('the toggle flows from the difficulty screen and persists through save/load', async ({ page }) => {
     await open2d(page);
-    // New Game → size → difficulty, turn disasters Off, start Normal.
+    // New Game → the setup screen: turn disasters Off, pick Normal, start.
     await page.click('#mm-new');
-    await page.click('#sz-small');
-    await expect(page.locator('#diff-normal')).toBeVisible();
-    await page.click('#diff-dis-off');
-    await page.click('#diff-normal');
+    await expect(page.locator('#ng-size-small')).toBeVisible();
+    await page.click('#ng-dis-off');
+    await page.click('#ng-diff-normal');
+    await page.click('#ng-start');
     await page.waitForTimeout(120);
     expect(await page.evaluate(() => (window as any).__village.state.disasters)).toBe(false);
 
@@ -3457,6 +3457,80 @@ test.describe('construction stages', () => {
     // building itself.
     expect(out.seen).toEqual(['site', 'site', 'frame', 'frame', 'model']);
     expect(out.anyTransparent, 'no placed building is drawn see-through').toBe(false);
+  });
+});
+
+test.describe('the New Village screen', () => {
+  test('every setting is on one card, and the seed can be typed, rerolled and copied', async ({ page }) => {
+    await open2d(page);
+    await page.click('#mm-new');
+    await expect(page.locator('#ng-seed')).toBeVisible();
+
+    // One card: no clicking through to reach any of it.
+    for (const id of ['ng-size-small', 'ng-size-large', 'ng-diff-easy', 'ng-diff-normal', 'ng-diff-hard',
+                      'ng-dis-on', 'ng-dis-off', 'ng-seed', 'ng-reroll', 'ng-copy', 'ng-start']) {
+      await expect(page.locator(`#${id}`), `${id} is on the setup card`).toBeVisible();
+    }
+
+    // Rerolling changes the seed, and does it without disturbing the other settings.
+    await page.click('#ng-size-large');
+    await page.click('#ng-diff-hard');
+    await page.click('#ng-dis-off');
+    const before = await page.inputValue('#ng-seed');
+    await page.click('#ng-reroll');
+    const after = await page.inputValue('#ng-seed');
+    expect(after).not.toBe(before);
+    await expect(page.locator('#ng-size-large')).toHaveClass(/on/);
+    await expect(page.locator('#ng-diff-hard')).toHaveClass(/on/);
+    await expect(page.locator('#ng-dis-off')).toHaveClass(/on/);
+
+    // A typed seed is the one the village is founded from, alongside the rest of the card.
+    await page.fill('#ng-seed', '24680');
+    await page.click('#ng-start');
+    await page.waitForTimeout(200);
+    const started = await page.evaluate(() => {
+      const g = (window as any).__village;
+      return { seed: g.debugSeed().seed, w: g.state.w, difficulty: g.state.difficulty, disasters: g.state.disasters };
+    });
+    expect(started.seed, 'the typed seed founded the village').toBe(24680);
+    expect(started.w, 'and Large was still Large').toBe(144);
+    expect(started.difficulty).toBe('hard');
+    expect(started.disasters).toBe(false);
+  });
+
+  test('a typed seed rebuilds the same village from the menu', async ({ page }) => {
+    await open2d(page);
+    const found = async (seed: string) => {
+      await page.evaluate(() => (window as any).__village.openMainMenu?.());
+      await page.click('#mm-new');
+      await page.fill('#ng-seed', seed);
+      await page.click('#ng-start');
+      await page.waitForTimeout(200);
+      return page.evaluate(() => {
+        const s = (window as any).__village.state;
+        return s.tiles.map((t: any) => t.type[0]).join('') + '#' + s.citizens.map((c: any) => c.name).join(',');
+      });
+    };
+    const a = await found('13579');
+    const b = await found('13579');
+    const c = await found('2468');
+    expect(a, 'the same seed typed twice founds the same village').toBe(b);
+    expect(c).not.toBe(a);
+  });
+
+  test('rubbish in the seed box does not found a broken village', async ({ page }) => {
+    await open2d(page);
+    await page.click('#mm-new');
+    await page.fill('#ng-seed', 'not a number');
+    await page.click('#ng-start');
+    await page.waitForTimeout(200);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      return { seed: g.debugSeed().seed, pop: g.state.citizens.length, running: g.running };
+    });
+    expect(Number.isFinite(out.seed), 'it falls back to the seed on the card').toBe(true);
+    expect(out.pop).toBeGreaterThan(0);
+    expect(out.running).toBe(true);
   });
 });
 

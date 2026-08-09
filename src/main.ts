@@ -68,7 +68,7 @@ import {
   entranceTiles,
 } from './types';
 import { newGame } from './game/state';
-import { pinRandom } from './game/rng';
+import { pinRandom, newSeed } from './game/rng';
 import {
   update,
   LogKind,
@@ -204,7 +204,7 @@ class Game {
       onSetDemolish: (a) => this.onSetDemolish(a),
       onPauseToggle: () => this.togglePause(),
       onSpeedCycle: () => this.cycleSpeed(),
-      onNewGame: () => this.openSizeSelect(),
+      onNewGame: () => this.openNewGameSetup(true),
       onOpenMenu: () => this.openPauseMenu(),
       onSetWorkers: (id, d) => this.setWorkers(id, d),
       onSetTradeWorkers: (type, d) => this.setTradeWorkers(type, d),
@@ -855,7 +855,7 @@ class Game {
     this.paused = false;
     this.ui.showMainMenu({
       hasSave: hasSave(),
-      onNew: () => this.openSizeSelect(),
+      onNew: () => this.openNewGameSetup(true),
       onContinue: () => this.continueGame(),
       onLoad: () => this.openSlotSelect('load', () => this.openMainMenu()),
       onCodex: () => this.openCodex(() => this.openMainMenu()),
@@ -869,27 +869,44 @@ class Game {
   }
 
   /** Map-size chooser, reachable from the main menu or the pause menu's New Game. */
-  private openSizeSelect(): void {
-    const cameFromGame = this.running;
-    this.running = false;
-    this.ui.showSizeSelect({
-      onPick: (size) => this.openDifficultySelect(size),
-      onBack: () => (cameFromGame ? this.openPauseMenu() : this.openMainMenu()),
-    });
-  }
+  /**
+   * What the New Village screen currently has selected. Kept on the app rather than in the card so
+   * the settings survive the card being re-rendered, which every toggle does.
+   */
+  private newGameOpts: { size: MapSize; difficulty: Difficulty; disasters: boolean; seed: number } = {
+    size: 'small',
+    difficulty: 'normal',
+    disasters: true,
+    seed: newSeed(),
+  };
+  /** Whether New Village was opened mid-game, so Back knows which menu it came from. */
+  private newGameFromGame = false;
 
-  /** Difficulty chooser with the disasters toggle — the last step before a game starts. */
-  private newGameDisasters = true;
-  private openDifficultySelect(size: MapSize): void {
+  /**
+   * The one screen a new village is set up on: size, difficulty, disasters, seed.
+   *
+   * `fresh` means the player has just asked for a new game rather than changed a toggle, so it
+   * rolls a new seed — reopening the screen should not silently re-found the same village, but
+   * flicking between Small and Large should not throw away a seed that was typed in either.
+   */
+  private openNewGameSetup(fresh = false): void {
+    if (fresh) {
+      this.newGameFromGame = this.running;
+      this.newGameOpts.seed = newSeed();
+    }
     this.running = false;
-    this.ui.showDifficultySelect({
-      disasters: this.newGameDisasters,
-      onToggleDisasters: (on) => {
-        this.newGameDisasters = on;
-        this.openDifficultySelect(size); // re-render with the new toggle state
+    this.ui.showNewGameSetup({
+      ...this.newGameOpts,
+      onChange: (patch) => {
+        Object.assign(this.newGameOpts, patch);
+        this.openNewGameSetup(); // re-render with the new selection
       },
-      onPick: (difficulty) => this.startNewGame(size, difficulty, this.newGameDisasters, this.firstEmptySlot()),
-      onBack: () => this.openSizeSelect(),
+      onStart: (seed) => {
+        this.newGameOpts.seed = seed;
+        const { size, difficulty, disasters } = this.newGameOpts;
+        this.startNewGame(size, difficulty, disasters, this.firstEmptySlot(), seed);
+      },
+      onBack: () => (this.newGameFromGame ? this.openPauseMenu() : this.openMainMenu()),
     });
   }
 
@@ -1003,7 +1020,7 @@ class Game {
       onLoad: () => this.openSlotSelect('load', () => this.openPauseMenu()),
       onCodex: () => this.openCodex(() => this.openPauseMenu()),
       onSettings: () => this.openSettings(() => this.openPauseMenu()),
-      onNewGame: () => this.openSizeSelect(),
+      onNewGame: () => this.openNewGameSetup(true),
       onMainMenu: () => this.openMainMenu(),
     });
   }
@@ -1837,7 +1854,7 @@ class Game {
       }
       if (this.state.gameOver && !wasOver) {
         this.persist();
-        this.ui.showGameOver(this.state, () => this.openSizeSelect(), () => this.openMainMenu());
+        this.ui.showGameOver(this.state, () => this.openNewGameSetup(true), () => this.openMainMenu());
       }
     }
 

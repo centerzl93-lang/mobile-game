@@ -55,6 +55,7 @@ import {
 import { footprintToClear } from '../game/buildings';
 import { atLimit, cappedOut, isLowStock, limitStock } from '../game/simulation';
 import { SLOT_NAME_MAX } from '../game/save';
+import { newSeed } from '../game/rng';
 import { totalStored, totalStoredAll, totalFoodAvailable, totalInLarders } from '../game/storage';
 import {
   LogKind,
@@ -1495,52 +1496,94 @@ export class UI {
     byId('cx-back').addEventListener('click', () => opts.onBack());
   }
 
-  /** Map-size chooser reached from New Game. */
-  showSizeSelect(opts: { onPick: (size: MapSize) => void; onBack: () => void }): void {
-    const btn = (id: MapSize, label: string) => {
-      const dim = MAP_SIZES[id];
-      return `<button id="sz-${id}">${label}<span class="sub">${dim}×${dim} tiles</span></button>`;
-    };
-    this.overlayCard(
-      `<h2>Choose a map size</h2>` +
-        `<div class="menu-list">` +
-        btn('small', 'Small') +
-        btn('large', 'Large') +
-        `<button class="ghost" id="sz-back">Back</button>` +
-        `</div>`,
-      'menu-card',
-    );
-    (['small', 'large'] as MapSize[]).forEach((size) =>
-      byId(`sz-${size}`).addEventListener('click', () => opts.onPick(size)),
-    );
-    byId('sz-back').addEventListener('click', () => opts.onBack());
-  }
-
-  /** Difficulty chooser (Easy/Normal/Hard) with an On/Off disasters toggle. */
-  showDifficultySelect(opts: {
+  /**
+   * Everything about a new village on one screen: size, difficulty, disasters and the seed.
+   *
+   * This used to be two cards to click through — pick a size, then pick a difficulty — which meant
+   * the settings could not be seen together and changing your mind about the first meant backing
+   * out of the second. One screen also gives the seed somewhere to live, which it needs now that a
+   * village is reproducible from one.
+   *
+   * The three toggles re-render the card; the seed field deliberately does not, because rebuilding
+   * the card under a focused input would throw away the caret mid-type. Reroll writes straight to
+   * the field, and Start reads whatever is in it.
+   */
+  showNewGameSetup(opts: {
+    size: MapSize;
+    difficulty: Difficulty;
     disasters: boolean;
-    onToggleDisasters: (on: boolean) => void;
-    onPick: (difficulty: Difficulty) => void;
+    seed: number;
+    onChange: (patch: { size?: MapSize; difficulty?: Difficulty; disasters?: boolean }) => void;
+    onStart: (seed: number) => void;
     onBack: () => void;
   }): void {
-    const diffBtn = (d: Difficulty) =>
-      `<button id="diff-${d}">${DIFFICULTY_META[d].label}<span class="sub">${DIFFICULTY_META[d].desc}</span></button>`;
-    const seg = (on: boolean, label: string) =>
-      `<button class="seg${opts.disasters === on ? ' on' : ''}" id="diff-dis-${on ? 'on' : 'off'}">${label}</button>`;
+    const seg = (id: string, on: boolean, label: string, sub?: string) =>
+      `<button class="seg${on ? ' on' : ''}" id="${id}">${label}${sub ? `<span class="sub">${sub}</span>` : ''}</button>`;
+    const sizes = (['small', 'large'] as MapSize[])
+      .map((z) => seg(`ng-size-${z}`, opts.size === z, z === 'small' ? 'Small' : 'Large', `${MAP_SIZES[z]}²`))
+      .join('');
+    const diffs = DIFFICULTIES.map((d) =>
+      seg(`ng-diff-${d}`, opts.difficulty === d, DIFFICULTY_META[d].label),
+    ).join('');
+    const dis = seg('ng-dis-on', opts.disasters, 'On') + seg('ng-dis-off', !opts.disasters, 'Off');
+
     this.overlayCard(
-      `<h2>Choose difficulty</h2>` +
-        `<div class="menu-list">` +
-        DIFFICULTIES.map(diffBtn).join('') +
-        `<div class="set-label">Disasters (fire &amp; disease)</div>` +
-        `<div class="seg-row">${seg(true, 'On')}${seg(false, 'Off')}</div>` +
-        `<button class="ghost" id="diff-back">Back</button>` +
+      `<h2>New Village</h2>` +
+        `<div class="menu-list ng-list">` +
+        `<div class="set-label">Map size</div><div class="seg-row">${sizes}</div>` +
+        `<div class="set-label">Difficulty</div><div class="seg-row">${diffs}</div>` +
+        `<p class="ng-desc">${DIFFICULTY_META[opts.difficulty].desc}</p>` +
+        `<div class="set-label">Disasters (fire &amp; disease)</div><div class="seg-row">${dis}</div>` +
+        `<div class="set-label">Seed</div>` +
+        `<div class="ng-seed">` +
+        `<input id="ng-seed" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" value="${opts.seed}">` +
+        `<button id="ng-reroll" title="Reroll the seed" aria-label="Reroll the seed">🎲</button>` +
+        `<button id="ng-copy" title="Copy the seed" aria-label="Copy the seed">📋</button>` +
+        `</div>` +
+        `<p class="ng-hint" id="ng-hint">The same seed builds the same map, and the same founders.</p>` +
+        `<button id="ng-start">Start</button>` +
+        `<button class="ghost" id="ng-back">Back</button>` +
         `</div>`,
-      'menu-card',
+      'menu-card newgame-card',
     );
-    DIFFICULTIES.forEach((d) => byId(`diff-${d}`).addEventListener('click', () => opts.onPick(d)));
-    byId('diff-dis-on').addEventListener('click', () => opts.onToggleDisasters(true));
-    byId('diff-dis-off').addEventListener('click', () => opts.onToggleDisasters(false));
-    byId('diff-back').addEventListener('click', () => opts.onBack());
+
+    const field = byId('ng-seed') as HTMLInputElement;
+    const hint = byId('ng-hint');
+    /** A seed is an unsigned 32-bit number; anything else in the box falls back to what we had. */
+    const readSeed = (): number => {
+      const n = Number.parseInt(field.value.trim(), 10);
+      return Number.isFinite(n) && n >= 0 ? n >>> 0 : opts.seed;
+    };
+
+    (['small', 'large'] as MapSize[]).forEach((z) =>
+      byId(`ng-size-${z}`).addEventListener('click', () => opts.onChange({ size: z })),
+    );
+    DIFFICULTIES.forEach((d) =>
+      byId(`ng-diff-${d}`).addEventListener('click', () => opts.onChange({ difficulty: d })),
+    );
+    byId('ng-dis-on').addEventListener('click', () => opts.onChange({ disasters: true }));
+    byId('ng-dis-off').addEventListener('click', () => opts.onChange({ disasters: false }));
+
+    byId('ng-reroll').addEventListener('click', () => {
+      field.value = String(newSeed());
+      hint.textContent = 'A fresh seed — a village nobody has founded before.';
+    });
+    byId('ng-copy').addEventListener('click', async () => {
+      const text = String(readSeed());
+      try {
+        await navigator.clipboard.writeText(text);
+        hint.textContent = `Copied ${text}`;
+      } catch {
+        // No clipboard permission (or an insecure context): select it so it can be copied by hand
+        // rather than leaving the button looking broken.
+        field.focus();
+        field.select();
+        hint.textContent = 'Press and hold to copy the seed.';
+      }
+    });
+
+    byId('ng-start').addEventListener('click', () => opts.onStart(readSeed()));
+    byId('ng-back').addEventListener('click', () => opts.onBack());
   }
 
   /** In-game pause menu: Resume, Save, Load, Codex, Settings, New Game, Main Menu. */

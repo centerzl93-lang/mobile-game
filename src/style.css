@@ -611,6 +611,67 @@ body {
   opacity: 0.8;
 }
 
+/* ---- New Village setup ---- */
+/* Every setting on one card, so the whole card has to fit a phone without the Start button
+   falling off the bottom. Tighter than the other menus for that reason, and it scrolls if a
+   short landscape screen still cannot take it. */
+.menu-card.newgame-card .ng-list {
+  gap: 7px;
+  margin-top: 12px;
+  max-height: min(78vh, 640px);
+  overflow-y: auto;
+}
+.menu-card.newgame-card .seg-row button.seg {
+  padding: 8px 6px;
+}
+/* The chosen difficulty explains itself here instead of every option carrying its own line of
+   prose, which is what made this two screens' worth of card in the first place. */
+.menu-card.newgame-card .ng-desc,
+.menu-card.newgame-card .ng-hint {
+  margin: 0;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.menu-card.newgame-card .ng-desc {
+  min-height: 2.7em; /* holds its height across difficulties so the card does not jump */
+}
+.menu-card.newgame-card .ng-seed {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.menu-card.newgame-card .ng-seed input {
+  flex: 1;
+  min-width: 0; /* or the field's content width pushes the two buttons off the card */
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  padding: 8px 10px;
+}
+.menu-card.newgame-card .ng-seed input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.menu-card.newgame-card .ng-seed button {
+  margin-top: 0;
+  flex: 0 0 auto;
+  width: 46px;
+  padding: 8px 0;
+  font-size: 18px;
+  background: transparent;
+  border: 1px solid var(--border);
+}
+.menu-card.newgame-card #ng-start {
+  margin-top: 4px;
+}
+
 /* ---------- Job board (right sidebar) ---------- */
 .panel {
   position: absolute;

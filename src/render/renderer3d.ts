@@ -23,7 +23,6 @@ import {
   PATH_STONE,
   PATH_STONE_PLAN,
   PATH_BRIDGE,
-  PATH_BRIDGE_STONE_PLAN,
   PATH_BRIDGE_STONE,
   PATH_BRIDGE_PLAN,
   PATH_TUNNEL,
@@ -38,6 +37,15 @@ import type { PlacementView } from './renderer';
 import { ModelLibrary, InstancedModel } from './models';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { bodyGeometry, skinGeometry, hairGeometry, legGeometry, coatGeometry, HEAD_Y, HIP_Y, LEG_X } from './villager';
+import {
+  BridgeDeck,
+  bridgeDeck,
+  bridgeNear,
+  isBridgeValue,
+  BRIDGE_DECK_HALF,
+  BRIDGE_STRIKE_SECONDS,
+  BRIDGE_WATER_Y,
+} from './bridges';
 
 const LAND_H = 0.3; // height of a normal land tile block
 const WATER_BED_H = 0.02; // lake/river floor, kept below the water plane at y = 0.14
@@ -72,6 +80,14 @@ const TREE_MODEL_SIZE = 0.55; // world scale for a normalized (footprint=1) tree
  * and the houses behind it.
  */
 const BOAT_SIZE = 3.5;
+/**
+ * How far back the mast lies when it is struck — a little short of flat.
+ *
+ * At 82 degrees the masthead comes down to about a third of a tile above the deck, well under the
+ * arch, and still reads as a spar lying along the boat. Laid dead level it reads as a mast that
+ * has been deleted rather than lowered.
+ */
+const RIG_STRUCK_ANGLE = (82 * Math.PI) / 180;
 const ROCK_MODEL_SIZE = 0.52; // world scale applied to a normalized loose-stone model
 /**
  * Props drawn per resource tile.
@@ -305,6 +321,11 @@ export class Renderer3D {
   private marks!: THREE.InstancedMesh;
   /** One instanced surface per path kind, so each can carry its own texture. */
   private pathLayers: Record<PathSurface, THREE.InstancedMesh> = {} as Record<PathSurface, THREE.InstancedMesh>;
+  /** The masonry (or trestle) that holds each bridge deck up, one box per tile under the deck. */
+  private archLayers: Record<'bridge' | 'stonebridge', THREE.InstancedMesh> = {} as Record<
+    'bridge' | 'stonebridge',
+    THREE.InstancedMesh
+  >;
   private portals!: THREE.InstancedMesh;
   private bores!: THREE.InstancedMesh;
   private citizens!: THREE.InstancedMesh;
@@ -327,6 +348,11 @@ export class Renderer3D {
   private tunnelSig = 0;
   /** Per tile: how many tunnel tiles in from the nearest mouth, or -1 if not a finished tunnel. */
   private tunnelDepth: Int16Array | null = null;
+  /** Where every bridge deck rides and where its arch springs from — rebuilt with the path layer. */
+  private deck: BridgeDeck | null = null;
+  /** The boat's rig, if the model carries one as a separate node, and how far it is lowered (0..1). */
+  private boatRig: THREE.Object3D | null = null;
+  private rigDown = 0;
   private selRing!: THREE.Mesh;
   private workRing!: THREE.Group; // ground circle (fill + outline) for a selected building's work radius
   private marquee!: THREE.Mesh;
@@ -505,6 +531,20 @@ export class Renderer3D {
       m.receiveShadow = this.tier === 'high';
       this.scene.add(m);
       this.pathLayers[key] = m;
+
+      // What holds a bridge deck up. One box per tile, stretched between the arch's underside and
+      // the deck: deep at the abutments where it meets the water, thin at the crown where the
+      // opening is. Sharing the deck's material means the arch is the same masonry (or the same
+      // timber) as the road it carries.
+      if (key === 'bridge' || key === 'stonebridge') {
+        const arch = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, MAP_W * MAP_H);
+        arch.count = 0;
+        arch.frustumCulled = false;
+        arch.castShadow = this.tier === 'high';
+        arch.receiveShadow = this.tier === 'high';
+        this.scene.add(arch);
+        this.archLayers[key] = arch;
+      }
     }
     // Tunnel portals: the timbered mouth where a tunnel meets open air. Drawn separately because
     // it is a standing structure, not a surface, and only the end tiles get one.
@@ -694,7 +734,7 @@ export class Renderer3D {
     this.syncMarks(s);
     this.syncBuildings(s);
     this.syncCitizens(s, now);
-    this.syncBoat(s);
+    this.syncBoat(s, dt);
     this.syncOverlays(s, placement);
     this.animate(dt, now);
     this.renderer.render(this.scene, cam.cam);
@@ -1241,6 +1281,26 @@ export class Renderer3D {
     return this.terrHeight[gz * vw + gx];
   }
 
+  /**
+   * Top of the bridge deck at a world position, or null where there is no bridge.
+   *
+   * Sampled across the tile rather than read flat off it: each slab is laid at a pitch, so a
+   * villager crossing an arch climbs it smoothly instead of stepping up once per tile — and at
+   * the abutment the sample meets bank level, which is what makes walking onto a bridge look
+   * like walking onto a bridge.
+   */
+  private deckTopAt(px: number, pz: number): number | null {
+    const d = this.deck;
+    if (!d) return null;
+    const tx = Math.floor(px);
+    const tz = Math.floor(pz);
+    if (!inBounds(tx, tz)) return null;
+    const i = tileIndex(tx, tz);
+    if (!d.span[i]) return null;
+    const off = (d.alongX[i] ? px - tx : pz - tz) - 0.5;
+    return d.y[i] + d.slope[i] * off + BRIDGE_DECK_HALF;
+  }
+
   /** Place the surface iron deposits; a depleted tile drops out of view like a spent rock. */
   private syncIron(s: GameState): void {
     // Gated like the trees and the stone. This used to rewrite every ore matrix and re-upload the
@@ -1331,6 +1391,11 @@ export class Renderer3D {
     this.sig.path = sig;
 
     const n: Record<PathSurface, number> = { dirt: 0, stone: 0, bridge: 0, stonebridge: 0, tunnel: 0 };
+    const arches: Record<'bridge' | 'stonebridge', number> = { bridge: 0, stonebridge: 0 };
+    // Where every crossing rides. Measured once here rather than per tile, because a tile's height
+    // depends on how wide the whole span it belongs to is.
+    const deck = bridgeDeck(s.paths);
+    this.deck = deck;
     let portals = 0;
     const built = (v: number) =>
       v === PATH_DIRT || v === PATH_STONE || v === PATH_BRIDGE || v === PATH_BRIDGE_STONE || v === PATH_TUNNEL;
@@ -1341,13 +1406,50 @@ export class Renderer3D {
       const z = (i / MAP_W) | 0;
       let surf: PathSurface;
       let y: number;
-      if (v === PATH_BRIDGE || v === PATH_BRIDGE_PLAN) {
-        surf = 'bridge';
-        y = 0.14 + 0.03; // decking sits just over the water plane
-      } else if (v === PATH_BRIDGE_STONE || v === PATH_BRIDGE_STONE_PLAN) {
-        surf = 'stonebridge';
-        y = 0.14 + 0.05; // masonry rides a little higher than planks
-      } else if (v === PATH_TUNNEL || v === PATH_TUNNEL_PLAN) {
+      if (isBridgeValue(v)) {
+        surf = v === PATH_BRIDGE || v === PATH_BRIDGE_PLAN ? 'bridge' : 'stonebridge';
+        // The deck rides the arch, so its height comes from where this tile sits along the span.
+        y = deck.y[i];
+        const layerB = this.pathLayers[surf];
+        const kB = n[surf]++;
+        // Laid at the pitch it is climbing at, and stretched along the run to make up the length
+        // a tilted slab loses — otherwise a steep arch opens a gap between every pair of slabs.
+        const pitch = Math.atan(deck.slope[i]);
+        const stretch = 1 / Math.max(0.3, Math.cos(pitch));
+        this.dummy.position.set(x + 0.5, y, z + 0.5);
+        this.dummy.scale.set(1, 1, 1);
+        this.dummy.rotation.set(0, 0, 0);
+        if (deck.alongX[i]) {
+          this.dummy.rotation.z = pitch;
+          this.dummy.scale.x = stretch;
+        } else {
+          this.dummy.rotation.x = -pitch;
+          this.dummy.scale.z = stretch;
+        }
+        this.dummy.updateMatrix();
+        layerB.setMatrixAt(kB, this.dummy.matrix);
+        layerB.setColorAt(kB, built(v) ? this.color.set(0xffffff) : this.color.set(PLAN_TINT));
+
+        // What holds the deck up. Masonry gets the arch ring: piers standing in the water at each
+        // bank, and above the opening a thin ring following the curve of the road. Timber gets a
+        // trestle instead — a narrow bent down to the water under every tile, which is how a plank
+        // crossing is actually held up, and which leaves the water visible between the legs.
+        const timber = surf === 'bridge';
+        const top = y - BRIDGE_DECK_HALF;
+        const h = Math.max(0.02, top - (timber ? BRIDGE_WATER_Y : deck.soffit[i]));
+        const archLayer = this.archLayers[surf];
+        const kA = arches[surf]++;
+        this.dummy.position.set(x + 0.5, top - h / 2, z + 0.5);
+        this.dummy.rotation.set(0, 0, 0);
+        const along = timber ? 0.34 : 1.0;
+        const across = timber ? 0.86 : 0.92;
+        this.dummy.scale.set(deck.alongX[i] ? along : across, h, deck.alongX[i] ? across : along);
+        this.dummy.updateMatrix();
+        archLayer.setMatrixAt(kA, this.dummy.matrix);
+        archLayer.setColorAt(kA, built(v) ? this.color.set(0xffffff) : this.color.set(PLAN_TINT));
+        continue;
+      }
+      if (v === PATH_TUNNEL || v === PATH_TUNNEL_PLAN) {
         surf = 'tunnel';
         // A planned tunnel has to be visible while it is still solid rock, so its marker rides on
         // the mountain surface. A finished one is a floor at ground level, inside the hill — which
@@ -1418,6 +1520,12 @@ export class Renderer3D {
     for (const key of ['dirt', 'stone', 'bridge', 'stonebridge', 'tunnel'] as PathSurface[]) {
       const layer = this.pathLayers[key];
       layer.count = n[key];
+      layer.instanceMatrix.needsUpdate = true;
+      if (layer.instanceColor) layer.instanceColor.needsUpdate = true;
+    }
+    for (const key of ['bridge', 'stonebridge'] as const) {
+      const layer = this.archLayers[key];
+      layer.count = arches[key];
       layer.instanceMatrix.needsUpdate = true;
       if (layer.instanceColor) layer.instanceColor.needsUpdate = true;
     }
@@ -1806,7 +1914,9 @@ export class Renderer3D {
       const stride = now * 5.2 + c.id;
       const bob = moving ? Math.abs(Math.sin(stride)) * 0.022 : 0;
       const yaw = moving ? Math.atan2(c.tx - c.x, c.ty - c.y) : 0;
-      const y0 = TOP + bob;
+      // On a bridge a villager walks the deck, which now arches well clear of the water. Drawing
+      // them at land height put them under their own bridge.
+      const y0 = (this.deckTopAt(c.x, c.y) ?? TOP) + bob;
 
       // Everything above the hips shares one transform; only the legs move independently.
       this.dummy.position.set(c.x, y0, c.y);
@@ -1889,6 +1999,17 @@ export class Renderer3D {
    * Exposed for tests: the coat is the visible answer to "does this household hold clothing?",
    * and that link between simulation state and what is on screen is worth pinning down.
    */
+  /**
+   * Debug/testing helper: the height a villager standing here is drawn at.
+   *
+   * The claim worth testing is that somebody crossing a bridge is drawn on the deck. Villagers
+   * used to be drawn at a constant land height, which was harmless while a bridge was a flat lid
+   * on the water and puts them under their own arch now that it is not.
+   */
+  standHeight(px: number, pz: number): number {
+    return this.deckTopAt(px, pz) ?? TOP;
+  }
+
   coatedCount(): number {
     return this.coats ? this.coats.count : 0;
   }
@@ -2060,7 +2181,7 @@ export class Renderer3D {
 
   /** Drop the instanced layers and building meshes (called before rebuilding on a new map). */
   /** Position and show the merchant boat while it's on the water. */
-  private syncBoat(s: GameState): void {
+  private syncBoat(s: GameState, dt: number): void {
     const b = s.merchant.boat;
     if (!b) {
       this.boat.visible = false;
@@ -2085,10 +2206,25 @@ export class Renderer3D {
         model.scale.multiplyScalar(BOAT_SIZE);
         this.boat.add(model);
         this.enableShadows(this.boat);
+        // Authored as two nodes so the rig can be worked separately, with its origin at the mast
+        // foot. Older builds of the model are one joined mesh and simply have no rig node — the
+        // boat then sails with its mast up, as it always did.
+        this.boatRig = model.getObjectByName('BoatRig') ?? null;
       }
     }
     this.boat.visible = true;
     this.boat.position.set(b.x, 0.16, b.y);
+    // Coming up on a crossing, the crew strike the mast and lower it aft. No arch a villager
+    // could walk over would ever clear a mast as tall as a house, and lowering one to shoot a
+    // bridge is what river traders did with theirs.
+    if (this.boatRig) {
+      const want = bridgeNear(s.paths, b.x, b.y) ? 1 : 0;
+      const step = dt / BRIDGE_STRIKE_SECONDS;
+      this.rigDown = want > this.rigDown ? Math.min(want, this.rigDown + step) : Math.max(want, this.rigDown - step);
+      // Not quite flat: a struck mast rests on its crutch with its head over the stern, and
+      // laying it dead level reads as the mast having been deleted.
+      this.boatRig.rotation.x = this.rigDown * RIG_STRUCK_ANGLE;
+    }
     // A little roll and pitch on the same swell the water is riding, so a moored boat is not a
     // static prop sitting on a moving surface — and a yaw from the course it is steering, since
     // it no longer only ever sails downstream.

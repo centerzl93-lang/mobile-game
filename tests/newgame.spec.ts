@@ -2093,7 +2093,11 @@ test.describe('quarry', () => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false);
+      // Seeded, and each retry below seeded too: the search walks through worlds looking for a
+      // rock-free clearing, and an unseeded walk fails outright on the runs where none of the
+      // eight it happens to draw has one.
+      const worldSeed = (n: number) => 4242 + n * 7919;
+      g.startNewGame('small', 'easy', false, 0, worldSeed(0));
       let s = g.state;
       g.debugAfford('quarry');
       const idx = (x: number, y: number) => y * s.w + x;
@@ -2121,7 +2125,7 @@ test.describe('quarry', () => {
       let spot: number[] | null = null;
       for (let world = 0; world < 8 && !spot; world++) {
         if (world > 0) {
-          g.startNewGame('small', 'easy', false);
+          g.startNewGame('small', 'easy', false, 0, worldSeed(world));
           s = g.state; // isOpen/nearRock close over `s`, so it must follow the new world
           barn = s.buildings.find((b: any) => b.type === 'barn');
         }
@@ -3516,6 +3520,86 @@ test.describe('bridges come in timber and stone', () => {
     expect(out.walkable, 'a stone bridge carries villagers like a timber one').toBe(true);
     expect(out.speed, 'and carries them at the stone road speed').toBe(2);
     expect(out.downgrade, 'timber can go back over masonry, as dirt over stone').toBe(true);
+  });
+
+  test('every crossing arches high enough for the merchant to pass beneath', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const s = g.state;
+      const limits = g.debugBridgeLimits();
+      // A crossing of each width, laid straight onto the map: the arch is geometry, so it does not
+      // need builders to walk out and lay it.
+      const rows: any[] = [];
+      const stone = g.debugPathValue('stonebridge');
+      for (const span of [1, 2, 3, 4, 6, 9, 14]) {
+        const y = 2 + rows.length * 2;
+        for (let x = 4; x < 4 + span; x++) s.paths[y * s.w + x] = stone;
+        const shapes = [];
+        for (let x = 4; x < 4 + span; x++) shapes.push(g.debugBridgeShape(x, y));
+        const crown = shapes.reduce((m: any, v: any) => (v.soffit > m.soffit ? v : m), shapes[0]);
+        // Where the outer edge of each end slab lands, following its own pitch back down: the
+        // slabs are laid tilted, so this is the height the road actually joins at.
+        const first = shapes[0];
+        const last = shapes[shapes.length - 1];
+        rows.push({
+          span,
+          seen: first.span,
+          crownSoffit: crown.soffit,
+          abutment: Math.max(first.deck - first.slope * 0.5, last.deck + last.slope * 0.5),
+          rises: shapes.every((v: any) => v.deck > limits.bank),
+        });
+        for (let x = 4; x < 4 + span; x++) s.paths[y * s.w + x] = 0;
+      }
+      return { limits, rows };
+    });
+
+    for (const r of out.rows) {
+      expect(r.seen, `a ${r.span}-tile crossing is measured as ${r.span} tiles wide`).toBe(r.span);
+      expect(r.rises, `a ${r.span}-tile crossing rides above bank level`).toBe(true);
+      // A gap narrower than the boat's beam is not one it could pass through however high it is
+      // built, so those are allowed to stay low.
+      if (r.span > 1) {
+        expect(
+          r.crownSoffit,
+          `a ${r.span}-tile crossing leaves ${out.limits.boatTop} of headroom for the boat`,
+        ).toBeGreaterThanOrEqual(out.limits.boatTop);
+      }
+      // The slab at the bank leans down onto the road rather than starting off a step.
+      expect(r.abutment, `a ${r.span}-tile crossing meets the bank`).toBeLessThan(out.limits.bank + 0.3);
+    }
+  });
+
+  test('a villager crossing an arch walks on top of it', async ({ page }) => {
+    // 3D only: the flat renderer has no heights to get wrong.
+    await page.goto('/?gfx=low', { waitUntil: 'load' });
+    await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
+    const out = await page.evaluate(async () => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const s = g.state;
+      const stone = g.debugPathValue('stonebridge');
+      // A six-tile crossing laid straight down, and a frame drawn so the renderer measures it.
+      let wet: any = null;
+      for (let y = 2; y < s.h - 2 && !wet; y++)
+        for (let x = 2; x < s.w - 8 && !wet; x++) {
+          let run = 0;
+          while (s.tiles[y * s.w + x + run].type === 'water' && run < 6) run++;
+          if (run === 6) wet = { x, y };
+        }
+      for (let k = 0; k < 6; k++) s.paths[wet.y * s.w + wet.x + k] = stone;
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const shape = g.debugBridgeShape(wet.x + 3, wet.y);
+      return {
+        onBank: g.debugStandHeight(wet.x - 1.5, wet.y + 0.5),
+        onDeck: g.debugStandHeight(wet.x + 3.5, wet.y + 0.5),
+        deck: shape.deck,
+      };
+    });
+
+    expect(out.onDeck, 'a villager mid-crossing stands on the deck, not under it').toBeCloseTo(out.deck + 0.03, 2);
+    expect(out.onDeck - out.onBank, 'which is well above the bank they walked off').toBeGreaterThan(0.8);
   });
 
   test('a timber bridge can burn down; a stone one cannot', async ({ page }) => {

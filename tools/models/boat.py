@@ -13,7 +13,7 @@ import math
 
 import bpy
 
-from common import reset_scene, box, bevel, finish
+from common import reset_scene, box, bevel, finish_parts
 from parts import barrel, crate, crate_cluster, posts
 from style import palette
 
@@ -100,14 +100,26 @@ def _cargo(m) -> list:
     return parts
 
 
+#: Where the mast steps through the deck — the point the whole rig turns about when it is lowered.
+#: Taken from `_rig`, which stands the mast at (0, 0.18) rising from DECK_Z.
+MAST_FOOT = (0.0, 0.18, DECK_Z)
+
+
 def boat():
-    """The whole vessel, ready to export."""
+    """The whole vessel, ready to export.
+
+    Exported as two objects rather than one. The rig is a separate node so the renderer can lay it
+    down: a masted boat stands as tall as a house, and no arch a villager could walk over would
+    ever clear it, so the boat strikes its mast to shoot a bridge — which is what river traders
+    did with their own. Its origin is the mast foot, so lowering it swings the heel in place.
+    """
     reset_scene()
     m = palette()
-    parts = _hull(m) + _rig(m) + _cargo(m)
-    for ob in parts:
+    hull = _hull(m) + _cargo(m)
+    rig = _rig(m)
+    for ob in hull + rig:
         bevel(ob, 0.012)
-    return finish(parts, "Boat")
+    return finish_parts([("Hull", hull), ("Rig", rig)], "Boat", pivots={"Rig": MAST_FOOT})
 
 
 if __name__ == "__main__":

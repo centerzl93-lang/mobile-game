@@ -18,7 +18,7 @@ import os
 
 import bpy
 import bmesh
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 TEXTURE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "public", "textures")
@@ -140,8 +140,21 @@ def bevel(ob, width: float = 0.012, segments: int = 1) -> None:
     bm.free()
 
 
-def finish(objects, name: str):
-    """Join the parts into one object, flat-shade it, and sit it on the ground at the origin."""
+def _tidy(ob, name: str) -> None:
+    """Flat-shade a joined object and give it the village's shared cube-projected UVs."""
+    ob.name = name
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+    shade_flat(ob)
+    if not ob.data.uv_layers:
+        ob.data.uv_layers.new(name="UVMap")
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.cube_project(cube_size=UV_WORLD_SCALE, correct_aspect=True)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+
+def _join(objects, name: str):
+    """Join a list of parts into one object named `name`, and make it active."""
     for ob in bpy.context.selected_objects:
         ob.select_set(False)
     for ob in objects:
@@ -149,20 +162,61 @@ def finish(objects, name: str):
     bpy.context.view_layer.objects.active = objects[0]
     if len(objects) > 1:
         bpy.ops.object.join()
-    ob = bpy.context.active_object
-    ob.name = name
-    bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
-    shade_flat(ob)
+    return bpy.context.active_object
 
+
+def finish_parts(groups, name: str, pivots=None):
+    """Like `finish`, but keeps named sub-assemblies as separate objects in one model.
+
+    A model whose parts have to move at runtime cannot be a single joined mesh — the boat's rig is
+    lowered to shoot a bridge, and that needs a node the renderer can turn on its own. Each group
+    is joined by itself and they are then normalized *together*, against the combined bounds, so
+    the pieces keep exactly the relative positions they were authored in.
+
+    `groups` is a list of (suffix, parts). `pivots` optionally maps a suffix to the point that
+    part should turn about, in authored coordinates: the object's origin is put there, so a
+    rotation applied to its node in the renderer swings it about that point rather than about the
+    model's centre. The mast has to pivot at its foot, or lowering it drags the heel through the
+    deck.
+
+    The offset is left on each object's *location* rather than applied into its vertices, because
+    applying it would move every origin back to the model centre and undo the pivots.
+    """
+    pivots = pivots or {}
+    made = []
+    for suffix, parts in groups:
+        ob = _join(parts, f"{name}{suffix}")
+        _tidy(ob, f"{name}{suffix}")
+        pivot = pivots.get(suffix)
+        if pivot is not None:
+            # Move the origin to the pivot by shifting the mesh the other way, so nothing in the
+            # scene appears to move.
+            delta = Vector(pivot) - ob.location
+            ob.data.transform(Matrix.Translation(-delta))
+            ob.location += delta
+        made.append(ob)
+
+    bpy.context.view_layer.update()
+    lo = Vector((1e9, 1e9, 1e9))
+    hi = Vector((-1e9, -1e9, -1e9))
+    for ob in made:
+        for c in ob.bound_box:
+            w = ob.matrix_world @ Vector(c)
+            lo = Vector((min(lo.x, w.x), min(lo.y, w.y), min(lo.z, w.z)))
+            hi = Vector((max(hi.x, w.x), max(hi.y, w.y), max(hi.z, w.z)))
+    offset = Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z))
+    for ob in made:
+        ob.location -= offset
+    return made
+
+
+def finish(objects, name: str):
+    """Join the parts into one object, flat-shade it, and sit it on the ground at the origin."""
+    ob = _join(objects, name)
     # Cube-project the UVs at a fixed world scale. These buildings are boxy, so a cube projection
     # gives every face sensible texture direction with no hand-unwrapping, and one shared scale
     # keeps texel density consistent across every model in the village.
-    if not ob.data.uv_layers:
-        ob.data.uv_layers.new(name="UVMap")
-    bpy.ops.object.mode_set(mode="EDIT")
-    bpy.ops.mesh.select_all(action="SELECT")
-    bpy.ops.uv.cube_project(cube_size=UV_WORLD_SCALE, correct_aspect=True)
-    bpy.ops.object.mode_set(mode="OBJECT")
+    _tidy(ob, name)
 
     # Sit the model on the ground, centered on its footprint — the same normalization the
     # loader applies, done here too so the model looks right in any other viewer.

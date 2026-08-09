@@ -124,6 +124,7 @@ import {
   footprintToClear,
 } from './game/buildings';
 import { findPath, isWalkable } from './game/pathfind';
+import { bridgeDeck, BOAT_LADEN_TOP, BRIDGE_BANK_Y } from './render/bridges';
 import { tileIndex, inBounds } from './game/world';
 import {
   addNearest,
@@ -1574,6 +1575,22 @@ class Game {
     return slotName(slot);
   }
 
+  /**
+   * Debug/testing helper: point the camera at a tile, optionally from a given distance and angle.
+   *
+   * For looking at something on purpose — a screenshot of a bridge is worthless if the camera is
+   * still sitting over the village where the game left it.
+   */
+  debugLookAt(x: number, y: number, distance?: number, yaw?: number, pitch?: number): void {
+    this.camera.focus(x, y);
+    const cam = this.camera as Camera3D;
+    if (typeof cam.distance !== 'number') return; // the 2D camera has no orbit to set
+    if (distance !== undefined) cam.distance = distance;
+    if (yaw !== undefined) cam.yaw = yaw;
+    if (pitch !== undefined) cam.pitch = pitch;
+    cam.apply();
+  }
+
   /** Debug/testing helper: the tile value a path tier writes when built. */
   debugPathValue(tier: PathTier): number {
     return tier === 'dirt' ? PATH_DIRT
@@ -1581,6 +1598,21 @@ class Game {
       : tier === 'bridge' ? PATH_BRIDGE
       : tier === 'stonebridge' ? PATH_BRIDGE_STONE
       : PATH_TUNNEL;
+  }
+
+  /**
+   * Debug/testing helper: the shape of the crossing at this tile — where its deck rides, where the
+   * arch springs from underneath, and how wide the span it belongs to is.
+   */
+  debugBridgeShape(x: number, y: number): { deck: number; soffit: number; span: number; slope: number } {
+    const d = bridgeDeck(this.state.paths);
+    const i = tileIndex(x, y);
+    return { deck: d.y[i], soffit: d.soffit[i], span: d.span[i], slope: d.slope[i] };
+  }
+
+  /** Debug/testing helper: what a bridge has to clear, and the height its ramps start from. */
+  debugBridgeLimits(): { boatTop: number; bank: number } {
+    return { boatTop: BOAT_LADEN_TOP, bank: BRIDGE_BANK_Y };
   }
 
   /** Debug/testing helper: can a villager stand on this tile? */
@@ -1876,6 +1908,12 @@ class Game {
   debugWorkRadius(id: number): number | undefined {
     const b = this.state.buildings.find((x) => x.id === id);
     return b ? workRadiusOf(b) : undefined;
+  }
+
+  /** Debug/testing helper: the height a villager standing at this spot is drawn at (3D only). */
+  debugStandHeight(x: number, y: number): number | undefined {
+    const r = this.renderer as Renderer3D;
+    return typeof r.standHeight === 'function' ? r.standHeight(x, y) : undefined;
   }
 
   /** Debug/testing helper: how many villagers are drawn in a coat this frame (3D only). */

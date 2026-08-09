@@ -271,6 +271,7 @@ export type BuildingType =
   | 'stonehouse'
   | 'tavern'
   | 'chapel'
+  | 'townhall'
   | 'cemetery'
   | 'gatherer'
   | 'farm'
@@ -2037,7 +2038,7 @@ export const FIRE_SPREAD_NEAR = 0.03;
  */
 export const STONE_FIRE_FACTOR = 0.5;
 /** Buildings whose walls are masonry — see STONE_FIRE_FACTOR. */
-export const STONE_BUILT: BuildingType[] = ['stonehouse', 'chapel'];
+export const STONE_BUILT: BuildingType[] = ['stonehouse', 'chapel', 'townhall'];
 export function isStoneBuilt(type: BuildingType): boolean {
   return STONE_BUILT.includes(type);
 }
@@ -2282,6 +2283,11 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     cost: { wood: 90, stone: 52, iron: 12 }, jobs: 1, work: 20,
     desc: 'A staffed alehouse brews grain into ale each season, keeping the village merry.',
   },
+  townhall: {
+    type: 'townhall', name: 'Town Hall', emoji: '🏛️', category: 'civic', w: 5, h: 5,
+    cost: { wood: 124, stone: 84, iron: 84 }, jobs: 2, work: 180,
+    desc: 'The seat of the village. Its clerks keep the books — a ledger of what every store gained and spent last season — and enact the policies the village lives under. Each clerk at work carries one policy, so a hall with one is a hall with one rule in force.',
+  },
   chapel: {
     type: 'chapel', name: 'Chapel', emoji: '⛪', category: 'civic', w: 4, h: 5,
     cost: { wood: 100, stone: 60, iron: 40 }, jobs: 1, work: 140,
@@ -2345,6 +2351,7 @@ export const BUILD_ORDER: BuildingType[] = [
   'trading',
   'school',
   'tavern',
+  'townhall',
   'chapel',
   'cemetery',
   'herbalist',

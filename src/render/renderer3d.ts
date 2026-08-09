@@ -112,7 +112,7 @@ const BUILDING_COLORS: Record<BuildingType, number> = {
   gatherer: 0x5a8f4e, farm: 0x9a8340, fishing: 0x3f8f9a, hunting: 0x7a5a3c, ranch: 0xb58f52,
   lumberyard: 0x3f7a3a, woodcutter: 0x8a6a3c, quarry: 0x8b8e95, mine: 0x4a4a52, blacksmith: 0x565059,
   tailor: 0x9a5f92, trading: 0x46708f, school: 0x8f7d3f, herbalist: 0x4f8a5a, hospital: 0xb85a5a,
-  well: 0x5f7fa0, market: 0xa07a3f, barn: 0x6f6a4a,
+  well: 0x5f7fa0, market: 0xa07a3f, barn: 0x6f6a4a, townhall: 0xa8b0c4,
 };
 
 /**

@@ -61,6 +61,7 @@ const BUILDING_COLORS: Record<BuildingType, string> = {
   stonehouse: '#9a9089',
   tavern: '#b5893f',
   chapel: '#8f8fb0',
+  townhall: '#a8b0c4',
   cemetery: '#6a6a72',
   gatherer: '#5a8f4e',
   farm: '#9a8340',

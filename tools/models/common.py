@@ -175,6 +175,11 @@ def finish(objects, name: str):
     return ob
 
 
+#: Whether a textured material's tint is written out as `baseColorFactor`. See `export_gltf`.
+#: False matches the models in public/models/; True re-tints and requires rebuilding all of them.
+TINT_TEXTURED = False
+
+
 def export_gltf(path: str) -> None:
     """Export a .gltf that *references* the shared textures instead of packing them.
 
@@ -204,7 +209,22 @@ def export_gltf(path: str) -> None:
         doc = json.load(fh)
     # Re-attach the tints the exporter dropped (see `material`). Untextured materials already
     # carry their colour as the factor, so only the textured ones need this.
-    tints = {m.name: list(m["tint"]) for m in bpy.data.materials if m.get("tint") is not None}
+    #
+    # ...except that the models actually shipped in public/models/ carry **no** factor on their
+    # textured materials: the tint pass was written, seen to change all 29 of them at once, and
+    # reverted rather than shipped. That left the script and the art disagreeing, and the
+    # disagreement was a trap — a newly built model came out multiplied by its tint (stone at
+    # 0.27 x its own texture) and stood in the village three shades darker than every neighbour.
+    # The Town Hall was built and looked burnt for exactly this reason.
+    #
+    # So the script now matches the art. Turning this on is a deliberate decision to re-export
+    # every model together, not something a single new building should trip over; it is worth
+    # doing one day, because untinted means `stone` and `stone_dark` render identically and the
+    # five tree species share one green.
+    if TINT_TEXTURED:
+        tints = {m.name: list(m["tint"]) for m in bpy.data.materials if m.get("tint") is not None}
+    else:
+        tints = {}
     for mat_doc in doc.get("materials", []):
         tint = tints.get(mat_doc.get("name"))
         if tint is None:

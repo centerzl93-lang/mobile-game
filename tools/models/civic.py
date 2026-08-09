@@ -139,6 +139,90 @@ def tavern():
     return finish(parts, "Tavern")
 
 
+def townhall():
+    """Town Hall (5 x 5): four storeys of dressed stone under a clock stage — the village landmark.
+
+    Everything else in the village is one or two storeys, so height is what this building is for:
+    it should be recognisable from across the map at any zoom, and from the far side of a large
+    map it is mostly a silhouette. That argues for a square tower rather than a long hall — a
+    footprint this size laid out flat would read as another barn.
+
+    The storeys are made legible three ways, because a plain four-storey box reads as one very
+    tall room: a band course at every floor, windows ranked between the bands, and the walls step
+    in slightly as they rise so the mass tapers. The top stage carries the clock, which is the
+    detail that says *town hall* and not *keep*.
+    """
+    reset_scene()
+    m = palette()
+    parts = []
+    oy = -0.20
+
+    base_h = 0.30
+    floor_h = 1.15          # each storey, band to band
+    floors = 4
+    hw0, hd0 = 2.10, 2.10   # ground-floor half-extents; each storey steps in by `step`
+    step = 0.09
+
+    # A broad plinth, so four storeys look founded rather than balanced on the grass.
+    footing = box("Footing", (hw0 * 2 + 0.34, hd0 * 2 + 0.34, base_h), (0, oy, base_h / 2), m["stone"])
+    bevel(footing, 0.03)
+    parts.append(footing)
+
+    z = base_h
+    for i in range(floors):
+        hw = hw0 - step * i
+        hd = hd0 - step * i
+        # `stone_walls` builds centred on the origin, so shift the storey onto the plot like the
+        # other civic models do with their walls.
+        storey = stone_walls(f"Storey{i}", hw * 2, hd * 2, floor_h, z, m, quoins=(i < 2))
+        for ob in storey:
+            ob.location.y += oy
+        parts += storey
+        # The band course closing each storey: a stone plate a little proud of the wall below.
+        band = box(f"Band{i}", (hw * 2 + 0.16, hd * 2 + 0.16, 0.12), (0, oy, z + floor_h), m["stone_dark"])
+        bevel(band, 0.02)
+        parts.append(band)
+        # Ranked windows: three a side on the two lower storeys, two above where the walls narrow.
+        xs = [-0.78, 0.0, 0.78] if i < 2 else [-0.52, 0.52]
+        for x in xs:
+            parts += window(f"Front{i}", x, oy + hd, z + floor_h * 0.52, m, width=0.30, height=0.40)
+            parts += window(f"Back{i}", x, oy - hd, z + floor_h * 0.52, m, width=0.30, height=0.40)
+            parts += window(f"SideL{i}", oy + x, -hw, z + floor_h * 0.52, m, width=0.30, height=0.40, axis="x")
+            parts += window(f"SideR{i}", oy + x, hw, z + floor_h * 0.52, m, width=0.30, height=0.40, axis="x")
+        z += floor_h + 0.12
+
+    # Doors big enough to read at this scale, under a timber porch on the approach side.
+    hd_ground = hd0
+    parts += door("Hall", oy + hd_ground, base_h, m, width=0.62, height=1.00)
+    porch_z = base_h + 1.06
+    parts.append(box("PorchRoof", (1.30, 0.62, 0.10), (0, oy + hd_ground + 0.26, porch_z), m["timber"]))
+    parts += posts("Porch", [(-0.52, oy + hd_ground + 0.48), (0.52, oy + hd_ground + 0.48)],
+                   porch_z - base_h, 0.10, base_h, m["timber_dark"])
+    # Steps up to it, since the plinth puts the door a stride above the ground.
+    for i, w in enumerate((1.50, 1.26)):
+        parts.append(box("Step", (w, 0.26, base_h / 2),
+                         (0, oy + hd_ground + 0.30 + i * 0.24, base_h / 2 - i * (base_h / 2)), m["stone"]))
+
+    # The clock stage: a shallow drum on the top storey, then a low pyramid cap and a finial.
+    hw_top = hw0 - step * (floors - 1)
+    stage = hw_top * 1.30
+    parts.append(box("ClockStage", (stage, stage, 0.46), (0, oy, z + 0.23), m["stone"]))
+    for sy, face in ((1, oy + stage / 2), (-1, oy - stage / 2)):
+        parts.append(box("ClockFace", (0.44, 0.06, 0.44), (0, face, z + 0.23), m["plaster"]))
+        parts.append(box("ClockHand", (0.26, 0.08, 0.05), (0, face + sy * 0.02, z + 0.23), m["timber_dark"]))
+        parts.append(box("ClockHandM", (0.05, 0.08, 0.30), (0, face + sy * 0.02, z + 0.29), m["timber_dark"]))
+    bpy.ops.mesh.primitive_cone_add(radius1=hw_top * 0.98, radius2=0.0, depth=0.62, vertices=4,
+                                    location=(0, oy, z + 0.46 + 0.31))
+    cap = bpy.context.active_object
+    cap.name = "Cap"
+    cap.rotation_euler = (0, 0, math.radians(45))
+    cap.data.materials.append(m["slate"])
+    parts.append(cap)
+    parts += posts("Finial", [(0, oy)], 0.30, 0.07, z + 0.46 + 0.58, m["metal"])
+
+    finish(parts, "townhall")
+
+
 def chapel():
     """Chapel (4 x 5): a stone nave under a west tower whose spire is the village's tallest thing.
 

@@ -43,6 +43,7 @@ MODELS = {
     "trading": "craft:trading",
     "market": "craft:market",
     "school": "civic:school",
+    "townhall": "civic:townhall",
     "tavern": "civic:tavern",
     "chapel": "civic:chapel",
     "cemetery": "civic:cemetery",

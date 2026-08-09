@@ -396,7 +396,10 @@ test.describe('trading post & merchant', () => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'normal', true);
+      // Seeded: whether a boat sails in a given window is a roll per tick, so on a random
+      // village this test was asking the weather rather than the rule. It failed about one run in
+      // three that way.
+      g.startNewGame('small', 'normal', true, 0, 20260809);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       // Deliberately unstaffed: the worker moves goods in and out of the post, they don't summon

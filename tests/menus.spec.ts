@@ -172,7 +172,7 @@ test.describe('save slots', () => {
 });
 
 test.describe('pause menu', () => {
-  test('opens & pauses; Resume, Save-to-slot, Settings, New Game, Main Menu all work', async ({ page }) => {
+  test('opens & pauses; Resume, Save-to-slot, Settings, New Game, Main Menu all work', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'normal', true, 0));
     await page.waitForTimeout(100);

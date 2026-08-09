@@ -269,7 +269,7 @@ test.describe('trading post & merchant', () => {
     expect(out.stockIron).toBe(8); // merchant stock drawn down
   });
 
-  test('a seed merchant unlocks a crop when its value is matched', async ({ page }) => {
+  test('a seed merchant unlocks a crop when its value is matched', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(`(${setup})({ grain: 200 }, {}, { phase: 'docked', present: true, stayTimer: 600, category: 'seeds', stock: {}, seedStock: ['corn'], boat: { x: 0, y: 0 } })`);
     const out = await page.evaluate(() => {
@@ -300,7 +300,7 @@ test.describe('trading post & merchant', () => {
     expect(out.present).toBe(false);
   });
 
-  test('the cart takes ten at a time, fills to All, and accepts a typed quantity', async ({ page }) => {
+  test('the cart takes ten at a time, fills to All, and accepts a typed quantity', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(
       `(${setup})({ wood: 100 }, {}, { phase: 'docked', present: true, stayTimer: 600, category: 'basics', stock: { iron: 40 }, seedStock: [], boat: { x: 0, y: 0 } })`,
@@ -356,7 +356,7 @@ test.describe('trading post & merchant', () => {
     expect(JSON.parse(await cart())).toEqual({ wood: 100 });
   });
 
-  test('a typed standing order sets the post to that exact figure', async ({ page }) => {
+  test('a typed standing order sets the post to that exact figure', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(`(${setup})({}, {}, { phase: 'away', present: false, stayTimer: 0, category: null, stock: {}, seedStock: [], boat: null })`);
     await page.evaluate(() => {
@@ -442,7 +442,7 @@ test.describe('trading post & merchant', () => {
     expect(out.boat).toBe(true); // the boat stays moored at the dock
   });
 
-  test('a stock order pulls goods from the barns into the post', async ({ page }) => {
+  test('a stock order pulls goods from the barns into the post', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -506,7 +506,7 @@ test.describe('ranch', () => {
     expect(out.chickenCap).toBe(36); // 36 tiles / 1 per chicken — smaller animals pack tighter
   });
 
-  test('herds breed at least one per two seasons, cap out, and slaughter the excess', async ({ page }) => {
+  test('herds breed at least one per two seasons, cap out, and slaughter the excess', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate((mk) => {
       const g = (window as any).__village;
@@ -546,7 +546,7 @@ test.describe('ranch', () => {
     expect(max).toBe(5); // floor(16/3)
   });
 
-  test('cull slaughters the whole herd for resources; species only changes when empty', async ({ page }) => {
+  test('cull slaughters the whole herd for resources; species only changes when empty', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate((mk) => {
       const g = (window as any).__village;
@@ -591,7 +591,7 @@ test.describe('ranch', () => {
     expect(out.afterTransfer.to).toBe(12);
   });
 
-  test('a rancher pens purchased livestock from the barn', async ({ page }) => {
+  test('a rancher pens purchased livestock from the barn', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate((mk) => {
       const g = (window as any).__village;
@@ -718,7 +718,7 @@ test.describe('jobs & builders', () => {
     throw new Error('no placeable gatherer site anywhere on this map');
   }`;
 
-  test('an unbuilt work building shows on the job board and can be pre-staffed', async ({ page }) => {
+  test('an unbuilt work building shows on the job board and can be pre-staffed', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate((place) => {
       const g = (window as any).__village;
@@ -744,7 +744,7 @@ test.describe('jobs & builders', () => {
     expect(text).toContain('Laborers');
   });
 
-  test('with zero builders a site never builds; assigning builders constructs it', async ({ page }) => {
+  test('with zero builders a site never builds; assigning builders constructs it', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate((place) => {
       const g = (window as any).__village;
@@ -844,7 +844,7 @@ test.describe('jobs & builders', () => {
     expect(out.built).toBe(true);
   });
 
-  test('desiredBuilders round-trips through save/load', async ({ page }) => {
+  test('desiredBuilders round-trips through save/load', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => {
       const g = (window as any).__village;
@@ -865,7 +865,7 @@ test.describe('available workers count', () => {
   // The HUD chip that used to show this was removed; the count now lives on the job board, which
   // is where the player assigns workers anyway. The rule under test is unchanged: children have
   // no job but cannot work, so they must not be counted as available labour.
-  test('the job board counts free laborers as adults only, never children', async ({ page }) => {
+  test('the job board counts free laborers as adults only, never children', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
     await page.click('#btn-jobs');
@@ -960,7 +960,7 @@ test.describe('fire spread', () => {
     }
   }`;
 
-  test('fire jumps to touching buildings but not to ones a tile away', async ({ page }) => {
+  test('fire jumps to touching buildings but not to ones a tile away', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate(
       ([clusterSrc, collapseSrc]) => {
@@ -1168,7 +1168,7 @@ test.describe('camera rotate buttons', () => {
     await page.mouse.down();
   }
 
-  test('holding a top-corner button turns the 3D view continuously, and releasing stops it', async ({ page }) => {
+  test('holding a top-corner button turns the 3D view continuously, and releasing stops it', { tag: '@slow' }, async ({ page }) => {
     await open(page); // default 3D camera (no ?2d)
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
     const yaw = () => page.evaluate(() => (window as any).__village.camera.yaw);
@@ -1195,7 +1195,7 @@ test.describe('camera rotate buttons', () => {
     expect(await yaw()).toBeCloseTo(rest, 6);
   });
 
-  test('the two buttons turn the view opposite ways', async ({ page }) => {
+  test('the two buttons turn the view opposite ways', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
     const yaw = () => page.evaluate(() => (window as any).__village.camera.yaw);
@@ -1220,7 +1220,7 @@ test.describe('camera rotate buttons', () => {
 });
 
 test.describe('inspect sheet close button', () => {
-  test('the × drops the selection instead of the sheet reopening on the next frame', async ({ page }) => {
+  test('the × drops the selection instead of the sheet reopening on the next frame', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
     await page.evaluate(() => {
@@ -1239,7 +1239,7 @@ test.describe('inspect sheet close button', () => {
     expect(await page.evaluate(() => (window as any).__village.inspectSel)).toBeNull();
   });
 
-  test('switching to another tool also drops the selection', async ({ page }) => {
+  test('switching to another tool also drops the selection', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
     await page.evaluate(() => {
@@ -1257,7 +1257,7 @@ test.describe('inspect sheet close button', () => {
 });
 
 test.describe('hint bar layering', () => {
-  test('the hint stays visible and clear of the build pop-out', async ({ page }) => {
+  test('the hint stays visible and clear of the build pop-out', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
     // Paths, not buildings: picking a building no longer prints anything (what it is *for* lives
@@ -1280,7 +1280,7 @@ test.describe('hint bar layering', () => {
 });
 
 test.describe('top-line HUD', () => {
-  test('carries one chip per headline resource and nothing else', async ({ page }) => {
+  test('carries one chip per headline resource and nothing else', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
     const icons = await page.evaluate(() =>
@@ -1365,7 +1365,7 @@ test.describe('household larders', () => {
     expect(Number(out.chip)).toBeGreaterThanOrEqual(out.barnFood + 500);
   });
 
-  test('villagers eat and heat from their own larder before the barns', async ({ page }) => {
+  test('villagers eat and heat from their own larder before the barns', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -1408,7 +1408,7 @@ test.describe('household larders', () => {
     expect(out.survivors).toBe(out.residents);
   });
 
-  test('a shortage takes the villagers who went without, not a stocked household', async ({ page }) => {
+  test('a shortage takes the villagers who went without, not a stocked household', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -1559,7 +1559,7 @@ test.describe('seasonal firewood and clothing burn', () => {
     );
   }
 
-  test('firewood burns year-round: winter heaviest, summer lightest', async ({ page }) => {
+  test('firewood burns year-round: winter heaviest, summer lightest', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     // Seasons index Spring0 Summer1 Autumn2 Winter3.
     const winter = await burnDuring(page, 3, true);
@@ -1577,7 +1577,7 @@ test.describe('seasonal firewood and clothing burn', () => {
     expect(autumn.perResident).toBeGreaterThan(summer.perResident);
   });
 
-  test('a clothed villager burns less firewood than an unclothed one', async ({ page }) => {
+  test('a clothed villager burns less firewood than an unclothed one', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const dressed = await burnDuring(page, 0, true);
     const undressed = await burnDuring(page, 0, false);
@@ -1588,7 +1588,7 @@ test.describe('seasonal firewood and clothing burn', () => {
     expect(dressed.perResident).toBeCloseTo(undressed.perResident * 0.75, 5);
   });
 
-  test('stone walls hold their heat: a stone house burns less than a timber one', async ({ page }) => {
+  test('stone walls hold their heat: a stone house burns less than a timber one', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const timber = await burnDuring(page, 3, true); // winter, when heating actually bites
     const stone = await burnDuring(page, 3, true, true);
@@ -1789,7 +1789,7 @@ test.describe('villager breeding', () => {
     );
   }
 
-  test('the village grows when it has housing, food and good spirits', async ({ page }) => {
+  test('the village grows when it has housing, food and good spirits', { tag: '@slow' }, async ({ page }) => {
     // Simulating whole years tick-by-tick is not quick, and these runs are deliberately the
     // fastest-growing villages the game can produce — a household now averages about a child a
     // year, so by the last season there are far more villagers to step than there used to be.
@@ -1806,7 +1806,7 @@ test.describe('villager breeding', () => {
     ).toBeGreaterThan(out.startPop * 1.5);
   });
 
-  test('households settle into one couple with room for their children', async ({ page }) => {
+  test('households settle into one couple with room for their children', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(GROWTH_TIMEOUT);
     await open2d(page);
     const out = await growUnderIdealConditions(page, 12);
@@ -1830,7 +1830,7 @@ test.describe('villager breeding', () => {
     expect(out.childrenWithAParent).toBe(out.children);
   });
 
-  test('every child lives with an adult, and children are spread across households', async ({ page }) => {
+  test('every child lives with an adult, and children are spread across households', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(GROWTH_TIMEOUT);
     await open2d(page);
     const out = await growUnderIdealConditions(page, 12);
@@ -1846,7 +1846,7 @@ test.describe('villager breeding', () => {
     expect(out.maxChildrenInOneHouse).toBeLessThanOrEqual(houseCapacityForTest - 2);
   });
 
-  test('children still live with an adult when housing is tight', async ({ page }) => {
+  test('children still live with an adult when housing is tight', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(GROWTH_TIMEOUT);
     await open2d(page);
     const out = await growUnderIdealConditions(page, 16, 0); // only the starter houses
@@ -1855,7 +1855,7 @@ test.describe('villager breeding', () => {
     expect(out.homelessChildren).toBe(0);
   });
 
-  test('with no spare housing adults still pair up, silently', async ({ page }) => {
+  test('with no spare housing adults still pair up, silently', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(GROWTH_TIMEOUT);
     await open2d(page);
     // Same generous conditions, but *no* extra houses: the only limit is somewhere to live.
@@ -1879,7 +1879,7 @@ test.describe('villager breeding', () => {
     expect(out.housingPrompt).toBe('');
   });
 
-  test('no births while the village has under a season of food banked', async ({ page }) => {
+  test('no births while the village has under a season of food banked', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(GROWTH_TIMEOUT); // eight seasons of a whole village, stepped a tick at a time
     await open2d(page);
     const out = await page.evaluate(() => {
@@ -1926,7 +1926,7 @@ test.describe('villager breeding', () => {
     expect(out.endPop).toBeLessThanOrEqual(out.startPop);
   });
 
-  test('villagers past the fertile window stop bearing children', async ({ page }) => {
+  test('villagers past the fertile window stop bearing children', { tag: '@slow' }, async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -2012,7 +2012,7 @@ test.describe('paths and placement', () => {
     expect(out.after).toEqual([0, 0, 0, 0]); // PATH_NONE — torn up by the building
   });
 
-  test('trees do not grow on a path, and paving one clears the trees', async ({ page }) => {
+  test('trees do not grow on a path, and paving one clears the trees', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -2174,7 +2174,7 @@ test.describe('quarry', () => {
 });
 
 test.describe('volume-based hauling', () => {
-  test('a load is 12 logs but 48 of a crop, and a full field is brought in within a season', async ({ page }) => {
+  test('a load is 12 logs but 48 of a crop, and a full field is brought in within a season', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(240_000);
     await open(page);
     const out = await page.evaluate(() => {
@@ -2752,7 +2752,7 @@ test.describe('codex', () => {
 });
 
 test.describe('toolbar', () => {
-  test('has no Inspect button, and closing a category returns to inspecting', async ({ page }) => {
+  test('has no Inspect button, and closing a category returns to inspecting', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
     const tools = await page.evaluate(() =>
@@ -2771,7 +2771,7 @@ test.describe('toolbar', () => {
     expect(active).toEqual([]);
   });
 
-  test('every tool fits two rows across the full width, with the clock in its own column', async ({
+  test('every tool fits two rows across the full width, with the clock in its own column', { tag: '@slow' }, async ({
     page,
   }) => {
     await open2d(page);
@@ -2897,7 +2897,7 @@ test.describe('toolbar', () => {
     expect(out.logBottom).toBeLessThanOrEqual(out.popTop);
   });
 
-  test('demolish toggles off again', async ({ page }) => {
+  test('demolish toggles off again', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
     await page.click('.tool-btn[data-tool="demolish"]');
@@ -2908,7 +2908,7 @@ test.describe('toolbar', () => {
 });
 
 test.describe('confirm before it happens', () => {
-  test('drawn paths wait for confirmation, and villagers ignore them until then', async ({ page }) => {
+  test('drawn paths wait for confirmation, and villagers ignore them until then', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
     const drawn = await page.evaluate(() => {
@@ -2969,7 +2969,7 @@ test.describe('confirm before it happens', () => {
     expect(after.built).toBeGreaterThan(0);
   });
 
-  test('cancelling a drawn path clears it back to bare ground', async ({ page }) => {
+  test('cancelling a drawn path clears it back to bare ground', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
     const drew = await page.evaluate(() => {
@@ -2997,7 +2997,7 @@ test.describe('confirm before it happens', () => {
     await expect(page.locator('#confirm')).toBeHidden();
   });
 
-  test('demolition waits for confirmation; cancelling leaves the building standing', async ({ page }) => {
+  test('demolition waits for confirmation; cancelling leaves the building standing', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
     const picked = await page.evaluate(() => {
@@ -3035,7 +3035,7 @@ test.describe('confirm before it happens', () => {
 });
 
 test.describe('prompt rehousing', () => {
-  test('a couple moves into a new house within seconds, not at the next season', async ({ page }) => {
+  test('a couple moves into a new house within seconds, not at the next season', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -3077,7 +3077,7 @@ test.describe('build stamp', () => {
 });
 
 test.describe('village history', () => {
-  test('events are recorded newest-first with the season they happened in', async ({ page }) => {
+  test('events are recorded newest-first with the season they happened in', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -3100,7 +3100,7 @@ test.describe('village history', () => {
     for (const k of out.kinds) expect(['info', 'good', 'bad']).toContain(k);
   });
 
-  test('the History panel lists them grouped by season, and × closes it', async ({ page }) => {
+  test('the History panel lists them grouped by season, and × closes it', { tag: '@slow' }, async ({ page }) => {
     // 2D: every assertion here is about the DOM, and the rows are rendered by `refreshPanels` on
     // an animation frame. Under the 3D renderer headless Chromium gives about 2 fps, so the 5s
     // default was ten frames to catch the panel filling — it lost roughly one run in three.
@@ -3144,7 +3144,7 @@ test.describe('village history', () => {
     await expect(page.locator('#history')).toBeHidden();
   });
 
-  test('the chronicle survives a save and reload', async ({ page }) => {
+  test('the chronicle survives a save and reload', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const before = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -3183,7 +3183,7 @@ test.describe('village history', () => {
 });
 
 test.describe('disasters toggle', () => {
-  test('the toggle flows from the difficulty screen and persists through save/load', async ({ page }) => {
+  test('the toggle flows from the difficulty screen and persists through save/load', { tag: '@slow' }, async ({ page }) => {
     await open2d(page);
     // New Game → the setup screen: turn disasters Off, pick Normal, start.
     await page.click('#mm-new');
@@ -3204,7 +3204,7 @@ test.describe('disasters toggle', () => {
 });
 
 test.describe('villager coats', () => {
-  test('a villager wears a coat when their household holds clothing, and not when it does not', async ({ page }) => {
+  test('a villager wears a coat when their household holds clothing, and not when it does not', { tag: '@slow' }, async ({ page }) => {
     // Four polls against a software-rendered 3D scene; see `expectCoats` below for why they get a
     // generous budget each, which the default 30s test timeout would not cover.
     test.setTimeout(150_000);
@@ -3268,7 +3268,7 @@ test.describe('villager coats', () => {
 });
 
 test.describe('food consumption', () => {
-  test('villagers eat continuously, not in one lump at the season boundary', async ({ page }) => {
+  test('villagers eat continuously, not in one lump at the season boundary', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -3321,7 +3321,7 @@ test.describe('tips toggle', () => {
     expect(out.feedbackWithTipsOff).toBe(true);
   });
 
-  test('the setting is in Settings and survives a reload', async ({ page }) => {
+  test('the setting is in Settings and survives a reload', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.click('#mm-settings');
     await expect(page.locator('#set-tips-off')).toBeVisible();
@@ -3359,7 +3359,7 @@ test.describe('age groups', () => {
 });
 
 test.describe('birth rate', () => {
-  test('a household that meets the conditions averages about a child a year', async ({ page }) => {
+  test('a household that meets the conditions averages about a child a year', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(180_000);
     await open(page);
     const out = await page.evaluate(() => {
@@ -3417,7 +3417,7 @@ test.describe('birth rate', () => {
 });
 
 test.describe('construction stages', () => {
-  test('a site becomes footings, then a rising frame, then the finished building', async ({ page }) => {
+  test('a site becomes footings, then a rising frame, then the finished building', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate(async () => {
       const g = (window as any).__village;
@@ -3591,7 +3591,7 @@ test.describe('policies', () => {
     ]);
   });
 
-  test('rationing really does cut what the village eats', async ({ page }) => {
+  test('rationing really does cut what the village eats', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(180_000);
     await open2d(page);
     const out = await page.evaluate((mk) => {
@@ -3649,7 +3649,7 @@ test.describe('policies', () => {
 });
 
 test.describe('the Town Hall books', () => {
-  test('a season\'s row matches the stock that actually moved', async ({ page }) => {
+  test('a season\'s row matches the stock that actually moved', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(180_000);
     await open2d(page);
     const out = await page.evaluate(() => {
@@ -3707,7 +3707,7 @@ test.describe('the Town Hall books', () => {
     expect(out.anyOut, 'the books show something being used up').toBe(true);
   });
 
-  test('the books only keep two years, and drop the oldest', async ({ page }) => {
+  test('the books only keep two years, and drop the oldest', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(240_000);
     await open2d(page);
     const out = await page.evaluate(() => {
@@ -3726,7 +3726,7 @@ test.describe('the Town Hall books', () => {
 });
 
 test.describe('the New Village screen', () => {
-  test('every setting is on one card, and the seed can be typed, rerolled and copied', async ({ page }) => {
+  test('every setting is on one card, and the seed can be typed, rerolled and copied', { tag: '@slow' }, async ({ page }) => {
     await open2d(page);
     await page.click('#mm-new');
     await expect(page.locator('#ng-seed')).toBeVisible();
@@ -3764,7 +3764,7 @@ test.describe('the New Village screen', () => {
     expect(started.disasters).toBe(false);
   });
 
-  test('a typed seed rebuilds the same village from the menu', async ({ page }) => {
+  test('a typed seed rebuilds the same village from the menu', { tag: '@slow' }, async ({ page }) => {
     await open2d(page);
     const found = async (seed: string) => {
       await page.evaluate(() => (window as any).__village.openMainMenu?.());
@@ -3920,7 +3920,7 @@ test.describe('a seeded village', () => {
     expect(out.c.folk).not.toBe(out.a.folk);
   });
 
-  test('the simulation itself is deterministic, and survives a save and load', async ({ page }) => {
+  test('the simulation itself is deterministic, and survives a save and load', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(180_000); // three playthroughs of the same village, run back to back
     await open2d(page);
     const out = await page.evaluate(() => {
@@ -4134,7 +4134,7 @@ test.describe('fishing dock', () => {
     expect(out.centredOnPlot, 'sites whose work circle sits on the plot, not the dock').toBe(0);
   });
 
-  test('the work circle shows while siting a hut, centred on the dock', async ({ page }) => {
+  test('the work circle shows while siting a hut, centred on the dock', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate(async () => {
       const g = (window as any).__village;
@@ -4225,7 +4225,7 @@ test.describe('auto-staffing', () => {
     return b;
   }`;
 
-  test('a finished workplace hires itself when the setting is on, and not when it is off', async ({ page }) => {
+  test('a finished workplace hires itself when the setting is on, and not when it is off', { tag: '@slow' }, async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate((raise) => {
       const g = (window as any).__village;
@@ -4413,7 +4413,7 @@ test.describe('consumption and fuel', () => {
 });
 
 test.describe('roads get laid', () => {
-  test('a confirmed road frees a builder even when every job is taken', async ({ page }) => {
+  test('a confirmed road frees a builder even when every job is taken', { tag: '@slow' }, async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -4489,7 +4489,7 @@ test.describe('lives run on ticks, not seasons', () => {
    */
   const WALK_YEARS_TIMEOUT = 240_000;
 
-  test('villagers age continuously rather than all having a birthday at once', async ({ page }) => {
+  test('villagers age continuously rather than all having a birthday at once', { tag: '@slow' }, async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -4513,7 +4513,7 @@ test.describe('lives run on ticks, not seasons', () => {
     expect(out.after.some((a: number) => a % 1 !== 0)).toBe(true);
   });
 
-  test('children are born through the year, not only at the turn of a season', async ({ page }) => {
+  test('children are born through the year, not only at the turn of a season', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(WALK_YEARS_TIMEOUT);
     await open2d(page);
     const out = await page.evaluate(() => {
@@ -4561,7 +4561,7 @@ test.describe('lives run on ticks, not seasons', () => {
     expect(out.mid, 'births away from a season turnover').toBeGreaterThan(out.atTurnover);
   });
 
-  test('a full year still carries about the same growth as the yearly roll it replaced', async ({ page }) => {
+  test('a full year still carries about the same growth as the yearly roll it replaced', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(WALK_YEARS_TIMEOUT);
     await open2d(page);
     const out = await page.evaluate(() => {
@@ -5493,7 +5493,7 @@ test.describe('stockpile limits', () => {
     expect(out.subs[0]).toMatch(/^\d+ \/ \d+$/);
   });
 
-  test('the limits panel sets a cap, and it survives a save and reload', async ({ page }) => {
+  test('the limits panel sets a cap, and it survives a save and reload', { tag: '@slow' }, async ({ page }) => {
     await open2d(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false, 0));
     await page.click('#btn-limits');
@@ -5595,7 +5595,7 @@ test.describe('the merchant ties up at the trading post', () => {
     expect(out!.heading, 'with a heading for the renderer to point the bow along').toBe('number');
   });
 
-  test('the boat is drawn at a size a wharf would berth', async ({ page }) => {
+  test('the boat is drawn at a size a wharf would berth', { tag: '@slow' }, async ({ page }) => {
     await open(page); // the 3D renderer is the thing under test here
     const out = await page.evaluate(async (mk) => {
       const g = (window as any).__village;
@@ -5847,7 +5847,7 @@ test.describe('households keep their hearths stocked', () => {
   // whole village froze in its first winter. Three faults fed it — a barn door chosen by distance
   // rather than by whether it could be walked to, a site allowed to cover a barn's one usable
   // door, and a larder that always asked for food and so never asked for fuel.
-  test('a village that builds still gets fuel into every hearth', async ({ page }) => {
+  test('a village that builds still gets fuel into every hearth', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(120_000);
     await open2d(page);
     const out = await page.evaluate(() => {
@@ -5928,7 +5928,7 @@ test.describe('difficulty actually differs', () => {
 });
 
 test.describe('low stock is reported once, and shown', () => {
-  test('a stock that falls low says so once and turns its chip red', async ({ page }) => {
+  test('a stock that falls low says so once and turns its chip red', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(120_000);
     await open2d(page);
     const out = await page.evaluate(() => {
@@ -5987,7 +5987,7 @@ test.describe('sheep, wool and mutton', () => {
     return null;
   }`;
 
-  test('a flock is shorn, not slaughtered: wool from living sheep, mutton only from the knife', async ({ page }) => {
+  test('a flock is shorn, not slaughtered: wool from living sheep, mutton only from the knife', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(120_000);
     await open2d(page);
     const out = await page.evaluate((findSrc) => {
@@ -6077,7 +6077,7 @@ test.describe('sheep, wool and mutton', () => {
     expect(out!.culled.wool, 'killing a sheep does not produce wool').toBe(0);
   });
 
-  test('every herd gives one thing alive and another dead, and hide only ever comes off a carcass', async ({ page }) => {
+  test('every herd gives one thing alive and another dead, and hide only ever comes off a carcass', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(180_000);
     await open2d(page);
     const yields = (animal: string) =>
@@ -6158,7 +6158,7 @@ test.describe('sheep, wool and mutton', () => {
     expect(hens!.dead.beef ?? 0).toBe(0);
   });
 
-  test('a pen at its cap butchers the overflow without anyone asking', async ({ page }) => {
+  test('a pen at its cap butchers the overflow without anyone asking', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(120_000);
     await open2d(page);
     const out = await page.evaluate(() => {
@@ -6202,7 +6202,7 @@ test.describe('sheep, wool and mutton', () => {
     expect(out!.leather, 'and hide').toBeGreaterThan(0);
   });
 
-  test('the tailor sews from either hide or fleece, and wool goes further', async ({ page }) => {
+  test('the tailor sews from either hide or fleece, and wool goes further', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(120_000);
     await open2d(page);
     const run = (recipe: string) =>

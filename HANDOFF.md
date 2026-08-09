@@ -92,6 +92,37 @@ priest should be load-bearing, that is a change nobody has made yet.
   nothing. If a site ever refuses to start, that is the first thing to check; the inspect sheet
   shows the counts (`footprintToClear`).
 
+### Two test lanes, and six tests that only thought they were seeded (this session)
+
+**Run `npm run test:fast` on ordinary commits and `npm test` before a push.** The fast lane is
+115 tests in about **6 minutes**; the full suite is 189 in **28**. Anything that took 5 seconds or
+more carries `{ tag: '@slow' }` and is skipped by the fast lane — 74 tests, nearly all of them
+long simulation runs. `npm run test:slow` runs just those.
+
+**Both lanes are serial, deliberately.** `workers: 4 --fully-parallel` did cut the fast lane to
+8.5 minutes and produced **14 failures out of 160** — this suite drives a real animation loop and
+asserts on simulation outcomes, so contention on four cores makes timing-sensitive tests fail for
+no reason. A suite that invents failures costs more than a slow one. (Without `--fully-parallel`
+the extra workers do nothing at all: `fullyParallel: false` parallelises per *file*, and 90% of the
+tests live in `newgame.spec.ts`.)
+
+Picking the 5-second line was measurement, not taste — the full distribution:
+
+| Cut | Tests kept | Lane time |
+|---|---|---|
+| 3s | 58 | 1.5 min |
+| **5s** | **115** | **5.2 min** |
+| 8s | 139 | 7.6 min |
+| 15s | 160 | 11.5 min |
+
+**And the thing that mattered more than the speed:** six tests pinned their randomness by
+replacing `Math.random`, which stopped seeding anything the moment the simulation began drawing
+from its own stream (`game/rng.ts`). The fire tests failed loudly when that happened and were
+fixed; these failed *quietly*, going on passing most of the time on a different village every run.
+The most expensive test in the suite was failing about one run in two. They seed through
+`startNewGame(size, difficulty, disasters, slot, seed)` now, which reaches the stream the
+simulation actually uses. **If a test needs a fixed village, that is the only way to get one.**
+
 ### Buildings cost what they are worth, and construction is a project (this session)
 
 Two changes that go together: a real price list, and builders who tire.

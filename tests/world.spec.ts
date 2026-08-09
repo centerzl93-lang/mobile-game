@@ -128,7 +128,7 @@ test.describe('world generation, placement & pathfinding', () => {
     expect(worst, 'barest quadrant, fraction of buildable ground left bare').toBeLessThan(0.55);
   });
 
-  test('deposits are small, stay off the shore, and sit among the trees', async ({ page }) => {
+  test('deposits are small, stay off the shore, and sit among the trees', { tag: '@slow' }, async ({ page }) => {
     await startSmall(page);
     const dep = await page.evaluate(([W, H]) => {
       const s = (window as any).__village.state;
@@ -337,7 +337,7 @@ test.describe('world generation, placement & pathfinding', () => {
 });
 
 test.describe('tunnels', () => {
-  test('a tunnel makes a mountain walkable, and a span drag only builds the crossing', async ({ page }) => {
+  test('a tunnel makes a mountain walkable, and a span drag only builds the crossing', { tag: '@slow' }, async ({ page }) => {
     await startSmall(page);
     const res = await page.evaluate(([W, H]) => {
       const g = (window as any).__village;
@@ -395,7 +395,7 @@ test.describe('tunnels', () => {
 });
 
 test.describe('clearing build sites', () => {
-  test('resources blocking a building or a drawn path are harvested before anything else', async ({ page }) => {
+  test('resources blocking a building or a drawn path are harvested before anything else', { tag: '@slow' }, async ({ page }) => {
     await startSmall(page);
     const res = await page.evaluate(([W, H]) => {
       const g = (window as any).__village;
@@ -479,7 +479,7 @@ test.describe('clearing build sites', () => {
 });
 
 test.describe('path editing', () => {
-  test('upgrades can be cancelled, stone can be downgraded, and a drag pulls up a run', async ({ page }) => {
+  test('upgrades can be cancelled, stone can be downgraded, and a drag pulls up a run', { tag: '@slow' }, async ({ page }) => {
     await startSmall(page);
     const res = await page.evaluate(([W]) => {
       const g = (window as any).__village;
@@ -563,7 +563,7 @@ test.describe('rotation, doors and walls', () => {
     throw new Error('no clear area on this map');
   }`;
 
-  test('a quarter turn swaps the footprint and moves the door round', async ({ page }) => {
+  test('a quarter turn swaps the footprint and moves the door round', { tag: '@slow' }, async ({ page }) => {
     await startSmall(page);
     const out = await page.evaluate((clearSrc) => {
       const g = (window as any).__village;

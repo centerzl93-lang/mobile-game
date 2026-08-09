@@ -68,6 +68,7 @@ import {
   entranceTiles,
 } from './types';
 import { newGame } from './game/state';
+import { pinRandom } from './game/rng';
 import {
   update,
   LogKind,
@@ -1431,6 +1432,15 @@ class Game {
   /** Debug/testing helper: what a building costs to place, so a test need not restate the table. */
   debugCost(type: BuildingType): Partial<Record<ResourceKind, number>> {
     return { ...BUILDING_DEFS[type].cost };
+  }
+
+  /**
+   * Debug/testing helper: hold the simulation's rolls at a fixed value, or `null` to release.
+   *
+   * The replacement for tests that used to pin `Math.random`; see `pinRandom` in `game/rng.ts`.
+   */
+  debugPinRandom(v: number | number[] | null, after = 0.5): void {
+    pinRandom(v, after);
   }
 
   /** Debug/testing helper: the seed this village was founded from, and its live stream state. */

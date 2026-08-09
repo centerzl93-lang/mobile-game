@@ -947,14 +947,16 @@ test.describe('fire spread', () => {
   }`;
 
   // Burn the source down with Math.random pinned, so each neighbour's roll has a known outcome.
+  // Hold the roll still and let the odds vary — that is the only way to assert "a 25% chance
+  // catches and a 3% chance does not". Pins the simulation's own stream rather than Math.random,
+  // which the sim stopped drawing from when it became seeded.
   const collapse = `(g, source, fixed) => {
-    const real = Math.random;
-    Math.random = () => fixed;
+    g.debugPinRandom(fixed);
     try {
       source.fireTimer = 0.05;
       g.debugAdvance(0.1);
     } finally {
-      Math.random = real;
+      g.debugPinRandom(null);
     }
   }`;
 
@@ -1021,14 +1023,11 @@ test.describe('fire spread', () => {
         const s = g.state;
         const target = s.buildings.filter((b: any) => b.built && b.type === 'house')[0];
         target.type = type; // flammable[0] either way — the barn ahead of it is fireproof
-        const seq = [0.01, 0, resist];
-        let i = 0;
-        const real = Math.random;
-        Math.random = () => seq[i++] ?? 0.5;
+        g.debugPinRandom([0.01, 0, resist], 0.5);
         try {
           g.debugFireSeason();
         } finally {
-          Math.random = real;
+          g.debugPinRandom(null);
         }
         return !!target.fireTimer;
       };

@@ -40,7 +40,39 @@ export interface HasRng {
  * One step of `mulberry32` written out, because the state has to live on the game rather than in
  * a closure: a closure cannot be saved to `localStorage` and restored.
  */
+/**
+ * Test-only: pin every roll to a fixed value, or `null` to let the stream run again.
+ *
+ * Probabilistic behaviour has to be testable, and the way to test "a 25% chance fires and a 3%
+ * chance does not" is to hold the roll still and vary the odds. The tests used to do this by
+ * replacing `Math.random`, which stopped working the moment the simulation drew from its own
+ * stream instead — so the hook moved here rather than the tests losing the ability.
+ *
+ * Deliberately does *not* advance the stream: a pinned roll is a fixed number, not a real draw.
+ * Reached through `debugPinRandom` on the game object, alongside the other debug hooks.
+ */
+let pinned: number | null = null;
+let queue: number[] | null = null;
+let queueAt = 0;
+let queueAfter = 0.5;
+export function pinRandom(v: number | number[] | null, after = 0.5): void {
+  if (Array.isArray(v)) {
+    queue = v;
+    queueAt = 0;
+    queueAfter = after;
+    pinned = null;
+    return;
+  }
+  queue = null;
+  pinned = v;
+}
+
 export function rand(s: HasRng): number {
+  // A queue answers the first N rolls in order and every one after with `after`, which is how a
+  // test says "a fire starts, it picks this building, and *this* is the resistance roll" — the
+  // sequence is the assertion. A bare value answers everything.
+  if (queue) return queueAt < queue.length ? queue[queueAt++] : queueAfter;
+  if (pinned !== null) return pinned;
   let a = s.rng | 0;
   a = (a + 0x6d2b79f5) | 0;
   s.rng = a;

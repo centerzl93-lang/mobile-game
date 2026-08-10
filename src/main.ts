@@ -1922,7 +1922,7 @@ class Game {
     // Capture what the tile held first: `markPending` needs it so a cancelled upgrade restores
     // the road underneath instead of clearing the tile.
     const prev = inBounds(x, y) ? this.state.paths[tileIndex(x, y)] : PATH_NONE;
-    if (!planPath(this.state, x, y, tier)) return false;
+    if (!planPath(this.state, x, y, tier, { ignoreTier: true })) return false;
     markPending(this.state, x, y, prev);
     return true;
   }

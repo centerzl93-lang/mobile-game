@@ -738,11 +738,11 @@ test.describe('jobs & builders', () => {
     expect(out.desired).toBe(1);
 
     // The board lists the unbuilt site, plus the Builders job and a Laborers field.
-    await page.click('#btn-jobs');
+    await page.click('#btn-village');
     const text = await page.evaluate(() => {
       const g = (window as any).__village;
       g.ui.refreshPanels(g.state); // populate the just-opened board deterministically
-      return document.getElementById('jobboard')!.textContent ?? '';
+      return document.getElementById('village')!.textContent ?? '';
     });
     expect(text).toContain('Gatherer');
     expect(text).toContain('Builders');
@@ -873,13 +873,13 @@ test.describe('available workers count', () => {
   test('the job board counts free laborers as adults only, never children', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
-    await page.click('#btn-jobs');
+    await page.click('#btn-village');
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
       const ADULT_AGE = 12;
       const s = g.state;
       g.ui.refreshPanels(s); // populate the just-opened board deterministically
-      const line = [...document.querySelectorAll('#jobboard .summary')]
+      const line = [...document.querySelectorAll('#village .summary')]
         .map((e) => e.textContent ?? '')
         .find((t) => t.includes('Laborers')) ?? '';
       return {
@@ -2339,18 +2339,18 @@ test.describe('job board', () => {
   test('every trade gets a row and a stepper, built or not', async ({ page }) => {
     await open2d(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
-    await page.click('#btn-jobs');
-    await expect(page.locator('#jobboard .job-row').first()).toBeVisible();
+    await page.click('#btn-village');
+    await expect(page.locator('#village .staff-row').first()).toBeVisible();
     const board = await page.evaluate(() => {
       const g = (window as any).__village;
       g.ui.refreshPanels(g.state);
-      const rows = [...document.querySelectorAll('#jobboard .job-row')];
+      const rows = [...document.querySelectorAll('#village .staff-row')];
       return {
         names: rows.map((r) => r.querySelector('.jr-name')!.textContent),
         withSteppers: rows.filter((r) => r.querySelector('.stepper')).length,
         // Nothing is built on a fresh map, so every trade row is a quiet one.
         muted: rows.filter((r) => r.classList.contains('muted')).length,
-        hasSection: !!document.querySelector('#jobboard .jb-section'),
+        hasSection: !!document.querySelector('#village .jb-section'),
         trades: g.debugBuildNames(),
       };
     });
@@ -2477,18 +2477,18 @@ test.describe('job board', () => {
           }
       for (let i = 0; i < 40; i++) g.debugAdvance(0.5);
     });
-    await page.click('#btn-jobs');
+    await page.click('#btn-village');
     // The panel is redrawn on the frame after it opens.
     await page.waitForFunction(
       () =>
-        [...document.querySelectorAll('#jobboard .job-row:not(.muted) .jr-name')].some((n) =>
+        [...document.querySelectorAll('#village .staff-row:not(.muted) .jr-name')].some((n) =>
           n.textContent!.startsWith('Gatherer'),
         ),
       undefined,
       { timeout: 5000 },
     );
     const row = await page.evaluate(() => {
-      const el = [...document.querySelectorAll('#jobboard .job-row:not(.muted)')].find((r) =>
+      const el = [...document.querySelectorAll('#village .staff-row:not(.muted)')].find((r) =>
         r.querySelector('.jr-name')!.textContent!.startsWith('Gatherer'),
       )!;
       return {
@@ -2496,8 +2496,9 @@ test.describe('job board', () => {
         stepper: !!el.querySelector('.stepper'),
       };
     });
-    // Working against what the trade's finished buildings ask for, and nothing else.
-    expect(row.sub).toMatch(/^\d+ working \/ \d+ wanted$/);
+    // Who is at the job over how many the trade's finished buildings ask for — the numbers
+    // alone. Every row on the panel is the same shape, so the reading is learned once.
+    expect(row.sub).toMatch(/^\d+\/\d+$/);
     expect(row.sub).not.toContain('max');
     expect(row.stepper, 'it is still the place you set the number').toBe(true);
   });
@@ -3735,6 +3736,33 @@ test.describe('a village climbs through tiers', () => {
     expect(at('the blacksmith is a building site again'), 'an unfinished trade does not count').toBe('hamlet');
     expect(at('a plague takes it under fifty'), 'and the people have to be there too').toBe('hamlet');
     expect(at('and the woodcutter is rubble'), 'back to where it started').toBe('settlement');
+  });
+
+  test('the progression panel shows the ladder, what each rung asks for and what it opens', async ({ page }) => {
+    await open2d(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false, 0, 4242));
+    await page.click('#btn-progress');
+    const blocks = page.locator('#progress .tier-block');
+    await expect(blocks, 'all four rungs, reached or not').toHaveCount(4);
+
+    const here = page.locator('#progress .tier-block.current');
+    await expect(here, 'exactly one says you are here').toHaveCount(1);
+    await expect(here).toContainText('Settlement');
+    await expect(here, 'and what a settlement opens').toContainText('Woodcutter');
+
+    // The Hamlet block shows its requirements with the village's own numbers against them.
+    const hamlet = blocks.nth(1);
+    await expect(hamlet).toContainText('Hamlet');
+    await expect(hamlet, 'the population it wants, and where the village stands').toContainText('/ 20');
+    await expect(hamlet, 'the trade it wants').toContainText('Woodcutter');
+    await expect(hamlet, 'and what it opens').toContainText('Quarry');
+    await expect(hamlet, 'roadworks too').toContainText('Stone Bridge');
+
+    // Town is reachable and named, but its buildings do not exist yet.
+    const town = blocks.nth(3);
+    await expect(town).toContainText('Town');
+    await expect(town).toContainText('Schooled adults');
+    await expect(town, 'nothing to unlock there yet').toContainText('Still to come');
   });
 
   test('the build menu greys what the village has not earned', async ({ page }) => {
@@ -5894,32 +5922,33 @@ test.describe('stockpile limits', () => {
   test('the panel is rows and nothing else', async ({ page }) => {
     await open2d(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
-    await page.click('#btn-limits');
-    await expect(page.locator('#limits .job-row').first()).toBeVisible();
+    await page.click('#btn-village');
+    await expect(page.locator('#village .limit-row').first()).toBeVisible();
 
     const out = await page.evaluate(() => ({
-      // The rule about what a limit does lives in the Codex; the panel opens on the controls.
-      blurbs: document.querySelectorAll('#limits .summary').length,
-      subs: [...document.querySelectorAll('#limits .jr-sub')].map((e) => e.textContent!.trim()),
+      rows: document.querySelectorAll('#village .limit-row').length,
+      // A stockpile row is a name and its cap. The stock, and how many workplaces the cap had
+      // stood down, were three more numbers answering a question nobody opened the panel to ask.
+      subs: [...document.querySelectorAll('#village .limit-row .jr-sub')].length,
+      caps: [...document.querySelectorAll('#village .limit-row .count')].map((e) => e.textContent!.trim()),
     }));
 
-    expect(out.blurbs, 'no explainer above the rows').toBe(0);
-    // A row says the stock against its cap, and only mentions workplaces when there are some.
-    expect(out.subs.length).toBe(9);
-    expect(out.subs.some((t) => t.includes('produces this yet')), 'no dead-end note').toBe(false);
-    expect(out.subs[0]).toMatch(/^\d+ \/ \d+$/);
+    expect(out.rows, 'a row per limitable resource').toBe(9);
+    expect(out.subs, 'and nothing under the name but the stepper').toBe(0);
+    expect(out.caps.length).toBe(9);
+    expect(out.caps.every((c) => /^(\d+|—)$/.test(c)), 'each row shows its limit, or none').toBe(true);
   });
 
   test('the limits panel sets a cap, and it survives a save and reload', { tag: '@slow' }, async ({ page }) => {
     await open2d(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false, 0));
-    await page.click('#btn-limits');
-    await expect(page.locator('#limits .job-row').first()).toBeVisible();
+    await page.click('#btn-village');
+    await expect(page.locator('#village .limit-row').first()).toBeVisible();
 
-    const row = page.locator('#limits .job-row').filter({ hasText: 'Firewood' });
-    await expect(page.locator('#limits .job-row').filter({ hasText: 'Food (all kinds)' })).toHaveCount(1);
+    const row = page.locator('#village .limit-row').filter({ hasText: 'Firewood' });
+    await expect(page.locator('#village .limit-row').filter({ hasText: 'Food (all kinds)' })).toHaveCount(1);
     // Food is one category, so there is no row per edible thing.
-    await expect(page.locator('#limits .job-row').filter({ hasText: 'Fish' })).toHaveCount(0);
+    await expect(page.locator('#village .limit-row').filter({ hasText: 'Fish' })).toHaveCount(0);
     // A village is founded with caps already set — Easy's firewood ceiling is 1000.
     await expect(row.locator('.count')).toHaveText('1000');
     await row.locator('[data-step="1"]').click();
@@ -5928,7 +5957,7 @@ test.describe('stockpile limits', () => {
     // A cap can be taken off entirely, and the first tap back up lands on the current stock
     // rounded to a step rather than on 0. Medicine is the short way to show it: Easy founds the
     // village with 50 of it against a cap of 100, so it is two taps from off.
-    const med = page.locator('#limits .job-row').filter({ hasText: 'Medicine' });
+    const med = page.locator('#village .limit-row').filter({ hasText: 'Medicine' });
     await expect(med.locator('.count')).toHaveText('100');
     for (let i = 0; i < 2; i++) await med.locator('[data-step="-1"]').click();
     await expect(med.locator('.count')).toHaveText('—');
@@ -6146,13 +6175,13 @@ test.describe('clearing a build site', () => {
       return { placed: true };
     });
     expect(out, 'a gatherer site could be placed').not.toBeNull();
-    await page.click('#btn-jobs');
+    await page.click('#btn-village');
     // The board is per trade now, so what it can say about a site is that one is on its way. How
     // much ground is still to clear is a question about that one plot, and is on its own sheet
     // (see the test above).
     // A site is not a post: until it is finished the trade wants nobody, and the board says so.
-    const row = page.locator('#jobboard .job-row').filter({ hasText: 'Gatherer' });
-    await expect(row).toContainText('0 working / 0 wanted');
+    const row = page.locator('#village .staff-row').filter({ hasText: 'Gatherer' });
+    await expect(row.locator('.jr-sub')).toHaveText('0/0');
   });
 });
 

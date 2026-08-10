@@ -728,6 +728,18 @@ body {
   align-items: center;
   justify-content: space-between;
 }
+/*
+ * Section headings inside a panel. Jobs and stockpile live in one panel now, so the two halves
+ * need something to divide them that is quieter than a second title bar.
+ */
+.panel h4 {
+  margin: 10px 0 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
 .panel .close {
   border: none;
   background: transparent;
@@ -1801,4 +1813,94 @@ body {
 .stat.policy .val {
   font-size: 11px;
   font-weight: 600;
+}
+
+
+/* ---------- Progression panel ---------- */
+/*
+ * The tier ladder: four blocks, each naming what it asks for and what it opens. Tiers the village
+ * has not reached are dimmed rather than hidden — seeing the rung above is the whole point of the
+ * panel, and the requirements show their working so the line holding you back is visible.
+ */
+.tier-block {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  opacity: 0.55;
+}
+.tier-block.reached {
+  opacity: 1;
+}
+.tier-block.current {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.tier-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tier-emoji {
+  font-size: 20px;
+  line-height: 1;
+}
+.tier-name {
+  font-size: 15px;
+  font-weight: 700;
+}
+.tier-state {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.tier-block.current .tier-state {
+  color: var(--accent);
+}
+.tier-reqs {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.tier-req {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.tier-req.met {
+  color: var(--text);
+}
+.tier-req .tick {
+  width: 12px;
+  text-align: center;
+}
+.tier-req.met .tick {
+  color: var(--good, #6fcf7f);
+}
+.tier-req .rq-val {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.tier-unlocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.unlock {
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+.unlock.none {
+  color: var(--muted);
+  font-style: italic;
+  border-style: dashed;
 }

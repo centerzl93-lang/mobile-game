@@ -48,17 +48,19 @@
       <div id="controls">
         <button class="ctrl" id="btn-pause" title="Pause">⏸</button>
         <button class="ctrl" id="btn-speed" title="Speed">1×</button>
-        <button class="ctrl" id="btn-jobs" title="Job board">📋</button>
-        <button class="ctrl" id="btn-limits" title="Stockpile limits">📦</button>
+        <button class="ctrl" id="btn-village" title="Jobs & stockpile">📋</button>
+        <button class="ctrl" id="btn-progress" title="Progression">📈</button>
         <button class="ctrl" id="btn-history" title="Village history">📜</button>
         <button class="ctrl" id="btn-menu" title="Menu">☰</button>
       </div>
 
-      <!-- Job board (slide-in from right) -->
-      <div id="jobboard" class="panel hidden"></div>
+      <!-- Jobs and stockpile, one panel (slide-in from right). They are the two halves of the
+           same decision — how many hands on a trade, and how much of what it makes to keep — and
+           reading one usually meant opening the other. -->
+      <div id="village" class="panel hidden"></div>
 
-      <!-- Stockpile limits (slide-in from right) -->
-      <div id="limits" class="panel hidden"></div>
+      <!-- Progression: the tier ladder, what each rung asks for and what it opens. -->
+      <div id="progress" class="panel hidden"></div>
 
       <!-- Village history / chronicle (slide-in from right) -->
       <div id="history" class="panel hidden"></div>

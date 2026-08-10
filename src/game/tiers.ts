@@ -12,7 +12,7 @@
  * next, not what you have.
  */
 
-import { BuildingType, GameState, isAdult } from '../types';
+import { BUILD_ORDER, BUILDING_DEFS, BuildingType, GameState, isAdult } from '../types';
 import type { PathTier } from './paths';
 
 export type VillageTier = 'settlement' | 'hamlet' | 'village' | 'town';
@@ -149,4 +149,57 @@ export function pathUnlocked(s: GameState, tier: PathTier): boolean {
 export function nextTier(tier: VillageTier): VillageTier | null {
   const i = TIERS.indexOf(tier);
   return i >= 0 && i < TIERS.length - 1 ? TIERS[i + 1] : null;
+}
+
+/**
+ * The buildings a tier opens, in build-menu order.
+ *
+ * Derived from `BUILDING_TIER` rather than listed again, so the panel that tells the player what a
+ * tier is worth cannot drift from the gate that actually enforces it.
+ */
+export function buildingsAt(tier: VillageTier): BuildingType[] {
+  return BUILD_ORDER.filter((t) => BUILDING_TIER[t] === tier);
+}
+
+/** The roadworks a tier opens. */
+export function pathsAt(tier: VillageTier): PathTier[] {
+  return (Object.keys(PATH_TIER_AT) as PathTier[]).filter((t) => PATH_TIER_AT[t] === tier);
+}
+
+/** One line of a tier's requirements, and whether the village meets it. */
+export interface TierCheck {
+  label: string;
+  /** Where the village stands against it — "62 / 50". Empty for a plain yes-or-no. */
+  detail: string;
+  met: boolean;
+}
+
+/**
+ * A tier's requirements, spelled out against the village as it stands.
+ *
+ * The counterpart to `meetsTier`: same rules, but showing its working, so the player can see which
+ * line is the one holding them back rather than being told only that they are not there yet.
+ */
+export function tierChecks(s: GameState, tier: VillageTier): TierCheck[] {
+  const req = TIER_META[tier];
+  const out: TierCheck[] = [];
+  if (req.pop > 0) {
+    out.push({
+      label: 'Villagers',
+      detail: `${s.citizens.length} / ${req.pop}`,
+      met: s.citizens.length >= req.pop,
+    });
+  }
+  if (req.educated !== undefined) {
+    const n = educatedAdults(s);
+    out.push({ label: 'Schooled adults', detail: `${n} / ${req.educated}`, met: n >= req.educated });
+  }
+  for (const type of req.needs) {
+    out.push({
+      label: BUILDING_DEFS[type].name,
+      detail: '',
+      met: s.buildings.some((b) => b.built && !b.razed && b.type === type),
+    });
+  }
+  return out;
 }

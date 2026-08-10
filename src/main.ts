@@ -113,6 +113,7 @@ import {
   LogKind,
   recordEvent,
   basketTrade,
+  merchantBerth,
   dismissMerchant,
   TradeBasket,
   TradeResult,
@@ -1445,8 +1446,14 @@ class Game {
             canTransfer: (b.animals ?? 0) > 0 && targets.length > 0,
             targets,
           };
-        } else if (b.type === 'trading') {
-          controls.tradingPost = { merchantDocked: this.state.merchant.present };
+        } else if (b.type === 'trading' || b.type === 'port') {
+          // Docked *here*, not merely docked: a town with both a post and a harbour has two of
+          // these sheets, and a fleet at the quay is no use to the river wharf.
+          controls.tradingPost = {
+            merchantDocked:
+              this.state.merchant.present && merchantBerth(this.state)?.id === b.id,
+            port: b.type === 'port',
+          };
         }
       }
       // Demolition and upgrades live on the sheet, not only under the Demolish tool: by the time

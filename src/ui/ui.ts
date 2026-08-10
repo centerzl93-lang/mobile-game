@@ -45,6 +45,8 @@ import {
   TRADE_VALUE,
   SEED_COST,
   MERCHANT_CATEGORY_META,
+  PORT_SEASON_MERCHANT,
+  PORT_ARRIVAL_CHANCE,
   ADULT_AGE,
   isInfant,
   isStudent,
@@ -67,6 +69,7 @@ import {
   offerValue,
   purchaseValue,
   requiredValue,
+  merchantBerth,
   avgHealth,
   avgHappiness,
 } from '../game/simulation';
@@ -117,8 +120,11 @@ export interface InspectControls {
   workers?: { value: number; max: number };
   /** A single option toggle (mine output / smith recipe / forester replant / farm crop / ranch animal). */
   toggle?: { group: 'mine' | 'smith' | 'tailor' | 'luxury' | 'forester' | 'crop' | 'animal'; options: { v: string; label: string; on: boolean }[] };
-  /** Trading post: show a button that opens the inventory/trade panel; flags a docked merchant. */
-  tradingPost?: { merchantDocked: boolean };
+  /**
+   * Trading post or Port: show a button that opens the inventory/trade panel, and flag a merchant
+   * tied up *at this berth* — a river trader at the post, a fleet at the harbour.
+   */
+  tradingPost?: { merchantDocked: boolean; port: boolean };
   /**
    * Pull it down, or call it off. `blocked` is the village's last barn, which has to stay
    * standing; `marked` swaps the button for a cancel, right up until the walls actually come down.
@@ -770,8 +776,11 @@ export class UI {
       ctrlHtml += `<div class="inv-ctrl"><div class="jr-toggle">${opts}</div></div>`;
     }
     if (controls?.tradingPost) {
-      const docked = controls.tradingPost.merchantDocked;
-      ctrlHtml += `<div class="inv-ctrl"><button class="tp-open${docked ? ' docked' : ''}" id="insp-tp">${docked ? '🤝 Trade with merchant' : '📦 Manage trading post'}</button></div>`;
+      const { merchantDocked: docked, port } = controls.tradingPost;
+      const label = docked
+        ? port ? '🤝 Trade with the fleet' : '🤝 Trade with merchant'
+        : port ? '⚓ Manage harbour' : '📦 Manage trading post';
+      ctrlHtml += `<div class="inv-ctrl"><button class="tp-open${docked ? ' docked' : ''}" id="insp-tp">${label}</button></div>`;
     }
     if (controls?.ranch) {
       const r = controls.ranch;
@@ -1272,9 +1281,11 @@ export class UI {
     this.tradingPostId = id;
     this.resetBasket();
     this.el.trade.classList.remove('hidden');
+    // The header says post or harbour; `refreshTradingPost` fills it in, since only the state
+    // knows which building this id belongs to.
     this.el.trade.innerHTML = `<div class="tp-card">
         <h2 id="tp-title">🚢 Trading Post <button class="close" id="tp-close">×</button></h2>
-        <div class="summary">Set stock orders and a trader hauls those goods here from your barns. Trades are settled by matching values — offer goods worth at least the price.</div>
+        <div class="summary" id="tp-summary"></div>
         <div class="tp-cols">
           <div class="tp-pane"><h3>Inventory &amp; orders</h3><div class="tp-scroll" id="tp-orders"></div></div>
           <div class="tp-pane" id="tp-merchant"></div>
@@ -1457,6 +1468,11 @@ export class UI {
       m.category,
       m.stock,
       m.seedStock,
+      m.priceMod ?? 1,
+      // Moorage, to the minute. Any finer and the panel would rebuild every frame a boat is in.
+      Math.ceil(m.stayTimer / 60),
+      s.season,
+      merchantBerth(s)?.id ?? null,
       RESOURCE_KINDS.map((k) => [Math.floor(store[k] ?? 0), orders[k] ?? 0]),
       this.basketGive,
       this.basketGet,
@@ -1466,13 +1482,22 @@ export class UI {
     if (sig === this.tradeSig) return;
     this.tradeSig = sig;
 
+    const isPort = post.type === 'port';
+    byId('tp-title').innerHTML = isPort
+      ? `⚓ Harbour <button class="close" id="tp-close">×</button>`
+      : `🚢 Trading Post <button class="close" id="tp-close">×</button>`;
+    byId('tp-close').addEventListener('click', () => this.closeTradingPost());
+    byId('tp-summary').textContent = isPort
+      ? 'Set stock orders and a carrier hauls those goods down to the quay from your barns. The deep-water fleets keep a calendar — one to a season — and settle by matching values, so offer goods worth at least the price.'
+      : 'Set stock orders and a trader hauls those goods here from your barns. Trades are settled by matching values — offer goods worth at least the price.';
+
     // Inventory & orders: every resource with its unit value, current stock, and an order stepper.
     byId('tp-orders').innerHTML = RESOURCE_KINDS.map((k) => {
       const have = Math.floor(store[k] ?? 0);
       return `<div class="tp-row">
           <span class="tp-good">${RESOURCE_ICON[k]} ${k}</span>
           <span class="tp-val" title="Trade value per unit">◈${TRADE_VALUE[k]}</span>
-          <span class="tp-have" title="In the post now">${have}</span>
+          <span class="tp-have" title="${isPort ? 'On the quay now' : 'In the post now'}">${have}</span>
           ${this.qtyControl('ord', k, orders[k] ?? 0, -1)}
         </div>`;
     }).join('');
@@ -1484,23 +1509,64 @@ export class UI {
       (k, v) => this.cb.onSetTradeOrderTo(post.id, k as ResourceKind, v),
     );
 
-    this.renderMerchantPane(s, post.store ?? {});
+    this.renderMerchantPane(s, post);
+  }
+
+  /**
+   * The tide table a harbour is worth building for.
+   *
+   * A Port's whole point is that its trade is *scheduled*: the grain ships come in spring, the
+   * medicine ship in winter. That is only worth anything if the player can read the calendar
+   * before the season turns, so an empty quay shows the year ahead rather than the shrug a
+   * trading post gives — which fleet each season brings, and which one is due now.
+   */
+  private portCalendar(s: GameState): string {
+    const now = SEASONS[s.season];
+    const rows = SEASONS.map((season) => {
+      const meta = MERCHANT_CATEGORY_META[PORT_SEASON_MERCHANT[season]];
+      return `<div class="tp-row fleet${season === now ? ' now' : ''}">
+          <span class="tp-good">${meta.emoji} ${meta.label}</span>
+          <span class="tp-season">${season}${season === now ? ' · now' : ''}</span>
+        </div>`;
+    }).join('');
+    return `<div class="tp-sub">The year's fleets</div>${rows}
+      <div class="tp-wait">Each sails ${Math.round(PORT_ARRIVAL_CHANCE * 100)} times in a hundred — often enough to plan a year around, not often enough to bet the winter on.</div>`;
   }
 
   /** The right-hand pane: the docked merchant's goods and the value-matching basket, or a wait note. */
-  private renderMerchantPane(s: GameState, store: Partial<Record<ResourceKind, number>>): void {
+  private renderMerchantPane(s: GameState, post: Building): void {
     const pane = byId('tp-merchant');
+    const store = post.store ?? {};
     const m = s.merchant;
-    if (!m.present || !m.category) {
-      pane.innerHTML = `<h3>Merchant</h3><div class="tp-wait">No merchant docked. One may sail in at any time — the post does not need to be staffed for a boat to call.</div>`;
+    const isPort = post.type === 'port';
+    // A boat is only tradeable through the building it actually tied up at. A town with both a
+    // post and a harbour has two of these sheets, and only one of them has a merchant in it.
+    const here = m.present && m.category !== null && merchantBerth(s)?.id === post.id;
+    if (!here || !m.category) {
+      const wait = isPort
+        ? `<div class="tp-wait">The quay is empty. A fleet does not need the harbour staffed to call.</div>${this.portCalendar(s)}`
+        : `<div class="tp-wait">No merchant docked. One may sail in at any time — the post does not need to be staffed for a boat to call.</div>`;
+      pane.innerHTML = `<h3>${isPort ? 'Harbour' : 'Merchant'}</h3>${wait}`;
       return;
     }
     const meta = MERCHANT_CATEGORY_META[m.category];
     const basket = this.currentBasket();
+    // The mod is the merchant's own prices, and it is applied to what they *ask*, so the panel has
+    // to charge it too. Quoting the book value here and the real one at the till was a sheet that
+    // said a trade was covered and a Trade button that refused it.
+    const priceMod = m.priceMod ?? 1;
     const offer = offerValue(basket);
-    const need = requiredValue(basket);
+    const need = requiredValue(basket, priceMod);
     const buy = purchaseValue(basket);
     const ok = buy > 0 && offer + 1e-6 >= need;
+    // How they bargain, and how long they will wait. Both only mean something for a fleet keeping
+    // a calendar, but a river trader keeps prices and moorage too, so both sheets get them.
+    const mins = Math.ceil(m.stayTimer / 60);
+    const price =
+      priceMod > 1 ? `<span class="tp-price dear">Hard bargainers · +${Math.round((priceMod - 1) * 100)}%</span>`
+      : priceMod < 1 ? `<span class="tp-price keen">Keen to deal · −${Math.round((1 - priceMod) * 100)}%</span>`
+      : `<span class="tp-price">Trading at book value</span>`;
+    const berthed = `<div class="tp-berth">${price}<span class="tp-stay">⏳ Sails in about ${mins} min${mins === 1 ? '' : 's'}</span></div>`;
 
     // Buy side: merchant resource stock, then seed unlocks.
     const buyRows = (Object.keys(m.stock) as ResourceKind[])
@@ -1540,11 +1606,11 @@ export class UI {
               </div>`;
           })
           .join('')
-      : `<div class="tp-wait">Nothing in the post yet — set stock orders on the left so your trader brings goods to sell.</div>`;
+      : `<div class="tp-wait">Nothing ${isPort ? 'on the quay' : 'in the post'} yet — set stock orders on the left so your ${isPort ? 'carriers bring' : 'trader brings'} goods to sell.</div>`;
 
-    pane.innerHTML = `<h3>${meta.emoji} ${meta.label}</h3>
+    pane.innerHTML = `<h3>${meta.emoji} ${meta.label}</h3>${berthed}
       <div class="tp-sub">You buy</div>${buyRows || '<div class="tp-wait">Sold out.</div>'}${seedRows}
-      <div class="tp-sub">You give <small>(from post stock)</small></div>${giveRows}
+      <div class="tp-sub">You give <small>(from ${isPort ? 'harbour' : 'post'} stock)</small></div>${giveRows}
       <div class="tp-totals ${ok ? 'ok' : 'short'}">Offer ◈${offer.toFixed(0)} / need ◈${need.toFixed(0)} ${buy > 0 ? (ok ? '✓' : '✗') : ''}</div>
       <div class="tp-actions">
         <button class="do-trade" id="tp-do"${ok ? '' : ' disabled'}>Trade</button>

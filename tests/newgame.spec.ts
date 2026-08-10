@@ -4088,6 +4088,92 @@ test.describe('sand, glass, jewellery and the harbour', () => {
     expect(out.mods).toEqual([0.9, 1, 1.1]);
   });
 
+  /**
+   * A synthetic harbour, dropped straight into the building list.
+   *
+   * These two are about the *sheet*, not about finding deep water, and hunting a 7x5 quay across
+   * eight generated worlds to open a panel is a slow way to fail for reasons that have nothing to
+   * do with what is being tested.
+   */
+  const fakePort = `(merchant) => {
+    const g = window.__village;
+    g.startNewGame('small', 'easy', false, 0, 4242);
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    const port = { id: s.nextId++, type: 'port', x: barn.x, y: barn.y, built: true, progress: 99,
+      workers: [], desiredWorkers: 0, growth: 0, store: { wood: 100 }, orders: {} };
+    s.buildings.push(port);
+    Object.assign(s.merchant, merchant);
+    g.debugOpenTradingPost(port.id);
+    return port.id;
+  }`;
+
+  test('an empty quay shows the year of fleets, with the season that is due now', async ({ page }) => {
+    await open2d(page);
+    const season = await page.evaluate(`(${fakePort})({ phase: 'away', present: false, category: null, stock: {}, seedStock: [], boat: null }) && window.__village.debugSeasonName()`);
+    await expect(page.locator('#tp-title')).toContainText('Harbour');
+    // All four, in calendar order, with exactly one marked as the one due.
+    await expect(page.locator('#trade-overlay .tp-row.fleet')).toHaveCount(4);
+    await expect(page.locator('#trade-overlay .tp-row.fleet.now')).toHaveCount(1);
+    await expect(page.locator('#trade-overlay .tp-row.fleet.now')).toContainText(String(season));
+    await expect(page.locator('#trade-overlay .tp-row.fleet').first()).toContainText('Northern Grain Fleet');
+    await expect(page.locator('#trade-overlay .tp-row.fleet').last()).toContainText('Winter Supply Fleet');
+  });
+
+  test('the price a fleet quotes on the sheet is the price the trade actually charges', async ({ page }) => {
+    await open2d(page);
+    // Gold is 10 and wood is 1, so an ingot is 10 wood at book value and 11 from a fleet keeping
+    // its prices a tenth above it. Chosen because both come out whole: a rounded quote could hide
+    // the very mismatch this is here to catch.
+    await page.evaluate(`(${fakePort})({ phase: 'docked', present: true, stayTimer: 600, priceMod: 1.1, category: 'portluxury', stock: { gold: 10 }, seedStock: [], boat: { x: 0, y: 0 } })`);
+    await expect(page.locator('#tp-merchant h3')).toContainText('Eastern Luxury Fleet');
+    await expect(page.locator('#trade-overlay .tp-price')).toContainText('+10%');
+    await expect(page.locator('#trade-overlay .tp-stay')).toContainText('Sails in');
+
+    await page.click('#trade-overlay [data-buy="1"][data-k="gold"]');
+    // Book value would read 10 here. The sheet has to quote what the fleet will take.
+    await expect(page.locator('#trade-overlay .tp-totals')).toContainText('need ◈11');
+    for (let i = 0; i < 10; i++) await page.click('#trade-overlay [data-give="1"][data-k="wood"]');
+    await expect(page.locator('#trade-overlay .tp-totals')).toContainText('Offer ◈10');
+    await expect(page.locator('#trade-overlay .tp-totals')).toHaveClass(/short/);
+    await expect(page.locator('#tp-do')).toBeDisabled();
+
+    // And the till agrees with the sheet, in both directions — which is the whole point.
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const short = g.trade({ give: { wood: 10 }, get: { gold: 1 }, buySeeds: [] });
+      const paid = g.trade({ give: { wood: 11 }, get: { gold: 1 }, buySeeds: [] });
+      return { short: short.ok, paid: paid.ok };
+    });
+    expect(out.short, 'book value is not enough for a fleet charging a tenth over').toBe(false);
+    expect(out.paid, 'the price the sheet quoted is the price that settles').toBe(true);
+  });
+
+  test('the harbour hands cart ordered goods down to the quay', { tag: '@slow' }, async ({ page }) => {
+    test.setTimeout(180_000);
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${town}
+        const port = put('port');
+        if (!port) return null;
+        // A harbour runs the same errands a trading post does — without that its five hands stand
+        // at a wharf doing nothing, and a fleet ties up to an empty quay with nothing to buy.
+        port.orders = { wood: 60 };
+        port.desiredWorkers = g.debugJobCount('port');
+        barn.store.grain = 3000;
+        barn.store.wood = 400;
+        const before = port.store.wood ?? 0;
+        for (let i = 0; i < 4000; i++) g.debugAdvance(0.5);
+        return { before, after: port.store.wood ?? 0, staffed: port.workers.length };
+      `) as () => any,
+    );
+    expect(out, 'the harbour went up').not.toBeNull();
+    expect(out.staffed, 'somebody works the quay').toBeGreaterThan(0);
+    expect(out.after, 'the ordered wood reached the quay').toBeGreaterThan(out.before);
+    expect(out.after, 'and stops at the order, rather than emptying the barn').toBeLessThanOrEqual(60);
+  });
+
   test('jewellery is the most valuable thing a town can make, and survives a save', { tag: '@slow' }, async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(
@@ -4105,15 +4191,23 @@ test.describe('sand, glass, jewellery and the harbour', () => {
         barn.store.jewelry = 12;
         barn.store.sand = 34;
         s.portTradeCount = 3;
+        // A harbour and the standing orders the player set on it. The orders are the only part of
+        // a Port that is not derivable from its type and position, so they are the part a reload
+        // can quietly lose.
+        s.buildings.push({ id: s.nextId++, type: 'port', x: barn.x, y: barn.y, built: true,
+          progress: 99, workers: [], desiredWorkers: 0, growth: 0,
+          store: { glass: 7 }, orders: { glass: 40, jewelry: 5 } });
         g.debugSave();
         g.debugLoad();
         const after = g.state;
         const b2 = after.buildings.find((b) => b.type === 'barn');
+        const p2 = after.buildings.find((b) => b.type === 'port');
         return {
           values,
           jewelryAfter: b2.store.jewelry,
           sandAfter: b2.store.sand,
           tradesAfter: after.portTradeCount,
+          portAfter: p2 ? { store: p2.store, orders: p2.orders } : null,
         };
       `) as () => any,
     );
@@ -4122,6 +4216,9 @@ test.describe('sand, glass, jewellery and the harbour', () => {
     expect(out.jewelryAfter, 'the jewellery is still in the barn after a reload').toBe(12);
     expect(out.sandAfter).toBe(34);
     expect(out.tradesAfter, 'and the port tally with it').toBe(3);
+    expect(out.portAfter, 'the harbour is still standing after a reload').not.toBeNull();
+    expect(out.portAfter.store).toEqual({ glass: 7 });
+    expect(out.portAfter.orders, 'and its standing orders came back with it').toEqual({ glass: 40, jewelry: 5 });
   });
 });
 

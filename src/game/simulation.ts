@@ -1191,7 +1191,11 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workFactor
     runVendor(s, c, b, dt);
     return;
   }
-  if (b.type === 'trading') {
+  // The harbour is a trading post with deeper water: its hands run the same errands, carting
+  // ordered goods down from the barns so there is something on the quay to sell when a fleet ties
+  // up. Without this a Port's five workers would stand at a wharf with nothing to do, and the
+  // panel's offer to haul goods down would be a promise nobody kept.
+  if (b.type === 'trading' || b.type === 'port') {
     runTrader(s, c, b, dt);
     return;
   }
@@ -2635,6 +2639,19 @@ export function tradingPost(s: GameState): Building | null {
   return s.buildings.find((b) => b.built && b.type === 'trading') ?? null;
 }
 
+/**
+ * Where the merchant currently on the map is tied up, or null when nobody is.
+ *
+ * A river trader always comes to the trading post; a Port fleet comes to the Port, or to the post
+ * if the harbour has gone. Both the trade itself and the sheet the player trades through have to
+ * agree on which building that is, or a town with both would offer a fleet's goods at a wharf the
+ * fleet never called at.
+ */
+export function merchantBerth(s: GameState): Building | null {
+  if (s.merchant.category === null) return null;
+  return (isPortMerchant(s.merchant.category) ? portOrPost(s) : tradingPost(s)) ?? null;
+}
+
 const BOAT_SPEED = 5; // tiles per second the merchant boat travels along the river
 
 /**
@@ -2896,7 +2913,7 @@ export function basketTrade(s: GameState, basket: TradeBasket): TradeResult {
   const m = s.merchant;
   if (!m.present) return { ok: false, reason: 'No merchant docked' };
   // A Port fleet unloads at the Port; a river trader at the trading post.
-  const post = isPortMerchant(m.category) ? portOrPost(s) : tradingPost(s);
+  const post = merchantBerth(s);
   if (!post) return { ok: false, reason: 'No trading post' };
   post.store = post.store ?? {};
 

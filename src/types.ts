@@ -1340,7 +1340,7 @@ export const CODEX_NOTES: { icon: string; title: string; body: string }[] = [
 
 /** Player-facing name and icon for a limit row. Food is a category, so it has its own. */
 export const LIMIT_META: Record<LimitKey, { label: string; icon: string }> = {
-  food: { label: 'Food (all kinds)', icon: '🍽️' },
+  food: { label: 'Food', icon: '🍽️' },
 } as Record<LimitKey, { label: string; icon: string }>;
 for (const k of RESOURCE_KINDS) {
   LIMIT_META[k] = { label: k[0].toUpperCase() + k.slice(1), icon: RESOURCE_ICON[k] };

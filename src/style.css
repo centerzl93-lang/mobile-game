@@ -1904,3 +1904,108 @@ body {
   font-style: italic;
   border-style: dashed;
 }
+
+
+/* ---------- Village panel: tabbed jobs and limits ---------- */
+/*
+ * Wider than the other panels, because the jobs half runs two columns. Twenty trades in one
+ * column is a scroll that hides half the village's work below the fold; side by side they are all
+ * on screen at once, which is the whole point of the list.
+ */
+#village.panel {
+  width: min(760px, 96vw);
+}
+.tabs {
+  display: flex;
+  gap: 6px;
+}
+.tab {
+  flex: 1 1 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.tab.on {
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+/*
+ * As many columns as the panel can give a legible row. A phone in landscape is wide and *short*,
+ * which is the shape that hides a long list: the same twenty trades that need seven scrolls in one
+ * column sit in three or four ranks across.
+ */
+.job-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 5px;
+}
+/*
+ * A job in the grid is one line: trade, its staffing, and the stepper. Stacking the numbers under
+ * the name doubled every row's height, which is what pushed half the trade list off the bottom —
+ * and the grid exists precisely so it is all on screen. The name is the part that gives when a
+ * column is narrow; the numbers never truncate.
+ */
+.job-grid .job-row {
+  min-width: 0;
+  padding: 3px 6px;
+  gap: 6px;
+}
+.job-grid .jr-emoji {
+  font-size: 16px;
+}
+.job-grid .jr-main {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.job-grid .jr-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.job-grid .jr-sub {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/*
+ * A tighter stepper in the grid, so the name gets the room instead. Still 28px of tap target —
+ * the buttons are what the panel is for, and shrinking them past this to win a few more letters
+ * would be the wrong trade.
+ */
+.job-grid .stepper {
+  gap: 3px;
+}
+.job-grid .stepper button {
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+}
+.job-grid .stepper .count {
+  min-width: 22px;
+  font-size: 12px;
+}
+.job-grid .jr-sub {
+  font-size: 10px;
+}
+
+/* One column on a screen too narrow to split — two columns of 120px is worse than a scroll. */
+@media (max-width: 520px) {
+  .job-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel h3 .hd-note {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-left: 8px;
+}

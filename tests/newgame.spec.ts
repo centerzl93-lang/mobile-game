@@ -1071,7 +1071,9 @@ test.describe('clearing land before building', () => {
     const out = await page.evaluate((findSpotSrc) => {
       const g = (window as any).__village;
       const HARVEST_WOOD = 1;
-      g.startNewGame('small', 'easy', true); // full wood stockpile in the barn
+      // Seeded: the test needs a clear spot near the founding site for a second barn, and on a
+      // cramped map the search comes back with nowhere to plant its trees.
+      g.startNewGame('small', 'easy', true, 0, 4242); // full wood stockpile in the barn
       const s = g.state;
       const [px, py] = eval(findSpotSrc)(g);
       const { w: fw, h: fh } = g.debugFootprint('barn');
@@ -5919,10 +5921,32 @@ test.describe('stockpile limits', () => {
     expect(out.workersKept).toBe(true);
   });
 
+  test('the panel has two tabs, and only one is showing at a time', async ({ page }) => {
+    await open2d(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false, 0, 4242));
+    await page.click('#btn-village');
+
+    // Opens on Jobs: every trade at once, in two columns, and no limits underneath them.
+    await expect(page.locator('#village .tab.on')).toHaveText('Jobs');
+    await expect(page.locator('#village .job-grid')).toBeVisible();
+    await expect(page.locator('#village .staff-row').first()).toBeVisible();
+    await expect(page.locator('#village .limit-row'), 'limits are on the other tab').toHaveCount(0);
+
+    await page.click('#village .tab[data-tab="limits"]');
+    await expect(page.locator('#village .tab.on')).toHaveText('Limits');
+    await expect(page.locator('#village .limit-row').first()).toBeVisible();
+    await expect(page.locator('#village .staff-row'), 'and the jobs are on theirs').toHaveCount(0);
+
+    // Food is one category and says so in one word.
+    await expect(page.locator('#village .limit-row').filter({ hasText: 'Food' })).toHaveCount(1);
+    await expect(page.locator('#village')).not.toContainText('all kinds');
+  });
+
   test('the panel is rows and nothing else', async ({ page }) => {
     await open2d(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
     await page.click('#btn-village');
+    await page.click('#village .tab[data-tab="limits"]'); // the panel opens on Jobs
     await expect(page.locator('#village .limit-row').first()).toBeVisible();
 
     const out = await page.evaluate(() => ({
@@ -5943,10 +5967,11 @@ test.describe('stockpile limits', () => {
     await open2d(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false, 0));
     await page.click('#btn-village');
+    await page.click('#village .tab[data-tab="limits"]'); // the panel opens on Jobs
     await expect(page.locator('#village .limit-row').first()).toBeVisible();
 
     const row = page.locator('#village .limit-row').filter({ hasText: 'Firewood' });
-    await expect(page.locator('#village .limit-row').filter({ hasText: 'Food (all kinds)' })).toHaveCount(1);
+    await expect(page.locator('#village .limit-row').filter({ hasText: 'Food' })).toHaveCount(1);
     // Food is one category, so there is no row per edible thing.
     await expect(page.locator('#village .limit-row').filter({ hasText: 'Fish' })).toHaveCount(0);
     // A village is founded with caps already set — Easy's firewood ceiling is 1000.

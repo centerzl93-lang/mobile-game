@@ -256,6 +256,8 @@ export class UI {
   private tier: VillageTier = 'settlement';
   private villagePanelOpen = false;
   private villageSig = '';
+  /** Which half of the village panel is showing. Remembered across openings. */
+  private villageTab: 'jobs' | 'limits' = 'jobs';
   private progressOpen = false;
   private progressSig = '';
   private historyOpen = false;
@@ -1063,6 +1065,7 @@ export class UI {
     // Free laborers are unemployed *adults* only — children have no job but can't be assigned.
     const laborers = s.citizens.reduce((n, c) => n + (isAdult(c) && c.jobId === null && !c.builder ? 1 : 0), 0);
     const sig =
+      this.villageTab +
       trades
         .map((t) => `${t}:${tradeWorking(s, t)}:${tradeStaff(s, t)}:${tradeCapacity(s, t)}:${tradePosts(s, t).length}`)
         .join('|') +
@@ -1074,52 +1077,77 @@ export class UI {
     const p = this.el.village;
     p.innerHTML = '';
     const head = document.createElement('h3');
-    head.innerHTML = `Jobs &amp; Stockpile <button class="close" id="vp-close">×</button>`;
+    // Free hands ride in the title, because that is the number every job row is spent against and
+    // a line of its own was a line the trade list could not have on a phone in landscape.
+    head.innerHTML =
+      `<span>Village <span class="hd-note">👷 ${laborers} free</span></span>` +
+      `<button class="close" id="vp-close">×</button>`;
     p.appendChild(head);
     head.querySelector('#vp-close')!.addEventListener('click', () => this.toggleVillagePanel());
 
-    // Free hands, because that is the number every job row below is spent against.
-    const sum = document.createElement('div');
-    sum.className = 'summary';
-    sum.textContent = `👷 Laborers: ${laborers}`;
-    p.appendChild(sum);
+    // Two tabs rather than two stacked sections. Twenty trades and nine limits in one column is a
+    // long scroll to reach either, and they are read at different moments — you come here to staff
+    // a trade *or* to move a cap, rarely both in the same breath.
+    const tabs = document.createElement('div');
+    tabs.className = 'tabs';
+    for (const [key, label] of [['jobs', 'Jobs'], ['limits', 'Limits']] as const) {
+      const b = document.createElement('button');
+      b.className = 'tab' + (this.villageTab === key ? ' on' : '');
+      b.textContent = label;
+      b.dataset.tab = key;
+      b.addEventListener('click', () => {
+        this.villageTab = key;
+        this.villageSig = '';
+        this.refreshVillagePanel(s);
+      });
+      tabs.appendChild(b);
+    }
+    p.appendChild(tabs);
 
-    const jobsHead = document.createElement('h4');
-    jobsHead.textContent = 'Jobs';
-    p.appendChild(jobsHead);
+    if (this.villageTab === 'jobs') {
+      // Two columns, so the whole trade list is on screen at once instead of a scroll that hides
+      // half the village's work below the fold.
+      const grid = document.createElement('div');
+      grid.className = 'job-grid';
+      p.appendChild(grid);
 
-    // Builders — a global job (only these villagers construct work buildings). Always shown so the
-    // player can staff construction even before any workplace exists.
-    p.appendChild(
-      this.staffRow('🔨', 'Builders', buildersWorking, s.desiredBuilders, s.desiredBuilders, false, (d) =>
-        this.cb.onSetBuilders(d),
-      ),
-    );
-
-    // One row per profession, listed whether the village has one of those buildings or not.
-    //
-    // A village thinks in trades — "I want four foresters" — not in which hut wants its second
-    // pair of hands, and a trade with nowhere to work yet is still something you can decide about:
-    // set two fishermen before the hut is up and the hut opens staffed. What a single building
-    // decides for itself — which seam a mine digs, what a field sows — is on its own panel.
-    for (const type of trades) {
-      const def = BUILDING_DEFS[type];
-      p.appendChild(
-        this.staffRow(
-          def.emoji,
-          def.name,
-          tradeWorking(s, type),
-          tradeCapacity(s, type),
-          tradeStaff(s, type),
-          tradePosts(s, type).length === 0,
-          (d) => this.cb.onSetTradeWorkers(type, d),
+      // Builders — a global job (only these villagers construct work buildings). Always shown so
+      // the player can staff construction even before any workplace exists.
+      grid.appendChild(
+        this.staffRow('🔨', 'Builders', buildersWorking, s.desiredBuilders, s.desiredBuilders, false, (d) =>
+          this.cb.onSetBuilders(d),
         ),
       );
+
+      // One row per profession, listed whether the village has one of those buildings or not.
+      //
+      // A village thinks in trades — "I want four foresters" — not in which hut wants its second
+      // pair of hands, and a trade with nowhere to work yet is still something you can decide
+      // about: set two fishermen before the hut is up and the hut opens staffed. What a single
+      // building decides for itself — which seam a mine digs, what a field sows — is on its own
+      // panel.
+      for (const type of trades) {
+        const def = BUILDING_DEFS[type];
+        grid.appendChild(
+          this.staffRow(
+            def.emoji,
+            def.name,
+            tradeWorking(s, type),
+            tradeCapacity(s, type),
+            tradeStaff(s, type),
+            tradePosts(s, type).length === 0,
+            (d) => this.cb.onSetTradeWorkers(type, d),
+          ),
+        );
+      }
+      return;
     }
 
-    const limHead = document.createElement('h4');
-    limHead.textContent = 'Stockpile';
-    p.appendChild(limHead);
+    // The same grid as the jobs: nine caps in one column scrolled in a panel this wide, which is
+    // the problem the columns were for.
+    const limGrid = document.createElement('div');
+    limGrid.className = 'job-grid';
+    p.appendChild(limGrid);
     // Only the resources a limit can act on (`LIMITABLE`) — a cap on something no workplace
     // produces would be a control that does nothing.
     for (const k of LIMITABLE) {
@@ -1135,7 +1163,7 @@ export class UI {
         `<span class="count">${cap > 0 ? cap : '—'}</span><button data-step="1">+</button></div>`;
       row.querySelector('[data-step="-1"]')!.addEventListener('click', () => this.cb.onSetLimit(k, -1));
       row.querySelector('[data-step="1"]')!.addEventListener('click', () => this.cb.onSetLimit(k, 1));
-      p.appendChild(row);
+      limGrid.appendChild(row);
     }
   }
 
@@ -1157,6 +1185,8 @@ export class UI {
   ): HTMLElement {
     const row = document.createElement('div');
     row.className = 'job-row staff-row' + (muted ? ' muted' : '');
+    // The name is what gives when a column is narrow, so keep the whole of it within reach.
+    row.title = name;
     row.innerHTML =
       `<span class="jr-emoji">${emoji}</span>` +
       `<div class="jr-main"><div class="jr-name">${name}</div>` +

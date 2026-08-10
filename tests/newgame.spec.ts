@@ -1289,8 +1289,11 @@ test.describe('top-line HUD', () => {
   test('carries one chip per headline resource and nothing else', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
+    // Only the chips actually on screen. The row also carries the luxury goods' chips, but those
+    // are built hidden and shown only while the village holds the good (see `HUD_LUXURY`), and a
+    // founding camp holds none — so what a new game shows is exactly the headline set.
     const icons = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('#stat-resources .stat .ico')).map((e) => e.textContent),
+      Array.from(document.querySelectorAll('#stat-resources .stat:not(.hidden) .ico')).map((e) => e.textContent),
     );
     // The 🍽️ food aggregate, then the eight headline resources in display order. Leather and the
     // livestock herds are deliberately absent — they crowded the line and live in the barn sheet.

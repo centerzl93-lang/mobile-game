@@ -746,7 +746,8 @@ test.describe('jobs & builders', () => {
     });
     expect(text).toContain('Gatherer');
     expect(text).toContain('Builders');
-    expect(text).toContain('Laborers');
+    // Free hands live in the title bar now, not on a line of their own — the trade list needed it.
+    expect(text).toMatch(/👷\s*\d+ free/);
   });
 
   test('with zero builders a site never builds; assigning builders constructs it', { tag: '@slow' }, async ({ page }) => {
@@ -879,9 +880,7 @@ test.describe('available workers count', () => {
       const ADULT_AGE = 12;
       const s = g.state;
       g.ui.refreshPanels(s); // populate the just-opened board deterministically
-      const line = [...document.querySelectorAll('#village .summary')]
-        .map((e) => e.textContent ?? '')
-        .find((t) => t.includes('Laborers')) ?? '';
+      const line = document.querySelector('#village .hd-note')?.textContent ?? '';
       return {
         shown: Number(line.replace(/[^0-9]/g, '')),
         adults: s.citizens.filter((c: any) => c.age >= ADULT_AGE).length,

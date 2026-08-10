@@ -2429,7 +2429,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     desc: 'A warm, sturdy home for up to 10. Masonry holds its heat, so a household here burns 40% less firewood through the winter, and it is half as likely to catch fire. A wooden house can be upgraded to one in place.',
   },
   shelter: {
-    type: 'shelter', name: 'Shelter', emoji: '🛏️', category: 'housing', w: 3, h: 4,
+    type: 'shelter', name: 'Shelter', emoji: '🛏️', category: 'housing', w: 3, h: 5,
     cost: { wood: 100, stone: 60 }, jobs: 0, work: 160,
     desc: 'A boarding house: three storeys of bunks for up to 18 villagers who have nowhere else. Nobody courts or raises a family here, and living in one wears on a villager — it is the roof you put over newcomers while their houses go up.',
   },

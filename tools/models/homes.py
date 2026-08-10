@@ -68,8 +68,10 @@ def shelter():
 
     # Narrow for its plot on purpose: the external gallery hangs off the west wall and counts
     # toward the model's width, so the block itself has to give that room back or the finished
-    # building overhangs the tile next door.
-    hw, hd = 1.88, 3.04
+    # building overhangs the tile next door. On a 3 x 5 plot that width buys a genuinely long
+    # block, which is what the building wanted — three storeys over a short footprint read as a
+    # tower, and a lodging house should read as a range.
+    hw, hd = 1.88, 4.10
     base_h = 0.24
     storey = 1.02
     wall_h = storey * 3
@@ -105,9 +107,9 @@ def shelter():
     parts += posts("Porch", [(-0.34, front + 0.30), (0.34, front + 0.30)], 0.86, 0.08, base_h, m["timber"])
     parts.append(box("PorchRoof", (1.00, 0.44, 0.08), (0, front + 0.22, base_h + 0.90), m["slate"]))
 
-    # Dormitory windows: small, identical, and a lot of them. Three ranks down each long side and
-    # a pair in each gable — the repetition is the whole read.
-    for dy in (-1.02, -0.34, 0.34, 1.02):
+    # Dormitory windows: small, identical, and a lot of them. Five ranks down each long side and
+    # a pair in each gable — the repetition is the whole read, and the longer range takes more.
+    for dy in (-1.56, -0.78, 0.0, 0.78, 1.56):
         for sx in (-1, 1):
             for k in (0, 1, 2):
                 parts += window(
@@ -122,28 +124,21 @@ def shelter():
     # detail that makes the building read as lodgings rather than as a large house.
     gx = -(hw / 2)
     gallery_z = base_h + storey
-    parts += deck("Gallery", 0.52, 2.30, 0.08, (gx - 0.30, oy - 0.10, gallery_z), m["timber"], planks=4)
-    parts += posts(
-        "Gallery",
-        [(gx - 0.52, oy - 1.00), (gx - 0.52, oy + 0.10), (gx - 0.52, oy + 1.00)],
-        gallery_z - base_h, 0.09, base_h, m["timber"],
-    )
-    parts.append(box("GalleryRail", (0.06, 2.30, 0.06), (gx - 0.54, oy - 0.10, gallery_z + 0.42), m["timber"]))
-    parts += posts(
-        "Rail",
-        [(gx - 0.54, oy - 1.00), (gx - 0.54, oy + 0.10), (gx - 0.54, oy + 1.00)],
-        0.44, 0.05, gallery_z, m["timber"],
-    )
-    for i in range(6):
+    parts += deck("Gallery", 0.52, 3.30, 0.08, (gx - 0.30, oy - 0.20, gallery_z), m["timber"], planks=6)
+    bays = [oy - 1.75, oy - 0.85, oy + 0.05, oy + 0.95]
+    parts += posts("Gallery", [(gx - 0.52, y) for y in bays], gallery_z - base_h, 0.09, base_h, m["timber"])
+    parts.append(box("GalleryRail", (0.06, 3.30, 0.06), (gx - 0.54, oy - 0.20, gallery_z + 0.42), m["timber"]))
+    parts += posts("Rail", [(gx - 0.54, y) for y in bays], 0.44, 0.05, gallery_z, m["timber"])
+    for i in range(7):
         # Steps climbing from the ground at the door end up to the gallery.
-        z = base_h + (gallery_z - base_h) * (i + 0.5) / 6
-        y = oy + 1.16 - 0.16 * i
-        parts.append(box("Step", (0.50, 0.16, 0.06), (gx - 0.30, y, z), m["timber"]))
+        z = base_h + (gallery_z - base_h) * (i + 0.5) / 7
+        y = oy + 1.70 - 0.17 * i
+        parts.append(box("Step", (0.50, 0.17, 0.06), (gx - 0.30, y, z), m["timber"]))
     parts += door("Gallery", 0, gallery_z, m, width=0.40, height=0.70, x=gx + 0.02, depth=0.10)
 
     # Two flues: eighteen people is a lot of hearth.
     for sy in (-1, 1):
-        parts += chimney("Flue", 0.52, oy + sy * 1.06, base_h + wall_h, 0.72, m, width=0.30)
+        parts += chimney("Flue", 0.52, oy + sy * 1.58, base_h + wall_h, 0.72, m, width=0.30)
 
     for ob in parts:
         bevel(ob, 0.012)

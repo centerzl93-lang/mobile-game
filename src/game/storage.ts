@@ -16,7 +16,7 @@ import {
   HOUSE_CLOTHING_PER_RESIDENT,
   HOUSE_MEDICINE_PER_RESIDENT,
   CHILD_FOOD_FACTOR,
-  STONE_HOUSE_HEAT_FACTOR,
+  heatFactorOf,
   CLOTHED_HEAT_FACTOR,
   HEAT_PER_CITIZEN_WINTER,
   FIREWOOD_HEAT,
@@ -273,7 +273,7 @@ export function residentsOf(s: GameState, house: Building): Citizen[] {
  * barely moves in summer, and what stone walls and warm coats are saving them.
  */
 export function houseFuelPerSeason(s: GameState, house: Building): number {
-  const walls = house.type === 'stonehouse' ? STONE_HOUSE_HEAT_FACTOR : 1;
+  const walls = heatFactorOf(house.type);
   const burn = SEASON_BURN[SEASONS[s.season]];
   let units = 0;
   for (const c of residentsOf(s, house)) {
@@ -297,7 +297,7 @@ export function larderTarget(s: GameState, house: Building, kind: ResourceKind):
   if (residents === 0) return 0;
   if (kind === 'firewood') {
     // Stone houses hold their heat, so their residents keep less fuel by the same factor they burn.
-    const factor = house.type === 'stonehouse' ? STONE_HOUSE_HEAT_FACTOR : 1;
+    const factor = heatFactorOf(house.type);
     return residents * HOUSE_FIREWOOD_PER_RESIDENT * factor;
   }
   if (kind === 'clothing') return residents * HOUSE_CLOTHING_PER_RESIDENT;

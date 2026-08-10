@@ -272,6 +272,12 @@ export type BuildingType =
   | 'house'
   | 'stonehouse'
   | 'shelter'
+  | 'grandhouse'
+  | 'university'
+  | 'port'
+  | 'cathedral'
+  | 'luxury'
+  | 'monument'
   | 'tavern'
   | 'chapel'
   | 'townhall'
@@ -524,6 +530,11 @@ export interface BuildingDef {
    * mine is a season's.
    */
   work: number;
+  /**
+   * Builders the village asks for while this is going up. Falls back to a guess from the footprint
+   * (`buildersWantedFor`) when a building does not name one.
+   */
+  builders?: number;
   /** At least one border tile must be one of these types (terrain gating). */
   requiresAdjacent?: TileType[];
   /** At least one footprint tile must be one of these types (e.g. mines touch a foothill). */
@@ -733,6 +744,13 @@ export interface Citizen {
   health: number; // 0..100
   happiness: number; // 0..100
   educated: boolean; // attended school in the year before coming of age -> more productive
+  /** Went on to university after school — more productive again, and longer-lived. */
+  graduate?: boolean;
+  /**
+   * Sitting the university year right now: grown by every measure except that they are not working
+   * yet, the same way `student` holds a school-age child out of the workforce for their last year.
+   */
+  undergrad?: boolean;
   /** Enrolled at a staffed school for the final year of childhood. Cleared on coming of age. */
   student?: boolean;
   /**
@@ -797,12 +815,15 @@ export interface Citizen {
 }
 
 /** Children can't work; they take a housing slot and grow up at ADULT_AGE. */
-export function isAdult(c: { age: number; student?: boolean }): boolean {
+export function isAdult(c: { age: number; student?: boolean; undergrad?: boolean }): boolean {
   // A student is old enough to work and does not: schooling buys one more year of childhood, so
   // between 12 and 16 an enrolled child is over `ADULT_AGE` and still not a worker. Every caller
   // asking "is this one of the workforce" needs that exclusion — before schooling could outlast
   // `ADULT_AGE`, being under it was the whole test.
-  return c.age >= ADULT_AGE && !c.student;
+  //
+  // An undergraduate is the same bargain a year further on: sitting the university year rather
+  // than working, and not yet keeping a house or starting a family either.
+  return c.age >= ADULT_AGE && !c.student && !c.undergrad;
 }
 
 /**
@@ -838,7 +859,7 @@ export function isFertile(c: { age: number }): boolean {
  * `isDwelling` instead.
  */
 export function isHouse(type: BuildingType): boolean {
-  return type === 'house' || type === 'stonehouse';
+  return type === 'house' || type === 'stonehouse' || type === 'grandhouse';
 }
 
 /** The boarding house: beds for villagers with nowhere else, and nothing more than beds. */
@@ -858,7 +879,19 @@ export function isDwelling(type: BuildingType): boolean {
 
 /** How many villagers a given house type shelters. */
 export function houseCapacityOf(type: BuildingType): number {
-  return type === 'stonehouse' ? STONE_HOUSE_CAPACITY : HOUSING_PER_HOUSE;
+  if (type === 'stonehouse' || type === 'grandhouse') return STONE_HOUSE_CAPACITY;
+  return HOUSING_PER_HOUSE;
+}
+
+/**
+ * How much winter fuel a household in this kind of home burns, against a timber house.
+ *
+ * Masonry holds its heat; a grand house is double-skinned and glazed on top of that.
+ */
+export function heatFactorOf(type: BuildingType): number {
+  if (type === 'grandhouse') return GRAND_HOUSE_HEAT_FACTOR;
+  if (type === 'stonehouse') return STONE_HOUSE_HEAT_FACTOR;
+  return 1;
 }
 
 /** How many villagers sleep in a dwelling of this type — beds, whether or not they are homes. */
@@ -944,6 +977,11 @@ export function framedFraction(b: Building): number {
  */
 export function buildersWantedFor(type: BuildingType): number {
   const d = BUILDING_DEFS[type];
+  // A gang named on the building itself wins. Footprint is a decent guess and was the only rule
+  // for a long time, but it says a monument on nine tiles is a two-man job and a port on
+  // forty-five needs six, which is backwards: what a site takes is how much *building* there is,
+  // not how much ground it covers.
+  if (d.builders !== undefined) return d.builders;
   const area = d.w * d.h;
   return area >= 20 ? 4 : area >= 9 ? 3 : 2;
 }
@@ -2086,6 +2124,9 @@ export const ADULT_AGE = 12;
  */
 export const SCHOOL_START_AGE = 8;
 export const SCHOOL_LEAVING_AGE = 16;
+/** A university year, and the age a student who sits it finally goes to work. */
+export const UNIVERSITY_YEARS = 1;
+export const UNIVERSITY_LEAVING_AGE = SCHOOL_LEAVING_AGE + UNIVERSITY_YEARS * AGE_PER_YEAR;
 /** Study, in years of the calendar — `SCHOOL_START_AGE` to `SCHOOL_LEAVING_AGE` at `AGE_PER_YEAR`. */
 export const SCHOOL_YEARS = (SCHOOL_LEAVING_AGE - SCHOOL_START_AGE) / AGE_PER_YEAR;
 /** Fraction of the school years a child must actually sit to count as educated. */
@@ -2218,7 +2259,26 @@ export const BIRTH_FOOD_SURPLUS_TARGET = 2;
 
 export const OLD_AGE_START = 60; // old-age deaths begin at this age
 export const MAX_AGE = 80; // by this age old-age death is near-certain each year
-export const EDUCATED_BONUS = 1.3; // production multiplier for educated workers
+/**
+ * What learning is worth at the bench.
+ *
+ * School is a quarter more work than none. A university year on top of it adds fifteen per cent
+ * again — compounding, not replacing, because the second year is built on the first.
+ */
+export const EDUCATED_BONUS = 1.25;
+export const GRADUATE_BONUS = EDUCATED_BONUS * 1.15;
+/**
+ * Years of life learning buys, and how much it softens the odds each year past that.
+ *
+ * A schooled villager knows what water to drink and when to rest; one who went further knows more
+ * again. Modelled as both halves of the same thing the ageing roll already uses: old age starts
+ * later, and having started, kills more slowly.
+ */
+export const EDUCATED_LONGEVITY_YEARS = 6;
+export const GRADUATE_LONGEVITY_YEARS = 12;
+export const EDUCATED_DEATH_FACTOR = 0.8;
+export const GRADUATE_DEATH_FACTOR = 0.65;
+
 export const START_HEALTH = 80;
 export const START_HAPPINESS = 80;
 
@@ -2235,6 +2295,22 @@ export const SHELTER_CAPACITY = 18;
  * build proper homes is something the player feels rather than something the game announces.
  */
 export const SHELTER_HAPPY = 12;
+/** A grand house is warmer again than a stone one — its household burns barely half the fuel. */
+export const GRAND_HOUSE_HEAT_FACTOR = 0.45;
+/** Happiness a grand house is worth to the people living in it, and to nobody else. */
+export const GRAND_HOUSE_HAPPY = 10;
+/**
+ * Souls one priest can keep. A chapel has one; a cathedral three.
+ *
+ * Worship used to be a yes-or-no: build a chapel anywhere and the whole village felt it, however
+ * many thousand of them there were. Capacity is what makes a cathedral worth its two hundred stone
+ * — a town outgrows its chapel the same way it outgrows its barns.
+ */
+export const CONGREGATION_PER_PRIEST = 100;
+/** Happiness a monument is worth to the whole town, for doing nothing whatsoever. */
+export const HAPPY_MONUMENT = 15;
+/** Students one teacher (or one professor) can take. */
+export const STUDENTS_PER_TEACHER = 10;
 export const HAPPY_TAVERN = 12; // happiness from a staffed, stocked tavern
 export const HAPPY_CHAPEL = 10; // happiness from a chapel
 export const HAPPY_CEMETERY = 8; // happiness from a cemetery
@@ -2461,6 +2537,37 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     cost: { wood: 100, stone: 60 }, jobs: 0, work: 160,
     desc: 'A boarding house: three storeys of bunks for up to 18 villagers who have nowhere else. Nobody courts or raises a family here, and living in one wears on a villager — it is the roof you put over newcomers while their houses go up.',
   },
+  grandhouse: {
+    type: 'grandhouse', name: 'Grand House', emoji: '🏰', category: 'housing', w: 2, h: 2,
+    cost: { wood: 50, stone: 70, iron: 20 }, jobs: 0, work: 120, builders: 2,
+    desc: 'A fine town house for up to 10. Double-skinned walls and glazed windows: its household burns less fuel again than a stone house, and living somewhere this good is worth 10 happiness to everyone under its roof.',
+  },
+  university: {
+    type: 'university', name: 'University', emoji: '🎓', category: 'civic', w: 5, h: 5,
+    cost: { wood: 60, stone: 80, iron: 30 }, jobs: 5, work: 180, builders: 4,
+    desc: 'Higher learning. School-leavers go straight on for another year, and come out working faster still — and living longer. Each of its five professors can take ten students.',
+  },
+  port: {
+    type: 'port', name: 'Port', emoji: '⚓', category: 'trade', w: 5, h: 9,
+    cost: { wood: 100, stone: 100, iron: 40 }, jobs: 5, work: 260, builders: 3,
+    requiresWaterFraction: 1 / 3,
+    desc: 'A deep-water quay: bigger traders, calling more reliably. Two of them can be put on a standing order to return in a season you name, so trade becomes something you can plan around rather than wait for.',
+  },
+  cathedral: {
+    type: 'cathedral', name: 'Cathedral', emoji: '🕍', category: 'civic', w: 7, h: 7,
+    cost: { wood: 120, stone: 200, iron: 50 }, jobs: 3, work: 360, builders: 6,
+    desc: 'A great church for a town too large for its chapel. Each of its three priests can keep a congregation of a hundred — three hundred souls in all, where a chapel serves one.',
+  },
+  luxury: {
+    type: 'luxury', name: 'Luxury Workshop', emoji: '💎', category: 'resources', w: 5, h: 4,
+    cost: { wood: 70, stone: 80, iron: 40 }, jobs: 1, work: 180, builders: 3,
+    desc: 'A workshop for fine goods. Its benches are standing empty for now — there is nothing yet that a town knows how to make here.',
+  },
+  monument: {
+    type: 'monument', name: 'Monument', emoji: '🗿', category: 'civic', w: 3, h: 3,
+    cost: { wood: 50, stone: 250, iron: 60 }, jobs: 0, work: 400, builders: 4,
+    desc: 'Stone raised for no reason but pride. It does no work and houses nobody, and the whole town is 15 happier for standing in its shadow.',
+  },
   gatherer: {
     type: 'gatherer', name: 'Gatherer', emoji: '🧺', category: 'food', w: 3, h: 3,
     cost: { wood: 48, stone: 12 }, jobs: 3, work: 70, workRadius: 6,
@@ -2588,6 +2695,7 @@ export const CATEGORY_META: Record<BuildCategory, { label: string; emoji: string
 export const BUILD_ORDER: BuildingType[] = [
   'house',
   'stonehouse',
+  'grandhouse',
   'shelter',
   'gatherer',
   'farm',
@@ -2600,11 +2708,16 @@ export const BUILD_ORDER: BuildingType[] = [
   'mine',
   'blacksmith',
   'tailor',
+  'luxury',
   'trading',
+  'port',
   'school',
+  'university',
   'tavern',
   'townhall',
   'chapel',
+  'cathedral',
+  'monument',
   'cemetery',
   'herbalist',
   'hospital',

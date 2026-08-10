@@ -2880,7 +2880,8 @@ test.describe('toolbar', () => {
   test('a build category wraps instead of scrolling, and the log clears it', async ({ page }) => {
     await open2d(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
-    // Resources is the biggest category — eight buildings, the case that used to scroll.
+    // Resources is the biggest category — nine buildings once the Luxury Workshop joined it, and
+    // the case that used to scroll.
     await page.click('#toolbar [data-tool="resources"]');
 
     const out = await page.evaluate(() => {
@@ -2903,7 +2904,7 @@ test.describe('toolbar', () => {
       };
     });
 
-    expect(out.count).toBe(8);
+    expect(out.count).toBe(9);
     expect(out.scrolls, 'the pop-out wraps rather than hiding buildings off-screen').toBe(false);
     expect(out.inside).toBe(true);
     // The event log lifts above however many rows the pop-out turned out to need.
@@ -3740,6 +3741,157 @@ test.describe('choosing a road, and taking an order back', () => {
   });
 });
 
+test.describe('what a town builds', () => {
+  const stock = `
+    const g = window.__village;
+    g.startNewGame('small', 'easy', false, 0, 4242);
+    g.debugPinTier('town');
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    for (const k of ['wood', 'stone', 'iron']) barn.store[k] = 99000;
+    const put = (type) => {
+      for (let r = 3; r < 30; r++)
+        for (let dy = -r; dy <= r; dy++)
+          for (let dx = -r; dx <= r; dx++) {
+            if (!g.debugCanPlace(type, barn.x + dx, barn.y + dy).ok) continue;
+            const id = g.debugPlace(type, barn.x + dx, barn.y + dy);
+            if (id == null) continue;
+            const b = s.buildings.find((v) => v.id === id);
+            b.built = true;
+            b.progress = 99999;
+            return b;
+          }
+      return null;
+    };
+  `;
+
+  test('all six are priced and sized as specified, and only a town may raise them', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const want: any = {
+        university: { w: 5, h: 5, jobs: 5, wood: 60, stone: 80, iron: 30, work: 180, builders: 4 },
+        port: { w: 5, h: 9, jobs: 5, wood: 100, stone: 100, iron: 40, work: 260, builders: 3 },
+        grandhouse: { w: 2, h: 2, jobs: 0, wood: 50, stone: 70, iron: 20, work: 120, builders: 2 },
+        cathedral: { w: 7, h: 7, jobs: 3, wood: 120, stone: 200, iron: 50, work: 360, builders: 6 },
+        luxury: { w: 5, h: 4, jobs: 1, wood: 70, stone: 80, iron: 40, work: 180, builders: 3 },
+        monument: { w: 3, h: 3, jobs: 0, wood: 50, stone: 250, iron: 60, work: 400, builders: 4 },
+      };
+      const got: any = {};
+      for (const type of Object.keys(want)) {
+        const f = g.debugFootprint(type);
+        const c = g.debugCost(type);
+        got[type] = {
+          w: f.w, h: f.h, jobs: g.debugJobCount(type),
+          wood: c.wood, stone: c.stone, iron: c.iron,
+          work: g.debugBuildWork(type), builders: g.debugBuildersWanted(type),
+          lockedAsVillage: !g.debugUnlocked(type),
+        };
+      }
+      return { want, got };
+    });
+
+    for (const type of Object.keys(out.want)) {
+      expect(out.got[type], type).toMatchObject({ ...out.want[type], lockedAsVillage: true });
+    }
+  });
+
+  test('a monument lifts the whole town; a grand house lifts only its household', { tag: '@slow' }, async ({ page }) => {
+    test.setTimeout(180_000);
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        // Two villages run side by side, identical but for the monument: happiness drifts toward
+        // its target over seasons, so the honest way to see what a building is worth is a control.
+        const run = (withMonument) => {
+          ${stock}
+          if (withMonument) put('monument');
+          for (let i = 0; i < 2500; i++) g.debugAdvance(1);
+          return g.debugAvgHappiness();
+        };
+        const plain = run(false);
+        const proud = run(true);
+
+        // And the grand house, whose 10 is charged to its household rather than to the town.
+        ${stock}
+        const grand = put('grandhouse');
+        for (let i = 0; i < 2500; i++) g.debugAdvance(1);
+        const inGrand = s.citizens.filter((c) => c.homeId === grand.id);
+        const others = s.citizens.filter((c) => c.homeId !== null && c.homeId !== grand.id);
+        const mean = (list) => list.reduce((a, c) => a + c.happiness, 0) / Math.max(1, list.length);
+        return { plain, proud, residents: inGrand.length, grandMood: mean(inGrand), otherMood: mean(others) };
+      `) as () => any,
+    );
+
+    expect(out.proud, 'a monument is worth something to everybody').toBeGreaterThan(out.plain);
+    expect(out.residents, 'somebody moved into the grand house').toBeGreaterThan(0);
+    expect(out.grandMood, 'and they are happier than the rest of the town').toBeGreaterThan(out.otherMood);
+  });
+
+  test('worship is measured in souls a priest can keep', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${stock}
+        // A town far too big for one chapel.
+        const src = s.citizens.find((c) => c.age >= 20);
+        while (s.citizens.length < 250) {
+          const c = JSON.parse(JSON.stringify(src));
+          c.id = s.nextId++; c.homeId = null; c.partnerId = null; c.parents = null;
+          s.citizens.push(c);
+        }
+        const chapel = put('chapel');
+        chapel.workers = [s.citizens[0].id];
+        const oneChapel = g.debugCongregation();
+        const cath = put('cathedral');
+        cath.workers = [s.citizens[1].id, s.citizens[2].id, s.citizens[3].id];
+        const withCathedral = g.debugCongregation();
+        cath.workers = [];
+        const unstaffed = g.debugCongregation();
+        return { pop: s.citizens.length, oneChapel, withCathedral, unstaffed };
+      `) as () => any,
+    );
+
+    expect(out.oneChapel, 'one priest keeps a hundred souls').toBe(100);
+    expect(out.withCathedral, 'three more priests keep three hundred more').toBe(400);
+    expect(out.unstaffed, 'an empty cathedral keeps nobody').toBe(100);
+    expect(out.pop).toBeGreaterThan(out.oneChapel);
+  });
+
+  test('a university takes school-leavers on for another year, and they live longer for it', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${stock}
+        const school = put('school');
+        const uni = put('university');
+        return {
+          schoolSeats: g.debugStudentPlaces('school', 1),
+          uniSeats: g.debugStudentPlaces('university', 5),
+          uneducated: g.debugProduction(false, false),
+          schooled: g.debugProduction(true, false),
+          graduate: g.debugProduction(true, true),
+          oldAgeNone: g.debugOldAgeStart(false, false),
+          oldAgeSchool: g.debugOldAgeStart(true, false),
+          oldAgeUni: g.debugOldAgeStart(true, true),
+          builtBoth: !!school && !!uni,
+        };
+      `) as () => any,
+    );
+
+    expect(out.builtBoth).toBe(true);
+    expect(out.schoolSeats, 'a teacher takes ten').toBe(10);
+    expect(out.uniSeats, 'five professors take fifty').toBe(50);
+    // A quarter more than nothing, and fifteen per cent again on top of that.
+    expect(out.schooled / out.uneducated).toBeCloseTo(1.25, 2);
+    expect(out.graduate / out.schooled).toBeCloseTo(1.15, 2);
+    // And learning buys years before old age even begins.
+    expect(out.oldAgeSchool).toBeGreaterThan(out.oldAgeNone);
+    expect(out.oldAgeUni).toBeGreaterThan(out.oldAgeSchool);
+  });
+});
+
 test.describe('a village climbs through tiers', () => {
   test('a founding settlement can raise a hut but not a market', async ({ page }) => {
     await open2d(page);
@@ -3863,7 +4015,9 @@ test.describe('a village climbs through tiers', () => {
     const town = blocks.nth(3);
     await expect(town).toContainText('Town');
     await expect(town).toContainText('Schooled adults');
-    await expect(town, 'nothing to unlock there yet').toContainText('Still to come');
+    await expect(town, 'and the six things a town can build').toContainText('Cathedral');
+    await expect(town).toContainText('University');
+    await expect(town).toContainText('Monument');
   });
 
   test('the build menu greys what the village has not earned', async ({ page }) => {
@@ -3951,7 +4105,7 @@ test.describe('the shelter is a boarding house, not a home', () => {
         for (const c of s.citizens) c.partnerId = null;
         const singlesBefore = s.citizens.filter((c) => c.partnerId == null).length;
         const popBefore = s.citizens.length;
-        for (let i = 0; i < 4000; i++) g.debugAdvance(1); // several seasons
+        for (let i = 0; i < 2500; i++) g.debugAdvance(1); // several seasons
         const onBunks = s.citizens.filter((c) => c.homeId === shelter.id);
         return {
           singlesBefore,
@@ -4511,7 +4665,8 @@ test.describe('builder shifts', () => {
     await open2d(page);
     const out = await page.evaluate(async () => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false);
+      // Seeded: how far the workforce has to walk is the map's call, and the budget here is tight.
+      g.startNewGame('small', 'easy', false, 0, 4242);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       g.debugAfford('chapel');
@@ -4804,7 +4959,8 @@ test.describe('auto-staffing', () => {
       const g = (window as any).__village;
       const run = (auto: boolean) => {
         localStorage.setItem('village-auto-staff', auto ? 'on' : 'off');
-        g.startNewGame('small', 'easy', false);
+        // Seeded: how far the workforce has to walk is the map's call, and the budget here is tight.
+        g.startNewGame('small', 'easy', false, 0, 4242);
         const s = g.state;
         const b = eval(raise)();
         // With the setting off the player would have staffed it; do that, so both branches are

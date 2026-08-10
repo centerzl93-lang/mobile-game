@@ -38,6 +38,14 @@ import {
   HEAT_PER_CITIZEN_WINTER,
   workRadiusOf,
   fullWorkRadiusOf,
+  buildersWantedFor,
+  CONGREGATION_PER_PRIEST,
+  STUDENTS_PER_TEACHER,
+  EDUCATED_BONUS,
+  GRADUATE_BONUS,
+  EDUCATED_LONGEVITY_YEARS,
+  GRADUATE_LONGEVITY_YEARS,
+  OLD_AGE_START,
   workCentre,
   footprintW,
   footprintH,
@@ -116,6 +124,7 @@ import {
   debugWorkSpotFor,
   debugApproach,
   debugReachable,
+  avgHappiness,
 } from './game/simulation';
 import {
   canPlace,
@@ -1847,6 +1856,41 @@ class Game {
   debugCanPlace(type: BuildingType, x: number, y: number, rot: 0 | 1 | 2 | 3 = 0): { ok: boolean; reason?: string } {
     const { w, h } = this.placeSize(type);
     return canPlace(this.state, type, x, y, w, h, rot, { ignoreTier: true });
+  }
+
+  /** Debug/testing helper: builders the village asks for while this type is going up. */
+  debugBuildersWanted(type: BuildingType): number {
+    return buildersWantedFor(type);
+  }
+
+  /** Debug/testing helper: the town's average mood. */
+  debugAvgHappiness(): number {
+    return avgHappiness(this.state);
+  }
+
+  /** Debug/testing helper: souls the village's priests can keep between them. */
+  debugCongregation(): number {
+    let n = 0;
+    for (const b of this.state.buildings) {
+      if (!b.built || b.razed) continue;
+      if (b.type === 'chapel' || b.type === 'cathedral') n += b.workers.length * CONGREGATION_PER_PRIEST;
+    }
+    return n;
+  }
+
+  /** Debug/testing helper: seats a building of this type offers with `staff` teachers on. */
+  debugStudentPlaces(_type: BuildingType, staff: number): number {
+    return staff * STUDENTS_PER_TEACHER;
+  }
+
+  /** Debug/testing helper: the production multiplier learning is worth. */
+  debugProduction(educated: boolean, graduate: boolean): number {
+    return graduate ? GRADUATE_BONUS : educated ? EDUCATED_BONUS : 1;
+  }
+
+  /** Debug/testing helper: the age old age starts at for this much learning. */
+  debugOldAgeStart(educated: boolean, graduate: boolean): number {
+    return OLD_AGE_START + (graduate ? GRADUATE_LONGEVITY_YEARS : educated ? EDUCATED_LONGEVITY_YEARS : 0);
   }
 
   /** Debug/testing helper: the village's tier right now. */

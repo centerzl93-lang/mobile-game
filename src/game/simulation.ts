@@ -133,11 +133,21 @@ import {
   OLD_AGE_START,
   MAX_AGE,
   EDUCATED_BONUS,
+  GRADUATE_BONUS,
+  EDUCATED_LONGEVITY_YEARS,
+  GRADUATE_LONGEVITY_YEARS,
+  EDUCATED_DEATH_FACTOR,
+  GRADUATE_DEATH_FACTOR,
+  STUDENTS_PER_TEACHER,
+  UNIVERSITY_LEAVING_AGE,
   isHouse,
   isShelter,
   isDwelling,
   dwellingCapacityOf,
   SHELTER_HAPPY,
+  GRAND_HOUSE_HAPPY,
+  HAPPY_MONUMENT,
+  CONGREGATION_PER_PRIEST,
   isWorkplace,
   houseCapacityOf,
   STONE_HOUSE_HEAT_FACTOR,
@@ -521,7 +531,24 @@ function chanceOver(p: number, part: number, whole: number): number {
  */
 function lives(s: GameState, dt: number, log: LogFn): void {
   if (s.citizens.length === 0) return;
-  const schoolStaffed = s.buildings.some((b) => b.built && b.type === 'school' && b.workers.length > 0);
+  // Places, not a yes-or-no. A teacher takes ten and a professor takes ten, so one schoolhouse is
+  // a village's worth of schooling and a town needs more of them — which is the whole reason a
+  // university is five staff rather than one.
+  let schoolPlaces = 0;
+  let uniPlaces = 0;
+  for (const b of s.buildings) {
+    if (!b.built || b.razed) continue;
+    if (b.type === 'school') schoolPlaces += b.workers.length * STUDENTS_PER_TEACHER;
+    else if (b.type === 'university') uniPlaces += b.workers.length * STUDENTS_PER_TEACHER;
+  }
+  // Seats are handed out to whoever is already in them first, so nobody is turned out of a class
+  // half-way through by a younger child coming of age behind them.
+  let schoolFree = schoolPlaces;
+  let uniFree = uniPlaces;
+  for (const c of s.citizens) {
+    if (c.student) schoolFree--;
+    else if (c.undergrad) uniFree--;
+  }
   const years = dt / YEAR_LENGTH;
 
   const cameOfAge: Citizen[] = [];
@@ -532,29 +559,60 @@ function lives(s: GameState, dt: number, log: LogFn): void {
     if (wasChild) {
       // Enrolment, and the one place adulthood is not a fixed age. A child at a staffed school
       // keeps growing up to `SCHOOL_LEAVING_AGE`; one without goes to work at `ADULT_AGE`.
-      const canAttend = schoolStaffed && c.age >= SCHOOL_START_AGE && c.age < SCHOOL_LEAVING_AGE;
+      const oldEnough = c.age >= SCHOOL_START_AGE && c.age < SCHOOL_LEAVING_AGE;
+      // A seat is either already yours or has to be free. A school that loses its teacher turns
+      // its pupils back into children — and any of them already past `ADULT_AGE` go straight to
+      // work below, with whatever schooling they managed to sit.
       if (c.student || c.age < ADULT_AGE) {
-        // Already enrolled, or still young enough to enrol. A school that loses its teacher turns
-        // its pupils back into children — and any of them already past `ADULT_AGE` go straight to
-        // work below, with whatever schooling they managed to sit.
-        c.student = canAttend;
+        const keep = c.student && schoolPlaces > 0;
+        const take = !c.student && oldEnough && schoolFree > 0;
+        if (take) schoolFree--;
+        c.student = oldEnough && (keep || take);
       }
       // Past `ADULT_AGE` with no school to be at: that childhood is over and cannot be extended
       // by a school built afterwards.
       if (c.student) c.schooling = (c.schooling ?? 0) + dt;
-      const leavingAge = c.student ? SCHOOL_LEAVING_AGE : ADULT_AGE;
-      if (c.age >= leavingAge) {
+      if (c.age >= SCHOOL_LEAVING_AGE && c.student) {
+        // School is done. A university with a free seat takes them straight on for another year,
+        // and it is that second year — not the offer of it — that makes a graduate.
         c.educated = (c.schooling ?? 0) >= YEAR_LENGTH * SCHOOL_YEARS * SCHOOL_ATTENDANCE;
         c.student = false;
+        if (c.educated && uniFree > 0) {
+          uniFree--;
+          c.undergrad = true;
+        } else {
+          cameOfAge.push(c);
+          continue;
+        }
+      }
+      if (c.undergrad) {
+        // Enrolled, and it holds only while the lecture halls are staffed.
+        if (uniPlaces === 0) {
+          c.undergrad = false;
+          cameOfAge.push(c);
+          continue;
+        }
+        if (c.age >= UNIVERSITY_LEAVING_AGE) {
+          c.undergrad = false;
+          c.graduate = true;
+          cameOfAge.push(c);
+        }
+        continue;
+      }
+      if (c.age >= ADULT_AGE && !c.student) {
+        c.educated = (c.schooling ?? 0) >= YEAR_LENGTH * SCHOOL_YEARS * SCHOOL_ATTENDANCE;
         cameOfAge.push(c);
       }
       continue;
     }
     // Old age: past OLD_AGE_START the yearly odds of dying climb toward certain at MAX_AGE, and
     // climb faster for the unwell.
-    if (c.age < OLD_AGE_START) continue;
-    const base = clamp((c.age - OLD_AGE_START) / (MAX_AGE - OLD_AGE_START), 0, 1);
-    const perYear = Math.min(1, base * (1 + (1 - c.health / 100)));
+    // Learning buys years, and softens the odds once they run out.
+    const start = OLD_AGE_START + (c.graduate ? GRADUATE_LONGEVITY_YEARS : c.educated ? EDUCATED_LONGEVITY_YEARS : 0);
+    if (c.age < start) continue;
+    const base = clamp((c.age - start) / (MAX_AGE - start), 0, 1);
+    const learned = c.graduate ? GRADUATE_DEATH_FACTOR : c.educated ? EDUCATED_DEATH_FACTOR : 1;
+    const perYear = Math.min(1, base * (1 + (1 - c.health / 100)) * learned);
     if (rand(s) < chanceOver(perYear, dt, YEAR_LENGTH)) dying.push(c);
   }
 
@@ -1185,7 +1243,7 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workFactor
       if (out && out.amount > 0.01) {
         // Healthier, happier, and educated workers produce more.
         const wellbeing = (0.7 + 0.3 * (c.health / 100)) * (0.85 + 0.15 * (c.happiness / 100));
-        const prod = wellbeing * (c.educated ? EDUCATED_BONUS : 1);
+        const prod = wellbeing * (c.graduate ? GRADUATE_BONUS : c.educated ? EDUCATED_BONUS : 1);
         const limit = carryLimit(out.kind);
         // Keep working until the load is full, rather than setting off with whatever one cycle
         // produced. A single cycle yields well under a full load, so workers were walking the
@@ -3346,13 +3404,23 @@ function updateWellbeing(s: GameState, foodShort: boolean, deaths: number, taver
   const headroom = housingCapacity(s) - pop > 0;
   const clothed = totalAvailable(s, 'clothing') >= pop;
   const comfortable = totalFoodAvailable(s) > pop * FOOD_PER_CITIZEN_PER_SEASON;
-  const chapel = s.buildings.some((b) => b.built && b.type === 'chapel');
+  // Souls the village's priests can actually keep, against how many there are. Worship used to be
+  // a yes-or-no — one chapel lifted a village of any size — which is what left a cathedral with
+  // nothing to be for. A church that serves half the town is worth half the comfort.
+  let congregation = 0;
+  for (const b of s.buildings) {
+    if (!b.built || b.razed) continue;
+    if (b.type === 'chapel' || b.type === 'cathedral') congregation += b.workers.length * CONGREGATION_PER_PRIEST;
+  }
+  const faith = pop > 0 ? Math.min(1, congregation / pop) : 0;
   const cemetery = s.buildings.some((b) => b.built && b.type === 'cemetery');
+  const monument = s.buildings.some((b) => b.built && !b.razed && b.type === 'monument');
   // Basics can reach 75; amenities carry the village the rest of the way.
   let happyTarget = 40 + (headroom ? 10 : 0) + (clothed ? 10 : 0) + (comfortable ? 15 : 0);
   if (tavernActive) happyTarget += HAPPY_TAVERN;
-  if (chapel) happyTarget += HAPPY_CHAPEL;
+  happyTarget += HAPPY_CHAPEL * faith;
   if (cemetery) happyTarget += HAPPY_CEMETERY;
+  if (monument) happyTarget += HAPPY_MONUMENT;
   if (deaths > 0 && !cemetery) happyTarget -= DEATH_UNREST; // grief when the dead lie unhonoured
   // What the standing rules cost. Charged against the *targets* rather than docked from the
   // running figures, so a policy settles the village at a lower level instead of grinding it down
@@ -3368,8 +3436,15 @@ function updateWellbeing(s: GameState, foodShort: boolean, deaths: number, taver
   const bunks = new Set(
     s.buildings.filter((b) => b.built && isShelter(b.type)).map((b) => b.id),
   );
+  // A grand house is worth something to the people in it and to nobody else — the same way a bunk
+  // costs its own occupants, charged to the household rather than to the town.
+  const grand = new Set(
+    s.buildings.filter((b) => b.built && b.type === 'grandhouse').map((b) => b.id),
+  );
   for (const c of s.citizens) {
-    const aim = c.homeId !== null && bunks.has(c.homeId) ? happyTarget - SHELTER_HAPPY : happyTarget;
+    let aim = happyTarget;
+    if (c.homeId !== null && bunks.has(c.homeId)) aim -= SHELTER_HAPPY;
+    if (c.homeId !== null && grand.has(c.homeId)) aim += GRAND_HOUSE_HAPPY;
     c.health += (healthAim - c.health) * 0.25;
     c.happiness += (clamp(aim, 0, 100) - c.happiness) * 0.25;
   }

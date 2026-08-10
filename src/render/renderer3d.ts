@@ -127,7 +127,8 @@ const TILE_COLOR: Record<string, number> = {
 };
 
 const BUILDING_COLORS: Record<BuildingType, number> = {
-  house: 0xb07a45, stonehouse: 0x9a9089, shelter: 0x8f7a5e, tavern: 0xb5893f, chapel: 0x8f8fb0, cemetery: 0x6a6a72,
+  house: 0xb07a45, stonehouse: 0x9a9089, shelter: 0x8f7a5e, grandhouse: 0xb8a06a, university: 0x7f6fb0,
+  port: 0x3f6a8f, cathedral: 0xa8a0c8, luxury: 0xc07fa8, monument: 0x9a9aa2, tavern: 0xb5893f, chapel: 0x8f8fb0, cemetery: 0x6a6a72,
   gatherer: 0x5a8f4e, farm: 0x9a8340, fishing: 0x3f8f9a, hunting: 0x7a5a3c, ranch: 0xb58f52,
   lumberyard: 0x3f7a3a, woodcutter: 0x8a6a3c, quarry: 0x8b8e95, mine: 0x4a4a52, blacksmith: 0x565059,
   tailor: 0x9a5f92, trading: 0x46708f, school: 0x8f7d3f, herbalist: 0x4f8a5a, hospital: 0xb85a5a,

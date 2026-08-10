@@ -52,6 +52,12 @@ MODELS = {
     "hospital": "civic:hospital",
     "well": "civic:well",
     "barn": "civic:barn",
+    "grandhouse": "town:grandhouse",
+    "university": "town:university",
+    "port": "town:port",
+    "cathedral": "town:cathedral",
+    "luxury": "town:luxury",
+    "monument": "town:monument",
     "boat": "boat:boat",
 }
 

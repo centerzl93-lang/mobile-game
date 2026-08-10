@@ -75,6 +75,14 @@ export const BUILDING_TIER: Record<BuildingType, VillageTier> = {
   trading: 'village',
   ranch: 'village',
   farm: 'village',
+  // Town: what a place stops being a village to build. Learning past school, deep water, houses
+  // for people with money, a church for thousands, fine goods, and stone raised for pride alone.
+  university: 'town',
+  port: 'town',
+  grandhouse: 'town',
+  cathedral: 'town',
+  luxury: 'town',
+  monument: 'town',
 };
 
 /** The tier each kind of roadway becomes available at. */

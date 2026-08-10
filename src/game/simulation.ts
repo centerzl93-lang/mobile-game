@@ -1846,6 +1846,20 @@ export function markHarvestRect(
   const hx = Math.min(MAP_W - 1, Math.max(x0, x1));
   const ly = Math.max(0, Math.min(y0, y1));
   const hy = Math.min(MAP_H - 1, Math.max(y0, y1));
+  // `clear` is the eraser: it takes orders off rather than putting them on, so the whole
+  // question of what is standing on a tile does not arise.
+  if (want === 'clear') {
+    let cleared = 0;
+    for (let ty = ly; ty <= hy; ty++) {
+      for (let tx = lx; tx <= hx; tx++) {
+        const i = tileIndex(tx, ty);
+        if (s.harvest[i] === HARVEST_NONE) continue;
+        s.harvest[i] = HARVEST_NONE;
+        cleared++;
+      }
+    }
+    return cleared;
+  }
   const wants = (k: HarvestKind): boolean => want === 'all' || want === k;
   let marked = 0;
   for (let ty = ly; ty <= hy; ty++) {

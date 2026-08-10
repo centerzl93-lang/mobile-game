@@ -683,8 +683,13 @@ export class UI {
   }
 
   private harvestHint(): void {
+    // Unmark is the one kind that does not *mark* anything, so it gets its own sentence rather
+    // than being fed through a template that starts "Drag a square to mark".
+    const hint = HARVEST_KIND_META[this.harvestKind].hint;
     this.showHint(
-      `Drag a square to mark ${HARVEST_KIND_META[this.harvestKind].hint}; pan with two fingers.`,
+      this.harvestKind === 'clear'
+        ? 'Drag a square to call off the orders inside it; pan with two fingers.'
+        : `Drag a square to mark ${hint}; pan with two fingers.`,
     );
   }
 

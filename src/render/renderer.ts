@@ -7,6 +7,7 @@ import {
   costOf,
   BuildingType,
   workRadiusOf,
+  fullWorkRadiusOf,
   footprintW,
   footprintH,
   ranchCapacity,
@@ -391,7 +392,8 @@ export class Renderer {
           h,
         );
         ctx.beginPath();
-        ctx.arc(cxp, cyp, def.workRadius * p, 0, Math.PI * 2);
+        // Fully staffed, not the one-worker circle — see `fullWorkRadiusOf`.
+        ctx.arc(cxp, cyp, fullWorkRadiusOf(placement.type)! * p, 0, Math.PI * 2);
         ctx.strokeStyle = 'rgba(255,255,255,0.5)';
         ctx.lineWidth = 2;
         ctx.stroke();

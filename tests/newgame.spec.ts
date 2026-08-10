@@ -3641,6 +3641,106 @@ test.describe('bridges come in timber and stone', () => {
   });
 });
 
+test.describe('choosing a road, and taking an order back', () => {
+  test('the start stays put while the far end moves, and only a decision lets go of it', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // Clear ground to draw over, so the route is about the anchor and not about obstacles.
+      for (let dy = -6; dy <= 6; dy++)
+        for (let dx = -6; dx <= 6; dx++) {
+          const t = s.tiles[(barn.y + dy) * s.w + (barn.x + dx)];
+          if (!t) continue;
+          t.type = 'grass';
+          t.trees = 0;
+          delete t.stone;
+          delete t.iron;
+        }
+      const from = { x: barn.x - 5, y: barn.y + 5 };
+      const count = () => g.debugPendingPaths();
+
+      g.debugPaintDown('dirt', from.x, from.y); // plant the start
+      g.debugPaintMove(from.x + 3, from.y); // drag the far end out
+      const drawnThree = count();
+      g.debugPaintUp(); // let go — the route must survive the finger
+
+      const afterLift = count();
+      g.debugPaintDown('dirt', from.x + 5, from.y); // a second touch moves the *end*, not the start
+      const drawnFive = count();
+      const stillAnchored = g.debugStrokeStart();
+
+      g.debugConfirmPaths();
+      return {
+        drawnThree, afterLift, drawnFive, stillAnchored,
+        from, anchorAfterConfirm: g.debugStrokeStart(),
+      };
+    });
+
+    expect(out.drawnThree, 'a route is drawn between the two ends').toBeGreaterThan(1);
+    expect(out.afterLift, 'and it is still there when the finger comes off').toBe(out.drawnThree);
+    expect(out.drawnFive, 'the next touch lengthens it rather than starting again').toBeGreaterThan(out.drawnThree);
+    expect(out.stillAnchored, 'because the start has not moved').toEqual(out.from);
+    expect(out.anchorAfterConfirm, 'confirming is what lets go of it').toBeNull();
+  });
+
+  test('a harvest order can be called off', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const s = g.state;
+      // A patch of wood to give the order over.
+      let spot: any = null;
+      for (let y = 4; y < s.h - 8 && !spot; y++)
+        for (let x = 4; x < s.w - 8 && !spot; x++) {
+          let n = 0;
+          for (let dy = 0; dy < 4; dy++)
+            for (let dx = 0; dx < 4; dx++) {
+              const t = s.tiles[(y + dy) * s.w + x + dx];
+              if (t.type === 'forest' && t.trees > 0.05) n++;
+            }
+          if (n >= 12) spot = { x, y };
+        }
+      const marked = g.debugMarkHarvest(spot.x, spot.y, spot.x + 3, spot.y + 3, 'trees');
+      const after = g.debugHarvestCount();
+      // Rub out half of it, then the rest.
+      const clearedHalf = g.debugMarkHarvest(spot.x, spot.y, spot.x + 1, spot.y + 3, 'clear');
+      const half = g.debugHarvestCount();
+      g.debugMarkHarvest(spot.x, spot.y, spot.x + 3, spot.y + 3, 'clear');
+      const none = g.debugHarvestCount();
+      const nothingLeft = g.debugMarkHarvest(spot.x, spot.y, spot.x + 3, spot.y + 3, 'clear');
+      return { marked, after, clearedHalf, half, none, nothingLeft };
+    });
+
+    expect(out.marked, 'the wood was marked').toBeGreaterThan(0);
+    expect(out.after).toBe(out.marked);
+    expect(out.clearedHalf, 'and part of it can be rubbed out').toBeGreaterThan(0);
+    expect(out.half, 'leaving the rest standing as orders').toBe(out.after - out.clearedHalf);
+    expect(out.none, 'the whole square goes too').toBe(0);
+    expect(out.nothingLeft, 'and unmarking bare ground is simply nothing').toBe(0);
+  });
+
+  test('a work circle is shown at the size it will be when staffed', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      return {
+        gatherer: { ghost: g.debugFullWorkRadius('gatherer'), one: g.debugWorkRadiusFor('gatherer', 1) },
+        forester: { ghost: g.debugFullWorkRadius('lumberyard'), one: g.debugWorkRadiusFor('lumberyard', 1) },
+        house: g.debugFullWorkRadius('house'),
+      };
+    });
+
+    expect(out.gatherer.ghost, 'the ghost shows the circle a full crew works').toBeGreaterThan(out.gatherer.one);
+    expect(out.forester.ghost).toBeGreaterThan(out.forester.one);
+    expect(out.house, 'a building with no work circle has none to show').toBeUndefined();
+  });
+});
+
 test.describe('a village climbs through tiers', () => {
   test('a founding settlement can raise a hut but not a market', async ({ page }) => {
     await open2d(page);
@@ -5202,7 +5302,8 @@ test.describe('choosing what to harvest', () => {
         hint: document.getElementById('hint')!.textContent!.trim(),
       };
     });
-    expect(opened.labels).toEqual(['Everything', 'Trees', 'Stone', 'Iron']);
+    // Unmark rides with the three kinds: taking an order back is the same drag, run the other way.
+    expect(opened.labels).toEqual(['Everything', 'Trees', 'Stone', 'Iron', 'Unmark']);
     // One tap arms the tool on everything — the choice is there, not in the way.
     expect(opened.on).toBe(true);
     expect(opened.kind).toBe('all');

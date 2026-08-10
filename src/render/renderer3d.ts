@@ -8,6 +8,7 @@ import {
   BUILDING_DEFS,
   BuildingType,
   workRadiusOf,
+  fullWorkRadiusOf,
   workCentre,
   footprintW,
   footprintH,
@@ -2121,8 +2122,10 @@ export class Renderer3D {
           ...(pv.pw !== undefined ? { w: pv.pw, h: pv.ph } : {}),
         };
         const wc = workCentre(ghost);
-        // A fresh site starts on one worker, so show the radius that single worker covers.
-        workCircle = { x: wc.x, y: wc.y, r: d.workRadius };
+        // The circle it will work once it is staffed, not the one a single worker covers. You are
+        // siting it against where the trees or the fish are, and the smaller circle had the player
+        // choosing against a reach the building outgrows the moment it opens.
+        workCircle = { x: wc.x, y: wc.y, r: fullWorkRadiusOf(pv.type)! };
       }
     }
     if (workCircle) {

@@ -37,6 +37,7 @@ import {
   FOOD_PER_CITIZEN_PER_SEASON,
   HEAT_PER_CITIZEN_WINTER,
   workRadiusOf,
+  fullWorkRadiusOf,
   workCentre,
   footprintW,
   footprintH,
@@ -408,6 +409,11 @@ class Game {
   }
 
   private onSelectPath(tier: PathTier | null): void {
+    // Changing tier, or putting the tool down, starts the next road from scratch — an anchor
+    // planted for a dirt track is not where the player meant to begin a tunnel.
+    if (tier !== this.selectedPath) {
+      this.cancelPaths();
+    }
     this.selectedPath = tier;
     this.selectedBuild = null;
     this.demolish = false;
@@ -502,10 +508,15 @@ class Game {
       this.harvestKind,
     );
     const meta = HARVEST_KIND_META[this.harvestKind];
+    const erasing = this.harvestKind === 'clear';
     this.ui.flashHint(
       n > 0
-        ? `Marked ${n} tile${n > 1 ? 's' : ''} for harvest`
-        : `Nothing to take there — this drag marks ${meta.hint}`,
+        ? erasing
+          ? `Called off ${n} order${n > 1 ? 's' : ''}`
+          : `Marked ${n} tile${n > 1 ? 's' : ''} for harvest`
+        : erasing
+          ? 'No orders in that square'
+          : `Nothing to take there — this drag marks ${meta.hint}`,
     );
     if (n > 0) this.persist();
   }
@@ -738,10 +749,24 @@ class Game {
   private strokeStart: { x: number; y: number } | null = null;
   private strokeTiles: number[] = [];
 
+  /**
+   * A road is two ends, and the second one keeps moving until the player is happy.
+   *
+   * The first touch plants the start. Every touch after that — drag or tap — moves the *end*, and
+   * the route between them is re-found and re-drawn each time, so the player can let go, look at
+   * what the village would build, and then shift the far end without starting again. Only
+   * confirming or cancelling releases the anchor.
+   *
+   * This used to end with the finger: lifting cleared the start, so the next touch anchored a
+   * fresh stroke somewhere else and the road you were half-way through choosing became two roads.
+   */
   private onPaintStart(sx: number, sy: number): void {
     if (!this.selectedPath || !this.running || this.state.gameOver) return;
     const [wx, wy] = this.camera.screenToTile(sx, sy, this.cw, this.ch);
-    this.beginStroke(Math.floor(wx), Math.floor(wy));
+    const tx = Math.floor(wx);
+    const ty = Math.floor(wy);
+    if (!this.strokeStart) this.beginStroke(tx, ty);
+    else this.paintStroke(tx, ty);
   }
 
   /** Anchor a path drag at a tile and draw its first (single-tile) route. */
@@ -749,11 +774,17 @@ class Game {
     this.strokeStart = { x: tx, y: ty };
     this.strokeTiles = [];
     this.paintStroke(tx, ty);
+    this.ui.showHint('Drag to move the far end — the route follows. Confirm when it looks right.');
+  }
+
+  /** The anchor outlives the finger; only a decision about the route lets go of it. */
+  private clearStroke(): void {
+    this.strokeStart = null;
+    this.strokeTiles = [];
   }
 
   private onPaintEnd(): void {
-    this.strokeStart = null;
-    this.strokeTiles = [];
+    // Deliberately nothing: the route stays on screen with its anchor intact.
   }
 
   /**
@@ -800,6 +831,7 @@ class Game {
 
   /** Accept the drawn path tiles — villagers can now lay them. */
   private confirmPaths(): void {
+    this.clearStroke();
     const n = confirmPendingPaths(this.state);
     if (n > 0) this.ui.flashHint(`${n} path tile${n > 1 ? 's' : ''} queued for the builders`);
     this.persist();
@@ -807,6 +839,7 @@ class Game {
 
   /** Throw the drawn path tiles away, clearing them back to bare ground. */
   private cancelPaths(): void {
+    this.clearStroke();
     cancelPendingPaths(this.state);
     this.persist();
   }
@@ -1911,6 +1944,53 @@ class Game {
       ranchMin: SIZABLE.ranch!.min,
       ranchMax: SIZABLE.ranch!.max,
     };
+  }
+
+  /**
+   * Debug/testing helpers driving the road tool the way a finger does: plant the start, move the
+   * far end, lift. Tile coordinates rather than screen ones, so a test does not have to know where
+   * the camera happens to be pointing.
+   */
+  debugPaintDown(tier: PathTier, x: number, y: number): void {
+    if (this.selectedPath !== tier) this.onSelectPath(tier);
+    if (!this.strokeStart) this.beginStroke(x, y);
+    else this.paintStroke(x, y);
+  }
+  debugPaintMove(x: number, y: number): void {
+    this.paintStroke(x, y);
+  }
+  debugPaintUp(): void {
+    this.onPaintEnd();
+  }
+  /** Debug/testing helper: where the road being drawn is anchored, or null between roads. */
+  debugStrokeStart(): { x: number; y: number } | null {
+    return this.strokeStart ? { ...this.strokeStart } : null;
+  }
+  /** Debug/testing helper: how many drawn-but-unconfirmed path tiles are waiting. */
+  debugPendingPaths(): number {
+    return pendingPathCount(this.state);
+  }
+  /** Debug/testing helper: accept the drawn road, as the confirm bar does. */
+  debugConfirmPaths(): void {
+    this.confirmPaths();
+  }
+  /** Debug/testing helper: mark or unmark a rectangle, as the harvest drag does. */
+  debugMarkHarvest(x0: number, y0: number, x1: number, y1: number, kind: HarvestKind): number {
+    return markHarvestRect(this.state, x0, y0, x1, y1, kind);
+  }
+  /** Debug/testing helper: how many tiles carry a harvest order. */
+  debugHarvestCount(): number {
+    let n = 0;
+    for (let i = 0; i < this.state.harvest.length; i++) if (this.state.harvest[i]) n++;
+    return n;
+  }
+  /** Debug/testing helper: the work circle a placement ghost draws — fully staffed. */
+  debugFullWorkRadius(type: BuildingType): number | undefined {
+    return fullWorkRadiusOf(type);
+  }
+  /** Debug/testing helper: the work circle this building type has on `n` workers. */
+  debugWorkRadiusFor(type: BuildingType, n: number): number | undefined {
+    return workRadiusOf({ type, desiredWorkers: n });
   }
 
   /** Debug/testing helper: the route a road would take between two tiles, both ends included. */

@@ -1121,6 +1121,20 @@ export function workRadiusOf(b: Pick<Building, 'type' | 'desiredWorkers'>): numb
 }
 
 /**
+ * The work circle a building would have once it is fully staffed.
+ *
+ * What a placement ghost shows. Siting a forester or a fishing hut *is* the act of choosing which
+ * trees or which water it will work, and showing the one-worker circle understated the reach of
+ * every building the player was ever going to staff properly — you sited it against a circle it
+ * would outgrow the moment it opened.
+ */
+export function fullWorkRadiusOf(type: BuildingType): number | undefined {
+  const def = BUILDING_DEFS[type];
+  if (def.workRadius === undefined) return undefined;
+  return workRadiusOf({ type, desiredWorkers: def.jobs });
+}
+
+/**
  * The part of a building that decides where it sits: enough for the footprint and work-centre
  * helpers, and no more. A placement preview is one of these before it is ever a `Building`, so
  * the ghost the player is dragging measures its work circle by exactly the same rules.
@@ -1414,13 +1428,16 @@ export const HARVEST_IRON = 3; // a marked surface iron-ore tile
  * felled to get at it, and one thinning trees for timber does not want its stone picked up and
  * hauled at the same time. Picking a kind first makes the drag say what it is for.
  */
-export type HarvestKind = 'all' | 'trees' | 'stone' | 'iron';
-export const HARVEST_KINDS: HarvestKind[] = ['all', 'trees', 'stone', 'iron'];
+export type HarvestKind = 'all' | 'trees' | 'stone' | 'iron' | 'clear';
+export const HARVEST_KINDS: HarvestKind[] = ['all', 'trees', 'stone', 'iron', 'clear'];
 export const HARVEST_KIND_META: Record<HarvestKind, { label: string; emoji: string; hint: string }> = {
   all: { label: 'Everything', emoji: '🪓', hint: 'trees, stone and iron' },
   trees: { label: 'Trees', emoji: '🌲', hint: 'trees only — stone and iron are left where they lie' },
   stone: { label: 'Stone', emoji: '🪨', hint: 'loose stone only — the trees are left standing' },
   iron: { label: 'Iron', emoji: '🔩', hint: 'surface iron only — the trees are left standing' },
+  // The way back. An order given by dragging a square could only be taken back by waiting for
+  // somebody to carry it out, which made a misplaced drag across half a wood permanent.
+  clear: { label: 'Unmark', emoji: '🚫', hint: 'call off the orders inside the square' },
 };
 
 /** The single kind of goods a visiting merchant deals in. */

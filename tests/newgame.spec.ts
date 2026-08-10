@@ -2372,7 +2372,12 @@ test.describe('job board', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false);
+      // Seeded: the hut is placed by walking out from the barn for the first buildable tile, and
+      // on an unseeded map that tile — and how long its materials take to haul and raise — swings
+      // with the world. One CI run in a while drew a map where the hut landed far enough out that
+      // it had not finished inside the 400s this gives it, and the build check read false. The
+      // seed fixes the map, so the hut lands in the same reachable spot every run.
+      g.startNewGame('small', 'easy', false, 0, 4242);
       const s = g.state;
       // Auto-staffing off, or this test cannot see what it is testing: a new workplace opened
       // with it on is filled to its job count regardless, which would pass whether or not the

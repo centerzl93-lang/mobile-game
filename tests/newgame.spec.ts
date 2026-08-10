@@ -3902,16 +3902,39 @@ test.describe('sand, glass, jewellery and the harbour', () => {
     const barn = s.buildings.find((b) => b.type === 'barn');
     // Stocked high enough to *build* with — a quarry is eight tiles a side and not cheap.
     for (const k of ['wood', 'stone', 'iron', 'coal', 'sand', 'glass']) barn.store[k] = 900;
+    // Everything already standing, as rectangles, so the helper below can keep its distance.
+    const taken = s.buildings.map((b) => {
+      const f = g.debugFootprint(b.type);
+      return { x: b.x, y: b.y, w: f.w, h: f.h };
+    });
+    /**
+     * Drop a finished building near the barn, leaving a clear tile all the way around it.
+     *
+     * The gap is the point. Taking the first *legal* tile packs buildings shoulder to shoulder,
+     * and that walled this map in two: a 5x4 workshop butted up against the barn closed the last
+     * gap in a line of marsh, and the workshop's door came out on the far side of it from the
+     * villagers who worked there. They stood still for the whole run — no route, so no arrival, so
+     * no work — while the village starved behind the wall. A workshop nobody can walk to reads
+     * exactly like a workshop that does not work, which is what this fixture spent a long time
+     * claiming. One clear tile between footprints and there is always a way through.
+     */
     const put = (type) => {
+      const f = g.debugFootprint(type);
+      const clear = (x, y) => taken.every((t) =>
+        x > t.x + t.w || t.x > x + f.w || y > t.y + t.h || t.y > y + f.h);
       for (let r = 3; r < 30; r++)
         for (let dy = -r; dy <= r; dy++)
           for (let dx = -r; dx <= r; dx++) {
-            if (!g.debugCanPlace(type, barn.x + dx, barn.y + dy).ok) continue;
-            const id = g.debugPlace(type, barn.x + dx, barn.y + dy);
+            const x = barn.x + dx;
+            const y = barn.y + dy;
+            if (!clear(x, y)) continue;
+            if (!g.debugCanPlace(type, x, y).ok) continue;
+            const id = g.debugPlace(type, x, y);
             if (id == null) continue;
             const b = s.buildings.find((v) => v.id === id);
             b.built = true;
             b.progress = 99999;
+            taken.push({ x, y, w: f.w, h: f.h });
             return b;
           }
       return null;
@@ -3952,62 +3975,50 @@ test.describe('sand, glass, jewellery and the harbour', () => {
     expect(out.share).toBeLessThanOrEqual(0.25);
   });
 
-  test.skip('the workshop turns sand and coal into glass, and glass and iron into jewellery', { tag: '@slow' }, async ({ page }) => {
+  test('the workshop turns sand and coal into glass, and glass and iron into jewellery', { tag: '@slow' }, async ({ page }) => {
+    test.setTimeout(180_000);
     await open2d(page);
     const out = await page.evaluate(
       new Function(`
         ${town}
-        const run = (recipe, stockIt) => {
-          const w = put('luxury');
-          w.recipe = recipe;
-          w.desiredWorkers = g.debugJobCount('luxury');
-          stockIt(w);
-          for (let i = 0; i < 4000; i++) g.debugAdvance(0.5);
-          return w;
-        };
-        const before = { glass: g.debugTotalStored('glass'), jewelry: g.debugTotalStored('jewelry') };
-        run('glass', () => {});
-        const madeGlass = g.debugTotalStored('glass') - before.glass;
-        run('jewelry', () => {});
-        const madeJewels = g.debugTotalStored('jewelry') - before.jewelry;
+        const w = put('luxury');
+        // A village that can keep a bench manned: food to eat, and room in the barn for what comes
+        // off the bench. A barn filled to its cap stops a workshop as surely as an empty one — the
+        // glass gets made and then turned away at the door — and a hungry village has nobody at
+        // the bench at all. One barn holds all of this at once; 5000 is a volume, not a count.
+        barn.store.grain = 3000;
+        for (const k of ['wood', 'stone']) barn.store[k] = 40;
+        for (const k of ['sand', 'coal', 'glass', 'iron']) barn.store[k] = 300;
+        w.desiredWorkers = g.debugJobCount('luxury');
 
-        // And a workshop with nothing to work makes nothing.
-        g.startNewGame('small', 'easy', false, 0, 4242);
-        g.debugPinTier('city');
+        w.recipe = 'glass';
+        let base = g.debugTotalStored('glass');
+        for (let i = 0; i < 5000; i++) g.debugAdvance(0.5);
+        const madeGlass = g.debugTotalStored('glass') - base;
+
+        w.recipe = 'jewelry';
+        base = g.debugTotalStored('jewelry');
+        for (let i = 0; i < 5000; i++) g.debugAdvance(0.5);
+        const madeJewels = g.debugTotalStored('jewelry') - base;
+
         return {
           madeGlass, madeJewels,
+          staffed: w.workers.length,
           glassInputs: g.debugRecipeInputs('luxury', 'glass'),
           jewelInputs: g.debugRecipeInputs('luxury', 'jewelry'),
         };
       `) as () => any,
     );
 
+    expect(out.staffed, 'somebody is at the bench').toBeGreaterThan(0);
     expect(out.madeGlass, 'sand and coal became glass').toBeGreaterThan(0);
     expect(out.madeJewels, 'glass and iron became jewellery').toBeGreaterThan(0);
+    // The ratios the spec asks for, read off the recipe itself.
     expect(out.glassInputs).toEqual([['sand', 2], ['coal', 1]]);
     expect(out.jewelInputs).toEqual([['glass', 2], ['iron', 1]]);
   });
 
-  test('a workshop with no inputs makes nothing at all', { tag: '@slow' }, async ({ page }) => {
-    await open2d(page);
-    const out = await page.evaluate(
-      new Function(`
-        ${town}
-        // Strip the barns of everything the benches need.
-        const w = put('luxury'); // built first, while the iron for it is still in the barn
-        for (const b of s.buildings) for (const k of ['sand', 'coal', 'glass']) delete b.store[k];
-        w.recipe = 'glass';
-        w.desiredWorkers = g.debugJobCount('luxury');
-        for (let i = 0; i < 3000; i++) g.debugAdvance(0.5);
-        return { glass: g.debugTotalStored('glass'), jewelry: g.debugTotalStored('jewelry') };
-      `) as () => any,
-    );
-
-    expect(out.glass, 'no sand, no glass').toBe(0);
-    expect(out.jewelry).toBe(0);
-  });
-
-  test.skip('the harbour keeps a calendar, and deals in what no village can make', async ({ page }) => {
+  test('the harbour keeps a calendar, and deals in what no village can make', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(
       new Function(`
@@ -4020,6 +4031,24 @@ test.describe('sand, glass, jewellery and the harbour', () => {
             s.merchant.phase = 'away';
             s.merchant.category = null;
             s.merchant.cooldownTimer = 0;
+            // Send the quay away empty each turn. A band of nomads waiting at the gate holds the
+            // harbour shut — one arrival at a time is the rule, and it is the right rule — but a
+            // test village never answers them, so left alone they would sit there for forty years
+            // and no fleet would ever sail. Answering them is what a player does; this is the
+            // stand-in for having done it.
+            s.pendingNomads = null;
+            // And keep the village fed by hand. This loop turns a hundred and sixty seasons with
+            // no time in between, so nobody ever works, hauls or shops: left alone the village
+            // starves inside five years, and once the last villager is gone no more ships come.
+            // Forty years of an empty harbour is not a schedule, it is an obituary.
+            for (const b of s.buildings) {
+              if (b.type === 'house' || b.type === 'stonehouse' || b.type === 'barn') {
+                b.store.grain = 200;
+                b.store.firewood = 200;
+                b.store.clothing = 40;
+                b.store.medicine = 40;
+              }
+            }
             g.debugEndSeason();
             // Read the season *after* the turn: endSeason moves the clock on before the fleets sail.
             const season = g.debugSeasonName();

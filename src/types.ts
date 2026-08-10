@@ -1851,9 +1851,12 @@ export const CARRY_VOLUME = 12;
  * only compact goods gain. Crops at 0.25 mean 48 per trip, which is what makes a harvest haulable.
  */
 export const RESOURCE_VOLUME: Record<ResourceKind, number> = {
-  // Sand is quarried by the cartload; glass and the fine goods are small, valuable and carried
-  // carefully, so a trip carries a lot of them.
-  sand: 1, glass: 0.5, jewelry: 0.1, gold: 0.1, dye: 0.25, silk: 0.25,
+  // Sand is quarried by the cartload. The fine goods are small, but volume is not only how much
+  // fits in a barn — it is also what divides a load, and a worker holds their output back until
+  // they have a *full* one. Jewellery comes off the bench one piece at a time, so at the 0.1 a
+  // ring deserves by bulk a jeweller would have had to make a hundred and twenty of them before
+  // carrying any to a barn. These are set by how many make a sensible trip.
+  sand: 1, glass: 0.5, jewelry: 1, gold: 0.5, dye: 0.5, silk: 0.5,
   // Crops and other foods: compact, and hauled in bulk from field to barn.
   fruit: 0.25, grain: 0.25, corn: 0.25, potato: 0.25, rice: 0.25, barley: 0.25,
   carrot: 0.25, tomato: 0.25, onion: 0.25, pepper: 0.25, cabbage: 0.25, beans: 0.25,

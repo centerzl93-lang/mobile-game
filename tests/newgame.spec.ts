@@ -5215,7 +5215,8 @@ test.describe('lives run on ticks, not seasons', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false);
+      // Seeded: this walks years of simulation, and how long that takes is the map's call.
+      g.startNewGame('small', 'easy', false, 0, 4242);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       barn.store.wood = 1000;

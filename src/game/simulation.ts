@@ -3288,8 +3288,16 @@ function formCouples(s: GameState, houses: Building[]): void {
     if (householdCouple(s, h)) continue;
     matchWithin(singleAdults(residentsOf(s, h)), 1);
   }
-  // Then everyone still single, wherever they live. These couples have no home together yet.
-  matchWithin(singleAdults(s.citizens));
+  // Then everyone still single, wherever they live — except on a bunk. These couples have no home
+  // together yet, which is the pressure to build one.
+  //
+  // The boarding house is deliberately out of it: it is a dormitory, and courtship there would
+  // make it the cheapest way to grow a population as well as the cheapest way to house one. A
+  // lodger who moves into a house is in the pool again the moment they have a door of their own.
+  const bunks = new Set(
+    s.buildings.filter((b) => b.built && isShelter(b.type)).map((b) => b.id),
+  );
+  matchWithin(singleAdults(s.citizens.filter((c) => c.homeId === null || !bunks.has(c.homeId))));
 }
 
 /**

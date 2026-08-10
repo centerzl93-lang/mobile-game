@@ -45,6 +45,8 @@ import {
   MERCHANT_CATEGORY_STOCK,
   MerchantCategory,
   TRADE_VALUE,
+  CLOTHED_HEAT_FACTOR,
+  FINE_CLOTHED_HEAT_FACTOR,
   Season,
   SEASONS,
   CONGREGATION_PER_PRIEST,
@@ -87,6 +89,7 @@ import {
   LARDER_KINDS,
   LIMIT_STEP,
   LimitKey,
+  LIMITABLE,
   carryLimit,
   RESOURCE_KINDS,
   ADULT_AGE,
@@ -114,6 +117,7 @@ import {
   recordEvent,
   basketTrade,
   merchantBerth,
+  placementReachable,
   dismissMerchant,
   TradeBasket,
   TradeResult,
@@ -1170,16 +1174,21 @@ class Game {
       this.ui.flashHint(check.reason ?? 'Cannot build here');
       return;
     }
+    const unreachable = !placementReachable(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot);
     const placed = placeBuilding(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot);
     const name = BUILDING_DEFS[this.selectedBuild].name;
     const needsClearing = placed !== null && !footprintClear(this.state, placed);
     this.ui.log(
-      needsClearing
-        ? `${name} site marked — clear the trees and stone under it first`
-        : this.state.desiredBuilders > 0
-          ? `${name} site marked — builders will haul materials`
-          : `${name} site marked — assign Builders on the Job Board to construct it`,
-      'info',
+      // An unreachable site outranks the other notes: builders can't get to it to raise it, so
+      // "assign builders" would be a lie. Say what is actually wrong.
+      unreachable
+        ? `${name} site marked — but nothing can reach it; lay a road or bridge to it first`
+        : needsClearing
+          ? `${name} site marked — clear the trees and stone under it first`
+          : this.state.desiredBuilders > 0
+            ? `${name} site marked — builders will haul materials`
+            : `${name} site marked — assign Builders on the Job Board to construct it`,
+      unreachable ? 'bad' : 'info',
     );
     this.persist();
     if (!canAfford(this.state, this.selectedBuild)) {
@@ -1327,10 +1336,13 @@ class Game {
         if (b.type === 'blacksmith') rows.push({ label: 'Forging', value: `${b.recipe} tools` });
         if (b.type === 'tailor') rows.push({ label: 'Sewing from', value: `${b.recipe}` });
         if (b.type === 'luxury') {
-          rows.push({
-            label: 'At the bench',
-            value: b.recipe === 'jewelry' ? '💍 jewellery, from glass and iron' : '🔷 glass, from sand and coal',
-          });
+          const bench: Record<LuxuryRecipe, string> = {
+            glass: '🔷 glass, from sand and coal',
+            jewelry: '💍 jewellery, from glass and iron',
+            finejewelry: '👑 fine jewellery, from gold and glass',
+            fineclothes: '👗 fine clothes, from dye and silk',
+          };
+          rows.push({ label: 'At the bench', value: bench[(b.recipe as LuxuryRecipe) ?? 'glass'] });
         }
         if (b.type === 'farm') {
           rows.push({ label: 'Crop', value: b.crop ? `${CROP_META[b.crop].emoji} ${CROP_META[b.crop].label}` : '🌱 No seed — buy from a trader' });
@@ -1412,8 +1424,10 @@ class Game {
           ] };
         } else if (b.type === 'luxury') {
           controls.toggle = { group: 'luxury', options: [
-            { v: 'glass', label: '🔷 Glass', on: b.recipe !== 'jewelry' },
+            { v: 'glass', label: '🔷 Glass', on: b.recipe === 'glass' || b.recipe === undefined },
             { v: 'jewelry', label: '💍 Jewellery', on: b.recipe === 'jewelry' },
+            { v: 'finejewelry', label: '👑 Fine jewellery', on: b.recipe === 'finejewelry' },
+            { v: 'fineclothes', label: '👗 Fine clothes', on: b.recipe === 'fineclothes' },
           ] };
         } else if (b.type === 'lumberyard') {
           const on = b.replant ?? true;
@@ -1897,6 +1911,12 @@ class Game {
     return canPlace(this.state, type, x, y, w, h, rot, { ignoreTier: true });
   }
 
+  /** Debug/testing helper: would a building here have a door the village could walk to? */
+  debugPlacementReachable(type: BuildingType, x: number, y: number, rot: 0 | 1 | 2 | 3 = 0): boolean {
+    const { w, h } = this.placeSize(type);
+    return placementReachable(this.state, type, x, y, w, h, rot);
+  }
+
   /** Debug/testing helper: how often a quarry load comes up sand. */
   debugSandShare(): number {
     return QUARRY_SAND_SHARE;
@@ -1932,6 +1952,16 @@ class Game {
   /** Debug/testing helper: what a resource is worth in trade. */
   debugTradeValue(kind: ResourceKind): number {
     return TRADE_VALUE[kind];
+  }
+
+  /** Debug/testing helper: the winter-fuel multiplier for a coat — plain, or the weaker fine kind. */
+  debugClothFactor(fine: boolean): number {
+    return fine ? FINE_CLOTHED_HEAT_FACTOR : CLOTHED_HEAT_FACTOR;
+  }
+
+  /** Debug/testing helper: every stockpile the limits panel offers a cap on. */
+  debugLimitable(): LimitKey[] {
+    return [...LIMITABLE];
   }
 
   /** Debug/testing helpers: round-trip the village through storage. */
@@ -2315,7 +2345,14 @@ class Game {
       placement.ph = h;
       placement.prot = this.buildRot;
       placement.valid = canPlace(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot).ok;
+      // A legal but unreachable spot is a soft-lock the player is about to build: warn, don't
+      // forbid. `warn` only means anything alongside a valid placement — a red ghost is already
+      // saying no for a better reason.
+      placement.warn =
+        placement.valid &&
+        !placementReachable(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot);
     }
+    this.ui.setPlaceWarn(!!placement.warn);
 
     if (this.use2d) {
       this.ctx!.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);

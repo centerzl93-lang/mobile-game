@@ -159,6 +159,16 @@ export function generateWorld(seed = newSeed()): Tile[] {
     }
   }
 
+  // Keep the mountains off the water. A mountain tile is impassable and so is water, so a range
+  // that runs straight into the river or a lake is a solid wall meeting a solid wall — and the
+  // land it fences off has no way in or out. That is a soft-lock a player cannot dig out of, and
+  // it is worst at the start, when a founding camp can wake up walled into a cove. Demoting the
+  // mountain tiles that touch water to open grass leaves a thin, walkable shore between the rock
+  // and the waterline, so the range still comes down to the coast but never seals it. (The
+  // foothill pass below then re-skirts whatever mountain is left, so the shore may read as rocky
+  // rather than grassy — foothill is walkable too, which is all this needs.)
+  separateMountainsFromWater(tiles);
+
   // Surface deposits go in after the landscape exists, as individual bounded outcrops. Both
   // passes share one keep-out mask — seeded with the shoreline margin, then extended around each
   // outcrop as it is placed — so stone and iron cannot chain into each other either.
@@ -435,6 +445,35 @@ function growRegion(seed: number, target: number, rand: () => number, ok: (i: nu
 }
 
 /** Mask of tiles within `margin` (Chebyshev) of a water tile. */
+/**
+ * Demote every mountain tile that touches water to grass, so no impassable range ever seals
+ * against the equally impassable shore. Checked over the eight-neighbourhood, so a range cannot
+ * even meet the water corner-to-corner; one pass is enough, since demoting rock to grass never
+ * creates new water for another tile to be caught against.
+ */
+function separateMountainsFromWater(tiles: Tile[]): void {
+  for (let y = 0; y < MAP_H; y++) {
+    for (let x = 0; x < MAP_W; x++) {
+      const t = tiles[tileIndex(x, y)];
+      if (t.type !== 'stone') continue;
+      let touchesWater = false;
+      for (let dy = -1; dy <= 1 && !touchesWater; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const n = getTile(tiles, x + dx, y + dy);
+          if (n && n.type === 'water') { touchesWater = true; break; }
+        }
+      }
+      if (touchesWater) {
+        t.type = 'grass';
+        t.trees = 0;
+        delete t.stone;
+        delete t.iron;
+      }
+    }
+  }
+}
+
 function waterProximity(tiles: Tile[], margin: number): Uint8Array {
   const near = new Uint8Array(tiles.length);
   for (let y = 0; y < MAP_H; y++) {

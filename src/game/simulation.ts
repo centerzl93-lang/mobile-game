@@ -118,6 +118,7 @@ import {
   isFertile,
   entranceTile,
   entranceTiles,
+  entrancesAt,
   hasDoor,
   limitedOutput,
   LimitKey,
@@ -186,6 +187,7 @@ import {
   BuildingType,
   SEASON_BURN,
   CLOTHED_HEAT_FACTOR,
+  FINE_CLOTHED_HEAT_FACTOR,
   isAdult,
   isFireproof,
 } from '../types';
@@ -265,6 +267,11 @@ const TAILOR_LEATHER_IN = 5, TAILOR_WOOL_IN = 4, TAILOR_OUT = 4;
 // an iron make one piece of jewellery.
 const LUX_GLASS_SAND = 2, LUX_GLASS_COAL = 1, LUX_GLASS_OUT = 2;
 const LUX_JEWEL_GLASS = 2, LUX_JEWEL_IRON = 1, LUX_JEWEL_OUT = 1;
+// The fine bench: gold set in glass, and dyed silk worked into a gown. Both take two of a
+// bought luxury and one of a town-made good, and yield a single piece a cycle — dear to run and
+// worth it, since a merchant pays more for one than for anything else the town can make.
+const LUX_FINEJEWEL_GOLD = 2, LUX_FINEJEWEL_GLASS = 1, LUX_FINEJEWEL_OUT = 1;
+const LUX_FINECLOTH_DYE = 1, LUX_FINECLOTH_SILK = 2, LUX_FINECLOTH_OUT = 1;
 
 const ARRIVE = 0.25; // tile distance considered "arrived"
 /**
@@ -408,7 +415,8 @@ function heat(s: GameState, dt: number, log: LogFn): void {
   for (const c of s.citizens) {
     const home = c.homeId !== null ? homeById.get(c.homeId) : undefined;
     const stoneFactor = home?.type === 'stonehouse' ? STONE_HOUSE_HEAT_FACTOR : 1;
-    const clothFactor = c.clothed ? CLOTHED_HEAT_FACTOR : 1;
+    // A fine gown saves less than a proper coat — see `FINE_CLOTHED_HEAT_FACTOR`.
+    const clothFactor = c.clothed ? (c.fineclothed ? FINE_CLOTHED_HEAT_FACTOR : CLOTHED_HEAT_FACTOR) : 1;
     let need = HEAT_PER_CITIZEN_WINTER * rate * stoneFactor * clothFactor; // heat units
     // Fuel is burned where it is kept: in the hearth of the house the villager lives in. A housed
     // villager has no fall-back to the village fuel pile — a barn is a woodshed, not a fire, and
@@ -1171,9 +1179,16 @@ function converterInputs(b: Building): [ResourceKind, number][] {
     case 'tailor':
       return b.recipe === 'wool' ? [['wool', TAILOR_WOOL_IN]] : [['leather', TAILOR_LEATHER_IN]];
     case 'luxury':
-      return b.recipe === 'jewelry'
-        ? [['glass', LUX_JEWEL_GLASS], ['iron', LUX_JEWEL_IRON]]
-        : [['sand', LUX_GLASS_SAND], ['coal', LUX_GLASS_COAL]];
+      switch (b.recipe) {
+        case 'jewelry':
+          return [['glass', LUX_JEWEL_GLASS], ['iron', LUX_JEWEL_IRON]];
+        case 'finejewelry':
+          return [['gold', LUX_FINEJEWEL_GOLD], ['glass', LUX_FINEJEWEL_GLASS]];
+        case 'fineclothes':
+          return [['dye', LUX_FINECLOTH_DYE], ['silk', LUX_FINECLOTH_SILK]];
+        default:
+          return [['sand', LUX_GLASS_SAND], ['coal', LUX_GLASS_COAL]];
+      }
     default:
       return [];
   }
@@ -1317,6 +1332,52 @@ export function debugReachable(
 ): boolean {
   ensureNavLabels(s);
   return reachableFrom(from, tx, ty);
+}
+
+/**
+ * Would a building put here have a door the village could actually walk to?
+ *
+ * The soft-lock this guards against: a site sealed off from the rest of the map — on a spit of
+ * land the river wraps, behind a wall of its own buildings — where every door opens onto ground
+ * nothing can path to from where the villagers live. A workshop nobody can reach is a workshop
+ * that never runs, and its assigned hands stand at the barn holding jobs they can't get to.
+ *
+ * Placement does not *forbid* it (the player may be about to bridge the gap), so this only feeds
+ * the warning: a yellow ghost and an "Unreachable" tag over it, said before the tap, not after.
+ *
+ * Open-ground buildings — fields and pens — have no door to reach and are always "reachable" here.
+ * A building with a door is reachable if any of its doors shares a walkable component with the
+ * village core, which we take to be the built barns (where the food is and the haulers converge).
+ * With no barn standing yet — the opening frames — anywhere goes, since there is no core to cut
+ * off from.
+ */
+export function placementReachable(
+  s: GameState,
+  type: BuildingType,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  rot: 0 | 1 | 2 | 3,
+): boolean {
+  if (!hasDoor(type)) return true;
+  ensureNavLabels(s);
+  const fw = rot % 2 === 1 ? h : w;
+  const fh = rot % 2 === 1 ? w : h;
+  // The village core: the walkable tiles the built barns are entered from. A door that reaches any
+  // of these reaches the village.
+  const core: { x: number; y: number }[] = [];
+  for (const b of s.buildings) {
+    if (b.built && !b.razed && b.type === 'barn') {
+      for (const e of entranceTiles(b)) if (isWalkable(s, e.x, e.y)) core.push(e);
+    }
+  }
+  if (core.length === 0) return true; // nothing to be cut off from yet
+  for (const d of entrancesAt(x, y, fw, fh, rot, type)) {
+    if (!isWalkable(s, d.x, d.y)) continue;
+    if (core.some((c) => reachableFrom(c, d.x, d.y))) return true;
+  }
+  return false;
 }
 
 /** Debug/testing helper: what a converter consumes per cycle, for the recipe it is set to. */
@@ -1712,16 +1773,27 @@ function workOutput(
       }
       return consumeStore(b, [['iron', SMITH_IRON_IN]]) ? { kind: 'tools', amount: SMITH_IRON_OUT * tf } : null;
     case 'luxury':
-      // Two benches, one workshop. Glass is the first step and jewellery the second, so a town
-      // with one workshop chooses which half of the chain it is running; two can run both.
-      if (b.recipe === 'jewelry') {
-        return consumeStore(b, [['glass', LUX_JEWEL_GLASS], ['iron', LUX_JEWEL_IRON]])
-          ? { kind: 'jewelry', amount: LUX_JEWEL_OUT * tf }
-          : null;
+      // Four benches, one workshop. Glass is the first step, jewellery the second, and the two
+      // fine goods are the top of the chain — gold set in glass, and dyed silk. A town with one
+      // workshop chooses which bench it is running; several can run several.
+      switch (b.recipe) {
+        case 'jewelry':
+          return consumeStore(b, [['glass', LUX_JEWEL_GLASS], ['iron', LUX_JEWEL_IRON]])
+            ? { kind: 'jewelry', amount: LUX_JEWEL_OUT * tf }
+            : null;
+        case 'finejewelry':
+          return consumeStore(b, [['gold', LUX_FINEJEWEL_GOLD], ['glass', LUX_FINEJEWEL_GLASS]])
+            ? { kind: 'finejewelry', amount: LUX_FINEJEWEL_OUT * tf }
+            : null;
+        case 'fineclothes':
+          return consumeStore(b, [['dye', LUX_FINECLOTH_DYE], ['silk', LUX_FINECLOTH_SILK]])
+            ? { kind: 'fineclothes', amount: LUX_FINECLOTH_OUT * tf }
+            : null;
+        default:
+          return consumeStore(b, [['sand', LUX_GLASS_SAND], ['coal', LUX_GLASS_COAL]])
+            ? { kind: 'glass', amount: LUX_GLASS_OUT * tf }
+            : null;
       }
-      return consumeStore(b, [['sand', LUX_GLASS_SAND], ['coal', LUX_GLASS_COAL]])
-        ? { kind: 'glass', amount: LUX_GLASS_OUT * tf }
-        : null;
     case 'tailor':
       if (b.recipe === 'wool') {
         return consumeStore(b, [['wool', TAILOR_WOOL_IN]]) ? { kind: 'clothing', amount: TAILOR_OUT * tf } : null;
@@ -2500,7 +2572,28 @@ function endSeason(s: GameState, log: LogFn): void {
         }
       }
       if (need > 0) need = consume(s, 'clothing', need);
+      // A proper wool coat comes first. Fine clothes make up any shortfall — a village that runs
+      // its fine bench can dress its people in gowns when the tailor falls behind. They are still
+      // a garment, so they ward the winter illness off just the same; they only hold less heat in,
+      // which the fuel bill above reads through `c.fineclothed`.
+      let wornFine = false;
+      if (need > 0.001) {
+        if (home) {
+          const fromLarder = Math.min(need, home.store['fineclothes'] ?? 0);
+          if (fromLarder > 0) {
+            takeFromLarder(s, home, 'fineclothes', fromLarder);
+            need -= fromLarder;
+            wornFine = true;
+          }
+        }
+        if (need > 0.001) {
+          const before = need;
+          need = consume(s, 'fineclothes', need);
+          if (need < before - 0.001) wornFine = true;
+        }
+      }
       c.clothed = need <= 0.001;
+      c.fineclothed = c.clothed && wornFine;
       if (!c.clothed) unclothed.push(c);
     }
 

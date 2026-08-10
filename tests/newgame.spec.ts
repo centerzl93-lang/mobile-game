@@ -4023,6 +4023,88 @@ test.describe('sand, glass, jewellery and the harbour', () => {
     expect(out.jewelInputs).toEqual([['glass', 2], ['iron', 1]]);
   });
 
+  test('the fine bench sets gold in glass, and takes silk up in dye', { tag: '@slow' }, async ({ page }) => {
+    test.setTimeout(180_000);
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${town}
+        const w = put('luxury');
+        // Fed and roomy, like the glass test. The fine bench's bought luxuries — gold, dye, silk —
+        // are stocked in the barn for the workshop to haul; glass it would otherwise have to blow.
+        barn.store.grain = 3000;
+        for (const k of ['wood', 'stone']) barn.store[k] = 40;
+        for (const k of ['gold', 'glass', 'dye', 'silk']) barn.store[k] = 300;
+        w.desiredWorkers = g.debugJobCount('luxury');
+
+        w.recipe = 'finejewelry';
+        let base = g.debugTotalStored('finejewelry');
+        for (let i = 0; i < 5000; i++) g.debugAdvance(0.5);
+        const madeFineJewels = g.debugTotalStored('finejewelry') - base;
+
+        w.recipe = 'fineclothes';
+        base = g.debugTotalStored('fineclothes');
+        for (let i = 0; i < 5000; i++) g.debugAdvance(0.5);
+        const madeFineClothes = g.debugTotalStored('fineclothes') - base;
+
+        return {
+          madeFineJewels, madeFineClothes,
+          fineJewelInputs: g.debugRecipeInputs('luxury', 'finejewelry'),
+          fineClothInputs: g.debugRecipeInputs('luxury', 'fineclothes'),
+          jewelVal: g.debugTradeValue('finejewelry'),
+          clothVal: g.debugTradeValue('fineclothes'),
+        };
+      `) as () => any,
+    );
+
+    expect(out.madeFineJewels, 'gold and glass became fine jewellery').toBeGreaterThan(0);
+    expect(out.madeFineClothes, 'dye and silk became fine clothes').toBeGreaterThan(0);
+    expect(out.fineJewelInputs).toEqual([['gold', 2], ['glass', 1]]);
+    expect(out.fineClothInputs).toEqual([['dye', 1], ['silk', 2]]);
+    // The most valuable things a town can make — dearer than the plain jewellery below them.
+    expect(out.jewelVal).toBe(40);
+    expect(out.clothVal).toBe(24);
+  });
+
+  test('fine clothes are worn like a coat, for less of the warmth', { tag: '@slow' }, async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      // Dress a whole village in one thing and turn the year to winter, then read the coats.
+      const clothe = (only: string) => {
+        g.startNewGame('small', 'easy', false, 0, 4242);
+        const s = g.state;
+        for (const b of s.buildings) { delete b.store?.clothing; delete b.store?.fineclothes; }
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        barn.store[only] = 500;
+        for (let i = 0; i < 4 && g.debugSeasonName() !== 'Winter'; i++) g.debugEndSeason();
+        g.debugEndSeason(); // the winter turn issues the ration
+        const cs = s.citizens;
+        return {
+          clothed: cs.filter((c: any) => c.clothed).length,
+          fineclothed: cs.filter((c: any) => c.fineclothed).length,
+          pop: cs.length,
+        };
+      };
+      return {
+        plain: clothe('clothing'),
+        fine: clothe('fineclothes'),
+        plainFactor: g.debugClothFactor(false),
+        fineFactor: g.debugClothFactor(true),
+      };
+    });
+
+    // A plain coat clothes everyone and is a plain coat.
+    expect(out.plain.clothed).toBe(out.plain.pop);
+    expect(out.plain.fineclothed).toBe(0);
+    // Fine clothes clothe everyone too — worn like normal — and are flagged as the fine kind.
+    expect(out.fine.clothed).toBe(out.fine.pop);
+    expect(out.fine.fineclothed).toBe(out.fine.pop);
+    // "Less protection": a fine gown saves less winter fuel than a proper coat (both under 1).
+    expect(out.fineFactor).toBeGreaterThan(out.plainFactor);
+    expect(out.fineFactor).toBeLessThan(1);
+  });
+
   test('the harbour keeps a calendar, and deals in what no village can make', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(
@@ -4224,6 +4306,63 @@ test.describe('sand, glass, jewellery and the harbour', () => {
     expect(out.portAfter, 'the harbour is still standing after a reload').not.toBeNull();
     expect(out.portAfter.store).toEqual({ glass: 7 });
     expect(out.portAfter.orders, 'and its standing orders came back with it').toEqual({ glass: 40, jewelry: 5 });
+  });
+});
+
+test.describe('a site the village cannot reach', () => {
+  test('is still buildable, but warned as unreachable', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const s = g.state;
+      const W = 72;
+      const at = (x: number, y: number) => s.tiles[y * W + x];
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // Carve a walled island in a far corner: a 4x4 patch of open grass ringed on all sides —
+      // corners included — by water, so nothing can path onto it from where the village lives.
+      const ox = 4, oy = 4;
+      for (let y = oy - 1; y <= oy + 4; y++)
+        for (let x = ox - 1; x <= ox + 4; x++) {
+          const t = at(x, y);
+          const ring = x < ox || x > ox + 3 || y < oy || y > oy + 3;
+          t.type = ring ? 'water' : 'grass';
+          t.trees = 0;
+          delete t.stone;
+          delete t.iron;
+        }
+      // The map changed under the pathfinder — make it rebuild its walkable-component labels.
+      s.navVersion = (s.navVersion ?? 0) + 1;
+      // Stock the barn so cost is never the reason a placement is refused.
+      barn.store.wood = 500;
+      barn.store.stone = 500;
+
+      // A house on the island: its footprint and door sit on grass (so it is legal to build), but
+      // that grass is cut off from the barn by the moat.
+      const island = { x: ox + 1, y: oy + 1 };
+      // A house on open ground the village plainly walks: the first buildable spot found stepping
+      // out from the barn, which on the cleared founding ground is a tile or two away.
+      let home: { x: number; y: number } | null = null;
+      for (let r = 3; r < 12 && !home; r++)
+        for (let dy = -r; dy <= r && !home; dy++)
+          for (let dx = -r; dx <= r && !home; dx++)
+            if (g.debugCanPlace('house', barn.x + dx, barn.y + dy).ok)
+              home = { x: barn.x + dx, y: barn.y + dy };
+      return {
+        islandCanPlace: g.debugCanPlace('house', island.x, island.y).ok,
+        islandReachable: g.debugPlacementReachable('house', island.x, island.y),
+        foundHome: !!home,
+        homeReachable: home ? g.debugPlacementReachable('house', home.x, home.y) : null,
+      };
+    });
+
+    // The island house is a legal placement — the tiles are clear and the materials are in store.
+    expect(out.islandCanPlace, 'the island site is buildable').toBe(true);
+    // But nothing can reach it, so it is flagged: the player may build it and bridge to it later.
+    expect(out.islandReachable, 'the island site is unreachable').toBe(false);
+    // A house on open ground by the barn is both buildable and reachable — no warning.
+    expect(out.foundHome, 'a buildable spot exists by the barn').toBe(true);
+    expect(out.homeReachable, 'ground by the barn is reachable').toBe(true);
   });
 });
 
@@ -6534,6 +6673,26 @@ test.describe('stockpile limits', () => {
     await expect(page.locator('#village')).not.toContainText('all kinds');
   });
 
+  test('the luxury goods reach the HUD and the limits', async ({ page }) => {
+    await open2d(page);
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const barn = g.state.buildings.find((b: any) => b.type === 'barn');
+      barn.store.glass = 120; // the village now holds a luxury good
+    });
+    // The glass chip appears in the HUD once there is glass to show; the core chips are always up.
+    await expect(page.locator('#stat-resources .stat.lux:not(.hidden)').filter({ hasText: '120' })).toHaveCount(1);
+
+    // The makeable luxury goods each get a limit row; the bought-only ones (gold, dye, silk) do not.
+    await page.click('#btn-village');
+    await page.click('#village .tab[data-tab="limits"]');
+    for (const label of ['Glass', 'Fine jewellery', 'Fine clothes']) {
+      await expect(page.locator('#village .limit-row').filter({ hasText: label })).toHaveCount(1);
+    }
+    await expect(page.locator('#village .limit-row').filter({ hasText: 'Gold' })).toHaveCount(0);
+  });
+
   test('the panel is rows and nothing else', async ({ page }) => {
     await open2d(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
@@ -6543,15 +6702,18 @@ test.describe('stockpile limits', () => {
 
     const out = await page.evaluate(() => ({
       rows: document.querySelectorAll('#village .limit-row').length,
+      limitable: (window as any).__village.debugLimitable().length,
       // A stockpile row is a name and its cap. The stock, and how many workplaces the cap had
       // stood down, were three more numbers answering a question nobody opened the panel to ask.
       subs: [...document.querySelectorAll('#village .limit-row .jr-sub')].length,
       caps: [...document.querySelectorAll('#village .limit-row .count')].map((e) => e.textContent!.trim()),
     }));
 
-    expect(out.rows, 'a row per limitable resource').toBe(9);
+    // A row per limitable resource — the nine core plus the five luxury goods a town can make.
+    expect(out.rows, 'a row per limitable resource').toBe(out.limitable);
+    expect(out.rows).toBe(14);
     expect(out.subs, 'and nothing under the name but the stepper').toBe(0);
-    expect(out.caps.length).toBe(9);
+    expect(out.caps.length).toBe(out.limitable);
     expect(out.caps.every((c) => /^(\d+|—)$/.test(c)), 'each row shows its limit, or none').toBe(true);
   });
 

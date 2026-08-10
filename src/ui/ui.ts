@@ -13,6 +13,7 @@ import {
   RESOURCE_ICON,
   RESOURCE_KINDS,
   HUD_RESOURCES,
+  HUD_LUXURY,
   FOOD_ICON,
   ResourceKind,
   seasonLabel,
@@ -337,6 +338,15 @@ export class UI {
       this.el.resources.appendChild(chip);
       this.resChips.set(kind, chip);
     }
+    // The luxury chips sit after the core ones, built hidden and shown only while the village holds
+    // the good (see `HUD_LUXURY`). They carry a class so the update loop can tell them apart.
+    for (const kind of HUD_LUXURY) {
+      const chip = document.createElement('div');
+      chip.className = 'stat mini lux hidden';
+      chip.innerHTML = `<span class="ico">${RESOURCE_ICON[kind]}</span><span class="val">0</span><span class="cap">▲</span><span class="dn">▼</span>`;
+      this.el.resources.appendChild(chip);
+      this.resChips.set(kind, chip);
+    }
   }
 
   /**
@@ -441,6 +451,17 @@ export class UI {
       // Firewood and clothing live in larders too, and are consumed from there first, so their
       // warnings have to count them for the same reason.
       const v = (totals[kind] ?? 0) + totalInLarders(s, kind);
+      chip.querySelector('.val')!.textContent = `${Math.floor(v)}`;
+      this.markLimit(chip, s, kind, LIMIT_META[kind].label);
+      this.markLow(chip, s, kind);
+    }
+    // Luxury chips: same read, but the chip only shows while the good is actually held. Fine
+    // clothes count larders too, since a household keeps a gown in its press like any coat.
+    for (const kind of HUD_LUXURY) {
+      const chip = this.resChips.get(kind)!;
+      const v = (totals[kind] ?? 0) + totalInLarders(s, kind);
+      chip.classList.toggle('hidden', v < 0.5);
+      if (v < 0.5) continue;
       chip.querySelector('.val')!.textContent = `${Math.floor(v)}`;
       this.markLimit(chip, s, kind, LIMIT_META[kind].label);
       this.markLow(chip, s, kind);
@@ -1352,6 +1373,28 @@ export class UI {
   }
   hideSizeWidget(): void {
     this.sizeEl?.classList.add('hidden');
+  }
+
+  private placeWarnEl: HTMLElement | null = null;
+  /**
+   * The "Unreachable" tag over a placement ghost sitting where nothing can walk to it.
+   *
+   * A floating badge above the centre reticle — where the ghost is — rather than a hint down by
+   * the toolbar, so the warning reads as belonging to the building the player is siting. Toggled
+   * every frame from the render loop; the DOM is only touched when the state flips, so this is
+   * cheap to call at 60Hz.
+   */
+  setPlaceWarn(show: boolean): void {
+    if (!this.placeWarnEl) {
+      if (!show) return; // nothing to hide, and don't build the node until first needed
+      const el = document.createElement('div');
+      el.id = 'place-warn';
+      el.className = 'place-warn hidden';
+      el.textContent = '⚠️ Unreachable';
+      document.body.appendChild(el);
+      this.placeWarnEl = el;
+    }
+    this.placeWarnEl.classList.toggle('hidden', !show);
   }
 
   // ---- Ranch split/transfer destination picker (reuses the modal container) ----

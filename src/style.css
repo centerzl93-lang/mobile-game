@@ -1110,6 +1110,30 @@ body {
 /* ---- Ranch: placement size widget ---- */
 /* Placement controls. Centred just under the ghost rather than parked in a corner, where they
    sat on top of the build bar and a long way from the thing being placed. */
+/* "Unreachable" tag, floated above the centre reticle where the ghost sits. Amber to match the
+   yellow ghost the renderer draws for the same case, and pointer-transparent so it never eats a
+   tap meant for the map or the Build button beneath it. */
+.place-warn {
+  position: fixed;
+  left: 50%;
+  top: 40%;
+  transform: translateX(-50%);
+  z-index: 25;
+  pointer-events: none;
+  background: rgba(40, 30, 8, 0.86);
+  color: #ffd24a;
+  border: 1px solid #d9a441;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.place-warn.hidden {
+  display: none;
+}
 .ranch-size {
   position: fixed;
   left: 50%;
@@ -1468,11 +1492,12 @@ body {
 }
 .inv-ctrl .jr-toggle {
   display: flex;
+  flex-wrap: wrap; /* the workshop has four benches — let them fall to a second row rather than crush */
   gap: 6px;
   width: 100%;
 }
 .inv-ctrl .jr-toggle button {
-  flex: 1;
+  flex: 1 1 40%; /* two per row when there are four; a single row still fills the width */
   padding: 7px 10px;
   border-radius: 8px;
   border: 1px solid var(--border);

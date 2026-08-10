@@ -40,6 +40,12 @@ export interface PlacementView {
   /** Quarter turns clockwise the ghost is being placed at (see `Building.rot`). */
   prot?: 0 | 1 | 2 | 3;
   valid: boolean;
+  /**
+   * Placeable, but its door can't be reached from the village — a soft-lock waiting to happen.
+   * Drawn yellow rather than green, with an "Unreachable" tag, but still allowed (see
+   * `placementReachable`). Only meaningful when `valid` is true.
+   */
+  warn?: boolean;
   /** True while in path-drawing mode (shows a hint reticle at screen centre). */
   pathTier?: 'dirt' | 'stone' | 'bridge' | 'stonebridge' | 'tunnel' | null;
   selBuildingId?: number | null;
@@ -405,7 +411,8 @@ export class Renderer {
         ctx.stroke();
       }
       ctx.globalAlpha = 0.5;
-      ctx.fillStyle = placement.valid ? '#5ad06a' : '#e0574a';
+      // Green go, red no, amber go-but-unreachable — matching the 3D ghost tint.
+      ctx.fillStyle = !placement.valid ? '#e0574a' : placement.warn ? '#e0b84a' : '#5ad06a';
       roundRect(ctx, sx, sy, pw * p, ph * p, 4);
       ctx.fill();
       ctx.restore();

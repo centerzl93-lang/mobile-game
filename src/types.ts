@@ -99,7 +99,11 @@ export type ResourceKind =
   | 'jewelry'
   | 'gold'
   | 'dye'
-  | 'silk';
+  | 'silk'
+  // The fine bench's two goods: gold set in glass, and silk taken up in dye. Both are the top of
+  // their chain — nothing consumes them but a merchant — and fine clothing doubles as a coat.
+  | 'finejewelry'
+  | 'fineclothes';
 
 export type Resources = Record<ResourceKind, number>;
 
@@ -185,6 +189,8 @@ export const RESOURCE_KINDS: ResourceKind[] = [
   'gold',
   'dye',
   'silk',
+  'finejewelry',
+  'fineclothes',
 ];
 
 /**
@@ -204,6 +210,19 @@ export const HUD_RESOURCES: ResourceKind[] = [
   'clothing',
   'medicine',
   'firewood',
+];
+
+/**
+ * The luxury goods, shown in the HUD *only while the village holds some*.
+ *
+ * They would be dead weight on a founding camp's top line — a settlement has no glass and never
+ * will until it is a town — so their chips are built once and hidden at zero, appearing the moment
+ * the first load is quarried, blown, cut or bought and vanishing again if the stock runs out. That
+ * keeps the early HUD clean while still putting every luxury good where the core resources are once
+ * it actually exists. Sand leads because it is the first link in the chain a hamlet can already dig.
+ */
+export const HUD_LUXURY: ResourceKind[] = [
+  'sand', 'glass', 'jewelry', 'finejewelry', 'gold', 'dye', 'silk', 'fineclothes',
 ];
 
 /** Icon for the combined food total shown in the HUD. */
@@ -250,6 +269,7 @@ export const RESOURCE_ICON: Record<ResourceKind, string> = {
   sheep: '🐑',
   medicine: '💊',
   sand: '⏳', glass: '🔷', jewelry: '💍', gold: '🪙', dye: '🎨', silk: '🧣',
+  finejewelry: '👑', fineclothes: '👗',
 };
 
 /** Non-food resources that show a red "low" warning in the HUD (survival-critical). */
@@ -325,7 +345,7 @@ export type TailorRecipe = 'leather' | 'wool';
  * and each of those is another member of this union and another arm of `converterInputs`, not a
  * new building or a new system.
  */
-export type LuxuryRecipe = 'glass' | 'jewelry';
+export type LuxuryRecipe = 'glass' | 'jewelry' | 'finejewelry' | 'fineclothes';
 
 /**
  * What a farm grows. There are 16 varieties, each harvesting into its own food resource for
@@ -806,6 +826,13 @@ export interface Citizen {
    * falling ill in winter.
    */
   clothed?: boolean;
+  /**
+   * The coat they got was a fine gown (dyed silk), not a proper wool one. Worn all the same, and
+   * it keeps winter illness off exactly as a plain coat does — but it holds less heat in, so a
+   * fine-clad villager saves less fuel (see `FINE_CLOTHED_HEAT_FACTOR`). Transient, like `clothed`:
+   * only set when `clothed` is, recomputed each season, never saved.
+   */
+  fineclothed?: boolean;
   /**
    * Seconds this villager has gone unfed. Death comes at STARVE_SECONDS, so a short gap while a
    * hauler restocks the larder is survivable. Transient — not saved.
@@ -1335,13 +1362,23 @@ export function limitedOutput(b: Building): LimitKey | null {
     case 'blacksmith': return 'tools';
     case 'tailor': return 'clothing';
     case 'herbalist': return 'medicine';
+    // The workshop is judged against whatever bench it is running — the recipe *is* the output
+    // kind, so a cap on glass stands down a glassblower while a jeweller beside it keeps working.
+    case 'luxury': return (b.recipe as LuxuryRecipe) ?? 'glass';
     default: return null;
   }
 }
 
-/** Every stockpile a limit could actually act on — what the limits panel offers. */
+/**
+ * Every stockpile a limit could actually act on — what the limits panel offers.
+ *
+ * A cap only means anything for a good the village *makes*: `atLimit` stands a producer down, so a
+ * limit on gold, dye or silk — bought off a ship, made by nobody — would sit in the panel doing
+ * nothing. The five luxury goods a town produces are here; the three it only buys are not.
+ */
 export const LIMITABLE: LimitKey[] = [
   'food', 'wood', 'firewood', 'stone', 'coal', 'iron', 'tools', 'clothing', 'medicine',
+  'sand', 'glass', 'jewelry', 'finejewelry', 'fineclothes',
 ];
 
 /**
@@ -1418,6 +1455,10 @@ export const LIMIT_META: Record<LimitKey, { label: string; icon: string }> = {
 for (const k of RESOURCE_KINDS) {
   LIMIT_META[k] = { label: k[0].toUpperCase() + k.slice(1), icon: RESOURCE_ICON[k] };
 }
+// The luxury goods read as two words, which the capitalise-the-key rule cannot know.
+LIMIT_META.finejewelry.label = 'Fine jewellery';
+LIMIT_META.fineclothes.label = 'Fine clothes';
+LIMIT_META.jewelry.label = 'Jewellery';
 
 /**
  * Fraction of a resource's own stockpile limit below which the village calls it low.
@@ -1857,6 +1898,9 @@ export const RESOURCE_VOLUME: Record<ResourceKind, number> = {
   // ring deserves by bulk a jeweller would have had to make a hundred and twenty of them before
   // carrying any to a barn. These are set by how many make a sensible trip.
   sand: 1, glass: 0.5, jewelry: 1, gold: 0.5, dye: 0.5, silk: 0.5,
+  // Finer than the plain goods but not smaller in the barn — a coronet still needs its case and a
+  // gown its press. Held to 1 so a full load is a sensible trip rather than a hundred pieces.
+  finejewelry: 1, fineclothes: 1,
   // Crops and other foods: compact, and hauled in bulk from field to barn.
   fruit: 0.25, grain: 0.25, corn: 0.25, potato: 0.25, rice: 0.25, barley: 0.25,
   carrot: 0.25, tomato: 0.25, onion: 0.25, pepper: 0.25, cabbage: 0.25, beans: 0.25,
@@ -2102,6 +2146,13 @@ export const SEASON_BURN: Record<Season, number> = {
  * means less fuel burned, so clothing production pays for itself twice over.
  */
 export const CLOTHED_HEAT_FACTOR = 0.75;
+/**
+ * The same multiplier for a villager whose coat this winter was a fine gown rather than a proper
+ * one. Fine clothes are a showpiece, cut for the look of the thing, so they keep less of the cold
+ * out — halfway between a plain coat and none at all. They still ward off winter illness (a gown
+ * is a garment); they simply save less fuel than wool would.
+ */
+export const FINE_CLOTHED_HEAT_FACTOR = 0.88;
 
 // ---- Household larders (villagers keep their own supplies at home) ----
 /**
@@ -2518,6 +2569,10 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
   gold: 10,
   dye: 6,
   silk: 8,
+  // The fine bench's own goods — the most valuable things a town can make. Gold set in glass, and
+  // dyed silk worked into a gown, each worth well more than the raw luxuries that went into it.
+  finejewelry: 40,
+  fineclothes: 24,
   fruit: 1,
   grain: 1,
   corn: 1,

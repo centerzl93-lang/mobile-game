@@ -196,6 +196,45 @@ test.describe('world generation, placement & pathfinding', () => {
     expect(peak).toBeGreaterThan(1.5);
   });
 
+  test('no mountain ever touches water, across many worlds', { tag: '@slow' }, async ({ page }) => {
+    await startSmall(page);
+    const out = await page.evaluate(([W, H]) => {
+      const g = (window as any).__village;
+      const idx = (x: number, y: number) => y * W + x;
+      let worlds = 0;
+      let touching = 0; // stone tiles sat against water, over every world tried
+      let leanestRange = Infinity; // fewest mountain tiles any one world kept
+      for (let seed = 1; seed <= 24; seed++) {
+        // A fresh, reproducible world each pass. Mountains and water are terrain, so a new game is
+        // a new map — no need to touch anything but the seed.
+        g.startNewGame('small', 'easy', false, 0, seed * 1013);
+        const T = g.state.tiles;
+        let stone = 0;
+        for (let y = 0; y < H; y++)
+          for (let x = 0; x < W; x++) {
+            if (T[idx(x, y)].type !== 'stone') continue;
+            stone++;
+            for (let dy = -1; dy <= 1; dy++)
+              for (let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dy === 0) continue;
+                const nx = x + dx, ny = y + dy;
+                if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+                if (T[idx(nx, ny)].type === 'water') touching++;
+              }
+          }
+        leanestRange = Math.min(leanestRange, stone);
+        worlds++;
+      }
+      return { worlds, touching, leanestRange };
+    }, [W, H] as const);
+
+    expect(out.worlds).toBe(24);
+    // The whole point: not one mountain tile abuts water, corner-to-corner included, on any world.
+    expect(out.touching, 'mountain tiles sitting against water').toBe(0);
+    // And the separation did not eat the ranges — every world still raises a proper mountain.
+    expect(out.leanestRange, 'even the barest world keeps a range').toBeGreaterThan(20);
+  });
+
   test('mines require foothills; quarries go anywhere there is room', async ({ page }) => {
     await startSmall(page);
     const place = await page.evaluate(([W, H]) => {

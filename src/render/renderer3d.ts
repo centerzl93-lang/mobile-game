@@ -2075,11 +2075,13 @@ export class Renderer3D {
         this.faceArrowBack.position.set(doors[1].x + 0.5, TOP + 0.05, doors[1].y + 0.5);
         this.faceArrowBack.rotation.y = -((rot + 2) % 4) * (Math.PI / 2);
       }
-      // Green means it will go here, red means it will not. The tint is applied over the
-      // silhouette rather than replacing it, so the building stays recognisable either way.
+      // Green means it will go here, red means it will not, amber means it will — but nothing will
+      // be able to reach it. The tint is applied over the silhouette rather than replacing it, so
+      // the building stays recognisable either way.
+      const tint = !pv.valid ? 0x6b1a12 : pv.warn ? 0x6b5310 : 0x1d5c26;
       this.ghost.traverse((o) => {
         const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
-        if (m && !Array.isArray(m) && m.emissive) m.emissive.set(pv.valid ? 0x1d5c26 : 0x6b1a12);
+        if (m && !Array.isArray(m) && m.emissive) m.emissive.set(tint);
       });
     } else {
       this.ghost.visible = false;

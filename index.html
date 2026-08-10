@@ -24,18 +24,22 @@
       <button class="rotate-btn" id="btn-rot-left" title="Hold to rotate view left" aria-label="Hold to rotate view left">↺</button>
       <button class="rotate-btn" id="btn-rot-right" title="Hold to rotate view right" aria-label="Hold to rotate view right">↻</button>
 
-      <!-- Top HUD: resources + season -->
+      <!-- Top HUD: tier, then the village's state, then resources -->
       <div id="hud-top">
+        <!-- How far along the village is — its own line at the very top, larger and set apart, so
+             the one label that says what kind of place this is stands out. Ornaments flank it; the
+             tier name and emoji fill in at runtime. What each tier *asks for* lives in the menu. -->
+        <div class="hud-row tier-row">
+          <div id="stat-tier" title="Village tier"><span class="orn">❧</span><span class="val">🏕️ Settlement</span><span class="orn">❧</span></div>
+        </div>
+        <!-- The village's people and time in one line: who is here, how healthy and happy they
+             are, and what season it is. Health and happiness read as five pips apiece, one per 20
+             points; the exact figure stays on the title for anyone who wants it. -->
         <div class="hud-row" id="hud-people">
           <div class="stat" id="stat-ages" title="children · students · adults"><span class="val">🧒0 🎓0 🧑0</span></div>
-          <div class="stat season" id="stat-season"><span class="val">Spring · Yr 1</span></div>
-          <!-- How far along the village is. What each tier *asks for* lives elsewhere; this only
-               ever names where the village stands. -->
-          <div class="stat tier" id="stat-tier" title="Village tier"><span class="val">🏕️ Settlement</span></div>
-          <!-- Health and happiness read as five pips apiece, one per 20 points; the exact
-               figure stays on the title for anyone who wants it. -->
           <div class="stat meter" id="stat-health" title="Average health"><span class="pips"></span></div>
           <div class="stat meter" id="stat-happy" title="Average happiness"><span class="pips"></span></div>
+          <div class="stat season" id="stat-season"><span class="val">Spring · Yr 1</span></div>
           <div class="stat hidden" id="stat-sick" title="Sick villagers"><span class="ico">🤒</span><span class="val">0</span></div>
         </div>
         <div class="hud-row" id="stat-resources"></div>
@@ -54,16 +58,9 @@
         <button class="ctrl" id="btn-menu" title="Menu">☰</button>
       </div>
 
-      <!-- Jobs and stockpile, one panel (slide-in from right). They are the two halves of the
-           same decision — how many hands on a trade, and how much of what it makes to keep — and
-           reading one usually meant opening the other. -->
+      <!-- The one village menu (slide-in from right): four tabs — Jobs and Limits to set, History
+           and Progress to read. The 📋/📈/📜 buttons all open this panel, each on its own tab. -->
       <div id="village" class="panel hidden"></div>
-
-      <!-- Progression: the tier ladder, what each rung asks for and what it opens. -->
-      <div id="progress" class="panel hidden"></div>
-
-      <!-- Village history / chronicle (slide-in from right) -->
-      <div id="history" class="panel hidden"></div>
 
       <!-- Trade modal -->
       <div id="trade-overlay" class="hidden"></div>

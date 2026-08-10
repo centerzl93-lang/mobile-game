@@ -116,8 +116,57 @@ body {
 .stat.season {
   font-weight: 600;
 }
-.stat.tier {
-  font-weight: 600;
+
+/*
+ * The tier gets a line to itself at the top of the HUD, centred and set apart. It is the one label
+ * that says what kind of place this is, so it is bigger, in a serif for a touch of ceremony, and
+ * flanked by a pair of ornaments. `pointer-events: none` on the row keeps the map draggable behind
+ * it; the chip itself is the only painted thing.
+ */
+.tier-row {
+  justify-content: center;
+}
+#stat-tier {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 16px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+#stat-tier .val {
+  font-family: Georgia, 'Iowan Old Style', 'Times New Roman', serif;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+#stat-tier .orn {
+  color: var(--accent);
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+/* The resources expand toggle reads like a chip but acts like a button. The HUD column is
+   click-through so the map drags behind it, so this one control has to opt back into events. */
+.stat.mini.expand {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 700;
+  pointer-events: auto;
+}
+.stat.mini.expand .ico {
+  font-size: 10px;
+}
+/* Extra resource chips are hidden until the row is expanded. */
+#stat-resources .res-extra {
+  display: none;
+}
+#stat-resources.expanded .res-extra {
+  display: inline-flex;
 }
 
 /*
@@ -715,11 +764,26 @@ body {
   border-left: 1px solid var(--border);
   padding: calc(var(--safe-top) + 12px) calc(var(--safe-right) + 12px)
     calc(var(--safe-bottom) + 12px) 12px;
-  overflow-y: auto;
+  /* The panel itself does not scroll — its header and tab row stay put. Only `.panel-body` does,
+     so however long the history or the trade list runs, the tabs are always within reach. */
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 8px;
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.4);
+}
+/* The one scrolling region of a tabbed panel, under the frozen header and tabs. */
+.panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Room past the last row for the home-indicator inset, since the panel's own bottom padding is
+     above this scroll box now. */
+  padding-bottom: var(--safe-bottom);
 }
 .panel h3 {
   margin: 0;

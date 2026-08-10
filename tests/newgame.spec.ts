@@ -1289,15 +1289,15 @@ test.describe('top-line HUD', () => {
   test('carries one chip per headline resource and nothing else', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
-    // Only the chips actually on screen. The row also carries the luxury goods' chips, but those
-    // are built hidden and shown only while the village holds the good (see `HUD_LUXURY`), and a
-    // founding camp holds none — so what a new game shows is exactly the headline set.
+    // The always-on chips: the food total and the four core materials. The processed goods and the
+    // luxuries live in the `.res-extra` half, hidden behind the More toggle, so a default HUD shows
+    // exactly these five. The `.expand` button is the toggle itself, not a resource, so it is out.
     const icons = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('#stat-resources .stat:not(.hidden) .ico')).map((e) => e.textContent),
+      Array.from(document.querySelectorAll('#stat-resources .stat:not(.res-extra):not(.expand) .ico')).map((e) => e.textContent),
     );
-    // The 🍽️ food aggregate, then the eight headline resources in display order. Leather and the
-    // livestock herds are deliberately absent — they crowded the line and live in the barn sheet.
-    expect(icons).toEqual(['🍽️', '🪵', '🪨', '🔩', '⚫', '🛠️', '🧥', '💊', '🔥']);
+    expect(icons).toEqual(['🍽️', '🪵', '🪨', '🔩', '🔥']);
+    // And the toggle is there, leading the hidden half.
+    expect(await page.locator('#res-expand').count()).toBe(1);
   });
 
   test('the season chip names which third of the season it is', async ({ page }) => {
@@ -2522,8 +2522,12 @@ test.describe('top HUD', () => {
     );
     expect(ids).not.toContain('stat-pop');
     expect(ids).not.toContain('stat-builders');
-    // Season sits beside the ages, then how far along the village is; the two meters follow.
-    expect(ids).toEqual(['stat-ages', 'stat-season', 'stat-tier', 'stat-health', 'stat-happy', 'stat-sick']);
+    // The village's people and time in one line: who is here, how healthy and happy, and the
+    // season. The tier moved to its own row above this one, so it is no longer among these.
+    expect(ids).toEqual(['stat-ages', 'stat-health', 'stat-happy', 'stat-season', 'stat-sick']);
+    // The tier stands alone on the top row now.
+    const tierRow = await page.evaluate(() => document.getElementById('stat-tier')!.closest('.tier-row') !== null);
+    expect(tierRow, 'the tier has its own row').toBe(true);
   });
 
   test('health and happiness are five pips each, one per 20 points', async ({ page }) => {
@@ -3122,7 +3126,7 @@ test.describe('village history', () => {
     for (const k of out.kinds) expect(['info', 'good', 'bad']).toContain(k);
   });
 
-  test('the History panel lists them grouped by season, and × closes it', { tag: '@slow' }, async ({ page }) => {
+  test('the History tab lists them grouped by season, and × closes it', { tag: '@slow' }, async ({ page }) => {
     // 2D: every assertion here is about the DOM, and the rows are rendered by `refreshPanels` on
     // an animation frame. Under the 3D renderer headless Chromium gives about 2 fps, so the 5s
     // default was ten frames to catch the panel filling — it lost roughly one run in three.
@@ -3140,18 +3144,20 @@ test.describe('village history', () => {
       }
     });
     await expect(page.locator('#nomad')).toBeHidden();
-    await expect(page.locator('#history')).toBeHidden();
+    await expect(page.locator('#village')).toBeHidden();
+    // History is a tab of the one village menu now; its toolbar button opens the menu on that tab.
     await page.click('#btn-history');
-    await expect(page.locator('#history')).toBeVisible();
+    await expect(page.locator('#village')).toBeVisible();
+    await expect(page.locator('#village .tab.on')).toHaveText('History');
     // Contents are rendered by `refreshPanels` on the next animation frame, not by the click, so
     // this waits on a frame rather than on the game. The budget is generous because a rare run
-    // still loses this assertion (about 3 in 38 after the switch to 2D) for a reason not yet
-    // pinned down — the panel simply comes up with no rows, though `state.events` is never empty
-    // and driving the same sequence by hand has never reproduced it.
-    await expect(page.locator('#history .hist-row').first()).toBeVisible({ timeout: 20_000 });
+    // still loses this assertion for a reason not yet pinned down — the panel comes up with no
+    // rows, though `state.events` is never empty and driving the same sequence by hand never
+    // reproduces it.
+    await expect(page.locator('#village .hist-row').first()).toBeVisible({ timeout: 20_000 });
 
     const dom = await page.evaluate(() => {
-      const h = document.getElementById('history')!;
+      const h = document.getElementById('village')!;
       return {
         seasons: h.querySelectorAll('.hist-season').length,
         rows: h.querySelectorAll('.hist-row').length,
@@ -3162,8 +3168,8 @@ test.describe('village history', () => {
     expect(dom.seasons).toBeGreaterThan(0);
     expect(dom.firstSeasonHeading).toMatch(/^(Spring|Summer|Autumn|Winter) · Yr \d+$/);
 
-    await page.click('#hist-close');
-    await expect(page.locator('#history')).toBeHidden();
+    await page.click('#vp-close');
+    await expect(page.locator('#village')).toBeHidden();
   });
 
   test('the chronicle survives a save and reload', { tag: '@slow' }, async ({ page }) => {
@@ -4471,11 +4477,13 @@ test.describe('a village climbs through tiers', () => {
   test('the progression panel shows the ladder, what each rung asks for and what it opens', async ({ page }) => {
     await open2d(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false, 0, 4242));
+    // Progress is a tab of the one village menu now; its button opens that menu on that tab.
     await page.click('#btn-progress');
-    const blocks = page.locator('#progress .tier-block');
+    await expect(page.locator('#village .tab.on')).toHaveText('Progress');
+    const blocks = page.locator('#village .tier-block');
     await expect(blocks, 'all five rungs, reached or not').toHaveCount(5);
 
-    const here = page.locator('#progress .tier-block.current');
+    const here = page.locator('#village .tier-block.current');
     await expect(here, 'exactly one says you are here').toHaveCount(1);
     await expect(here).toContainText('Settlement');
     await expect(here, 'and what a settlement opens').toContainText('Woodcutter');
@@ -6683,9 +6691,14 @@ test.describe('stockpile limits', () => {
       g.startNewGame('small', 'easy', false, 0, 4242);
       const barn = g.state.buildings.find((b: any) => b.type === 'barn');
       barn.store.glass = 120; // the village now holds a luxury good
+      g.ui.updateHud(g.state, 1, false);
     });
-    // The glass chip appears in the HUD once there is glass to show; the core chips are always up.
-    await expect(page.locator('#stat-resources .stat.lux:not(.hidden)').filter({ hasText: '120' })).toHaveCount(1);
+    // Glass lives in the expandable half of the resources row — hidden until the row is expanded,
+    // then showing its stock like any other chip.
+    const glass = page.locator('#stat-resources .res-extra').filter({ hasText: '120' });
+    await expect(glass, 'hidden until expanded').toBeHidden();
+    await page.click('#res-expand');
+    await expect(glass, 'shown once expanded').toBeVisible();
 
     // The makeable luxury goods each get a limit row; the bought-only ones (gold, dye, silk) do not.
     await page.click('#btn-village');
@@ -7174,7 +7187,9 @@ test.describe('low stock is reported once, and shown', () => {
       const afterMore = lowLines();
 
       g.ui.updateHud(s, 1, false);
-      const chips = [...document.querySelectorAll('#stat-resources .stat')].map((c: any) => ({
+      // Resource chips only — the More/Less toggle is a `.stat` in this row too but carries no
+      // ▲/▼, so it is excluded rather than dereferenced to null.
+      const chips = [...document.querySelectorAll('#stat-resources .stat:not(.expand)')].map((c: any) => ({
         low: c.classList.contains('low'),
         full: c.classList.contains('full'),
         down: getComputedStyle(c.querySelector('.dn')).display !== 'none',

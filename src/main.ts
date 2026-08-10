@@ -1191,12 +1191,15 @@ class Game {
       unreachable ? 'bad' : 'info',
     );
     this.persist();
-    if (!canAfford(this.state, this.selectedBuild)) {
-      this.selectedBuild = null;
-      this.ui.clearSelection();
-      this.ui.hideSizeWidget();
-      this.ui.flashHint('Not enough materials in storage for another');
-    }
+    // A placed building closes the build menu and drops back to the plain screen. Siting one is a
+    // deliberate act with its own Build button, not a brush you sweep across the map, and leaving
+    // the category open with the ghost still armed only invited an accidental second placement.
+    // If the village can no longer afford another, say so on the way out.
+    const affordMore = canAfford(this.state, this.selectedBuild);
+    this.selectedBuild = null;
+    this.ui.clearSelection();
+    this.ui.hideSizeWidget();
+    if (!affordMore) this.ui.flashHint('Not enough materials in storage for another');
   }
 
   private buildingAt(wx: number, wy: number): Building | null {

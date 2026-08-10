@@ -12,8 +12,8 @@ import {
   DIFFICULTY_META,
   RESOURCE_ICON,
   RESOURCE_KINDS,
-  HUD_RESOURCES,
-  HUD_LUXURY,
+  HUD_CORE,
+  HUD_EXTRA,
   FOOD_ICON,
   ResourceKind,
   seasonLabel,
@@ -103,6 +103,9 @@ const PATH_LABEL: Record<PathTier, string> = {
 };
 
 export type PathTier = 'dirt' | 'stone' | 'bridge' | 'stonebridge' | 'tunnel';
+
+/** The four tabs of the one village menu — jobs and limits to set, history and progress to read. */
+export type VillageTab = 'jobs' | 'limits' | 'history' | 'progress';
 
 /** Version / commit / build date, injected at build time — see `__BUILD_STAMP__`. */
 export const BUILD_STAMP = __BUILD_STAMP__;
@@ -248,9 +251,9 @@ export class UI {
     inspect: byId('inspect'),
     overlay: byId('overlay'),
     village: byId('village'),
-    progress: byId('progress'),
+    // Progress and History are tabs of the one #village menu now — no separate panels — but their
+    // toolbar buttons remain, opening the menu on the right tab.
     historyBtn: byId('btn-history'),
-    history: byId('history'),
     trade: byId('trade-overlay'),
     nomad: byId('nomad'),
   };
@@ -265,12 +268,8 @@ export class UI {
   private tier: VillageTier = 'settlement';
   private villagePanelOpen = false;
   private villageSig = '';
-  /** Which half of the village panel is showing. Remembered across openings. */
-  private villageTab: 'jobs' | 'limits' = 'jobs';
-  private progressOpen = false;
-  private progressSig = '';
-  private historyOpen = false;
-  private historySig = '';
+  /** Which tab of the one village menu is showing. Remembered across openings. */
+  private villageTab: VillageTab = 'jobs';
   // Trading post overlay: which post is open, and the in-progress value-matching basket.
   private tradingPostId: number | null = null;
   private basketGive: Partial<Record<ResourceKind, number>> = {};
@@ -321,32 +320,50 @@ export class UI {
 
   // ---- HUD ----
   private foodChip!: HTMLElement;
+  private expandBtn!: HTMLElement;
+  /** Whether the resources row is showing its extra (non-core) chips. Remembered across a session. */
+  private resExpanded = false;
+  private chip(kind: ResourceKind, extra: boolean): HTMLElement {
+    const chip = document.createElement('div');
+    chip.className = 'stat mini' + (extra ? ' res-extra' : '');
+    // The ▲ only shows while the chip is `full` (see `.stat .cap`); the ▼ while it is low.
+    chip.innerHTML = `<span class="ico">${RESOURCE_ICON[kind]}</span><span class="val">0</span><span class="cap">▲</span><span class="dn">▼</span>`;
+    this.resChips.set(kind, chip);
+    return chip;
+  }
   private buildResourceChips(): void {
-    // One combined food chip (all food types), then a chip per non-food resource.
+    const row = this.el.resources;
+    // Food total, then the four core materials — always on the HUD.
     const food = document.createElement('div');
     food.className = 'stat mini';
-    // The ▲ only shows while the chip is `full` (see `.stat .cap` in the stylesheet) — it says
-    // the stock has hit the limit set for it and its trades have downed tools, without the
-    // player having to open the stockpile panel to find out.
     food.innerHTML = `<span class="ico">${FOOD_ICON}</span><span class="val">0</span><span class="cap">▲</span><span class="dn">▼</span>`;
-    this.el.resources.appendChild(food);
+    row.appendChild(food);
     this.foodChip = food;
-    for (const kind of HUD_RESOURCES) {
-      const chip = document.createElement('div');
-      chip.className = 'stat mini';
-      chip.innerHTML = `<span class="ico">${RESOURCE_ICON[kind]}</span><span class="val">0</span><span class="cap">▲</span><span class="dn">▼</span>`;
-      this.el.resources.appendChild(chip);
-      this.resChips.set(kind, chip);
-    }
-    // The luxury chips sit after the core ones, built hidden and shown only while the village holds
-    // the good (see `HUD_LUXURY`). They carry a class so the update loop can tell them apart.
-    for (const kind of HUD_LUXURY) {
-      const chip = document.createElement('div');
-      chip.className = 'stat mini lux hidden';
-      chip.innerHTML = `<span class="ico">${RESOURCE_ICON[kind]}</span><span class="val">0</span><span class="cap">▲</span><span class="dn">▼</span>`;
-      this.el.resources.appendChild(chip);
-      this.resChips.set(kind, chip);
-    }
+    for (const kind of HUD_CORE) row.appendChild(this.chip(kind, false));
+
+    // The expand toggle sits between the core chips and the rest. It reveals the processed goods
+    // and every luxury — kept off the default line so the HUD stays a glance, not a ledger.
+    const btn = document.createElement('button');
+    btn.className = 'stat mini expand';
+    btn.id = 'res-expand';
+    btn.addEventListener('click', () => this.toggleResources());
+    row.appendChild(btn);
+    this.expandBtn = btn;
+
+    for (const kind of HUD_EXTRA) row.appendChild(this.chip(kind, true));
+    this.applyResExpanded();
+  }
+
+  private toggleResources(): void {
+    this.resExpanded = !this.resExpanded;
+    this.applyResExpanded();
+  }
+  private applyResExpanded(): void {
+    this.el.resources.classList.toggle('expanded', this.resExpanded);
+    this.expandBtn.innerHTML = this.resExpanded
+      ? `<span class="ico">▾</span><span class="val">Less</span>`
+      : `<span class="ico">▸</span><span class="val">More</span>`;
+    this.expandBtn.title = this.resExpanded ? 'Hide the extra resources' : 'Show every resource';
   }
 
   /**
@@ -446,22 +463,13 @@ export class UI {
     this.foodChip.querySelector('.val')!.textContent = `${Math.floor(food)}`;
     this.markLimit(this.foodChip, s, 'food', 'Total food (all types), including household larders');
     this.markLow(this.foodChip, s, 'food');
-    for (const kind of HUD_RESOURCES) {
-      const chip = this.resChips.get(kind)!;
-      // Firewood and clothing live in larders too, and are consumed from there first, so their
-      // warnings have to count them for the same reason.
-      const v = (totals[kind] ?? 0) + totalInLarders(s, kind);
-      chip.querySelector('.val')!.textContent = `${Math.floor(v)}`;
-      this.markLimit(chip, s, kind, LIMIT_META[kind].label);
-      this.markLow(chip, s, kind);
-    }
-    // Luxury chips: same read, but the chip only shows while the good is actually held. Fine
-    // clothes count larders too, since a household keeps a gown in its press like any coat.
-    for (const kind of HUD_LUXURY) {
+    // Every resource chip, core and extra alike, reads the same way. The extra chips are only on
+    // screen when the row is expanded, but updating a hidden chip is cheap, so no branch here.
+    // Firewood and clothing live in larders too, and are consumed from there first, so their
+    // warnings have to count them for the same reason — as do the fine clothes among the luxuries.
+    for (const kind of [...HUD_CORE, ...HUD_EXTRA]) {
       const chip = this.resChips.get(kind)!;
       const v = (totals[kind] ?? 0) + totalInLarders(s, kind);
-      chip.classList.toggle('hidden', v < 0.5);
-      if (v < 0.5) continue;
       chip.querySelector('.val')!.textContent = `${Math.floor(v)}`;
       this.markLimit(chip, s, kind, LIMIT_META[kind].label);
       this.markLow(chip, s, kind);
@@ -558,13 +566,17 @@ export class UI {
     }
     po.innerHTML = '';
     if (this.openCategory === 'paths') {
-      for (const [tier, emoji, label, cost] of [
+      const kinds = [
         ['dirt', '🟤', 'Dirt Path', 'free'],
         ['stone', '⬜', 'Stone Path', '🪨1/tile'],
         ['bridge', '🌉', 'Timber Bridge', '🪵3/tile'],
         ['stonebridge', '🏛️', 'Stone Bridge', '🪵2 🪨4/tile'],
         ['tunnel', '⛰️', 'Tunnel', '🪵6 🪨4/tile'],
-      ] as [PathTier, string, string, string][]) {
+      ] as [PathTier, string, string, string][];
+      // Once a kind of road is picked the row narrows to just it — the rest are only clutter over
+      // the map you are drawing on until it is unpicked. Tapping it again brings the row back.
+      const shown = this.selectedPath ? kinds.filter(([t]) => t === this.selectedPath) : kinds;
+      for (const [tier, emoji, label, cost] of shown) {
         const locked = this.tier && !tierReaches(this.tier, PATH_TIER_AT[tier])
           ? TIER_META[PATH_TIER_AT[tier]].name
           : undefined;
@@ -584,7 +596,14 @@ export class UI {
         );
       }
     } else {
-      const types = BUILD_ORDER.filter((t) => BUILDING_DEFS[t].category === this.openCategory);
+      let types = BUILD_ORDER.filter((t) => BUILDING_DEFS[t].category === this.openCategory);
+      // Once a building is picked, the pop-out narrows to just it. The row of alternatives has
+      // done its job — the choice is made — and leaving it up only crowds the map while the player
+      // sites the ghost. Tapping the lone button again deselects and brings the whole row back;
+      // placing the building closes the menu outright (see `clearSelection`, called on placement).
+      if (this.selectedBuild && BUILDING_DEFS[this.selectedBuild].category === this.openCategory) {
+        types = [this.selectedBuild];
+      }
       for (const type of types) {
         const def = BUILDING_DEFS[type];
         const cost = (Object.entries(def.cost) as [ResourceKind, number][])
@@ -945,68 +964,57 @@ export class UI {
     return !this.el.inspect.classList.contains('hidden');
   }
 
-  // ---- Village panel: jobs and stockpile ----
+  // ---- Village menu: jobs, limits, history and progress, one panel of tabs ----
   /**
-   * Jobs and stockpile share one panel.
-   *
-   * They are two halves of the same decision — how many hands to put on a trade, and how much of
-   * what it makes to keep — and reading one nearly always meant opening the other to see whether
-   * the answer had changed.
+   * One menu, four tabs. Jobs and limits are the two halves of the same decision — how many hands
+   * on a trade, and how much of what it makes to keep — and history and progress are the two things
+   * you read rather than set. They shared a strip of screen and closed each other anyway, so they
+   * are one panel now, and the toolbar's three buttons open it on their own tab.
    */
-  private toggleVillagePanel(): void {
-    this.villagePanelOpen = !this.villagePanelOpen;
-    this.el.village.classList.toggle('hidden', !this.villagePanelOpen);
+  private openVillageTab(tab: VillageTab): void {
+    // Tapping the button of the tab you are already on closes the panel; anything else opens the
+    // panel (if need be) and switches to that tab.
+    if (this.villagePanelOpen && this.villageTab === tab) {
+      this.villagePanelOpen = false;
+      this.el.village.classList.add('hidden');
+      return;
+    }
+    this.villageTab = tab;
+    this.villagePanelOpen = true;
+    this.el.village.classList.remove('hidden');
     this.villageSig = '';
-    // The side panels occupy the same strip of screen — opening one closes the others.
-    if (this.villagePanelOpen) this.closeOtherPanels('village');
   }
-
+  private toggleVillagePanel(): void {
+    // The 📋 button opens on whatever tab was last shown (jobs to begin with), or closes it.
+    if (this.villagePanelOpen) {
+      this.villagePanelOpen = false;
+      this.el.village.classList.add('hidden');
+      return;
+    }
+    this.villagePanelOpen = true;
+    this.el.village.classList.remove('hidden');
+    this.villageSig = '';
+  }
   private toggleHistory(): void {
-    this.historyOpen = !this.historyOpen;
-    this.el.history.classList.toggle('hidden', !this.historyOpen);
-    this.historySig = '';
-    if (this.historyOpen) this.closeOtherPanels('history');
+    this.openVillageTab('history');
   }
-
   private toggleProgress(): void {
-    this.progressOpen = !this.progressOpen;
-    this.el.progress.classList.toggle('hidden', !this.progressOpen);
-    this.progressSig = '';
-    if (this.progressOpen) this.closeOtherPanels('progress');
-  }
-
-  private closeOtherPanels(keep: 'village' | 'history' | 'progress'): void {
-    if (keep !== 'village' && this.villagePanelOpen) this.toggleVillagePanel();
-    if (keep !== 'history' && this.historyOpen) this.toggleHistory();
-    if (keep !== 'progress' && this.progressOpen) this.toggleProgress();
+    this.openVillageTab('progress');
   }
 
   /**
-   * Render the village chronicle: every logged event, newest first, grouped under the season it
-   * happened in. Toasts vanish after five seconds, so this is where the player goes to find out
-   * what actually happened while they were looking elsewhere.
+   * The village chronicle: every logged event, newest first, grouped under the season it happened
+   * in. Toasts vanish after five seconds, so this is where the player goes to find out what
+   * actually happened while they were looking elsewhere. Rendered into the menu's scrolling body.
    */
-  private refreshHistory(s: GameState): void {
-    if (!this.historyOpen) return;
+  private buildHistoryBody(body: HTMLElement, s: GameState): void {
     const events = s.events ?? [];
-    // Only rebuild when something changed — this runs every frame.
-    const sig = `${events.length}|${events[0]?.text ?? ''}`;
-    if (sig === this.historySig) return;
-    this.historySig = sig;
-
-    const p = this.el.history;
-    p.innerHTML = '';
-    const head = document.createElement('h3');
-    head.innerHTML = `📜 History <button class="close" id="hist-close">×</button>`;
-    head.querySelector('#hist-close')!.addEventListener('click', () => this.toggleHistory());
-    p.appendChild(head);
-
     const sum = document.createElement('div');
     sum.className = 'summary';
     sum.textContent = events.length
       ? `${events.length} event${events.length > 1 ? 's' : ''} · newest first`
       : 'Nothing has happened yet.';
-    p.appendChild(sum);
+    body.appendChild(sum);
 
     let lastStamp = '';
     for (const e of events) {
@@ -1016,12 +1024,12 @@ export class UI {
         const sep = document.createElement('div');
         sep.className = 'hist-season';
         sep.textContent = stamp;
-        p.appendChild(sep);
+        body.appendChild(sep);
       }
       const row = document.createElement('div');
       row.className = `hist-row ${e.kind === 'good' ? 'good' : e.kind === 'bad' ? 'bad' : ''}`;
       row.textContent = e.text;
-      p.appendChild(row);
+      body.appendChild(row);
     }
   }
 
@@ -1052,8 +1060,6 @@ export class UI {
 
   refreshPanels(s: GameState): void {
     if (this.villagePanelOpen) this.refreshVillagePanel(s);
-    if (this.progressOpen) this.refreshProgress(s);
-    if (this.historyOpen) this.refreshHistory(s);
     if (this.tradingPostId !== null) this.refreshTradingPost(s);
     this.refreshNomadPrompt(s);
   }
@@ -1088,13 +1094,11 @@ export class UI {
   }
 
   /**
-   * Jobs and stockpile, one panel: how many hands on each trade, and how much of what they make
-   * the village keeps.
+   * The one village menu: four tabs — Jobs and Limits to set, History and Progress to read — over a
+   * frozen header. The header and the tab row stay put while the body scrolls, so the tabs are
+   * always within reach however long the history or the trade list runs.
    *
-   * Both halves have been cut back to the number that matters. A job row used to read
-   * "2 working / 4 wanted" beside a stepper showing a third figure, and a stockpile row said how
-   * much was stored, what the cap was, and how many workplaces the cap had stood down. Between
-   * them that is five numbers to answer two questions. Now a trade says `2/4` and a stockpile row
+   * Jobs and limits are cut back to the number that matters: a trade says `2/4` and a stockpile row
    * says its limit and nothing else.
    */
   private refreshVillagePanel(s: GameState): void {
@@ -1102,33 +1106,38 @@ export class UI {
     const buildersWorking = s.citizens.reduce((n, c) => n + (c.builder ? 1 : 0), 0);
     // Free laborers are unemployed *adults* only — children have no job but can't be assigned.
     const laborers = s.citizens.reduce((n, c) => n + (isAdult(c) && c.jobId === null && !c.builder ? 1 : 0), 0);
-    const sig =
-      this.villageTab +
-      trades
-        .map((t) => `${t}:${tradeWorking(s, t)}:${tradeStaff(s, t)}:${tradeCapacity(s, t)}:${tradePosts(s, t).length}`)
-        .join('|') +
-      `#${buildersWorking},${laborers},${s.desiredBuilders}` +
-      `#${LIMITABLE.map((k) => s.limits?.[k] ?? 0).join(',')}`;
+    // The signature carries the active tab and only the data that tab shows, so switching tabs
+    // rebuilds and a change under the open tab rebuilds, but a change under a hidden one does not.
+    const now = villageTier(s);
+    const tabSig =
+      this.villageTab === 'jobs'
+        ? trades.map((t) => `${tradeWorking(s, t)}:${tradeStaff(s, t)}:${tradeCapacity(s, t)}:${tradePosts(s, t).length}`).join('|') +
+          `#${buildersWorking},${laborers},${s.desiredBuilders}`
+        : this.villageTab === 'limits'
+          ? LIMITABLE.map((k) => s.limits?.[k] ?? 0).join(',')
+          : this.villageTab === 'history'
+            ? `${(s.events ?? []).length}|${s.events?.[0]?.text ?? ''}`
+            : now + TIERS.map((t) => tierChecks(s, t).map((c) => `${c.label}${c.detail}${c.met ? 1 : 0}`).join(',')).join('|');
+    const sig = `${this.villageTab}#${laborers}#${tabSig}`;
     if (sig === this.villageSig) return;
     this.villageSig = sig;
 
     const p = this.el.village;
     p.innerHTML = '';
     const head = document.createElement('h3');
-    // Free hands ride in the title, because that is the number every job row is spent against and
-    // a line of its own was a line the trade list could not have on a phone in landscape.
+    // Free hands ride in the title, because that is the number every job row is spent against.
     head.innerHTML =
       `<span>Village <span class="hd-note">👷 ${laborers} free</span></span>` +
       `<button class="close" id="vp-close">×</button>`;
     p.appendChild(head);
     head.querySelector('#vp-close')!.addEventListener('click', () => this.toggleVillagePanel());
 
-    // Two tabs rather than two stacked sections. Twenty trades and nine limits in one column is a
-    // long scroll to reach either, and they are read at different moments — you come here to staff
-    // a trade *or* to move a cap, rarely both in the same breath.
+    // Four tabs, read at different moments: staff a trade, move a cap, read what happened, or see
+    // what the village is working toward. The header above and this row stay frozen; the body below
+    // is the only thing that scrolls (see `.panel-body` in the stylesheet).
     const tabs = document.createElement('div');
     tabs.className = 'tabs';
-    for (const [key, label] of [['jobs', 'Jobs'], ['limits', 'Limits']] as const) {
+    for (const [key, label] of [['jobs', 'Jobs'], ['limits', 'Limits'], ['history', 'History'], ['progress', 'Progress']] as const) {
       const b = document.createElement('button');
       b.className = 'tab' + (this.villageTab === key ? ' on' : '');
       b.textContent = label;
@@ -1142,57 +1151,54 @@ export class UI {
     }
     p.appendChild(tabs);
 
-    if (this.villageTab === 'jobs') {
-      // Two columns, so the whole trade list is on screen at once instead of a scroll that hides
-      // half the village's work below the fold.
-      const grid = document.createElement('div');
-      grid.className = 'job-grid';
-      p.appendChild(grid);
+    const body = document.createElement('div');
+    body.className = 'panel-body';
+    p.appendChild(body);
 
-      // Builders — a global job (only these villagers construct work buildings). Always shown so
-      // the player can staff construction even before any workplace exists.
+    if (this.villageTab === 'jobs') this.buildJobsBody(body, s, trades, buildersWorking);
+    else if (this.villageTab === 'limits') this.buildLimitsBody(body, s);
+    else if (this.villageTab === 'history') this.buildHistoryBody(body, s);
+    else this.buildProgressBody(body, s);
+  }
+
+  private buildJobsBody(body: HTMLElement, s: GameState, trades: BuildingType[], buildersWorking: number): void {
+    // Two columns, so the whole trade list is on screen at once instead of a scroll that hides
+    // half the village's work below the fold.
+    const grid = document.createElement('div');
+    grid.className = 'job-grid';
+    body.appendChild(grid);
+
+    // Builders — a global job (only these villagers construct work buildings). Always shown so the
+    // player can staff construction even before any workplace exists.
+    grid.appendChild(
+      this.staffRow('🔨', 'Builders', buildersWorking, s.desiredBuilders, s.desiredBuilders, false, (d) =>
+        this.cb.onSetBuilders(d),
+      ),
+    );
+    // One row per profession, listed whether the village has one of those buildings or not: a trade
+    // with nowhere to work yet is still something to decide, and set before the hut is up it opens
+    // staffed. What a single building decides for itself — which seam a mine digs — is on its sheet.
+    for (const type of trades) {
+      const def = BUILDING_DEFS[type];
       grid.appendChild(
-        this.staffRow('🔨', 'Builders', buildersWorking, s.desiredBuilders, s.desiredBuilders, false, (d) =>
-          this.cb.onSetBuilders(d),
+        this.staffRow(
+          def.emoji, def.name, tradeWorking(s, type), tradeCapacity(s, type), tradeStaff(s, type),
+          tradePosts(s, type).length === 0, (d) => this.cb.onSetTradeWorkers(type, d),
         ),
       );
-
-      // One row per profession, listed whether the village has one of those buildings or not.
-      //
-      // A village thinks in trades — "I want four foresters" — not in which hut wants its second
-      // pair of hands, and a trade with nowhere to work yet is still something you can decide
-      // about: set two fishermen before the hut is up and the hut opens staffed. What a single
-      // building decides for itself — which seam a mine digs, what a field sows — is on its own
-      // panel.
-      for (const type of trades) {
-        const def = BUILDING_DEFS[type];
-        grid.appendChild(
-          this.staffRow(
-            def.emoji,
-            def.name,
-            tradeWorking(s, type),
-            tradeCapacity(s, type),
-            tradeStaff(s, type),
-            tradePosts(s, type).length === 0,
-            (d) => this.cb.onSetTradeWorkers(type, d),
-          ),
-        );
-      }
-      return;
     }
+  }
 
-    // The same grid as the jobs: nine caps in one column scrolled in a panel this wide, which is
-    // the problem the columns were for.
+  private buildLimitsBody(body: HTMLElement, s: GameState): void {
     const limGrid = document.createElement('div');
     limGrid.className = 'job-grid';
-    p.appendChild(limGrid);
+    body.appendChild(limGrid);
     // Only the resources a limit can act on (`LIMITABLE`) — a cap on something no workplace
     // produces would be a control that does nothing.
     for (const k of LIMITABLE) {
       const cap = s.limits?.[k] ?? 0;
       const meta = LIMIT_META[k];
       const row = document.createElement('div');
-      // `limit-row` / `staff-row` distinguish the panel's two halves now that they share it.
       row.className = 'job-row limit-row';
       row.innerHTML =
         `<span class="jr-emoji">${meta.icon}</span>` +
@@ -1237,27 +1243,14 @@ export class UI {
   }
 
   /**
-   * Progression: the four tiers, what each asks for, and what each opens.
+   * Progression: the five tiers, what each asks for, and what each opens.
    *
-   * The build menu names only the tier a locked building waits on; this is the panel that place
-   * was leaving room for. Requirements show their working — "37 / 50" rather than a bare cross —
-   * so the line holding the village back is the one the player can see.
+   * The build menu names only the tier a locked building waits on; this is the tab that place was
+   * leaving room for. Requirements show their working — "37 / 50" rather than a bare cross — so the
+   * line holding the village back is the one the player can see. Rendered into the menu's body.
    */
-  private refreshProgress(s: GameState): void {
+  private buildProgressBody(body: HTMLElement, s: GameState): void {
     const now = villageTier(s);
-    const sig =
-      now +
-      TIERS.map((t) => tierChecks(s, t).map((c) => `${c.label}${c.detail}${c.met ? 1 : 0}`).join(',')).join('|');
-    if (sig === this.progressSig) return;
-    this.progressSig = sig;
-
-    const p = this.el.progress;
-    p.innerHTML = '';
-    const head = document.createElement('h3');
-    head.innerHTML = `Progression <button class="close" id="pr-close">×</button>`;
-    p.appendChild(head);
-    head.querySelector('#pr-close')!.addEventListener('click', () => this.toggleProgress());
-
     for (const t of TIERS) {
       const meta = TIER_META[t];
       const reached = tierReaches(now, t);
@@ -1292,7 +1285,7 @@ export class UI {
         `<span class="tier-state">${t === now ? 'You are here' : reached ? 'Reached' : ''}</span></div>` +
         `<div class="tier-reqs">${reqs}</div>` +
         `<div class="tier-unlocks">${unlocks}</div>`;
-      p.appendChild(block);
+      body.appendChild(block);
     }
   }
 

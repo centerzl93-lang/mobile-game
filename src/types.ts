@@ -213,17 +213,22 @@ export const HUD_RESOURCES: ResourceKind[] = [
 ];
 
 /**
- * The luxury goods, shown in the HUD *only while the village holds some*.
- *
- * They would be dead weight on a founding camp's top line — a settlement has no glass and never
- * will until it is a town — so their chips are built once and hidden at zero, appearing the moment
- * the first load is quarried, blown, cut or bought and vanishing again if the stock runs out. That
- * keeps the early HUD clean while still putting every luxury good where the core resources are once
- * it actually exists. Sand leads because it is the first link in the chain a hamlet can already dig.
+ * The luxury goods, in HUD display order. They live in the expandable half of the resources row
+ * (see `HUD_EXTRA`), so a founding camp never sees them and a town finds them one tap away.
  */
 export const HUD_LUXURY: ResourceKind[] = [
   'sand', 'glass', 'jewelry', 'finejewelry', 'gold', 'dye', 'silk', 'fineclothes',
 ];
+
+/**
+ * The resources row is split in two. The **core** four are always on the HUD — the building
+ * materials a village burns through and watches constantly — with the 🍽️ food total ahead of them.
+ * Everything **else** sits behind an expand button: the processed goods a settlement rarely thinks
+ * about and every luxury a town trades in. This is what keeps the top line to a glanceable handful
+ * without hiding anything: the chips are all there, a tap away, rather than culled to fit.
+ */
+export const HUD_CORE: ResourceKind[] = ['wood', 'stone', 'iron', 'firewood'];
+export const HUD_EXTRA: ResourceKind[] = ['coal', 'tools', 'clothing', 'medicine', ...HUD_LUXURY];
 
 /** Icon for the combined food total shown in the HUD. */
 export const FOOD_ICON = '🍽️';

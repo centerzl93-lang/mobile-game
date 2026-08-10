@@ -269,6 +269,7 @@ export function seasonLabel(s: { season: number; seasonTimer: number }): string 
 export type BuildingType =
   | 'house'
   | 'stonehouse'
+  | 'shelter'
   | 'tavern'
   | 'chapel'
   | 'townhall'
@@ -825,14 +826,42 @@ export function isFertile(c: { age: number }): boolean {
   return c.age >= FERTILE_MIN_AGE && c.age <= FERTILE_MAX_AGE;
 }
 
-/** House-type buildings that shelter villagers (plain and stone houses). */
+/**
+ * A *home*: somewhere a household lives. Plain and stone houses.
+ *
+ * Deliberately not the shelter. A home is where couples form and children are born, and the
+ * shelter is a boarding house — eighteen bunks in one building would otherwise pair off strangers
+ * wholesale and out-breed five houses at once, which would make it the only housing worth ever
+ * building. Everything that is about *a roof and a hearth* rather than about a family asks
+ * `isDwelling` instead.
+ */
 export function isHouse(type: BuildingType): boolean {
   return type === 'house' || type === 'stonehouse';
+}
+
+/** The boarding house: beds for villagers with nowhere else, and nothing more than beds. */
+export function isShelter(type: BuildingType): boolean {
+  return type === 'shelter';
+}
+
+/**
+ * Anywhere villagers sleep — homes and the shelter alike.
+ *
+ * This is the one that governs hearths and larders: everyone who lives somewhere eats there, burns
+ * fuel there, and loses their supplies back to the barns if it is pulled down.
+ */
+export function isDwelling(type: BuildingType): boolean {
+  return isHouse(type) || isShelter(type);
 }
 
 /** How many villagers a given house type shelters. */
 export function houseCapacityOf(type: BuildingType): number {
   return type === 'stonehouse' ? STONE_HOUSE_CAPACITY : HOUSING_PER_HOUSE;
+}
+
+/** How many villagers sleep in a dwelling of this type — beds, whether or not they are homes. */
+export function dwellingCapacityOf(type: BuildingType): number {
+  return isShelter(type) ? SHELTER_CAPACITY : houseCapacityOf(type);
 }
 
 /**
@@ -2168,6 +2197,16 @@ export const START_HAPPINESS = 80;
 // ---- Housing & amenities ----
 export const STONE_HOUSE_CAPACITY = 10; // villagers a stone house shelters (a larger family still)
 export const STONE_HOUSE_HEAT_FACTOR = 0.6; // stone-house residents need less winter fuel
+/** Bunks in the boarding house — three storeys of them. */
+export const SHELTER_CAPACITY = 18;
+/**
+ * Happiness lost by anyone sleeping in the shelter rather than a home of their own.
+ *
+ * A bed in a dormitory keeps a villager alive and nothing more. The penalty is what makes a
+ * village housed in the boarding house visibly worse off than one with houses, so the pressure to
+ * build proper homes is something the player feels rather than something the game announces.
+ */
+export const SHELTER_HAPPY = 12;
 export const HAPPY_TAVERN = 12; // happiness from a staffed, stocked tavern
 export const HAPPY_CHAPEL = 10; // happiness from a chapel
 export const HAPPY_CEMETERY = 8; // happiness from a cemetery
@@ -2389,6 +2428,11 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     cost: { wood: 8, stone: 30 }, jobs: 0, work: 60,
     desc: 'A warm, sturdy home for up to 10. Masonry holds its heat, so a household here burns 40% less firewood through the winter, and it is half as likely to catch fire. A wooden house can be upgraded to one in place.',
   },
+  shelter: {
+    type: 'shelter', name: 'Shelter', emoji: '🛏️', category: 'housing', w: 3, h: 4,
+    cost: { wood: 100, stone: 60 }, jobs: 0, work: 160,
+    desc: 'A boarding house: three storeys of bunks for up to 18 villagers who have nowhere else. Nobody courts or raises a family here, and living in one wears on a villager — it is the roof you put over newcomers while their houses go up.',
+  },
   gatherer: {
     type: 'gatherer', name: 'Gatherer', emoji: '🧺', category: 'food', w: 3, h: 3,
     cost: { wood: 48, stone: 12 }, jobs: 3, work: 70, workRadius: 6,
@@ -2516,6 +2560,7 @@ export const CATEGORY_META: Record<BuildCategory, { label: string; emoji: string
 export const BUILD_ORDER: BuildingType[] = [
   'house',
   'stonehouse',
+  'shelter',
   'gatherer',
   'farm',
   'fishing',

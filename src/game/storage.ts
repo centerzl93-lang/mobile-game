@@ -23,7 +23,7 @@ import {
   SEASON_BURN,
   SEASONS,
   isAdult,
-  isHouse,
+  isDwelling,
 } from '../types';
 
 export interface Pos {
@@ -255,9 +255,9 @@ export function consumeFood(s: GameState, amount: number): number {
 // and trade) sees only what is free in the barns and markets — not what a household has already
 // claimed. Consumption draws on a villager's own larder first and falls back to the barns.
 
-/** Built houses, the only buildings that keep a larder. */
+/** Built dwellings, the only buildings that keep a larder — the boarding house has one too. */
 export function houseNodes(s: GameState): Building[] {
-  return s.buildings.filter((b) => b.built && isHouse(b.type));
+  return s.buildings.filter((b) => b.built && isDwelling(b.type));
 }
 
 /** Who lives in this house. */

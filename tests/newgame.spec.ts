@@ -1320,7 +1320,9 @@ test.describe('household larders', () => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false); // easy starts with houses and a full stockpile
+      // Seeded: how far each house sits from a barn is the map's call, and on a spread-out
+      // village the shoppers had not finished their rounds inside the budget below.
+      g.startNewGame('small', 'easy', false, 0, 4242); // easy starts with houses and a full stockpile
       const s = g.state;
       // Long enough for each household's shopper to run its trips to the barns and back.
       for (let i = 0; i < 2400; i++) g.debugAdvance(0.1);
@@ -3636,6 +3638,117 @@ test.describe('bridges come in timber and stone', () => {
   });
 });
 
+test.describe('the shelter is a boarding house, not a home', () => {
+  // A village stripped of its houses, so the only roof going is the boarding house.
+  const homeless = `
+    const g = window.__village;
+    g.startNewGame('small', 'easy', false, 0, 4242);
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    for (const k of ['wood', 'stone']) barn.store[k] = 9000;
+    for (let i = s.buildings.length - 1; i >= 0; i--) {
+      if (['house', 'stonehouse'].includes(s.buildings[i].type)) s.buildings.splice(i, 1);
+    }
+    for (const c of s.citizens) c.homeId = null;
+  `;
+
+  const put = (type: string) => `
+    (() => {
+      const barn = s.buildings.find((b) => b.type === 'barn');
+      for (let r = 4; r < 26; r++)
+        for (let dy = -r; dy <= r; dy++)
+          for (let dx = -r; dx <= r; dx++) {
+            const x = barn.x + dx, y = barn.y + dy;
+            if (!g.debugCanPlace('${type}', x, y).ok) continue;
+            // The id first: calling debugPlace inside a find predicate runs it once per building.
+            const id = g.debugPlace('${type}', x, y);
+            if (id == null) continue;
+            const b = s.buildings.find((v) => v.id === id);
+            b.built = true;
+            b.progress = 9999;
+            return b;
+          }
+      return null;
+    })()
+  `;
+
+  test('it takes in villagers no house has room for, up to eighteen', { tag: '@slow' }, async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${homeless}
+        const shelter = ${put('shelter')};
+        g.debugAdvance(5);
+        const housed = s.citizens.filter((c) => c.homeId === shelter.id).length;
+        const roofless = s.citizens.filter((c) => c.homeId === null).length;
+        return { housed, roofless, pop: s.citizens.length, cap: g.debugShelterCapacity() };
+      `) as () => any,
+    );
+
+    expect(out.housed, 'the homeless moved onto the bunks').toBeGreaterThan(0);
+    expect(out.housed, 'and no more than the boarding house holds').toBeLessThanOrEqual(out.cap);
+    // Everyone fits: the founding village is well under eighteen.
+    expect(out.roofless, 'nobody was left sleeping out').toBe(0);
+  });
+
+  test('nobody courts or is born on a bunk', { tag: '@slow' }, async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${homeless}
+        const shelter = ${put('shelter')};
+        g.debugAdvance(5);
+        // Break up the founding couples: whether *new* pairings form is the question, and the
+        // village arrives with some already made.
+        for (const c of s.citizens) c.partnerId = null;
+        const singlesBefore = s.citizens.filter((c) => c.partnerId == null).length;
+        const popBefore = s.citizens.length;
+        for (let i = 0; i < 4000; i++) g.debugAdvance(1); // several seasons
+        const onBunks = s.citizens.filter((c) => c.homeId === shelter.id);
+        return {
+          singlesBefore,
+          paired: onBunks.filter((c) => c.partnerId != null).length,
+          popBefore,
+          popAfter: s.citizens.length,
+          babies: s.citizens.filter((c) => c.age < 1).length,
+        };
+      `) as () => any,
+    );
+
+    expect(out.singlesBefore, 'the village really was all single').toBeGreaterThan(0);
+    expect(out.paired, 'a dormitory does not marry its lodgers off').toBe(0);
+    expect(out.babies, 'and no child is born on a bunk').toBe(0);
+    expect(out.popAfter, 'so the population does not grow out of the shelter').toBeLessThanOrEqual(out.popBefore);
+  });
+
+  test('a bunk is worse than a home, and empties into one when a house goes up', { tag: '@slow' }, async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${homeless}
+        const shelter = ${put('shelter')};
+        g.debugAdvance(5);
+        const capBunksOnly = g.debugHousingCapacity();
+        for (let i = 0; i < 1200; i++) g.debugAdvance(1); // let happiness settle on the bunks
+        const bunkMood = s.citizens.filter((c) => c.homeId === shelter.id)
+          .reduce((a, c) => a + c.happiness, 0) / Math.max(1, s.citizens.filter((c) => c.homeId === shelter.id).length);
+        const house = ${put('house')};
+        const capWithHouse = g.debugHousingCapacity();
+        for (let i = 0; i < 1400; i++) g.debugAdvance(1); // a season, so rehousing runs
+        const movedIn = s.citizens.filter((c) => c.homeId === house.id).length;
+        const houseMood = s.citizens.filter((c) => c.homeId === house.id)
+          .reduce((a, c) => a + c.happiness, 0) / Math.max(1, movedIn);
+        return { capBunksOnly, capWithHouse, bunkMood, houseMood, movedIn };
+      `) as () => any,
+    );
+
+    expect(out.capBunksOnly, 'eighteen bunks are not eighteen homes').toBe(0);
+    expect(out.capWithHouse, 'a house is').toBeGreaterThan(0);
+    expect(out.movedIn, 'and villagers move off the bunks into it').toBeGreaterThan(0);
+    expect(out.houseMood, 'who are happier for it').toBeGreaterThan(out.bunkMood);
+  });
+});
+
 test.describe('a field is priced by its size', () => {
   test('an 8x8 costs four times a 4x4, and gives back more when pulled down', async ({ page }) => {
     await open2d(page);
@@ -5176,7 +5289,8 @@ test.describe('demolition is a job', () => {
   /** A village with builders standing by and one finished house singled out. */
   const setup = `(diff) => {
     const g = window.__village;
-    g.startNewGame('small', diff ?? 'easy', false);
+    // Seeded: how long the builders take to walk to the condemned house depends on the map.
+    g.startNewGame('small', diff ?? 'easy', false, 0, 4242);
     const s = g.state;
     g.debugSetBuilders(6);
     for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
@@ -5717,8 +5831,10 @@ test.describe('the merchant ties up at the trading post', () => {
   /** Put a finished trading post somewhere it can be built, retrying across generated maps. */
   const raisePost = `() => {
     const g = window.__village;
+    // Seeded per attempt: a 5x9 wharf needs a long enough stretch of shore, and an unseeded walk
+    // through eight worlds fails outright on the runs where none of them offers one.
     for (let attempt = 0; attempt < 8; attempt++) {
-      g.startNewGame('small', 'easy', false);
+      g.startNewGame('small', 'easy', false, 0, 4242 + attempt * 7919);
       const s = g.state;
       const barn = s.buildings.find((b) => b.type === 'barn');
       barn.store.wood = 2000;

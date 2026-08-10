@@ -31,6 +31,7 @@ MODELS = {
     "willow": "trees:willow",
     "rock": "rock",
     "stonehouse": "homes:stonehouse",
+    "shelter": "homes:shelter",
     "gatherer": "food:gatherer",
     "fishing": "food:fishing",
     "hunting": "food:hunting",

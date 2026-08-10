@@ -134,6 +134,10 @@ import {
   MAX_AGE,
   EDUCATED_BONUS,
   isHouse,
+  isShelter,
+  isDwelling,
+  dwellingCapacityOf,
+  SHELTER_HAPPY,
   isWorkplace,
   houseCapacityOf,
   STONE_HOUSE_HEAT_FACTOR,
@@ -333,7 +337,7 @@ function eat(s: GameState, dt: number, log: LogFn): void {
   if (s.citizens.length === 0) return;
   const rate = dt / SEASON_LENGTH; // fraction of a season's ration owed this tick
   const homeById = new Map<number, Building>();
-  for (const b of s.buildings) if (b.built && isHouse(b.type)) homeById.set(b.id, b);
+  for (const b of s.buildings) if (b.built && isDwelling(b.type)) homeById.set(b.id, b);
 
   const starved: Citizen[] = [];
   for (const c of s.citizens) {
@@ -378,7 +382,7 @@ function heat(s: GameState, dt: number, log: LogFn): void {
   const season = SEASONS[s.season];
   const rate = (dt / SEASON_LENGTH) * SEASON_BURN[season]; // fraction of a winter's heating owed
   const homeById = new Map<number, Building>();
-  for (const b of s.buildings) if (b.built && isHouse(b.type)) homeById.set(b.id, b);
+  for (const b of s.buildings) if (b.built && isDwelling(b.type)) homeById.set(b.id, b);
 
   const froze: Citizen[] = [];
   for (const c of s.citizens) {
@@ -642,6 +646,7 @@ function assignHomesAndJobs(s: GameState): void {
   // A condemned house is not somewhere to move anyone into: its residents are about to be turned
   // out as it is. It keeps the ones it already has until the walls come down.
   const houses = s.buildings.filter((b) => b.built && !b.demolish && isHouse(b.type));
+  const shelters = s.buildings.filter((b) => b.built && !b.demolish && isShelter(b.type));
   const occupancy = () => {
     const occ = new Map<number, number>();
     for (const c of s.citizens) if (c.homeId !== null) occ.set(c.homeId, (occ.get(c.homeId) ?? 0) + 1);
@@ -660,11 +665,12 @@ function assignHomesAndJobs(s: GameState): void {
           continue;
         }
       }
-      // Otherwise the normal preference order, crowding in as a last resort rather than sleeping out.
-      placeAdult(s, c, houses, true);
+      // Otherwise the normal preference order, crowding in as a last resort rather than sleeping
+      // out — and a bunk in the boarding house behind even that.
+      if (!placeAdult(s, c, houses, true)) placeInShelter(s, c, shelters);
       continue;
     }
-    placeChild(s, c, houses);
+    if (!placeChild(s, c, houses)) placeInShelter(s, c, shelters);
   }
 
   const byId = new Map(s.citizens.map((c) => [c.id, c]));
@@ -1288,7 +1294,7 @@ function marketErrand(
   if (r <= 0) return null;
   const centre = buildingCenter(b);
   for (const h of s.buildings) {
-    if (!h.built || !isHouse(h.type)) continue;
+    if (!h.built || !isDwelling(h.type)) continue;
     const hc = buildingCenter(h);
     if ((hc.x - centre.x) ** 2 + (hc.y - centre.y) ** 2 > r * r) continue;
     const want = larderShortfall(s, h);
@@ -2344,7 +2350,7 @@ function endSeason(s: GameState, log: LogFn): void {
 
   // A villager's own home, for larder-first consumption below.
   const homeById = new Map<number, Building>();
-  for (const b of s.buildings) if (b.built && isHouse(b.type)) homeById.set(b.id, b);
+  for (const b of s.buildings) if (b.built && isDwelling(b.type)) homeById.set(b.id, b);
   const homeOf = (c: Citizen): Building | undefined =>
     c.homeId !== null ? homeById.get(c.homeId) : undefined;
 
@@ -2493,7 +2499,7 @@ function warnOfShortfalls(s: GameState, season: Season, log: LogFn): void {
   // whose hauler cannot reach a barn — walled in behind new buildings, or cut off across a river —
   // goes cold beside a full woodpile, and in winter that kills. The stock warnings above all read
   // village totals and would say everything is fine, so this is the only sign the player would get.
-  const roofed = s.buildings.filter((b) => b.built && isHouse(b.type) && residentsOf(s, b).length > 0);
+  const roofed = s.buildings.filter((b) => b.built && isDwelling(b.type) && residentsOf(s, b).length > 0);
   const cold = roofed.filter((b) => (b.store['firewood'] ?? 0) <= 0 && (b.store['coal'] ?? 0) <= 0);
   const villageFuel = totalStored(s, 'firewood') + totalStored(s, 'coal');
   if (villageFuel > 0 && cold.length > 0 && cold.length >= roofed.length / 2) {
@@ -3023,6 +3029,33 @@ function placeAdult(s: GameState, c: Citizen, houses: Building[], allowCrowding 
  *
  * Returns true if the child now has a home.
  */
+/**
+ * A bunk in the boarding house, for a villager no home has room for.
+ *
+ * The last resort and nothing more: no preference order, no pairing, no household. Whoever ends up
+ * here is walked back out into a house by `rehouseVillagers` as soon as one has space.
+ *
+ * A child follows whichever bunk their parent is on, so a family turned away from the houses stays
+ * together rather than being scattered across two shelters.
+ */
+function placeInShelter(s: GameState, c: Citizen, shelters: Building[]): boolean {
+  if (shelters.length === 0) return false;
+  const occ = new Map<number, number>();
+  for (const o of s.citizens) if (o.homeId !== null) occ.set(o.homeId, (occ.get(o.homeId) ?? 0) + 1);
+  const hasRoom = (b: Building) => (occ.get(b.id) ?? 0) < dwellingCapacityOf(b.type);
+  const withKin = shelters.find(
+    (b) =>
+      hasRoom(b) &&
+      s.citizens.some(
+        (o) => o.homeId === b.id && (c.parents?.includes(o.id) || o.id === c.partnerId),
+      ),
+  );
+  const target = withKin ?? shelters.find(hasRoom);
+  if (!target) return false;
+  c.homeId = target.id;
+  return true;
+}
+
 function placeChild(s: GameState, c: Citizen, houses: Building[]): boolean {
   const { occupancy, adultsIn, childrenIn } = censusHouses(s);
   const eligible = houses.filter(
@@ -3103,6 +3136,21 @@ function rehouseVillagers(s: GameState): void {
     for (const c of movers) placeAdult(s, c, houses);
     // A lodger who moved into a place of their own can now bring their partner over.
     houseCouplesTogether(s, houses);
+  }
+
+  // Anyone still on a bunk moves into a house the moment one has room. The shelter is a roof to
+  // put over newcomers while their houses go up, not somewhere anyone is meant to stay, so the
+  // move out is the village's doing rather than the player's — and crowding in with another
+  // household still beats a dormitory.
+  for (const c of s.citizens) {
+    if (!isAdult(c) || c.homeId === null) continue;
+    const home = s.buildings.find((b) => b.id === c.homeId);
+    if (!home || !isShelter(home.type)) continue;
+    const partner = partnerOf(s, c);
+    placeAdult(s, c, houses, true);
+    // A couple leaves together: a partner left behind on a bunk would just be walked back over
+    // at the next sweep, and splitting them up is the one thing rehousing never does.
+    if (partner && c.homeId !== home.id) placeAdult(s, partner, houses, true);
   }
 
   // Last, because every move above can leave children behind: no child is left in a house with no
@@ -3297,9 +3345,17 @@ function updateWellbeing(s: GameState, foodShort: boolean, deaths: number, taver
   const healthPenalty = policyActive(s, 'longHours') ? POLICY_HOURS_HEALTH : 0;
   happyTarget = clamp(happyTarget, 0, 100);
   const healthAim = clamp(healthTarget - healthPenalty, 0, 100);
+  // Sleeping on a bunk is charged to the villager, not to the village: the shelter's residents
+  // settle lower than everyone else, and the rest of the village is no worse off for the building
+  // existing. `housingCapacity` counts homes only, so the headroom bonus above is already out of
+  // reach for a village whose only spare beds are in the boarding house.
+  const bunks = new Set(
+    s.buildings.filter((b) => b.built && isShelter(b.type)).map((b) => b.id),
+  );
   for (const c of s.citizens) {
+    const aim = c.homeId !== null && bunks.has(c.homeId) ? happyTarget - SHELTER_HAPPY : happyTarget;
     c.health += (healthAim - c.health) * 0.25;
-    c.happiness += (happyTarget - c.happiness) * 0.25;
+    c.happiness += (clamp(aim, 0, 100) - c.happiness) * 0.25;
   }
 }
 
@@ -3516,7 +3572,7 @@ function removeBuilding(s: GameState, b: Building): void {
   s.navVersion = (s.navVersion ?? 0) + 1; // its walls are gone; routes through it open up
   // A demolished house's larder isn't destroyed — the household's supplies go back to the barns
   // (which the residents will then re-fetch to whichever house they move into).
-  if (isHouse(b.type)) {
+  if (isDwelling(b.type)) {
     const at = buildingCenter(b);
     for (const k in b.store) {
       const kind = k as ResourceKind;

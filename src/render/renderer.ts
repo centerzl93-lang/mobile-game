@@ -62,6 +62,7 @@ const RES_DOT: Record<string, string> = {
 const BUILDING_COLORS: Record<BuildingType, string> = {
   house: '#b07a45',
   stonehouse: '#9a9089',
+  shelter: '#8f7a5e',
   tavern: '#b5893f',
   chapel: '#8f8fb0',
   townhall: '#a8b0c4',

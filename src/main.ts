@@ -44,6 +44,9 @@ import {
   SIZABLE,
   RANCH_SPLIT_MIN,
   isHouse,
+  isDwelling,
+  dwellingCapacityOf,
+  SHELTER_CAPACITY,
   isWorkplace,
   buildingName,
   nextBuildingName,
@@ -81,7 +84,7 @@ import {
   PATH_BRIDGE_STONE,
   entranceTiles,
 } from './types';
-import { newGame } from './game/state';
+import { newGame, housingCapacity } from './game/state';
 import { pinRandom, newSeed } from './game/rng';
 import {
   update,
@@ -1215,9 +1218,9 @@ class Game {
         }
       } else {
         if (def.jobs > 0) rows.push({ label: 'Workers', value: `${b.workers.length}/${b.desiredWorkers}` });
-        if (isHouse(b.type)) {
+        if (isDwelling(b.type)) {
           const residents = this.state.citizens.filter((c) => c.homeId === b.id);
-          rows.push({ label: 'Residents', value: `${residents.length}/${houseCapacityOf(b.type)}` });
+          rows.push({ label: 'Residents', value: `${residents.length}/${dwellingCapacityOf(b.type)}` });
           if (residents.length === 0) {
             rows.push({ label: '—', value: 'Nobody lives here yet' });
           } else {
@@ -1281,7 +1284,7 @@ class Game {
         }
         // Houses already report their larder above, against its targets — skip the raw dump so the
         // sheet doesn't list the same supplies twice.
-        if (!isHouse(b.type)) {
+        if (!isDwelling(b.type)) {
           for (const k of RESOURCE_KINDS) {
             const v = b.store[k] ?? 0;
             if (v > 0.5) rows.push({ label: `${RESOURCE_ICON[k]} ${k}`, value: `${Math.floor(v)}` });
@@ -1608,6 +1611,16 @@ class Game {
     const d = bridgeDeck(this.state.paths);
     const i = tileIndex(x, y);
     return { deck: d.y[i], soffit: d.soffit[i], span: d.span[i], slope: d.slope[i] };
+  }
+
+  /** Debug/testing helper: how many villagers the boarding house sleeps. */
+  debugShelterCapacity(): number {
+    return SHELTER_CAPACITY;
+  }
+
+  /** Debug/testing helper: beds in actual homes — the figure the headroom bonus is measured on. */
+  debugHousingCapacity(): number {
+    return housingCapacity(this.state);
   }
 
   /** Debug/testing helper: what a bridge has to clear, and the height its ramps start from. */

@@ -2512,8 +2512,8 @@ test.describe('top HUD', () => {
     );
     expect(ids).not.toContain('stat-pop');
     expect(ids).not.toContain('stat-builders');
-    // Season sits beside the ages; the two meters follow it.
-    expect(ids).toEqual(['stat-ages', 'stat-season', 'stat-health', 'stat-happy', 'stat-sick']);
+    // Season sits beside the ages, then how far along the village is; the two meters follow.
+    expect(ids).toEqual(['stat-ages', 'stat-season', 'stat-tier', 'stat-health', 'stat-happy', 'stat-sick']);
   });
 
   test('health and happiness are five pips each, one per 20 points', async ({ page }) => {
@@ -3635,6 +3635,125 @@ test.describe('bridges come in timber and stone', () => {
 
     expect(out.timberAfter, 'the planks burned and the crossing is gone').toBe(out.none);
     expect(out.stoneAfter, 'masonry does not burn').not.toBe(out.none);
+  });
+});
+
+test.describe('a village climbs through tiers', () => {
+  test('a founding settlement can raise a hut but not a market', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      return {
+        tier: g.debugTier(),
+        house: g.debugUnlocked('house'),
+        woodcutter: g.debugUnlocked('woodcutter'),
+        fishing: g.debugUnlocked('fishing'),
+        quarry: g.debugUnlocked('quarry'),
+        blacksmith: g.debugUnlocked('blacksmith'),
+        market: g.debugUnlocked('market'),
+        townhall: g.debugUnlocked('townhall'),
+        farm: g.debugUnlocked('farm'),
+        dirt: g.debugPathUnlocked('dirt'),
+        timber: g.debugPathUnlocked('bridge'),
+        stone: g.debugPathUnlocked('stone'),
+        tunnel: g.debugPathUnlocked('tunnel'),
+      };
+    });
+
+    expect(out.tier, 'a new village starts as a settlement').toBe('settlement');
+    for (const k of ['house', 'woodcutter', 'fishing', 'dirt', 'timber'] as const) {
+      expect(out[k], `${k} is there from the first day`).toBe(true);
+    }
+    for (const k of ['quarry', 'blacksmith', 'market', 'townhall', 'farm', 'stone', 'tunnel'] as const) {
+      expect(out[k], `${k} has to be earned`).toBe(false);
+    }
+  });
+
+  test('population and trades carry it up, and losing them carry it back down', { tag: '@slow' }, async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      for (const k of ['wood', 'stone', 'iron']) barn.store[k] = 9000;
+      const put = (type: string) => {
+        for (let r = 3; r < 26; r++)
+          for (let dy = -r; dy <= r; dy++)
+            for (let dx = -r; dx <= r; dx++) {
+              if (!g.debugCanPlace(type, barn.x + dx, barn.y + dy).ok) continue;
+              const id = g.debugPlace(type, barn.x + dx, barn.y + dy);
+              if (id == null) continue;
+              const b = s.buildings.find((v: any) => v.id === id);
+              b.built = true;
+              b.progress = 9999;
+              return b;
+            }
+        return null;
+      };
+      const clone = () => {
+        // Grow the village by copying a villager, which is far quicker than waiting for births.
+        const src = s.citizens.find((c: any) => c.age >= 20);
+        const c = JSON.parse(JSON.stringify(src));
+        c.id = s.nextId++;
+        c.homeId = null;
+        c.partnerId = null;
+        c.parents = null;
+        s.citizens.push(c);
+      };
+      const steps: any[] = [];
+      const note = (label: string) => steps.push({ label, tier: g.debugTier(), pop: s.citizens.length });
+
+      note('founded');
+      const cutter = put('woodcutter');
+      note('woodcutter, too few people');
+      while (s.citizens.length < 20) clone();
+      note('twenty with a woodcutter');
+      while (s.citizens.length < 50) clone();
+      note('fifty, but no trades');
+      const smith = put('blacksmith');
+      put('tailor');
+      note('fifty with both trades');
+      // Now take it away again: the tier reads the village as it stands.
+      smith.built = false;
+      note('the blacksmith is a building site again');
+      smith.built = true;
+      while (s.citizens.length > 30) s.citizens.pop();
+      note('a plague takes it under fifty');
+      cutter.razed = true;
+      note('and the woodcutter is rubble');
+      return steps;
+    });
+
+    const at = (label: string) => out.find((v: any) => v.label === label)!.tier;
+    expect(at('founded')).toBe('settlement');
+    expect(at('woodcutter, too few people'), 'a trade alone is not a hamlet').toBe('settlement');
+    expect(at('twenty with a woodcutter'), 'twenty people and a woodcutter is').toBe('hamlet');
+    expect(at('fifty, but no trades'), 'numbers alone do not make a village').toBe('hamlet');
+    expect(at('fifty with both trades'), 'a blacksmith and a tailor do').toBe('village');
+    expect(at('the blacksmith is a building site again'), 'an unfinished trade does not count').toBe('hamlet');
+    expect(at('a plague takes it under fifty'), 'and the people have to be there too').toBe('hamlet');
+    expect(at('and the woodcutter is rubble'), 'back to where it started').toBe('settlement');
+  });
+
+  test('the build menu greys what the village has not earned', async ({ page }) => {
+    await open2d(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false, 0, 4242));
+    // Resources holds the woodcutter (open from the start) and the quarry and mine (Hamlet).
+    await page.getByRole('button', { name: /Resources/ }).click();
+    const woodcutter = page.locator('.build-btn', { hasText: 'Woodcutter' }).first();
+    const quarry = page.locator('.build-btn', { hasText: 'Quarry' }).first();
+
+    await expect(woodcutter, 'what the village can build is live').toBeEnabled();
+    await expect(quarry, 'what it cannot is not').toBeDisabled();
+    await expect(quarry, 'and says which tier opens it').toContainText('Hamlet');
+    // Only the tier — what it takes to *reach* one lives elsewhere.
+    await expect(quarry).not.toContainText('20');
+
+    await page.evaluate(() => (window as any).__village.debugPinTier('town'));
+    await expect(quarry, 'and it comes to life when the village grows into it').toBeEnabled();
+    await page.evaluate(() => (window as any).__village.debugPinTier(null));
   });
 });
 
@@ -4967,7 +5086,9 @@ test.describe('work happens where the work is', () => {
     await open2d(page);
     const out = await page.evaluate((mk) => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false);
+      // Seeded: how far the nearest standing timber is depends on the map, and on a thin wood the
+      // forester's furthest trip crept a fraction past the allowance below.
+      g.startNewGame('small', 'easy', false, 0, 4242);
       const s = g.state; // after the new game: startNewGame replaces the state object wholesale
       s.limits = {}; // easy starts above the wood cap; this test is about where a forester works
       const lum = eval(mk)('lumberyard', 4);

@@ -70,6 +70,15 @@ import {
   avgHappiness,
 } from '../game/simulation';
 
+import {
+  BUILDING_TIER,
+  PATH_TIER_AT,
+  TIER_META,
+  VillageTier,
+  tierReaches,
+  villageTier,
+} from '../game/tiers';
+
 export type PathTier = 'dirt' | 'stone' | 'bridge' | 'stonebridge' | 'tunnel';
 
 /** Version / commit / build date, injected at build time — see `__BUILD_STAMP__`. */
@@ -196,6 +205,7 @@ export class UI {
     resources: byId('stat-resources'),
     policies: byId('hud-policies'),
     season: byId('stat-season'),
+    tier: byId('stat-tier'),
     pause: byId('btn-pause'),
     speed: byId('btn-speed'),
     jobs: byId('btn-jobs'),
@@ -224,6 +234,8 @@ export class UI {
   /** Which harvest the drag marks. Sticky, so the tool reopens on whatever was last used. */
   private harvestKind: HarvestKind = 'all';
   private openCategory: BuildCategory | 'paths' | 'harvest' | null = null;
+  /** The village's tier as of the last HUD refresh — what the build menus grey themselves against. */
+  private tier: VillageTier = 'settlement';
   private jobBoardOpen = false;
   private jobSig = '';
   private limitsOpen = false;
@@ -349,6 +361,25 @@ export class UI {
 
   updateHud(s: GameState, speed: number, paused: boolean): void {
     this.updatePolicyStrip(s);
+    // How far along the village is, which decides what the build menus offer. Re-rendered rather
+    // than left stale: crossing a tier should ungrey the buildings it opened there and then, and
+    // slipping back below one should grey them again.
+    const tier = villageTier(s);
+    if (tier !== this.tier) {
+      this.tier = tier;
+      // Slipping back below a tier takes the tool out of your hand too, not just the button off
+      // the menu — otherwise the reticle keeps placing a building the village can no longer raise.
+      if (this.selectedBuild && !tierReaches(tier, BUILDING_TIER[this.selectedBuild])) {
+        this.selectedBuild = null;
+        this.cb.onSelectBuild(null);
+      }
+      if (this.selectedPath && !tierReaches(tier, PATH_TIER_AT[this.selectedPath])) {
+        this.selectedPath = null;
+        this.cb.onSelectPath(null);
+      }
+      if (this.openCategory) this.renderPopout();
+      this.refreshToolbar();
+    }
     const totals = totalStoredAll(s);
     const pop = s.citizens.length;
     // Children, students, adults. Old age used to have its own tally, but it told the player
@@ -387,6 +418,7 @@ export class UI {
       this.markLow(chip, s, kind);
     }
     this.el.season.querySelector('.val')!.textContent = `${seasonLabel(s)} · Yr ${s.year}`;
+    this.el.tier.querySelector('.val')!.textContent = `${TIER_META[tier].emoji} ${TIER_META[tier].name}`;
     this.el.pause.textContent = paused ? '▶' : '⏸';
     this.el.speed.textContent = `${speed}×`;
   }
@@ -484,7 +516,12 @@ export class UI {
         ['stonebridge', '🏛️', 'Stone Bridge', '🪵2 🪨4/tile'],
         ['tunnel', '⛰️', 'Tunnel', '🪵6 🪨4/tile'],
       ] as [PathTier, string, string, string][]) {
-        po.appendChild(this.buildBtn(emoji, label, cost, tier === this.selectedPath, () => this.selectPath(tier)));
+        const locked = this.tier && !tierReaches(this.tier, PATH_TIER_AT[tier])
+          ? TIER_META[PATH_TIER_AT[tier]].name
+          : undefined;
+        po.appendChild(
+          this.buildBtn(emoji, label, cost, tier === this.selectedPath, () => this.selectPath(tier), locked),
+        );
       }
     } else if (this.openCategory === 'harvest') {
       for (const kind of HARVEST_KINDS) {
@@ -504,8 +541,14 @@ export class UI {
         const cost = (Object.entries(def.cost) as [ResourceKind, number][])
           .map(([k, a]) => `${RESOURCE_ICON[k]}${a}`)
           .join(' ');
+        const locked = this.tier && !tierReaches(this.tier, BUILDING_TIER[type])
+          ? TIER_META[BUILDING_TIER[type]].name
+          : undefined;
         po.appendChild(
-          this.buildBtn(def.emoji, def.name, cost, type === this.selectedBuild, () => this.selectBuild(type)),
+          this.buildBtn(
+            def.emoji, def.name, cost, type === this.selectedBuild,
+            () => this.selectBuild(type), locked,
+          ),
         );
       }
     }
@@ -517,13 +560,38 @@ export class UI {
   }
 
   /** A pop-out choice. `cost` is optional: some choices cost nothing and have nothing to say. */
-  private buildBtn(emoji: string, name: string, cost: string, selected: boolean, fn: () => void): HTMLElement {
+  /**
+   * A pop-out choice. `cost` is optional: some choices cost nothing and have nothing to say.
+   *
+   * `lockedAt` names the tier a building is still waiting on. It replaces the cost line rather
+   * than joining it — what a market costs is beside the point when the village cannot build one,
+   * and the tier name is all the button says: what it takes to *reach* that tier belongs
+   * somewhere with room to explain it, not on a chip this size.
+   */
+  private buildBtn(
+    emoji: string,
+    name: string,
+    cost: string,
+    selected: boolean,
+    fn: () => void,
+    lockedAt?: string,
+  ): HTMLElement {
     const btn = document.createElement('button');
-    btn.className = 'build-btn' + (selected ? ' selected' : '');
+    btn.className = 'build-btn' + (selected ? ' selected' : '') + (lockedAt ? ' locked' : '');
     btn.innerHTML =
       `<span class="emoji">${emoji}</span><span class="name">${name}</span>` +
-      (cost ? `<span class="cost">${cost}</span>` : '');
-    btn.addEventListener('click', fn);
+      (lockedAt
+        ? `<span class="cost lock">🔒 ${lockedAt}</span>`
+        : cost
+          ? `<span class="cost">${cost}</span>`
+          : '');
+    if (lockedAt) {
+      btn.disabled = true;
+      // Still worth a tap: a disabled button that does nothing at all reads as broken.
+      btn.addEventListener('click', () => this.flashHint(`${name} unlocks at ${lockedAt}`));
+    } else {
+      btn.addEventListener('click', fn);
+    }
     return btn;
   }
 

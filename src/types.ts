@@ -266,6 +266,8 @@ export function seasonLabel(s: { season: number; seasonTimer: number }): string 
   return name;
 }
 
+import type { VillageTier } from './game/tiers';
+
 export type BuildingType =
   | 'house'
   | 'stonehouse'
@@ -1679,6 +1681,15 @@ export interface GameState {
    * elders die whenever their time comes, the count has to be carried.
    */
   seasonDeaths?: number;
+  /**
+   * The tier the village was last told it had reached.
+   *
+   * The tier itself is never stored — it is read off the village every time it is asked for, so it
+   * follows a population crash or a burnt-out blacksmith straight back down. This is only here to
+   * notice a *change* worth announcing, and it starts as whatever the village already is, so
+   * loading a going concern does not congratulate you on a tier you reached years ago.
+   */
+  tierSeen?: VillageTier;
 }
 
 // ---- Time ----

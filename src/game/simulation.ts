@@ -174,6 +174,7 @@ import {
   isAdult,
   isFireproof,
 } from '../types';
+import { TIERS, TIER_META, villageTier } from './tiers';
 import { housingCapacity, buildingCenter, makeCitizen } from './state';
 import {
   forestInCircle,
@@ -2404,6 +2405,7 @@ function endSeason(s: GameState, log: LogFn): void {
   // (endSeason is the natural throttle). These ride the existing event log; no new UI.
   warnOfShortfalls(s, season, log);
 
+  announceTier(s, log);
   diseaseSeason(s, log);
   fireSeason(s, log);
   bridgeFireSeason(s, log);
@@ -3481,6 +3483,25 @@ export function fireSeason(s: GameState, log: LogFn): void {
   // distributed ones.
   if (isStoneBuilt(b.type) && rand(s) >= STONE_FIRE_FACTOR) return;
   tryIgnite(s, b, log, true);
+}
+
+/**
+ * Say so when the village grows into a new tier — or slips out of one.
+ *
+ * Checked at the season turn rather than every tick: the tier follows the village live, and a
+ * village hovering on fifty people would otherwise announce itself every time somebody was born or
+ * died. Once a season is the cadence a player can actually read.
+ */
+function announceTier(s: GameState, log: LogFn): void {
+  const now = villageTier(s);
+  const before = s.tierSeen;
+  s.tierSeen = now;
+  if (before === undefined || before === now) return; // a fresh village is simply what it is
+  if (TIERS.indexOf(now) > TIERS.indexOf(before)) {
+    log(`${TIER_META[now].emoji} Your ${TIER_META[before].name.toLowerCase()} has grown into a ${TIER_META[now].name.toLowerCase()}`, 'good');
+  } else {
+    log(`${TIER_META[now].emoji} Your ${TIER_META[before].name.toLowerCase()} has fallen back to a ${TIER_META[now].name.toLowerCase()}`, 'bad');
+  }
 }
 
 /**

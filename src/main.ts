@@ -85,6 +85,7 @@ import {
   entranceTiles,
 } from './types';
 import { newGame, housingCapacity } from './game/state';
+import { VillageTier, buildingUnlocked, pathUnlocked, pinTier, villageTier } from './game/tiers';
 import { pinRandom, newSeed } from './game/rng';
 import {
   update,
@@ -1801,15 +1802,45 @@ class Game {
   }
 
   /** Debug/testing helper: check a placement at a tile (uses the current ranch size). */
+  /**
+   * Debug/testing helper: could this building stand here?
+   *
+   * Progression is deliberately *not* asked about — this and `debugPlace` both mean "regardless of
+   * how far along the village is", which is what almost every test wants: they are about ranches
+   * and markets and quarries, not about whether a founding camp has earned one. The gate itself is
+   * tested through `debugUnlocked` and the build menu. The pair stay in step: whatever
+   * `debugCanPlace` says is placeable, `debugPlace` will place.
+   */
   debugCanPlace(type: BuildingType, x: number, y: number, rot: 0 | 1 | 2 | 3 = 0): { ok: boolean; reason?: string } {
     const { w, h } = this.placeSize(type);
-    return canPlace(this.state, type, x, y, w, h, rot);
+    return canPlace(this.state, type, x, y, w, h, rot, { ignoreTier: true });
+  }
+
+  /** Debug/testing helper: the village's tier right now. */
+  debugTier(): VillageTier {
+    return villageTier(this.state);
+  }
+
+  /** Debug/testing helper: may the village raise this building yet? */
+  debugUnlocked(type: BuildingType): boolean {
+    return buildingUnlocked(this.state, type);
+  }
+
+  /** Debug/testing helper: may the village lay this kind of road yet? */
+  debugPathUnlocked(tier: PathTier): boolean {
+    return pathUnlocked(this.state, tier);
+  }
+
+  /** Debug/testing helper: force the tier, so a test can get at what it actually cares about. */
+  debugPinTier(t: VillageTier | null): void {
+    pinTier(t);
+    this.ui.updateHud(this.state, SPEEDS[this.speedIndex], this.paused);
   }
 
   /** Debug/testing helper: place a building (as a construction site) at a tile. */
   debugPlace(type: BuildingType, x: number, y: number, rot: 0 | 1 | 2 | 3 = 0): number | null {
     const { w, h } = this.placeSize(type);
-    const b = placeBuilding(this.state, type, x, y, w, h, rot);
+    const b = placeBuilding(this.state, type, x, y, w, h, rot, { ignoreTier: true });
     return b ? b.id : null;
   }
 
@@ -1841,7 +1872,7 @@ class Game {
 
   /** Debug/testing helper: plan a path tile directly, bypassing the drag-paint input path. */
   debugPlanPath(tier: PathTier, x: number, y: number): boolean {
-    return planPath(this.state, x, y, tier);
+    return planPath(this.state, x, y, tier, { ignoreTier: true });
   }
 
   /**

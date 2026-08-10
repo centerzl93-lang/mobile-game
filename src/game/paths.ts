@@ -30,6 +30,7 @@ import {
   MAP_W,
   MAP_H,
 } from '../types';
+import { pathUnlocked } from './tiers';
 import { tileIndex, inBounds, getTile } from './world';
 import { HARVEST_WOOD, HARVEST_STONE, HARVEST_IRON } from '../types';
 import { totalStored } from './storage';
@@ -42,7 +43,17 @@ export type PathTier = 'dirt' | 'stone' | 'bridge' | 'stonebridge' | 'tunnel';
  * can cross. Tiles cannot be planned over an existing equal-or-better path of that kind,
  * nor under a building — a path is a surface, so nothing may share its tile.
  */
-export function planPath(s: GameState, tx: number, ty: number, tier: PathTier): boolean {
+export function planPath(
+  s: GameState,
+  tx: number,
+  ty: number,
+  tier: PathTier,
+  opts: { ignoreTier?: boolean } = {},
+): boolean {
+  // The village has not earned this kind of roadway yet. `ignoreTier` is for the debug hooks,
+  // which mean "lay this regardless of how far along the village is" — the same contract
+  // `debugPlace` keeps for buildings.
+  if (!opts.ignoreTier && !pathUnlocked(s, tier)) return false;
   if (!inBounds(tx, ty)) return false;
   const t = getTile(s.tiles, tx, ty)!;
   const idx = tileIndex(tx, ty);

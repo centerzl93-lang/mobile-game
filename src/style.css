@@ -116,6 +116,9 @@ body {
 .stat.season {
   font-weight: 600;
 }
+.stat.tier {
+  font-weight: 600;
+}
 
 /*
  * Health and happiness are five pips each, one lit per 20 points. A spent pip is dimmed rather
@@ -357,6 +360,21 @@ body {
 .build-btn.selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent) inset;
+}
+/*
+ * A building the village has not earned yet. Dimmed rather than removed: seeing what is coming is
+ * most of what makes progression read as progression, and a menu that silently grows new entries
+ * gives the player nothing to aim at.
+ */
+.build-btn.locked {
+  opacity: 0.45;
+  cursor: default;
+  border-style: dashed;
+}
+.build-btn .cost.lock {
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
 }
 .build-btn.cancel {
   min-width: 60px;

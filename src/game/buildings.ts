@@ -1,3 +1,4 @@
+import { BUILDING_TIER, TIER_META, buildingUnlocked } from './tiers';
 import {
   GameState,
   Building,
@@ -47,8 +48,15 @@ export function canPlace(
   w?: number,
   h?: number,
   rot: number = 0,
+  opts: { ignoreTier?: boolean } = {},
 ): PlaceResult {
   const def = BUILDING_DEFS[type];
+  // Progression first, because it is the answer that has nothing to do with the ground: a village
+  // that has not earned a building cannot put one anywhere. `ignoreTier` is for the debug hooks,
+  // which mean "place this regardless of how far along the village is".
+  if (!opts.ignoreTier && !buildingUnlocked(s, type)) {
+    return { ok: false, reason: `Unlocks at ${TIER_META[BUILDING_TIER[type]].name}` };
+  }
   const baseW = w ?? def.w;
   const baseH = h ?? def.h;
   // A quarter turn swaps the footprint, so everything below works in map space.
@@ -175,8 +183,9 @@ export function placeBuilding(
   w?: number,
   h?: number,
   rot: 0 | 1 | 2 | 3 = 0,
+  opts: { ignoreTier?: boolean } = {},
 ): Building | null {
-  const check = canPlace(s, type, x, y, w, h, rot);
+  const check = canPlace(s, type, x, y, w, h, rot, opts);
   if (!check.ok) return null;
   // No deduction — builders haul the materials to the site during construction.
   const b: Building = {

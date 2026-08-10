@@ -93,7 +93,13 @@ export type ResourceKind =
   | 'pigs'
   | 'chickens'
   | 'sheep'
-  | 'medicine';
+  | 'medicine'
+  | 'sand'
+  | 'glass'
+  | 'jewelry'
+  | 'gold'
+  | 'dye'
+  | 'silk';
 
 export type Resources = Record<ResourceKind, number>;
 
@@ -173,6 +179,12 @@ export const RESOURCE_KINDS: ResourceKind[] = [
   'sheep',
   'chickens',
   'medicine',
+  'sand',
+  'glass',
+  'jewelry',
+  'gold',
+  'dye',
+  'silk',
 ];
 
 /**
@@ -237,6 +249,7 @@ export const RESOURCE_ICON: Record<ResourceKind, string> = {
   chickens: '🐔',
   sheep: '🐑',
   medicine: '💊',
+  sand: '⏳', glass: '🔷', jewelry: '💍', gold: '🪙', dye: '🎨', silk: '🧣',
 };
 
 /** Non-food resources that show a red "low" warning in the HUD (survival-critical). */
@@ -305,6 +318,14 @@ export type MineOutput = 'coal' | 'iron';
 export type SmithRecipe = 'iron' | 'steel';
 /** What a tailor sews from: hides off the cattle and the hunt, or fleece off a sheep pen. */
 export type TailorRecipe = 'leather' | 'wool';
+/**
+ * What bench the luxury workshop is running.
+ *
+ * Left open on purpose: the chain is meant to grow — fine jewellery, fine clothing, furniture —
+ * and each of those is another member of this union and another arm of `converterInputs`, not a
+ * new building or a new system.
+ */
+export type LuxuryRecipe = 'glass' | 'jewelry';
 
 /**
  * What a farm grows. There are 16 varieties, each harvesting into its own food resource for
@@ -622,7 +643,7 @@ export interface Building {
    * `SmithRecipe`, a tailor as `TailorRecipe`. They never share a building, so they never
    * disagree about what the value means.
    */
-  recipe: SmithRecipe | TailorRecipe;
+  recipe: SmithRecipe | TailorRecipe | LuxuryRecipe;
   /**
    * Local inventory. Barn: its stock (cap BARN_CAPACITY). Producer: input/output
    * buffer. Construction site (built=false): materials delivered so far.
@@ -1479,8 +1500,37 @@ export const HARVEST_KIND_META: Record<HarvestKind, { label: string; emoji: stri
 };
 
 /** The single kind of goods a visiting merchant deals in. */
-export type MerchantCategory = 'basics' | 'seeds' | 'animals' | 'foods' | 'goods';
+export type MerchantCategory =
+  | 'basics'
+  | 'seeds'
+  | 'animals'
+  | 'foods'
+  | 'goods'
+  // The four that keep a calendar. They come to the Port, one to a season, and are the only way
+  // gold, dye and silk ever reach the town.
+  | 'portgrain'
+  | 'portluxury'
+  | 'portindustrial'
+  | 'portgeneral';
 export const MERCHANT_CATEGORIES: MerchantCategory[] = ['basics', 'seeds', 'animals', 'foods', 'goods'];
+/** The Port's four, and the season each keeps to. */
+export const PORT_CATEGORIES: MerchantCategory[] = ['portgrain', 'portluxury', 'portindustrial', 'portgeneral'];
+export const PORT_SEASON_MERCHANT: Record<Season, MerchantCategory> = {
+  Spring: 'portgrain',
+  Summer: 'portluxury',
+  Autumn: 'portindustrial',
+  Winter: 'portgeneral',
+};
+/**
+ * Odds the season's merchant actually sails.
+ *
+ * Predictable enough to plan a year around, not so certain that the plan is free: seven winters in
+ * ten the medicine ship comes, and the town that stocked nothing against the other three finds out
+ * why it should have.
+ */
+export const PORT_ARRIVAL_CHANCE = 0.7;
+/** What a merchant's own prices do to the book value, drawn when they sail. */
+export const PORT_PRICE_MODS = [0.9, 1.0, 1.1] as const;
 
 export interface Merchant {
   /**
@@ -1499,6 +1549,11 @@ export interface Merchant {
   stayTimer: number;
   /** Seconds before another merchant may arrive — set on departure, so visits never run back to back. */
   cooldownTimer: number;
+  /**
+   * What this trader's own prices do to the book value, drawn once when they sail: 0.9, 1.0 or 1.1.
+   * Applied to both sides, so a hard bargainer is dear to buy from *and* generous to sell to.
+   */
+  priceMod?: number;
   /** What this merchant deals in (null while away). */
   category: MerchantCategory | null;
   /** Goods for sale this visit: resource -> units remaining. */
@@ -1745,6 +1800,11 @@ export interface GameState {
    * loading a going concern does not congratulate you on a tier you reached years ago.
    */
   tierSeen?: VillageTier;
+  /**
+   * Port trades settled. Kept as a bare tally rather than a reputation: standing with a fleet is a
+   * system for later, and this is the number it would be built on.
+   */
+  portTradeCount?: number;
 }
 
 // ---- Time ----
@@ -1791,6 +1851,9 @@ export const CARRY_VOLUME = 12;
  * only compact goods gain. Crops at 0.25 mean 48 per trip, which is what makes a harvest haulable.
  */
 export const RESOURCE_VOLUME: Record<ResourceKind, number> = {
+  // Sand is quarried by the cartload; glass and the fine goods are small, valuable and carried
+  // carefully, so a trip carries a lot of them.
+  sand: 1, glass: 0.5, jewelry: 0.1, gold: 0.1, dye: 0.25, silk: 0.25,
   // Crops and other foods: compact, and hauled in bulk from field to barn.
   fruit: 0.25, grain: 0.25, corn: 0.25, potato: 0.25, rice: 0.25, barley: 0.25,
   carrot: 0.25, tomato: 0.25, onion: 0.25, pepper: 0.25, cabbage: 0.25, beans: 0.25,
@@ -2295,6 +2358,14 @@ export const SHELTER_CAPACITY = 18;
  * build proper homes is something the player feels rather than something the game announces.
  */
 export const SHELTER_HAPPY = 12;
+/**
+ * How often a quarry load comes up sand instead of stone.
+ *
+ * A share of the same output rather than a second stream on top: sand is what a quarry digs
+ * *instead of* stone that trip, so choosing to make glass costs the town masonry. A fifth is
+ * enough to feed a workshop without gutting the stone supply.
+ */
+export const QUARRY_SAND_SHARE = 0.22;
 /** A grand house is warmer again than a stone one — its household burns barely half the fuel. */
 export const GRAND_HOUSE_HEAT_FACTOR = 0.45;
 /** Happiness a grand house is worth to the people living in it, and to nobody else. */
@@ -2436,6 +2507,14 @@ export const DIFFICULTY_RESOURCES: Record<Difficulty, Partial<Resources>> = {
 
 // ---- Trade (barter by relative value; merchant keeps a margin) ----
 export const TRADE_VALUE: Record<ResourceKind, number> = {
+  // The luxury chain. Sand is worth barely carrying; every step after it multiplies.
+  sand: 1,
+  glass: 5,
+  jewelry: 20,
+  // Trade-only: no village makes these, they come off a ship.
+  gold: 10,
+  dye: 6,
+  silk: 8,
   fruit: 1,
   grain: 1,
   corn: 1,
@@ -2510,6 +2589,12 @@ export const MERCHANT_CATEGORY_STOCK: Record<MerchantCategory, Partial<Record<Re
   animals: { cattle: 6, pigs: 8, sheep: 8, chickens: 12 },
   foods: { grain: 160, corn: 120, potato: 120, fish: 140, beef: 80, venison: 60, mutton: 70, pork: 70, chicken: 70, milk: 90, eggs: 80 },
   goods: { tools: 60, clothing: 60, leather: 90, wool: 80, medicine: 40 },
+  // The Port's holds are deeper than a river boat's — larger quantities, and the imported goods
+  // no village can make for itself.
+  portgrain: { grain: 400, corn: 320, barley: 260, rice: 240 },
+  portluxury: { gold: 20, silk: 15, dye: 25 },
+  portindustrial: { iron: 240, coal: 260, tools: 140 },
+  portgeneral: { medicine: 120, gold: 8, silk: 6, dye: 10, tools: 80 },
 };
 
 /** Label + emoji for each merchant category (shown in the trade UI header). */
@@ -2519,7 +2604,16 @@ export const MERCHANT_CATEGORY_META: Record<MerchantCategory, { label: string; e
   animals: { label: 'Livestock Trader', emoji: '🐄' },
   foods: { label: 'Food Merchant', emoji: '🍞' },
   goods: { label: 'Goods Merchant', emoji: '🛠️' },
+  portgrain: { label: 'Northern Grain Fleet', emoji: '🌾' },
+  portluxury: { label: 'Eastern Luxury Fleet', emoji: '💎' },
+  portindustrial: { label: 'Ironworks Convoy', emoji: '⚒️' },
+  portgeneral: { label: 'Winter Supply Fleet', emoji: '🧭' },
 };
+
+/** Is this one of the Port's scheduled fleets, rather than a river trader? */
+export function isPortMerchant(c: MerchantCategory | null): boolean {
+  return c !== null && PORT_CATEGORIES.includes(c);
+}
 
 export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   house: {
@@ -2548,7 +2642,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     desc: 'Higher learning. School-leavers go straight on for another year, and come out working faster still — and living longer. Each of its five professors can take ten students.',
   },
   port: {
-    type: 'port', name: 'Port', emoji: '⚓', category: 'trade', w: 5, h: 9,
+    type: 'port', name: 'Port', emoji: '⚓', category: 'trade', w: 7, h: 5,
     cost: { wood: 100, stone: 100, iron: 40 }, jobs: 5, work: 260, builders: 3,
     requiresWaterFraction: 1 / 3,
     desc: 'A deep-water quay: bigger traders, calling more reliably. Two of them can be put on a standing order to return in a season you name, so trade becomes something you can plan around rather than wait for.',
@@ -2560,8 +2654,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   luxury: {
     type: 'luxury', name: 'Luxury Workshop', emoji: '💎', category: 'resources', w: 5, h: 4,
-    cost: { wood: 70, stone: 80, iron: 40 }, jobs: 1, work: 180, builders: 3,
-    desc: 'A workshop for fine goods. Its benches are standing empty for now — there is nothing yet that a town knows how to make here.',
+    cost: { wood: 70, stone: 80, iron: 40 }, jobs: 3, work: 180, builders: 3,
+    desc: 'Glass from sand and coal, or jewellery from glass and iron — pick which bench is running. Jewellery is the most valuable thing a town can make, and the only reason anyone wants the grit a quarry brings up.',
   },
   monument: {
     type: 'monument', name: 'Monument', emoji: '🗿', category: 'civic', w: 3, h: 3,

@@ -103,7 +103,7 @@ def university():
 
 
 def port():
-    """Port (5 x 9, two storeys): a stone quay with a warehouse, cranes and a lighthouse beacon.
+    """Port (7 x 5, two storeys): a stone quay with a warehouse, cranes and a lighthouse beacon.
 
     The trading post is a timber wharf. A port is what a town builds when the trading post is not
     enough: masonry quay walls instead of piles, a two-storey bonded warehouse, two treadwheel
@@ -114,18 +114,20 @@ def port():
     reset_scene()
     m = palette()
     parts = []
-    qw, qd = 3.30, 7.40
+    # Broad and shallow: a 7x5 plot is a wide frontage onto the water, not a long jetty. The quay
+    # runs across the plot and the warehouse sits at one end of it.
+    qw, qd = 6.60, 4.30
     quay_h = 0.34
 
     # The quay itself: a masonry apron with a plank deck along the water side.
     parts.append(box("Quay", (qw, qd, quay_h), (0, 0, quay_h / 2), m["stone"]))
-    for i, y in enumerate([-2.9 + 1.18 * k for k in range(6)]):
+    for i, y in enumerate([-1.7 + 0.85 * k for k in range(5)]):
         parts.append(box("QuayCourse", (qw + 0.10, 0.18, 0.12), (0, y, quay_h - 0.06), m["stone_dark"]))
-    parts += deck("Apron", 1.05, qd - 0.5, 0.09, (qw / 2 - 0.52, 0, quay_h + 0.04), m["timber"], planks=8)
+    parts += deck("Apron", 1.05, qd - 0.5, 0.09, (qw / 2 - 0.62, 0, quay_h + 0.04), m["timber"], planks=8)
 
     # Bonded warehouse at the landward end: two storeys, big cargo doors, shuttered lofts.
     ww, wd, wh = 2.40, 2.70, 2.10
-    wy = -2.10
+    wy = 0.0
     # Built at the origin and slid back along the quay as one piece: the helpers all centre what
     # they make, so collecting the warehouse first and moving it once is the only way to keep its
     # walls, its upper storey and its roof together.
@@ -136,46 +138,47 @@ def port():
         + [box("StoreBand", (ww + 0.12, wd + 0.12, 0.10), (0, 0, quay_h + wh * 0.5), m["timber"])]
     )
     for ob in store:
+        ob.location.x -= 1.95
         ob.location.y += wy
     parts += store
-    parts += door("Cargo", wy + wd / 2, quay_h, m, width=0.86, height=1.10)
+    parts += door("Cargo", wy + wd / 2, quay_h, m, width=0.86, height=1.10, x=-1.95)
     for k in (0, 1):
         for sx in (-1, 1):
             parts += window("Loft", wy + sx * 0.80, ww / 2 * (1 if k else -1), quay_h + wh * 0.5 + 0.44, m,
                             width=0.30, height=0.34, axis="x")
 
     # Two treadwheel cranes along the quay — the silhouette that says "port" from across the map.
-    for cy in (0.35, 2.45):
-        parts += posts("Crane", [(-0.55, cy - 0.28), (-0.55, cy + 0.28)], 1.85, 0.13, quay_h, m["timber"])
-        parts.append(box("CraneHead", (0.22, 0.80, 0.22), (-0.55, cy, quay_h + 1.90), m["timber_dark"]))
-        jib = box("CraneJib", (1.90, 0.16, 0.16), (0.30, cy, quay_h + 2.18), m["timber"])
+    for cy in (-1.35, 1.35):
+        parts += posts("Crane", [(1.10, cy - 0.28), (1.10, cy + 0.28)], 1.85, 0.13, quay_h, m["timber"])
+        parts.append(box("CraneHead", (0.22, 0.80, 0.22), (1.10, cy, quay_h + 1.90), m["timber_dark"]))
+        jib = box("CraneJib", (1.90, 0.16, 0.16), (1.95, cy, quay_h + 2.18), m["timber"])
         jib.rotation_euler = (0, math.radians(-19), 0)
         parts.append(jib)
-        parts.append(box("CraneRope", (0.05, 0.05, 0.62), (1.12, cy, quay_h + 1.62), m["timber_dark"]))
-        parts.append(box("CraneHook", (0.20, 0.20, 0.14), (1.12, cy, quay_h + 1.26), m["timber_dark"]))
+        parts.append(box("CraneRope", (0.05, 0.05, 0.62), (2.77, cy, quay_h + 1.62), m["timber_dark"]))
+        parts.append(box("CraneHook", (0.20, 0.20, 0.14), (2.77, cy, quay_h + 1.26), m["timber_dark"]))
         # The wheel the crew walk to lift with.
         bpy.ops.mesh.primitive_cylinder_add(radius=0.44, depth=0.34, vertices=12,
-                                            location=(-0.55, cy, quay_h + 1.02))
+                                            location=(1.10, cy, quay_h + 1.02))
         wheel = bpy.context.active_object
         wheel.name = "CraneWheel"
-        wheel.rotation_euler = (0, math.radians(90), 0)
+        wheel.rotation_euler = (math.radians(90), 0, 0)
         wheel.data.materials.append(m["timber"])
         parts.append(wheel)
 
     # Beacon at the seaward end, and bollards down the quay edge.
-    parts.append(box("BeaconBase", (0.70, 0.70, 0.36), (-0.30, 3.15, quay_h + 0.18), m["stone_dark"]))
+    parts.append(box("BeaconBase", (0.70, 0.70, 0.36), (3.00, -1.75, quay_h + 0.18), m["stone_dark"]))
     bpy.ops.mesh.primitive_cylinder_add(radius=0.30, depth=1.70, vertices=10,
-                                        location=(-0.30, 3.15, quay_h + 1.21))
+                                        location=(3.00, -1.75, quay_h + 1.21))
     tower = bpy.context.active_object
     tower.name = "Beacon"
     tower.data.materials.append(m["plaster"])
     parts.append(tower)
-    parts.append(box("BeaconLamp", (0.42, 0.42, 0.34), (-0.30, 3.15, quay_h + 2.22), m["timber_dark"]))
-    parts += _spire("BeaconCap", -0.30, 3.15, quay_h + 2.39, 0.44, 0.32, m["slate"], sides=8)
-    parts += posts("Bollard", [(qw / 2 - 0.16, y) for y in (-2.2, -0.7, 0.8, 2.3)], 0.30, 0.16, quay_h,
+    parts.append(box("BeaconLamp", (0.42, 0.42, 0.34), (3.00, -1.75, quay_h + 2.22), m["timber_dark"]))
+    parts += _spire("BeaconCap", 3.00, -1.75, quay_h + 2.39, 0.44, 0.32, m["slate"], sides=8)
+    parts += posts("Bollard", [(x, qd / 2 - 0.16) for x in (-2.4, -0.9, 0.6, 2.1)], 0.30, 0.16, quay_h,
                    m["stone_dark"])
-    parts += crate_cluster("Cargo", (-0.10, 1.30, quay_h), m, count=4)
-    parts += barrel("Barrel", (0.55, -0.60, quay_h + 0.19), m["timber"], radius=0.17, height=0.38)
+    parts += crate_cluster("Cargo", (0.10, -1.10, quay_h), m, count=4)
+    parts += barrel("Barrel", (-0.60, 1.30, quay_h + 0.19), m["timber"], radius=0.17, height=0.38)
 
     for ob in parts:
         bevel(ob, 0.012)

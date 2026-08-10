@@ -105,6 +105,10 @@ import {
   MERCHANT_CATEGORIES,
   MERCHANT_CATEGORY_STOCK,
   MERCHANT_CATEGORY_META,
+  PORT_ARRIVAL_CHANCE,
+  PORT_PRICE_MODS,
+  PORT_SEASON_MERCHANT,
+  isPortMerchant,
   DIET_VARIETY_TARGET,
   CHILD_FOOD_FACTOR,
   BIRTH_CHANCE,
@@ -145,6 +149,7 @@ import {
   isDwelling,
   dwellingCapacityOf,
   SHELTER_HAPPY,
+  QUARRY_SAND_SHARE,
   GRAND_HOUSE_HAPPY,
   HAPPY_MONUMENT,
   CONGREGATION_PER_PRIEST,
@@ -256,6 +261,10 @@ const SMITH_STEEL_IRON = 4, SMITH_STEEL_COAL = 3, SMITH_STEEL_OUT = 8;
 // Two ways to a coat. Wool goes further than hide per unit — a fleece is spun and woven, a hide
 // is cut around — but a pen of sheep is the real difference: see `ANIMAL_META`.
 const TAILOR_LEATHER_IN = 5, TAILOR_WOOL_IN = 4, TAILOR_OUT = 4;
+// The luxury chain, per the spec's ratios: two sand and a coal make two glass, and two glass with
+// an iron make one piece of jewellery.
+const LUX_GLASS_SAND = 2, LUX_GLASS_COAL = 1, LUX_GLASS_OUT = 2;
+const LUX_JEWEL_GLASS = 2, LUX_JEWEL_IRON = 1, LUX_JEWEL_OUT = 1;
 
 const ARRIVE = 0.25; // tile distance considered "arrived"
 /**
@@ -1161,6 +1170,10 @@ function converterInputs(b: Building): [ResourceKind, number][] {
         : [['iron', SMITH_IRON_IN]];
     case 'tailor':
       return b.recipe === 'wool' ? [['wool', TAILOR_WOOL_IN]] : [['leather', TAILOR_LEATHER_IN]];
+    case 'luxury':
+      return b.recipe === 'jewelry'
+        ? [['glass', LUX_JEWEL_GLASS], ['iron', LUX_JEWEL_IRON]]
+        : [['sand', LUX_GLASS_SAND], ['coal', LUX_GLASS_COAL]];
     default:
       return [];
   }
@@ -1300,6 +1313,16 @@ export function debugReachable(
 ): boolean {
   ensureNavLabels(s);
   return reachableFrom(from, tx, ty);
+}
+
+/** Debug/testing helper: what a converter consumes per cycle, for the recipe it is set to. */
+export function debugConverterInputs(b: Building): [ResourceKind, number][] {
+  return converterInputs(b);
+}
+
+/** Debug/testing helper: run the season turn, as the clock does at a season boundary. */
+export function debugEndSeason(s: GameState, log: LogFn): void {
+  endSeason(s, log);
 }
 
 /** Debug/testing helper: the tile someone standing at `from` would walk to for `b`. */
@@ -1656,11 +1679,19 @@ function workOutput(
     }
     case 'herbalist':
       return { kind: 'medicine', amount: MED_LOAD * factorCircle(s, b) * tf };
-    case 'quarry':
+    case 'quarry': {
       // Rock nearby is a *bonus*, not a requirement — a quarry sunk in open ground still works at
       // its base rate. (Using factorStone here would drop an inland quarry to MIN_FACTOR, which
       // would make "buildable anywhere" a lie.)
-      return { kind: 'stone', amount: LOAD_MAT * quarryRichness(s, b) * tf };
+      //
+      // Every so often a load comes up sand rather than stone. A quarry is a hole in the ground and
+      // some of what comes out of it is grit — which is where glass starts, so the whole luxury
+      // chain hangs off a building the village has had since it was a hamlet, with no new pit to
+      // dig for it.
+      const load = LOAD_MAT * quarryRichness(s, b) * tf;
+      if (rand(s) < QUARRY_SAND_SHARE) return { kind: 'sand', amount: load };
+      return { kind: 'stone', amount: load };
+    }
     case 'mine': {
       const f = factorStone(s, b) * tf;
       return b.output === 'iron'
@@ -1676,6 +1707,17 @@ function workOutput(
           : null;
       }
       return consumeStore(b, [['iron', SMITH_IRON_IN]]) ? { kind: 'tools', amount: SMITH_IRON_OUT * tf } : null;
+    case 'luxury':
+      // Two benches, one workshop. Glass is the first step and jewellery the second, so a town
+      // with one workshop chooses which half of the chain it is running; two can run both.
+      if (b.recipe === 'jewelry') {
+        return consumeStore(b, [['glass', LUX_JEWEL_GLASS], ['iron', LUX_JEWEL_IRON]])
+          ? { kind: 'jewelry', amount: LUX_JEWEL_OUT * tf }
+          : null;
+      }
+      return consumeStore(b, [['sand', LUX_GLASS_SAND], ['coal', LUX_GLASS_COAL]])
+        ? { kind: 'glass', amount: LUX_GLASS_OUT * tf }
+        : null;
     case 'tailor':
       if (b.recipe === 'wool') {
         return consumeStore(b, [['wool', TAILOR_WOOL_IN]]) ? { kind: 'clothing', amount: TAILOR_OUT * tf } : null;
@@ -2477,6 +2519,7 @@ function endSeason(s: GameState, log: LogFn): void {
   // (endSeason is the natural throttle). These ride the existing event log; no new UI.
   warnOfShortfalls(s, season, log);
 
+  portSeason(s, log);
   announceTier(s, log);
   diseaseSeason(s, log);
   fireSeason(s, log);
@@ -2652,6 +2695,7 @@ function spawnMerchant(s: GameState, log: LogFn): void {
   }
   m.phase = 'arriving';
   m.present = false;
+  m.priceMod = 1; // river traders deal at the book rate; only the Port's fleets haggle
   const post = tradingPost(s);
   m.boat = post ? boatEntry(s, dockSpot(s, post)) : { x: riverColumnX(s.tiles, 0), y: 0 };
   const meta = MERCHANT_CATEGORY_META[category];
@@ -2731,7 +2775,9 @@ function boatEntry(s: GameState, to: { x: number; y: number }): { x: number; y: 
 function updateMerchantBoat(s: GameState, dt: number, log: LogFn): void {
   const m = s.merchant;
   if (!m.boat) return;
-  const post = tradingPost(s);
+  // A Port fleet berths at the Port. Falls back to the trading post, so a fleet already at sea
+  // when the harbour is pulled down still has somewhere to tie up rather than sailing forever.
+  const post = isPortMerchant(m.category) ? portOrPost(s) : tradingPost(s);
 
   if (m.phase === 'arriving') {
     if (!post) {
@@ -2834,15 +2880,23 @@ export function purchaseValue(b: TradeBasket): number {
   return sumValue(b.get) + b.buySeeds.length * SEED_COST;
 }
 
-/** Minimum offer value needed to buy the basket (purchase value grossed up by the merchant's cut). */
-export function requiredValue(b: TradeBasket): number {
-  return purchaseValue(b) / MERCHANT_MARGIN;
+/**
+ * Minimum offer value needed to buy the basket (purchase value grossed up by the merchant's cut,
+ * and by whatever this particular trader thinks of their own goods).
+ *
+ * The modifier is one number applied to the whole basket rather than per line, because it is a
+ * fact about the *merchant* — a hard bargainer is dear across the board. It cuts both ways: the
+ * same 1.1 that makes their gold expensive makes the jewellery you hand over count for more.
+ */
+export function requiredValue(b: TradeBasket, priceMod = 1): number {
+  return (purchaseValue(b) * priceMod) / MERCHANT_MARGIN;
 }
 
 export function basketTrade(s: GameState, basket: TradeBasket): TradeResult {
   const m = s.merchant;
   if (!m.present) return { ok: false, reason: 'No merchant docked' };
-  const post = tradingPost(s);
+  // A Port fleet unloads at the Port; a river trader at the trading post.
+  const post = isPortMerchant(m.category) ? portOrPost(s) : tradingPost(s);
   if (!post) return { ok: false, reason: 'No trading post' };
   post.store = post.store ?? {};
 
@@ -2865,7 +2919,11 @@ export function basketTrade(s: GameState, basket: TradeBasket): TradeResult {
   }
   // Values must match (offer ≥ required).
   const have = offerValue(basket);
-  if (have + 1e-6 < requiredValue(basket)) return { ok: false, reason: 'Offer value too low' };
+  if (have + 1e-6 < requiredValue(basket, m.priceMod ?? 1)) {
+    return { ok: false, reason: 'Offer value too low' };
+  }
+
+  if (isPortMerchant(m.category)) s.portTradeCount = (s.portTradeCount ?? 0) + 1;
 
   // Settle: spend the give goods, receive the bought goods (both in the post inventory), unlock seeds.
   for (const [k, qty] of Object.entries(basket.give) as [ResourceKind, number][]) {
@@ -3580,6 +3638,46 @@ export function fireSeason(s: GameState, log: LogFn): void {
   // distributed ones.
   if (isStoneBuilt(b.type) && rand(s) >= STONE_FIRE_FACTOR) return;
   tryIgnite(s, b, log, true);
+}
+
+/** The Port if there is one, else the trading post — where a hull ties up and its goods land. */
+function portOrPost(s: GameState): Building | undefined {
+  return (
+    s.buildings.find((b) => b.built && !b.razed && b.type === 'port') ??
+    s.buildings.find((b) => b.built && !b.razed && b.type === 'trading')
+  );
+}
+
+/**
+ * The season's fleet, if it sails.
+ *
+ * Rolled once at the turn of the season rather than continuously, because the whole point is that
+ * it is *scheduled*: a town knows the grain ships come in spring and can hold its barns against
+ * it. Seven times in ten — the other three are what stops a plan being a certainty.
+ *
+ * Nothing happens if a river trader is already tied up: one boat at the quay at a time.
+ */
+function portSeason(s: GameState, log: LogFn): void {
+  const port = s.buildings.find((b) => b.built && !b.razed && b.type === 'port');
+  if (!port) return;
+  const m = s.merchant;
+  if (m.phase !== 'away' || s.pendingNomads) return;
+  if (rand(s) >= PORT_ARRIVAL_CHANCE) return;
+
+  const category = PORT_SEASON_MERCHANT[SEASONS[s.season]];
+  m.category = category;
+  m.stock = {};
+  m.seedStock = [];
+  for (const [k, qty] of Object.entries(MERCHANT_CATEGORY_STOCK[category]) as [ResourceKind, number][]) {
+    m.stock[k] = qty;
+  }
+  m.priceMod = PORT_PRICE_MODS[Math.floor(rand(s) * PORT_PRICE_MODS.length)];
+  m.phase = 'arriving';
+  m.present = false;
+  m.cooldownTimer = 0;
+  m.boat = boatEntry(s, dockSpot(s, port));
+  const meta = MERCHANT_CATEGORY_META[category];
+  log(`${meta.emoji} The ${meta.label} is making for the harbour`, 'good');
 }
 
 /**

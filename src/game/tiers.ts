@@ -15,10 +15,10 @@
 import { BUILD_ORDER, BUILDING_DEFS, BuildingType, GameState, isAdult } from '../types';
 import type { PathTier } from './paths';
 
-export type VillageTier = 'settlement' | 'hamlet' | 'village' | 'town';
+export type VillageTier = 'settlement' | 'hamlet' | 'village' | 'town' | 'city';
 
 /** Lowest to highest. Index into this is what "higher tier" means everywhere below. */
-export const TIERS: VillageTier[] = ['settlement', 'hamlet', 'village', 'town'];
+export const TIERS: VillageTier[] = ['settlement', 'hamlet', 'village', 'town', 'city'];
 
 export interface TierReq {
   name: string;
@@ -36,6 +36,9 @@ export const TIER_META: Record<VillageTier, TierReq> = {
   hamlet: { name: 'Hamlet', emoji: '🏘️', pop: 20, needs: ['woodcutter'] },
   village: { name: 'Village', emoji: '🏞️', pop: 50, needs: ['blacksmith', 'tailor'] },
   town: { name: 'Town', emoji: '🏙️', pop: 100, needs: ['townhall', 'trading'], educated: 40 },
+  // A city is a town that built out what the town tier opened: twice the people, and the two
+  // buildings that most say a place has arrived.
+  city: { name: 'City', emoji: '🌆', pop: 200, needs: ['university', 'cathedral'] },
 };
 
 /**
@@ -78,11 +81,13 @@ export const BUILDING_TIER: Record<BuildingType, VillageTier> = {
   // Town: what a place stops being a village to build. Learning past school, deep water, houses
   // for people with money, a church for thousands, fine goods, and stone raised for pride alone.
   university: 'town',
-  port: 'town',
   grandhouse: 'town',
   cathedral: 'town',
   luxury: 'town',
   monument: 'town',
+  // City: the deep-water quay, and with it merchants that keep a calendar. Everything the port
+  // trades in can already be made or bought by a town — what a city buys is *reach*.
+  port: 'city',
 };
 
 /** The tier each kind of roadway becomes available at. */

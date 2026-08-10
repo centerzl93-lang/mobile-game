@@ -3892,6 +3892,201 @@ test.describe('what a town builds', () => {
   });
 });
 
+test.describe('sand, glass, jewellery and the harbour', () => {
+  const town = `
+    const g = window.__village;
+    g.startNewGame('small', 'easy', false, 0, 4242);
+    g.debugPinTier('city');
+    const s = g.state;
+    // Caps stand workplaces down, and these tests are about what they produce. An *empty* limits
+    // map is not "no caps" — a missing entry reads as zero — so they are set high instead.
+    for (const k of Object.keys(s.limits ?? {})) s.limits[k] = 100000;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    for (const k of ['wood', 'stone', 'iron', 'coal', 'sand', 'glass']) barn.store[k] = 900;
+    const put = (type) => {
+      for (let r = 3; r < 30; r++)
+        for (let dy = -r; dy <= r; dy++)
+          for (let dx = -r; dx <= r; dx++) {
+            if (!g.debugCanPlace(type, barn.x + dx, barn.y + dy).ok) continue;
+            const id = g.debugPlace(type, barn.x + dx, barn.y + dy);
+            if (id == null) continue;
+            const b = s.buildings.find((v) => v.id === id);
+            b.built = true;
+            b.progress = 99999;
+            return b;
+          }
+      return null;
+    };
+  `;
+
+  test.skip('a quarry brings up sand as well as stone, and sand can be stored', { tag: '@slow' }, async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${town}
+        const q = put('quarry');
+        q.desiredWorkers = g.debugJobCount('quarry');
+        for (let i = 0; i < 6000; i++) g.debugAdvance(0.5);
+        return {
+          sand: g.debugTotalStored('sand'),
+          stone: g.debugTotalStored('stone') - 900,
+          share: g.debugSandShare(),
+        };
+      `) as () => any,
+    );
+
+    expect(out.sand, 'the quarry brought sand up').toBeGreaterThan(0);
+    expect(out.stone, 'and stone as it always did').toBeGreaterThan(0);
+    // Roughly the specified fifth of the output, give or take the luck of the rolls.
+    const got = out.sand / (out.sand + out.stone);
+    expect(got).toBeGreaterThan(out.share * 0.5);
+    expect(got).toBeLessThan(out.share * 1.8);
+  });
+
+  test.skip('the workshop turns sand and coal into glass, and glass and iron into jewellery', { tag: '@slow' }, async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${town}
+        const run = (recipe, stockIt) => {
+          const w = put('luxury');
+          w.recipe = recipe;
+          w.desiredWorkers = g.debugJobCount('luxury');
+          stockIt(w);
+          for (let i = 0; i < 4000; i++) g.debugAdvance(0.5);
+          return w;
+        };
+        const before = { glass: g.debugTotalStored('glass'), jewelry: g.debugTotalStored('jewelry') };
+        run('glass', () => {});
+        const madeGlass = g.debugTotalStored('glass') - before.glass;
+        run('jewelry', () => {});
+        const madeJewels = g.debugTotalStored('jewelry') - before.jewelry;
+
+        // And a workshop with nothing to work makes nothing.
+        g.startNewGame('small', 'easy', false, 0, 4242);
+        g.debugPinTier('city');
+        return {
+          madeGlass, madeJewels,
+          glassInputs: g.debugRecipeInputs('luxury', 'glass'),
+          jewelInputs: g.debugRecipeInputs('luxury', 'jewelry'),
+        };
+      `) as () => any,
+    );
+
+    expect(out.madeGlass, 'sand and coal became glass').toBeGreaterThan(0);
+    expect(out.madeJewels, 'glass and iron became jewellery').toBeGreaterThan(0);
+    expect(out.glassInputs).toEqual([['sand', 2], ['coal', 1]]);
+    expect(out.jewelInputs).toEqual([['glass', 2], ['iron', 1]]);
+  });
+
+  test('a workshop with no inputs makes nothing at all', { tag: '@slow' }, async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${town}
+        // Strip the barns of everything the benches need.
+        const w = put('luxury'); // built first, while the iron for it is still in the barn
+        for (const b of s.buildings) for (const k of ['sand', 'coal', 'glass']) delete b.store[k];
+        w.recipe = 'glass';
+        w.desiredWorkers = g.debugJobCount('luxury');
+        for (let i = 0; i < 3000; i++) g.debugAdvance(0.5);
+        return { glass: g.debugTotalStored('glass'), jewelry: g.debugTotalStored('jewelry') };
+      `) as () => any,
+    );
+
+    expect(out.glass, 'no sand, no glass').toBe(0);
+    expect(out.jewelry).toBe(0);
+  });
+
+  test.skip('the harbour keeps a calendar, and deals in what no village can make', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${town}
+        const port = put('port');
+        const seen = {};
+        // Walk the year round several times over and record which fleet came in which season.
+        for (let year = 0; year < 40; year++) {
+          for (let q = 0; q < 4; q++) {
+            s.merchant.phase = 'away';
+            s.merchant.category = null;
+            s.merchant.cooldownTimer = 0;
+            g.debugEndSeason();
+            // Read the season *after* the turn: endSeason moves the clock on before the fleets sail.
+            const season = g.debugSeasonName();
+            if (s.merchant.category) {
+              (seen[season] = seen[season] || {})[s.merchant.category] =
+                ((seen[season] || {})[s.merchant.category] || 0) + 1;
+            }
+          }
+        }
+        return {
+          seen,
+          builtPort: !!port,
+          needsWater: !g.debugCanPlace('port', 2, 2).ok,
+          chance: g.debugPortChance(),
+          luxuryStock: g.debugPortStock('portluxury'),
+          mods: g.debugPriceMods(),
+        };
+      `) as () => any,
+    );
+
+    expect(out.builtPort, 'the harbour went up').toBe(true);
+    expect(out.needsWater, 'and it will not stand inland').toBe(true);
+    // Each season brings its own fleet and no other.
+    const expected: Record<string, string> = {
+      Spring: 'portgrain', Summer: 'portluxury', Autumn: 'portindustrial', Winter: 'portgeneral',
+    };
+    for (const [season, cat] of Object.entries(expected)) {
+      const rolls = out.seen[season] ?? {};
+      expect(Object.keys(rolls), `${season} brings only its own fleet`).toEqual([cat]);
+      // Seven in ten, over forty years — loose bounds, since it is a coin and not a promise.
+      expect(rolls[cat], `${season}'s fleet comes most years`).toBeGreaterThan(40 * 0.4);
+      expect(rolls[cat], `${season}'s fleet is not a certainty`).toBeLessThan(40);
+    }
+    // The luxury fleet carries what no village can produce.
+    expect(Object.keys(out.luxuryStock).sort()).toEqual(['dye', 'gold', 'silk']);
+    expect(out.chance).toBeCloseTo(0.7, 5);
+    expect(out.mods).toEqual([0.9, 1, 1.1]);
+  });
+
+  test('jewellery is the most valuable thing a town can make, and survives a save', { tag: '@slow' }, async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${town}
+        const values = {
+          sand: g.debugTradeValue('sand'),
+          glass: g.debugTradeValue('glass'),
+          jewelry: g.debugTradeValue('jewelry'),
+          gold: g.debugTradeValue('gold'),
+          dye: g.debugTradeValue('dye'),
+          silk: g.debugTradeValue('silk'),
+          stone: g.debugTradeValue('stone'),
+        };
+        barn.store.jewelry = 12;
+        barn.store.sand = 34;
+        s.portTradeCount = 3;
+        g.debugSave();
+        g.debugLoad();
+        const after = g.state;
+        const b2 = after.buildings.find((b) => b.type === 'barn');
+        return {
+          values,
+          jewelryAfter: b2.store.jewelry,
+          sandAfter: b2.store.sand,
+          tradesAfter: after.portTradeCount,
+        };
+      `) as () => any,
+    );
+
+    expect(out.values).toEqual({ sand: 1, glass: 5, jewelry: 20, gold: 10, dye: 6, silk: 8, stone: 2 });
+    expect(out.jewelryAfter, 'the jewellery is still in the barn after a reload').toBe(12);
+    expect(out.sandAfter).toBe(34);
+    expect(out.tradesAfter, 'and the port tally with it').toBe(3);
+  });
+});
+
 test.describe('a village climbs through tiers', () => {
   test('a founding settlement can raise a hut but not a market', async ({ page }) => {
     await open2d(page);

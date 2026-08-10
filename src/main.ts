@@ -39,6 +39,14 @@ import {
   workRadiusOf,
   fullWorkRadiusOf,
   buildersWantedFor,
+  QUARRY_SAND_SHARE,
+  PORT_ARRIVAL_CHANCE,
+  PORT_PRICE_MODS,
+  MERCHANT_CATEGORY_STOCK,
+  MerchantCategory,
+  TRADE_VALUE,
+  Season,
+  SEASONS,
   CONGREGATION_PER_PRIEST,
   STUDENTS_PER_TEACHER,
   EDUCATED_BONUS,
@@ -73,6 +81,7 @@ import {
   MineOutput,
   SmithRecipe,
   TailorRecipe,
+  LuxuryRecipe,
   ResourceKind,
   RESOURCE_ICON,
   LARDER_KINDS,
@@ -125,6 +134,8 @@ import {
   debugApproach,
   debugReachable,
   avgHappiness,
+  debugConverterInputs,
+  debugEndSeason,
 } from './game/simulation';
 import {
   canPlace,
@@ -261,6 +272,7 @@ class Game {
       onSetMineOutput: (id, o) => this.setMineOutput(id, o),
       onSetSmithRecipe: (id, r) => this.setSmithRecipe(id, r),
       onSetTailorRecipe: (id, r) => this.setTailorRecipe(id, r),
+      onSetLuxuryRecipe: (id, r) => this.setLuxuryRecipe(id, r),
       onSetForesterReplant: (id, on) => this.setForesterReplant(id, on),
       onSetCrop: (id, crop) => this.setCrop(id, crop),
       onSetAnimal: (id, animal) => this.setAnimal(id, animal),
@@ -598,6 +610,15 @@ class Game {
     const b = this.state.buildings.find((x) => x.id === id);
     if (b) {
       b.recipe = recipe;
+      this.persist();
+    }
+  }
+
+  private setLuxuryRecipe(id: number, recipe: LuxuryRecipe): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (b && b.type === 'luxury') {
+      b.recipe = recipe;
+      this.refreshInspect();
       this.persist();
     }
   }
@@ -1304,6 +1325,12 @@ class Game {
         if (b.type === 'mine') rows.push({ label: 'Digging', value: b.output });
         if (b.type === 'blacksmith') rows.push({ label: 'Forging', value: `${b.recipe} tools` });
         if (b.type === 'tailor') rows.push({ label: 'Sewing from', value: `${b.recipe}` });
+        if (b.type === 'luxury') {
+          rows.push({
+            label: 'At the bench',
+            value: b.recipe === 'jewelry' ? '💍 jewellery, from glass and iron' : '🔷 glass, from sand and coal',
+          });
+        }
         if (b.type === 'farm') {
           rows.push({ label: 'Crop', value: b.crop ? `${CROP_META[b.crop].emoji} ${CROP_META[b.crop].label}` : '🌱 No seed — buy from a trader' });
           rows.push({ label: 'Field', value: `${footprintW(b)}×${footprintH(b)}` });
@@ -1381,6 +1408,11 @@ class Game {
           controls.toggle = { group: 'tailor', options: [
             { v: 'leather', label: '🟫 Leather', on: b.recipe !== 'wool' },
             { v: 'wool', label: '🧶 Wool', on: b.recipe === 'wool' },
+          ] };
+        } else if (b.type === 'luxury') {
+          controls.toggle = { group: 'luxury', options: [
+            { v: 'glass', label: '🔷 Glass', on: b.recipe !== 'jewelry' },
+            { v: 'jewelry', label: '💍 Jewellery', on: b.recipe === 'jewelry' },
           ] };
         } else if (b.type === 'lumberyard') {
           const on = b.replant ?? true;
@@ -1856,6 +1888,54 @@ class Game {
   debugCanPlace(type: BuildingType, x: number, y: number, rot: 0 | 1 | 2 | 3 = 0): { ok: boolean; reason?: string } {
     const { w, h } = this.placeSize(type);
     return canPlace(this.state, type, x, y, w, h, rot, { ignoreTier: true });
+  }
+
+  /** Debug/testing helper: how often a quarry load comes up sand. */
+  debugSandShare(): number {
+    return QUARRY_SAND_SHARE;
+  }
+
+  /** Debug/testing helper: what a recipe consumes per cycle. */
+  debugRecipeInputs(type: BuildingType, recipe: string): [ResourceKind, number][] {
+    return debugConverterInputs({ type, recipe } as unknown as Building);
+  }
+
+  /** Debug/testing helper: the season the village is in, by name. */
+  debugSeasonName(): Season {
+    return SEASONS[this.state.season];
+  }
+
+  /** Debug/testing helper: run a season turn now, as the clock would at its boundary. */
+  debugEndSeason(): void {
+    this.state.seasonTimer = 0;
+    debugEndSeason(this.state, this.log);
+  }
+
+  /** Debug/testing helper: the odds the season's fleet sails, and the prices they may keep. */
+  debugPortChance(): number {
+    return PORT_ARRIVAL_CHANCE;
+  }
+  debugPriceMods(): number[] {
+    return [...PORT_PRICE_MODS];
+  }
+  debugPortStock(category: string): Partial<Record<ResourceKind, number>> {
+    return MERCHANT_CATEGORY_STOCK[category as MerchantCategory];
+  }
+
+  /** Debug/testing helper: what a resource is worth in trade. */
+  debugTradeValue(kind: ResourceKind): number {
+    return TRADE_VALUE[kind];
+  }
+
+  /** Debug/testing helpers: round-trip the village through storage. */
+  debugSave(): void {
+    saveGame(this.state, this.currentSlot);
+  }
+  debugLoad(): boolean {
+    const loaded = loadGame(this.currentSlot);
+    if (!loaded) return false;
+    this.state = loaded;
+    return true;
   }
 
   /** Debug/testing helper: builders the village asks for while this type is going up. */

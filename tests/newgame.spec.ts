@@ -3036,7 +3036,10 @@ test.describe('confirm before it happens', () => {
     });
     // Selecting must not destroy anything — a mis-tap costs nothing.
     expect(picked.stillThere).toBe(true);
-    await expect(page.locator('#confirm')).toContainText('Demolish');
+    // The confirm bar fills on a UI-refresh frame, and under the 3D renderer headless CI turns
+    // those out at a couple a second — so give it the same generous budget the History tab gets
+    // rather than the default 5s, which a loaded CI run occasionally misses.
+    await expect(page.locator('#confirm')).toContainText('Demolish', { timeout: 20_000 });
 
     await page.click('#cf-cancel');
     expect(
@@ -5597,6 +5600,10 @@ test.describe('consumption and fuel', () => {
 
 test.describe('roads get laid', () => {
   test('a confirmed road frees a builder even when every job is taken', { tag: '@slow' }, async ({ page }) => {
+    // Six thousand tenth-of-a-second ticks is real simulation, not waiting — ~50s of wall clock on
+    // its own and more under a loaded CI run, well past the default 30s. It is a heavy-sim test
+    // like the year-walkers below, so it gets a heavy-sim budget.
+    test.setTimeout(180_000);
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;

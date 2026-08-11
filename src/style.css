@@ -16,11 +16,11 @@
      log and confirm bar all clear the pop-out by reading it. The default is one row's worth,
      for the frame before anything has opened. */
   --popout-h: 84px;
-  /* How tall the bottom toolbar stands: two rows of `.tool-btn` plus its own padding. Everything
-     that has to sit clear of the bar — the pop-out, the hint, the log, the confirm bar, the
-     inspect sheet, the placement controls — is measured off this, so making the buttons taller
-     is a one-line change here instead of six offsets that drift apart. */
-  --bar-h: 74px;
+  /* How tall the bottom toolbar stands: two rows of `.tool-btn`, the tier line beneath them, plus
+     its own padding. Everything that has to sit clear of the bar — the pop-out, the hint, the log,
+     the confirm bar, the inspect sheet, the placement controls — is measured off this, so making
+     the bar taller is a one-line change here instead of six offsets that drift apart. */
+  --bar-h: 102px;
 }
 
 * {
@@ -118,48 +118,64 @@ body {
 }
 
 /*
- * The tier gets a line to itself at the top of the HUD, centred and set apart. It is the one label
- * that says what kind of place this is, so it is bigger, in a serif for a touch of ceremony, and
- * flanked by a pair of ornaments. `pointer-events: none` on the row keeps the map draggable behind
- * it; the chip itself is the only painted thing.
+ * The tier sits at the foot of the build bar, centred, filling the strip that would otherwise be
+ * blank above the home-indicator inset. It is the one label that says what kind of place this is,
+ * so it is bigger, in a serif for a touch of ceremony, and flanked by a pair of ornaments.
  */
-.tier-row {
-  justify-content: center;
-}
 #stat-tier {
+  align-self: center;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 3px 16px;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  white-space: nowrap;
 }
 #stat-tier .val {
   font-family: Georgia, 'Iowan Old Style', 'Times New Roman', serif;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
   color: var(--text);
 }
 #stat-tier .orn {
   color: var(--accent);
-  font-size: 13px;
+  font-size: 12px;
   opacity: 0.9;
 }
 
-/* The resources expand toggle reads like a chip but acts like a button. The HUD column is
-   click-through so the map drags behind it, so this one control has to opt back into events. */
-.stat.mini.expand {
-  cursor: pointer;
-  color: var(--muted);
-  font-weight: 700;
-  pointer-events: auto;
+/*
+ * The resources expand toggle: a free-standing wide, short chevron on its own line, centred beneath
+ * the resources — no chip, no box. It points down to open the extra chips and flips up to close
+ * them. The HUD column is click-through so the map drags behind it, so this one control opts back
+ * into events; the drop-shadow keeps the thin stroke legible over a busy map.
+ */
+.res-expand-row {
+  justify-content: center;
+  margin-top: 1px;
 }
-.stat.mini.expand .ico {
-  font-size: 10px;
+.res-expand {
+  pointer-events: auto;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 3px 26px;
+  line-height: 0;
+}
+.res-expand svg {
+  display: block;
+  width: 34px;
+  height: 9px;
+  transition: transform 0.15s ease;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.65));
+}
+.res-expand svg polyline {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.res-expand.open svg {
+  transform: scaleY(-1);
 }
 /* Extra resource chips are hidden until the row is expanded. */
 #stat-resources .res-extra {
@@ -1422,8 +1438,10 @@ body {
   right: 0;
   bottom: 0;
   display: flex;
+  /* A column now: the two rows of tools, then the tier line centred below them. */
+  flex-direction: column;
   align-items: stretch;
-  gap: 6px;
+  gap: 4px;
   /* The home-indicator inset used to sit under the buttons as dead padding — on an iPhone that is
      39px of empty bar, a strip as deep as the buttons themselves. It is reserved space, not
      unusable space: most of it goes to the buttons and a clearance is kept under them, so the bar
@@ -2041,7 +2059,20 @@ body {
 }
 .tabs {
   display: flex;
+  align-items: center;
   gap: 6px;
+}
+/* The close × rides on the right of the tab row now that the title line is gone. It is not a tab,
+   so it does not flex-grow — it stays a small square at the end. */
+.tab-close {
+  flex: 0 0 auto;
+  font-size: 22px;
+  line-height: 1;
+  padding: 0 4px;
+}
+/* The free-laborers count, at the head of the Jobs tab. */
+.jobs-free {
+  margin: 2px 0 4px;
 }
 .tab {
   flex: 1 1 0;
@@ -2127,9 +2158,8 @@ body {
   }
 }
 
-.panel h3 .hd-note {
+.panel .hd-note {
   font-size: 12px;
   font-weight: 600;
   color: var(--muted);
-  margin-left: 8px;
 }

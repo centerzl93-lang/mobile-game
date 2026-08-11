@@ -2522,12 +2522,12 @@ test.describe('top HUD', () => {
     );
     expect(ids).not.toContain('stat-pop');
     expect(ids).not.toContain('stat-builders');
-    // The village's people and time in one line: who is here, how healthy and happy, and the
-    // season. The tier moved to its own row above this one, so it is no longer among these.
-    expect(ids).toEqual(['stat-ages', 'stat-health', 'stat-happy', 'stat-season', 'stat-sick']);
-    // The tier stands alone on the top row now.
-    const tierRow = await page.evaluate(() => document.getElementById('stat-tier')!.closest('.tier-row') !== null);
-    expect(tierRow, 'the tier has its own row').toBe(true);
+    // Who is here, then the date, then the two meters: season leads the second half so the date
+    // rides the first wrapped line and the hearts sit below it.
+    expect(ids).toEqual(['stat-ages', 'stat-season', 'stat-happy', 'stat-health', 'stat-sick']);
+    // The tier is not in the HUD at all now — it lives at the foot of the build bar.
+    const inBar = await page.evaluate(() => document.getElementById('stat-tier')!.closest('#toolbar') !== null);
+    expect(inBar, 'the tier sits in the bottom build bar').toBe(true);
   });
 
   test('health and happiness are five pips each, one per 20 points', async ({ page }) => {
@@ -2631,10 +2631,11 @@ test.describe('top HUD', () => {
     expect(wood.arrow).toBe('▲');
     expect(wood.title).toContain('50');
 
-    // Food is one category, so its combined chip caps the same way.
+    // Food is one category, so its combined chip caps the same way. It is the first *resource*
+    // chip — the slim expand caret leads the row, so skip it.
     await page.evaluate(() => ((window as any).__village.state.limits = { food: 10 }));
     await page.waitForFunction(
-      () => document.querySelector('#stat-resources .stat')!.classList.contains('full'),
+      () => document.querySelector('#stat-resources .stat:not(.expand)')!.classList.contains('full'),
       undefined,
       { timeout: 3000 },
     );
@@ -3145,9 +3146,10 @@ test.describe('village history', () => {
     });
     await expect(page.locator('#nomad')).toBeHidden();
     await expect(page.locator('#village')).toBeHidden();
-    // History is a tab of the one village menu now; its toolbar button opens the menu on that tab.
-    await page.click('#btn-history');
+    // History is a tab of the one village menu now: open the menu (it lands on Jobs), then switch.
+    await page.click('#btn-village');
     await expect(page.locator('#village')).toBeVisible();
+    await page.click('#village .tab[data-tab="history"]');
     await expect(page.locator('#village .tab.on')).toHaveText('History');
     // Contents are rendered by `refreshPanels` on the next animation frame, not by the click, so
     // this waits on a frame rather than on the game. The budget is generous because a rare run
@@ -4477,8 +4479,9 @@ test.describe('a village climbs through tiers', () => {
   test('the progression panel shows the ladder, what each rung asks for and what it opens', async ({ page }) => {
     await open2d(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false, 0, 4242));
-    // Progress is a tab of the one village menu now; its button opens that menu on that tab.
-    await page.click('#btn-progress');
+    // Progress is a tab of the one village menu now: open the menu (it lands on Jobs), then switch.
+    await page.click('#btn-village');
+    await page.click('#village .tab[data-tab="progress"]');
     await expect(page.locator('#village .tab.on')).toHaveText('Progress');
     const blocks = page.locator('#village .tier-block');
     await expect(blocks, 'all five rungs, reached or not').toHaveCount(5);
@@ -5810,7 +5813,10 @@ test.describe('work happens where the work is', () => {
     await open2d(page);
     const out = await page.evaluate((mk) => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false);
+      // Seeded: the woodcutter is placed by walking out from the barn, and on an unseeded map how
+      // far it lands and how the walk falls swing enough that a rare run never catches the worker
+      // inside. The seed fixes the map; the rule under test is unchanged.
+      g.startNewGame('small', 'easy', false, 0, 4242);
       const s = g.state; // after the new game: startNewGame replaces the state object wholesale
       s.limits = {}; // a village starts capped on firewood; this test is about where they stand
       const wc = eval(mk)('woodcutter', 6); // clear of the barn, so walking there is visible

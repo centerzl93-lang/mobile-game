@@ -239,7 +239,6 @@ export class UI {
     pause: byId('btn-pause'),
     speed: byId('btn-speed'),
     villageBtn: byId('btn-village'),
-    progressBtn: byId('btn-progress'),
     menuBtn: byId('btn-menu'),
     rotLeft: byId('btn-rot-left'),
     rotRight: byId('btn-rot-right'),
@@ -250,10 +249,9 @@ export class UI {
     popout: byId('popout'),
     inspect: byId('inspect'),
     overlay: byId('overlay'),
+    // The one menu. History and Progress are tabs inside it, reached from its own tab row — they
+    // have no buttons of their own in the right column any more.
     village: byId('village'),
-    // Progress and History are tabs of the one #village menu now — no separate panels — but their
-    // toolbar buttons remain, opening the menu on the right tab.
-    historyBtn: byId('btn-history'),
     trade: byId('trade-overlay'),
     nomad: byId('nomad'),
   };
@@ -283,8 +281,6 @@ export class UI {
     this.el.pause.addEventListener('click', () => this.cb.onPauseToggle());
     this.el.speed.addEventListener('click', () => this.cb.onSpeedCycle());
     this.el.villageBtn.addEventListener('click', () => this.toggleVillagePanel());
-    this.el.progressBtn.addEventListener('click', () => this.toggleProgress());
-    this.el.historyBtn.addEventListener('click', () => this.toggleHistory());
     this.el.menuBtn.addEventListener('click', () => this.cb.onOpenMenu());
     this.holdToRotate(this.el.rotLeft, -1);
     this.holdToRotate(this.el.rotRight, 1);
@@ -341,16 +337,23 @@ export class UI {
     this.foodChip = food;
     for (const kind of HUD_CORE) row.appendChild(this.chip(kind, false));
 
-    // The expand toggle sits between the core chips and the rest. It reveals the processed goods
-    // and every luxury — kept off the default line so the HUD stays a glance, not a ledger.
-    const btn = document.createElement('button');
-    btn.className = 'stat mini expand';
-    btn.id = 'res-expand';
-    btn.addEventListener('click', () => this.toggleResources());
-    row.appendChild(btn);
-    this.expandBtn = btn;
-
+    // The rest — processed goods and every luxury — revealed only when the chevron is open, so the
+    // HUD stays a glance, not a ledger.
     for (const kind of HUD_EXTRA) row.appendChild(this.chip(kind, true));
+
+    // The toggle: a bare, wide, short chevron on its own line, centred under the resources — no
+    // chip around it. Down invites a tap to open; it flips up when the extra chips are showing.
+    const expandRow = document.createElement('div');
+    expandRow.className = 'hud-row res-expand-row';
+    const btn = document.createElement('button');
+    btn.className = 'res-expand';
+    btn.id = 'res-expand';
+    btn.innerHTML =
+      `<svg viewBox="0 0 36 9" aria-hidden="true"><polyline points="2,2 18,7 34,2"/></svg>`;
+    btn.addEventListener('click', () => this.toggleResources());
+    expandRow.appendChild(btn);
+    row.insertAdjacentElement('afterend', expandRow);
+    this.expandBtn = btn;
     this.applyResExpanded();
   }
 
@@ -360,9 +363,8 @@ export class UI {
   }
   private applyResExpanded(): void {
     this.el.resources.classList.toggle('expanded', this.resExpanded);
-    this.expandBtn.innerHTML = this.resExpanded
-      ? `<span class="ico">▾</span><span class="val">Less</span>`
-      : `<span class="ico">▸</span><span class="val">More</span>`;
+    // The same chevron, flipped to point up while the extra chips are on show.
+    this.expandBtn.classList.toggle('open', this.resExpanded);
     this.expandBtn.title = this.resExpanded ? 'Hide the extra resources' : 'Show every resource';
   }
 
@@ -968,38 +970,21 @@ export class UI {
   /**
    * One menu, four tabs. Jobs and limits are the two halves of the same decision — how many hands
    * on a trade, and how much of what it makes to keep — and history and progress are the two things
-   * you read rather than set. They shared a strip of screen and closed each other anyway, so they
-   * are one panel now, and the toolbar's three buttons open it on their own tab.
+   * you read rather than set. The 📋 button opens the menu, always on Jobs; the other three tabs
+   * are reached from the tab row inside it.
    */
-  private openVillageTab(tab: VillageTab): void {
-    // Tapping the button of the tab you are already on closes the panel; anything else opens the
-    // panel (if need be) and switches to that tab.
-    if (this.villagePanelOpen && this.villageTab === tab) {
-      this.villagePanelOpen = false;
-      this.el.village.classList.add('hidden');
-      return;
-    }
-    this.villageTab = tab;
-    this.villagePanelOpen = true;
-    this.el.village.classList.remove('hidden');
-    this.villageSig = '';
-  }
   private toggleVillagePanel(): void {
-    // The 📋 button opens on whatever tab was last shown (jobs to begin with), or closes it.
     if (this.villagePanelOpen) {
       this.villagePanelOpen = false;
       this.el.village.classList.add('hidden');
       return;
     }
+    // Always open on Jobs, whatever tab was left showing last time. It is the tab you come to the
+    // menu to use; History and Progress are things you go looking for, one tab away.
+    this.villageTab = 'jobs';
     this.villagePanelOpen = true;
     this.el.village.classList.remove('hidden');
     this.villageSig = '';
-  }
-  private toggleHistory(): void {
-    this.openVillageTab('history');
-  }
-  private toggleProgress(): void {
-    this.openVillageTab('progress');
   }
 
   /**
@@ -1124,17 +1109,11 @@ export class UI {
 
     const p = this.el.village;
     p.innerHTML = '';
-    const head = document.createElement('h3');
-    // Free hands ride in the title, because that is the number every job row is spent against.
-    head.innerHTML =
-      `<span>Village <span class="hd-note">👷 ${laborers} free</span></span>` +
-      `<button class="close" id="vp-close">×</button>`;
-    p.appendChild(head);
-    head.querySelector('#vp-close')!.addEventListener('click', () => this.toggleVillagePanel());
 
-    // Four tabs, read at different moments: staff a trade, move a cap, read what happened, or see
-    // what the village is working toward. The header above and this row stay frozen; the body below
-    // is the only thing that scrolls (see `.panel-body` in the stylesheet).
+    // No title line: the tab row *is* the top of the panel now, with the close × riding on its
+    // right. Four tabs, read at different moments: staff a trade, move a cap, read what happened,
+    // or see what the village is working toward. This row stays frozen; only the body below scrolls
+    // (see `.panel-body` in the stylesheet).
     const tabs = document.createElement('div');
     tabs.className = 'tabs';
     for (const [key, label] of [['jobs', 'Jobs'], ['limits', 'Limits'], ['history', 'History'], ['progress', 'Progress']] as const) {
@@ -1149,19 +1128,30 @@ export class UI {
       });
       tabs.appendChild(b);
     }
+    const close = document.createElement('button');
+    close.className = 'close tab-close';
+    close.id = 'vp-close';
+    close.textContent = '×';
+    close.addEventListener('click', () => this.toggleVillagePanel());
+    tabs.appendChild(close);
     p.appendChild(tabs);
 
     const body = document.createElement('div');
     body.className = 'panel-body';
     p.appendChild(body);
 
-    if (this.villageTab === 'jobs') this.buildJobsBody(body, s, trades, buildersWorking);
+    if (this.villageTab === 'jobs') this.buildJobsBody(body, s, trades, buildersWorking, laborers);
     else if (this.villageTab === 'limits') this.buildLimitsBody(body, s);
     else if (this.villageTab === 'history') this.buildHistoryBody(body, s);
     else this.buildProgressBody(body, s);
   }
 
-  private buildJobsBody(body: HTMLElement, s: GameState, trades: BuildingType[], buildersWorking: number): void {
+  private buildJobsBody(body: HTMLElement, s: GameState, trades: BuildingType[], buildersWorking: number, laborers: number): void {
+    // The free hands, at the head of the jobs tab — the number every row below is spent against.
+    const free = document.createElement('div');
+    free.className = 'hd-note jobs-free';
+    free.textContent = `👷 ${laborers} free`;
+    body.appendChild(free);
     // Two columns, so the whole trade list is on screen at once instead of a scroll that hides
     // half the village's work below the fold.
     const grid = document.createElement('div');

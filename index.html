@@ -24,22 +24,18 @@
       <button class="rotate-btn" id="btn-rot-left" title="Hold to rotate view left" aria-label="Hold to rotate view left">↺</button>
       <button class="rotate-btn" id="btn-rot-right" title="Hold to rotate view right" aria-label="Hold to rotate view right">↻</button>
 
-      <!-- Top HUD: tier, then the village's state, then resources -->
+      <!-- Top HUD: the village's state, then resources. The tier sits in the right control column
+           now (below the menu buttons), not up here. -->
       <div id="hud-top">
-        <!-- How far along the village is — its own line at the very top, larger and set apart, so
-             the one label that says what kind of place this is stands out. Ornaments flank it; the
-             tier name and emoji fill in at runtime. What each tier *asks for* lives in the menu. -->
-        <div class="hud-row tier-row">
-          <div id="stat-tier" title="Village tier"><span class="orn">❧</span><span class="val">🏕️ Settlement</span><span class="orn">❧</span></div>
-        </div>
-        <!-- The village's people and time in one line: who is here, how healthy and happy they
-             are, and what season it is. Health and happiness read as five pips apiece, one per 20
-             points; the exact figure stays on the title for anyone who wants it. -->
+        <!-- The village's people and time in one line: who is here, what season it is, and how
+             happy and healthy they are. Health and happiness read as five pips apiece, one per 20
+             points; the exact figure stays on the title for anyone who wants it. Season leads the
+             second half so the date sits up on the first wrapped line and the meters below it. -->
         <div class="hud-row" id="hud-people">
           <div class="stat" id="stat-ages" title="children · students · adults"><span class="val">🧒0 🎓0 🧑0</span></div>
-          <div class="stat meter" id="stat-health" title="Average health"><span class="pips"></span></div>
-          <div class="stat meter" id="stat-happy" title="Average happiness"><span class="pips"></span></div>
           <div class="stat season" id="stat-season"><span class="val">Spring · Yr 1</span></div>
+          <div class="stat meter" id="stat-happy" title="Average happiness"><span class="pips"></span></div>
+          <div class="stat meter" id="stat-health" title="Average health"><span class="pips"></span></div>
           <div class="stat hidden" id="stat-sick" title="Sick villagers"><span class="ico">🤒</span><span class="val">0</span></div>
         </div>
         <div class="hud-row" id="stat-resources"></div>
@@ -48,18 +44,17 @@
         <div class="hud-row hidden" id="hud-policies"></div>
       </div>
 
-      <!-- Clock, panels and menu: one column down the right edge. -->
+      <!-- Clock, menu and the tier: one column down the right edge. History and Progress are tabs
+           of the 📋 menu now, so they have no buttons of their own here. -->
       <div id="controls">
         <button class="ctrl" id="btn-pause" title="Pause">⏸</button>
         <button class="ctrl" id="btn-speed" title="Speed">1×</button>
-        <button class="ctrl" id="btn-village" title="Jobs & stockpile">📋</button>
-        <button class="ctrl" id="btn-progress" title="Progression">📈</button>
-        <button class="ctrl" id="btn-history" title="Village history">📜</button>
+        <button class="ctrl" id="btn-village" title="Village menu">📋</button>
         <button class="ctrl" id="btn-menu" title="Menu">☰</button>
       </div>
 
       <!-- The one village menu (slide-in from right): four tabs — Jobs and Limits to set, History
-           and Progress to read. The 📋/📈/📜 buttons all open this panel, each on its own tab. -->
+           and Progress to read. The 📋 button opens it, always on Jobs. -->
       <div id="village" class="panel hidden"></div>
 
       <!-- Trade modal -->
@@ -83,9 +78,12 @@
       <!-- Build: category buildings pop out above the toolbar -->
       <div id="popout" class="hidden"></div>
       <!-- Bottom toolbar: build categories and tools in two rows across the full width. Two rows
-           so every tool fits a phone's width without a sideways scroll. -->
+           so every tool fits a phone's width without a sideways scroll. The tier sits below them,
+           centred, filling the strip above the home-indicator inset — the one label that says what
+           kind of place this is, ornaments flanking it. -->
       <div id="toolbar">
         <div id="tools"></div>
+        <div id="stat-tier" title="Village tier"><span class="orn">❧</span><span class="val">🏕️ Settlement</span><span class="orn">❧</span></div>
       </div>
 
       <!-- Overlays -->

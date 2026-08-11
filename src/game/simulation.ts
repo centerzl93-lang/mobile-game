@@ -190,6 +190,7 @@ import {
   FINE_CLOTHED_HEAT_FACTOR,
   isAdult,
   isFireproof,
+  freshStats,
 } from '../types';
 import { TIERS, TIER_META, villageTier } from './tiers';
 import { housingCapacity, buildingCenter, makeCitizen } from './state';
@@ -387,6 +388,11 @@ function eat(s: GameState, dt: number, log: LogFn): void {
   if (starved.length > 0) {
     killFrom(s, starved, starved.length);
     log(`${starved.length} villager${starved.length > 1 ? 's' : ''} starved`, 'bad');
+    // A death by hunger is an unambiguous food shortage — the signal the "no shortage" achievements
+    // read. A hauler's brief gap (which `c.starve` rides out) is not counted.
+    const st = (s.stats ??= freshStats());
+    st.everFoodShortage = true;
+    st.yearFoodShortage = true;
   }
 }
 
@@ -455,6 +461,10 @@ function heat(s: GameState, dt: number, log: LogFn): void {
   if (froze.length > 0) {
     killFrom(s, froze, froze.length);
     log(`${froze.length} villager${froze.length > 1 ? 's' : ''} froze in the cold`, 'bad');
+    // A death by cold is the firewood shortage the "no shortage" achievements watch for.
+    const st = (s.stats ??= freshStats());
+    st.everFirewoodShortage = true;
+    st.yearFirewoodShortage = true;
   }
 }
 
@@ -593,6 +603,7 @@ function lives(s: GameState, dt: number, log: LogFn): void {
         // School is done. A university with a free seat takes them straight on for another year,
         // and it is that second year — not the offer of it — that makes a graduate.
         c.educated = (c.schooling ?? 0) >= YEAR_LENGTH * SCHOOL_YEARS * SCHOOL_ATTENDANCE;
+        if (c.educated) (s.stats ??= freshStats()).educatedEver++; // counted once, at coming of age
         c.student = false;
         if (c.educated && uniFree > 0) {
           uniFree--;
@@ -2652,10 +2663,90 @@ function endSeason(s: GameState, log: LogFn): void {
   updateWellbeing(s, shortFood > 0, deaths, tavernActive);
 
   closeLedger(s); // last, so a row covers everything this turnover did
+  recordSeasonStats(s); // read the just-closed row and the state, for the achievement tallies
 
   if (s.citizens.length === 0) {
     s.gameOver = true;
     log('Your village has died out.', 'bad');
+  }
+}
+
+/**
+ * Roll the achievement tallies forward one season.
+ *
+ * Runs after `closeLedger`, so the season's production is sitting in the last ledger row. Peaks are
+ * read off the state as it stands; cumulative production off that row; and once a year, at the turn
+ * into spring, the year's flags and streaks are settled and cleared. Everything a single glance at
+ * the state can answer — whether a cathedral stands, how many families there are — is left to the
+ * live achievement checks and not tracked here.
+ */
+function recordSeasonStats(s: GameState): void {
+  const st = (s.stats ??= freshStats());
+
+  // High-water marks the current state cannot recover once it slips back.
+  const pop = s.citizens.length;
+  st.peakPop = Math.max(st.peakPop, pop);
+  let housed = 0, workers = 0, educatedAlive = 0;
+  for (const c of s.citizens) {
+    if (c.homeId !== null) housed++;
+    if (c.jobId !== null) workers++;
+    if (isAdult(c) && c.educated) educatedAlive++;
+  }
+  st.peakHoused = Math.max(st.peakHoused, housed);
+  st.peakWorkers = Math.max(st.peakWorkers, workers);
+  st.peakEducatedAlive = Math.max(st.peakEducatedAlive, educatedAlive);
+  st.peakFoodStored = Math.max(st.peakFoodStored, totalFoodAvailable(s));
+  st.peakHappiness = Math.max(st.peakHappiness, avgHappiness(s));
+
+  // Tier ever reached, and the year the city was first won.
+  const tier = villageTier(s);
+  st.maxTier = Math.max(st.maxTier, TIERS.indexOf(tier));
+  if (st.cityYear === null && tier === 'city') st.cityYear = s.year;
+
+  // Building types ever placed / finished (the "build every building" tally). The per-building
+  // achievements read the live state; this is only for the exhaustive one.
+  for (const b of s.buildings) {
+    if (!st.placedTypes.includes(b.type)) st.placedTypes.push(b.type);
+    if (b.built && !b.razed && !st.builtTypes.includes(b.type)) st.builtTypes.push(b.type);
+  }
+
+  // Trade-only goods ever held.
+  if (totalStored(s, 'gold') > 0) st.acquiredGold = true;
+  if (totalStored(s, 'dye') > 0) st.acquiredDye = true;
+  if (totalStored(s, 'silk') > 0) st.acquiredSilk = true;
+
+  // Cumulative production off the season's ledger row, and this season's net flows.
+  const row = s.ledger?.[s.ledger.length - 1];
+  if (row) {
+    for (const k of RESOURCE_KINDS) {
+      const gross = Math.max(0, (row.net[k] ?? 0) + (row.out[k] ?? 0));
+      if (gross > 0) st.produced[k] = (st.produced[k] ?? 0) + gross;
+    }
+    let foodNet = 0;
+    for (const k of FOOD_KINDS) foodNet += row.net[k] ?? 0;
+    if (foodNet > 0 && (row.net.firewood ?? 0) > 0 && (row.net.tools ?? 0) > 0 && (row.net.clothing ?? 0) > 0) {
+      st.allFourProduced = true;
+    }
+  }
+
+  // At the turn into spring a whole year has passed: count the winter survived, settle the year's
+  // streaks off the last four ledger rows, and clear this year's shortage flags.
+  if (s.season === 0) {
+    st.wintersSurvived++;
+    const yearRows = (s.ledger ?? []).slice(-4);
+    let foodYear = 0, fireYear = 0;
+    for (const r of yearRows) {
+      for (const k of FOOD_KINDS) foodYear += r.net[k] ?? 0;
+      fireYear += r.net.firewood ?? 0;
+    }
+    st.foodPositiveYears = foodYear > 0 ? st.foodPositiveYears + 1 : 0;
+    st.firewoodPositiveYears = fireYear > 0 ? st.firewoodPositiveYears + 1 : 0;
+    st.happy70Years = avgHappiness(s) >= 70 ? st.happy70Years + 1 : 0;
+    if (!st.yearFoodShortage) st.cleanFoodYears++;
+    if (!st.yearFirewoodShortage) st.cleanFirewoodYears++;
+    st.noShortageYears = !st.yearFoodShortage && !st.yearFirewoodShortage ? st.noShortageYears + 1 : 0;
+    st.yearFoodShortage = false;
+    st.yearFirewoodShortage = false;
   }
 }
 
@@ -2900,6 +2991,7 @@ function updateMerchantBoat(s: GameState, dt: number, log: LogFn): void {
       m.phase = 'docked';
       m.present = true;
       m.stayTimer = MERCHANT_STAY_SEASONS * SEASON_LENGTH;
+      (s.stats ??= freshStats()).merchantVisits++;
       const meta = m.category ? MERCHANT_CATEGORY_META[m.category] : { emoji: '⚓', label: 'merchant' };
       log(`${meta.emoji} A ${meta.label.toLowerCase()} has docked — trade at the post`, 'good');
     }
@@ -3034,6 +3126,26 @@ export function basketTrade(s: GameState, basket: TradeBasket): TradeResult {
   }
 
   if (isPortMerchant(m.category)) s.portTradeCount = (s.portTradeCount ?? 0) + 1;
+
+  // Tally the trade for the achievement stats: the count, what left as luxury export, what came in
+  // as a trade-only import, and — through a port — the value that changed hands.
+  const st = (s.stats ??= freshStats());
+  st.tradesCompleted++;
+  const LUX_EXPORTS: ResourceKind[] = ['glass', 'jewelry', 'finejewelry', 'fineclothes'];
+  for (const [k, qty] of Object.entries(basket.give) as [ResourceKind, number][]) {
+    if (!qty || qty <= 0) continue;
+    if (LUX_EXPORTS.includes(k)) st.luxuryExported += qty;
+    if (k === 'jewelry') st.jewelryExported += qty;
+  }
+  for (const [k, qty] of Object.entries(basket.get) as [ResourceKind, number][]) {
+    if (!qty || qty <= 0) continue;
+    if (k === 'gold') { st.tradeOnlyImported += qty; st.importedGold = true; }
+    else if (k === 'dye') { st.tradeOnlyImported += qty; st.importedDye = true; }
+    else if (k === 'silk') { st.tradeOnlyImported += qty; st.importedSilk = true; }
+  }
+  if (isPortMerchant(m.category)) {
+    st.portTradeValue += offerValue(basket) + purchaseValue(basket);
+  }
 
   // Settle: spend the give goods, receive the bought goods (both in the post inventory), unlock seeds.
   for (const [k, qty] of Object.entries(basket.give) as [ResourceKind, number][]) {

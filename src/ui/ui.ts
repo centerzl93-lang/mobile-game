@@ -107,6 +107,16 @@ export type PathTier = 'dirt' | 'stone' | 'bridge' | 'stonebridge' | 'tunnel';
 /** The four tabs of the one village menu — jobs and limits to set, history and progress to read. */
 export type VillageTab = 'jobs' | 'limits' | 'history' | 'progress';
 
+/** One row of the achievements ledger, ready for the UI — no game logic, just what to draw. */
+export interface AchRow {
+  title: string;
+  /** The tier's medal glyph. */
+  medal: string;
+  /** Tier slug, for the bubble's colour. */
+  tier: string;
+  unlocked: boolean;
+}
+
 /** Version / commit / build date, injected at build time — see `__BUILD_STAMP__`. */
 export const BUILD_STAMP = __BUILD_STAMP__;
 
@@ -1980,14 +1990,14 @@ export class UI {
     byId('ng-back').addEventListener('click', () => opts.onBack());
   }
 
-  /** In-game pause menu: Resume, Save, Load, Codex, Settings, New Game, Main Menu. */
+  /** In-game pause menu: Resume, Save, Load, Codex, Achievements, Settings, Main Menu. */
   showPauseMenu(opts: {
     onResume: () => void;
     onSave: () => void;
     onLoad: () => void;
     onCodex: () => void;
+    onAchievements: () => void;
     onSettings: () => void;
-    onNewGame: () => void;
     onMainMenu: () => void;
   }): void {
     this.overlayCard(
@@ -1999,8 +2009,10 @@ export class UI {
         // Also here, not only on the title screen: "what does a Tailor do" is a question you have
         // mid-village, and the answer used to be one tap away on the map.
         `<button id="pm-codex">Codex</button>` +
+        // New Game moved out of the pause menu — starting over lives on the title screen and Main
+        // Menu — and its slot is the achievements the village has earned.
+        `<button id="pm-achievements">Achievements</button>` +
         `<button id="pm-settings">Settings</button>` +
-        `<button id="pm-new">New Game</button>` +
         `<button class="ghost" id="pm-main">Main Menu</button>` +
         `</div>`,
       'menu-card',
@@ -2009,8 +2021,8 @@ export class UI {
     byId('pm-save').addEventListener('click', () => opts.onSave());
     byId('pm-load').addEventListener('click', () => opts.onLoad());
     byId('pm-codex').addEventListener('click', () => opts.onCodex());
+    byId('pm-achievements').addEventListener('click', () => opts.onAchievements());
     byId('pm-settings').addEventListener('click', () => opts.onSettings());
-    byId('pm-new').addEventListener('click', () => opts.onNewGame());
     byId('pm-main').addEventListener('click', () => opts.onMainMenu());
   }
 
@@ -2150,6 +2162,68 @@ export class UI {
       onMainMenu();
     });
   }
+  /**
+   * The achievements ledger: a running count and a bubble per feat, medal first, the earned ones
+   * lit green. Opened from the pause menu (where it took New Game's place).
+   */
+  showAchievements(opts: { items: AchRow[]; count: number; total: number; onBack: () => void }): void {
+    const rows = opts.items
+      .map(
+        (it) =>
+          `<div class="ach-bubble tier-${it.tier}${it.unlocked ? ' earned' : ''}">` +
+          `<span class="ach-medal">${it.medal}</span>` +
+          `<span class="ach-title">${it.title}</span>` +
+          `<span class="ach-tick">${it.unlocked ? '✓' : ''}</span>` +
+          `</div>`,
+      )
+      .join('');
+    this.overlayCard(
+      `<h2>Achievements <span class="ach-count">${opts.count} / ${opts.total}</span></h2>` +
+        `<div class="ach-list">${rows}</div>` +
+        `<div class="menu-list"><button class="ghost" id="ach-back">Back</button></div>`,
+      'menu-card ach-card',
+    );
+    byId('ach-back').addEventListener('click', () => opts.onBack());
+  }
+
+  // ---- Achievement unlock celebration ----
+  private celebrateQueue: AchRow[] = [];
+  private celebrateEl: HTMLElement | null = null;
+  /** Pop a celebration on screen for a newly-earned achievement; several queue up and play in turn. */
+  celebrateAchievement(a: AchRow): void {
+    this.celebrateQueue.push(a);
+    if (this.celebrateQueue.length === 1) this.playCelebration();
+  }
+  private playCelebration(): void {
+    const a = this.celebrateQueue[0];
+    if (!a) return;
+    if (!this.celebrateEl) {
+      const el = document.createElement('div');
+      el.id = 'ach-pop';
+      document.body.appendChild(el);
+      this.celebrateEl = el;
+    }
+    const el = this.celebrateEl;
+    el.className = `ach-pop tier-${a.tier}`;
+    el.innerHTML =
+      `<div class="ach-pop-card">` +
+      `<div class="ach-pop-head">🎉 Achievement unlocked</div>` +
+      `<div class="ach-pop-medal">${a.medal}</div>` +
+      `<div class="ach-pop-title">${a.title}</div>` +
+      `</div>`;
+    // A frame out of the DOM change, then the `show` class drives the entrance transition.
+    void el.offsetWidth;
+    el.classList.add('show');
+    window.setTimeout(() => {
+      el.classList.remove('show');
+      window.setTimeout(() => {
+        this.celebrateQueue.shift();
+        if (this.celebrateQueue.length > 0) this.playCelebration();
+        else el.className = 'ach-pop';
+      }, 450);
+    }, 3200);
+  }
+
   private overlayCard(inner: string, extraClass = ''): void {
     this.el.overlay.innerHTML = `<div class="card${extraClass ? ' ' + extraClass : ''}">${inner}</div>`;
     this.el.overlay.classList.remove('hidden');

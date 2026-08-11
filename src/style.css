@@ -504,6 +504,125 @@ body {
   transform: scale(0.98);
 }
 
+/* ---------- Achievements ledger ---------- */
+.ach-card {
+  max-width: min(560px, 96vw);
+  text-align: left;
+}
+.ach-card h2 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.ach-count {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.ach-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 8px;
+  max-height: 62vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 2px;
+  margin-top: 6px;
+}
+/* One achievement: medal, then title, then a tick when earned. Locked reads dim; earned lights up
+   green. A thin left edge in the tier's metal colours it bronze → platinum. */
+.ach-bubble {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--tier, #9a7b4f);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 12.5px;
+  opacity: 0.62;
+}
+.ach-bubble.earned {
+  opacity: 1;
+  border-color: var(--accent);
+  background: rgba(107, 191, 89, 0.16);
+}
+.ach-medal {
+  font-size: 17px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.ach-title {
+  flex: 1 1 auto;
+  line-height: 1.25;
+}
+.ach-tick {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-weight: 800;
+  width: 12px;
+  text-align: center;
+}
+.tier-bronze { --tier: #b87333; }
+.tier-silver { --tier: #b9c2cc; }
+.tier-gold { --tier: #e3b341; }
+.tier-platinum { --tier: #8fd6e6; }
+
+/* The unlock celebration: a card that drops in from the top, holds, and lifts away. Its own layer
+   above everything, click-through so it never eats a tap on the game beneath. The entrance is a
+   keyframe animation rather than a class-toggle transition: an animation starts from its own `from`
+   keyframe the instant the class lands, so it never depends on the browser having committed the
+   pre-transition state first — the one thing a freshly-inserted element cannot be trusted to do. */
+@keyframes ach-pop-in {
+  from { transform: translate(-50%, -140%); opacity: 0; }
+  to { transform: translate(-50%, 0); opacity: 1; }
+}
+.ach-pop {
+  position: fixed;
+  top: calc(var(--safe-top) + 14px);
+  left: 50%;
+  transform: translate(-50%, -140%);
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0;
+  transition: transform 0.42s cubic-bezier(0.2, 1.3, 0.5, 1), opacity 0.42s ease;
+}
+.ach-pop.show {
+  transform: translate(-50%, 0);
+  opacity: 1;
+  animation: ach-pop-in 0.5s cubic-bezier(0.2, 1.3, 0.5, 1);
+}
+.ach-pop-card {
+  min-width: 220px;
+  max-width: 88vw;
+  text-align: center;
+  padding: 12px 20px;
+  border-radius: 16px;
+  background: var(--panel-solid);
+  border: 1px solid var(--tier, var(--accent));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 0 3px color-mix(in srgb, var(--tier, var(--accent)) 30%, transparent);
+}
+.ach-pop-head {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.ach-pop-medal {
+  font-size: 34px;
+  line-height: 1.1;
+  margin: 2px 0;
+}
+.ach-pop-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
 /*
  * The Codex — every building on one scrolling page.
  *

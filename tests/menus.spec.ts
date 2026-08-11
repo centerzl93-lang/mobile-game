@@ -172,7 +172,7 @@ test.describe('save slots', () => {
 });
 
 test.describe('pause menu', () => {
-  test('opens & pauses; Resume, Save-to-slot, Settings, New Game, Main Menu all work', { tag: '@slow' }, async ({ page }) => {
+  test('opens & pauses; Resume, Save-to-slot, Settings, Achievements, Main Menu all work', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'normal', true, 0));
     await page.waitForTimeout(100);
@@ -200,17 +200,17 @@ test.describe('pause menu', () => {
     await expect(page.locator('#set-gfx-low')).toBeVisible();
     await page.click('#set-back');
 
-    // New Game → the one setup screen.
-    await page.click('#pm-new');
-    await expect(page.locator('#ng-size-small')).toBeVisible();
-    await page.click('#ng-size-large');
-    await page.click('#ng-diff-easy');
-    await page.click('#ng-start');
-    await page.waitForTimeout(120);
-    expect(await page.evaluate(() => (window as any).__village.state.w)).toBe(144);
+    // Achievements → the ledger (New Game's old slot) → Back returns to the still-open pause menu.
+    await page.click('#pm-achievements');
+    await expect(page.locator('#ach-back')).toBeVisible();
+    await expect(page.locator('.ach-count')).toContainText('/ 80');
+    await page.click('#ach-back');
+    await expect(page.locator('#pm-resume')).toBeVisible();
+
+    // New Game no longer lives in the pause menu — it moved to the title screen.
+    await expect(page.locator('#pm-new')).toHaveCount(0);
 
     // Main Menu returns to the title, idle.
-    await page.click('#btn-menu');
     await page.click('#pm-main');
     await expect(page.locator('#mm-new')).toBeVisible();
     expect(await page.evaluate(() => (window as any).__village.running)).toBe(false);

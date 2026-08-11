@@ -173,6 +173,13 @@ import {
   isSpanTier, spanLine, routePath, unplanTiles, demolishPathRect, pathSpeedMult,
 } from './game/paths';
 import { saveGame, loadGame, hasSave, clearSave, slotInfo, slotName, setSlotName, lastSlot, SLOTS } from './game/save';
+import {
+  ACHIEVEMENTS,
+  ACHIEVEMENT_COUNT,
+  TIER_MEDAL,
+  loadUnlocked,
+  evaluateAchievements,
+} from './game/achievements';
 import { InspectRow, InspectControls } from './ui/ui';
 
 /** Where the tips preference lives. Kept out of the save so it follows the player, not a village. */
@@ -1144,9 +1151,24 @@ class Game {
       onSave: () => this.openSlotSelect('save', () => this.openPauseMenu()),
       onLoad: () => this.openSlotSelect('load', () => this.openPauseMenu()),
       onCodex: () => this.openCodex(() => this.openPauseMenu()),
+      onAchievements: () => this.openAchievements(() => this.openPauseMenu()),
       onSettings: () => this.openSettings(() => this.openPauseMenu()),
-      onNewGame: () => this.openNewGameSetup(true),
       onMainMenu: () => this.openMainMenu(),
+    });
+  }
+
+  /** The achievements ledger, opened from the pause menu. */
+  private openAchievements(onBack: () => void): void {
+    this.ui.showAchievements({
+      items: ACHIEVEMENTS.map((a) => ({
+        title: a.title,
+        medal: TIER_MEDAL[a.tier],
+        tier: a.tier,
+        unlocked: this.unlockedAchievements.has(a.id),
+      })),
+      count: this.unlockedAchievements.size,
+      total: ACHIEVEMENT_COUNT,
+      onBack,
     });
   }
 
@@ -2298,6 +2320,22 @@ class Game {
   /** Last time the HUD and panels were rebuilt (ms, the animation-frame clock). */
   private lastUiAt = -Infinity;
 
+  /** The globally-earned achievement ids, loaded once and grown as new ones are unlocked. */
+  private unlockedAchievements = loadUnlocked();
+
+  /**
+   * Check the achievement conditions against the running village and celebrate anything newly won.
+   * Called on the UI clock, so it costs eighty simple predicates a tenth of a second — negligible —
+   * and never runs on the idle title backdrop or a dead village.
+   */
+  private checkAchievements(): void {
+    if (!this.running || this.state.gameOver) return;
+    const fresh = evaluateAchievements(this.state, this.unlockedAchievements);
+    for (const a of fresh) {
+      this.ui.celebrateAchievement({ title: a.title, medal: TIER_MEDAL[a.tier], tier: a.tier, unlocked: true });
+    }
+  }
+
   private frame(t: number): void {
     // Before anything is drawn: the canvas may have changed shape since the last frame (a phone
     // rotating is the case that matters) and no event we could have listened for reports that
@@ -2377,6 +2415,7 @@ class Game {
       this.ui.updateHud(this.state, SPEEDS[this.speedIndex], this.paused);
       this.ui.refreshPanels(this.state);
       if (this.inspectSel) this.refreshInspect();
+      this.checkAchievements();
     }
     this.refreshConfirmBar();
 

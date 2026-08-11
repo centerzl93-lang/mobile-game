@@ -36,6 +36,7 @@ import {
   CHILD_MIN_AGE,
   ADULT_AGE,
   AGE_PER_YEAR,
+  freshStats,
 } from '../types';
 import { generateWorld, findStartTile, getTile, emptyPaths, emptyHarvest, clearStartArea } from './world';
 import { randomName } from './names';
@@ -147,6 +148,7 @@ export function newGame(
     ageScale: AGE_PER_YEAR,
     seed: worldSeed,
     rng: roll.rng,
+    stats: freshStats(),
   };
 
   // A starting barn holds the opening stockpile for the chosen difficulty, scaled up for the

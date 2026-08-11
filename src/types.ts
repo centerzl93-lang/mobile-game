@@ -1851,6 +1851,94 @@ export interface GameState {
    * system for later, and this is the number it would be built on.
    */
   portTradeCount?: number;
+  /**
+   * Lifetime tallies for this village, the raw material the achievement checks read. Absent on a
+   * save from before achievements shipped — the migration seeds a fresh one (see `freshStats`).
+   */
+  stats?: VillageStats;
+}
+
+/**
+ * The record an achievement check reads against, over and above what the live state already says.
+ *
+ * Two kinds of thing live here: *peaks and totals* the current state cannot recover (a village that
+ * hit 300 people and crashed to 50 still earned the milestone), and *ledger-fed cumulatives* that
+ * would be ruinous to recompute — how much has ever been produced, traded, or educated. Everything
+ * a single glance at the state answers — how many are housed *now*, whether a cathedral stands —
+ * stays out of here and is computed live.
+ *
+ * Saved with the village. Achievements themselves are global and permanent (kept outside any one
+ * save); these are the per-village numbers those global unlocks are judged from.
+ */
+export interface VillageStats {
+  /** Cumulative gross production per resource, accrued a season at a time off the ledger. */
+  produced: Partial<Record<ResourceKind, number>>;
+  peakPop: number;
+  /** Most citizens with a home / a job / alive-and-schooled, at any one moment. */
+  peakHoused: number;
+  peakWorkers: number;
+  peakEducatedAlive: number;
+  /** Most food ever held at once (barns and larders). */
+  peakFoodStored: number;
+  /** Highest average happiness ever reached (0..100). */
+  peakHappiness: number;
+  /** Winters lived through. */
+  wintersSurvived: number;
+  /** Citizens who have finished schooling over the village's life (not the living count). */
+  educatedEver: number;
+  /** Trades settled through any post or port, and the luxury/trade-only flows through them. */
+  tradesCompleted: number;
+  merchantVisits: number;
+  jewelryExported: number;
+  luxuryExported: number;
+  tradeOnlyImported: number;
+  portTradeValue: number;
+  /** Whether gold / dye / silk have ever been held, and ever been *bought* (traded for). */
+  acquiredGold: boolean; acquiredDye: boolean; acquiredSilk: boolean;
+  importedGold: boolean; importedDye: boolean; importedSilk: boolean;
+  /** Building types ever commissioned (placed) and ever finished (built). */
+  placedTypes: BuildingType[];
+  builtTypes: BuildingType[];
+  /** Highest tier index ever reached (into `TIERS`), and the year the city rung was first hit. */
+  maxTier: number;
+  cityYear: number | null;
+  /** Whether the village has *ever* lost anyone to hunger or cold. */
+  everFoodShortage: boolean;
+  everFirewoodShortage: boolean;
+  /** Consecutive-year streaks, rolled at each year's turn. */
+  foodPositiveYears: number;
+  firewoodPositiveYears: number;
+  happy70Years: number;
+  noShortageYears: number;
+  /** How many whole years have finished clear of a food / firewood shortage (not necessarily in a row). */
+  cleanFoodYears: number;
+  cleanFirewoodYears: number;
+  /** Ever had food, firewood, tools and clothing all in net-positive production in one season. */
+  allFourProduced: boolean;
+  /** This year's flags, cleared at the year turn (feed the streaks above). */
+  yearFoodShortage: boolean;
+  yearFirewoodShortage: boolean;
+}
+
+/** A brand-new village's tallies — every count at zero, every flag clear. */
+export function freshStats(): VillageStats {
+  return {
+    produced: {},
+    peakPop: 0, peakHoused: 0, peakWorkers: 0, peakEducatedAlive: 0,
+    peakFoodStored: 0, peakHappiness: 0,
+    wintersSurvived: 0, educatedEver: 0,
+    tradesCompleted: 0, merchantVisits: 0,
+    jewelryExported: 0, luxuryExported: 0, tradeOnlyImported: 0, portTradeValue: 0,
+    acquiredGold: false, acquiredDye: false, acquiredSilk: false,
+    importedGold: false, importedDye: false, importedSilk: false,
+    placedTypes: [], builtTypes: [],
+    maxTier: 0, cityYear: null,
+    everFoodShortage: false, everFirewoodShortage: false,
+    foodPositiveYears: 0, firewoodPositiveYears: 0, happy70Years: 0, noShortageYears: 0,
+    cleanFoodYears: 0, cleanFirewoodYears: 0,
+    allFourProduced: false,
+    yearFoodShortage: false, yearFirewoodShortage: false,
+  };
 }
 
 // ---- Time ----

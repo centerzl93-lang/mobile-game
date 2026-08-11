@@ -3,7 +3,7 @@ import {
   AGE_PER_YEAR,
   GameState, MAP_W, MAP_H, MapSize, setMapSize, CROPS, RANCH_MIN, ranchCapacity, EVENT_LOG_MAX,
   isWorkplace, nextBuildingName, SEASON_LENGTH, Building,
-  buildWorkOf, BUILD_WORK_RATE,
+  buildWorkOf, BUILD_WORK_RATE, freshStats,
 } from '../types';
 import { randomName } from './names';
 import { newSeed } from './rng';
@@ -39,7 +39,7 @@ const LEGACY_KEY = 'little-village-save-v12';
  * To change the shape of a save now: bump this, and add a step to `MIGRATIONS` keyed by the
  * version it upgrades *from*.
  */
-const VERSION = 13;
+const VERSION = 14;
 
 /**
  * The oldest envelope the loader will still take. Below this a save is too old to reason about and
@@ -64,6 +64,13 @@ const MIGRATIONS: Record<number, (s: GameState) => void> = {
   12: (s) => {
     if (typeof s.seed !== 'number') s.seed = newSeed();
     if (typeof s.rng !== 'number') s.rng = (s.seed ^ 0x5bf03635) | 0;
+  },
+  // v13 → v14: the achievement tallies arrived. An old village has no history to reconstruct — its
+  // lifetime totals are gone — so it starts a fresh set of tallies from where it stands. Milestones
+  // it has already earned (a big population, a cathedral) are still checked live, so most re-unlock
+  // at once; the cumulative ones (produce N, survive N winters) simply start counting from now.
+  13: (s) => {
+    if (!s.stats) s.stats = freshStats();
   },
 };
 

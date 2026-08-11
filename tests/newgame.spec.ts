@@ -3041,7 +3041,11 @@ test.describe('confirm before it happens', () => {
     // rather than the default 5s, which a loaded CI run occasionally misses.
     await expect(page.locator('#confirm')).toContainText('Demolish', { timeout: 20_000 });
 
-    await page.click('#cf-cancel');
+    // The confirm bar is a fixed DOM overlay, but the 3D canvas repainting every frame under
+    // headless software rendering keeps Playwright's actionability "stable" check from ever
+    // settling on a loaded run — so force past it. The bar's content is asserted just above, so a
+    // forced click is clicking exactly the button we already verified is there.
+    await page.click('#cf-cancel', { force: true });
     expect(
       await page.evaluate((id) => (window as any).__village.state.buildings.some((b: any) => b.id === id), picked.id),
     ).toBe(true);
@@ -3053,7 +3057,9 @@ test.describe('confirm before it happens', () => {
       const b = g.state.buildings.find((x: any) => x.id === id);
       g.demolishAt(b.x + 0.5, b.y + 0.5);
     }, picked.id);
-    await page.click('#cf-ok');
+    // Wait for the bar to refill after re-selecting, then force past the same stability check.
+    await expect(page.locator('#confirm')).toContainText('Demolish', { timeout: 20_000 });
+    await page.click('#cf-ok', { force: true });
     const after = await page.evaluate(
       (id) => (window as any).__village.debugDemoState(id),
       picked.id,

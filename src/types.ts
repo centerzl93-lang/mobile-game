@@ -1466,14 +1466,22 @@ LIMIT_META.fineclothes.label = 'Fine clothes';
 LIMIT_META.jewelry.label = 'Jewellery';
 
 /**
- * Fraction of a resource's own stockpile limit below which the village calls it low.
+ * Fraction of a resource's own stockpile limit below which the village calls it low — the level
+ * that turns its HUD chip red.
  *
  * Measured against the limit rather than a hand-set number per resource, so the rule means the
  * same thing for every kind and moves with what the player asked the village to keep: raise the
- * cap on stone and "low on stone" quietly means more stone. Ten per cent is roughly one building's
- * worth at the opening caps.
+ * cap on stone and "low on stone" quietly means more stone. A fifth of the cap: enough headroom
+ * that a store the village is actively drawing on doesn't sit red while it is plainly well stocked.
  */
-export const LOW_STOCK_FRACTION = 0.1;
+export const LOW_STOCK_FRACTION = 0.2;
+
+/**
+ * The tighter fraction that raises an on-screen warning, as opposed to merely reddening the chip.
+ * Half the low mark: the chip warns the eye from a fifth of the cap, and only at a tenth — genuinely
+ * running out — does the game interrupt with a line in the log.
+ */
+export const WARN_STOCK_FRACTION = 0.1;
 
 export function worksIndoors(type: BuildingType): boolean {
   return hasDoor(type) && !CIRCLE_WORK.includes(type) && type !== 'fishing';
@@ -1815,6 +1823,8 @@ export interface GameState {
    * waiting out the rest of the season.
    */
   rehouseTimer?: number;
+  /** Seconds since the last low-stock warning sweep (see `warnLowStocks`). */
+  warnTimer?: number;
   /**
    * Seconds since the last reproduction check. Births are rolled on a cadence rather than every
    * tick because deciding them means walking every house and pairing off its residents, which is
@@ -2214,7 +2224,20 @@ export const PER_CITIZEN_SEASON_NEED: Partial<Record<LimitKey, number>> = {
 };
 
 export const NO_TOOLS_PENALTY = 0.6; // output multiplier when the tool stockpile is empty
-export const SICKNESS_CHANCE = 0.5; // chance an unclothed villager sickens in winter
+
+/**
+ * What going without a winter coat does, now that it no longer kills. A villager kept warm by the
+ * fire survives the winter uncoated — the fuel bill is what a coat was ever really about (see
+ * `CLOTHED_HEAT_FACTOR`) — but they are cold and miserable for it:
+ *
+ * - `COLD_WORK_FACTOR` — output multiplier for an uncoated worker in winter. Numb hands work slower.
+ * - `UNCLOTHED_HEALTH_PENALTY` / `UNCLOTHED_HAPPY_PENALTY` — how far their health and happiness
+ *   *targets* fall while uncoated. Charged to the target, not docked outright, so they slide toward
+ *   a lower level over the season and recover once dressed again rather than dropping like a stone.
+ */
+export const COLD_WORK_FACTOR = 0.75;
+export const UNCLOTHED_HEALTH_PENALTY = 15;
+export const UNCLOTHED_HAPPY_PENALTY = 12;
 
 /**
  * Seasonal draw on firewood and clothing. Both are used *year-round*, not only over winter:
@@ -2553,9 +2576,22 @@ export const IMMIGRANT_SICK_CHANCE = 0.15; // chance a newcomer arrives already 
 export const DISEASE_CHANCE = 0.06; // base chance per season of an outbreak
 export const DISEASE_INFECT_FRACTION = 0.3; // share of the healthy who fall ill
 export const SICK_RECOVER_BASE = 0.4; // per-season recovery chance, unaided
-export const SICK_RECOVER_MEDICINE = 0.3; // bonus if a dose of medicine is on hand
+export const SICK_RECOVER_MEDICINE = 0.3; // bonus per dose of medicine administered
 export const SICK_RECOVER_HOSPITAL = 0.2; // bonus if a staffed hospital exists
 export const SICK_DEATH_CHANCE = 0.15; // per-season death chance while still sick
+/** Doses a staffed hospital will spend on one patient in a season — a full course, each dose adding
+ *  `SICK_RECOVER_MEDICINE` to the odds. Without a hospital a household manages a single dose. */
+export const SICK_CURE_HOSPITAL_DOSES = 3;
+/** No amount of medicine makes a cure certain — the odds are capped here. */
+export const SICK_CURE_CHANCE_CAP = 0.95;
+/**
+ * A staffed hospital keeps the whole village a little healthier year-round, not only during an
+ * outbreak: it draws `HOSPITAL_MEDICINE_PER_CITIZEN` of medicine a head each season and, for it,
+ * lifts the health everyone settles at by up to `HOSPITAL_HEALTH_BONUS` (scaled by how much of that
+ * medicine the stores could actually cover).
+ */
+export const HOSPITAL_HEALTH_BONUS = 10;
+export const HOSPITAL_MEDICINE_PER_CITIZEN = 0.15;
 export const MED_LOAD = 5; // medicine produced per herbalist work cycle (× forest)
 export const FIRE_CHANCE = 0.05; // base chance per season a building ignites
 export const WELL_RADIUS = 6; // wells protect buildings within this radius
@@ -2589,6 +2625,9 @@ export const GATHER_FOOD_PER_SEASON = 15;
 export const FISH_FOOD_PER_SEASON = 16;
 export const HUNT_FOOD_PER_SEASON = 10;
 export const HUNT_LEATHER_PER_SEASON = 4;
+/** The hide off every kill, as a fraction of a material work-load: hunting yields its venison and
+ *  this leather together now, rather than one cut *or* the other, so the tailor always has hide. */
+export const HUNT_HIDE_FRACTION = 0.4;
 export const RANCH_FOOD_PER_SEASON = 12;
 export const RANCH_LEATHER_PER_SEASON = 5;
 export const LUMBER_WOOD_PER_SEASON = 13;
@@ -2909,7 +2948,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   hospital: {
     type: 'hospital', name: 'Hospital', emoji: '🏥', category: 'civic', w: 4, h: 5,
     cost: { wood: 62, stone: 52, iron: 30 }, jobs: 1, work: 120,
-    desc: 'Doctors treat the sick during outbreaks — the ill recover faster and die less.',
+    desc: 'Doctors keep the village healthier year-round and treat the sick, spending medicine to do both — the ill recover faster and die less.',
   },
   well: {
     type: 'well', name: 'Well', emoji: '⛲', category: 'civic', w: 1, h: 1,

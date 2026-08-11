@@ -91,14 +91,12 @@ export function planPath(
     // Stone is consumed by the builder when the tile is laid; just require some exists.
     if (totalStored(s, 'stone') < STONE_PATH_COST) return false;
     s.paths[idx] = PATH_STONE_PLAN;
-    markGroundHarvest(s, idx, t);
     return true;
   }
   // Dirt goes on bare ground, and also *over* a stone road — downgrading a paved street back to
   // a track was impossible without demolishing it tile by tile first.
   if (cur !== PATH_NONE && cur !== PATH_STONE && cur !== PATH_STONE_PLAN) return false;
   s.paths[idx] = PATH_DIRT_PLAN;
-  markGroundHarvest(s, idx, t);
   return true;
 }
 
@@ -107,8 +105,12 @@ export function planPath(
  *
  * Paving used to simply delete the trees and deposits it covered. Routing a road through the
  * woods therefore destroyed the timber instead of collecting it, and the player had no way to
- * ask for it first. Now planning a path queues the harvest, and `buildPath` waits for it —
+ * ask for it first. Now confirming a path queues the harvest, and `buildPath` waits for it —
  * the same rule buildings already follow through `footprintClear`.
+ *
+ * This runs on *confirm*, not while the route is being dragged: a drag re-plans the whole stroke
+ * every pointer move and can be cancelled or steered elsewhere, so marking on plan sent gatherers
+ * off to fell a wood the player was still deciding whether to route around.
  */
 function markGroundHarvest(s: GameState, idx: number, t: Tile): void {
   if (s.harvest[idx] !== HARVEST_NONE) return; // an order is already outstanding here
@@ -140,7 +142,17 @@ export function pendingPathCount(s: GameState): number {
 
 /** Accept the drawn tiles: they stay planned, and villagers may now lay them. */
 export function confirmPendingPaths(s: GameState): number {
-  const n = pendingPathCount(s);
+  const pending = s.pendingPaths ?? [];
+  const n = pending.length;
+  // Only now that the route is accepted do we queue the harvest of anything it covers — trees,
+  // loose stone, ore. Marking it while the stroke was still being dragged (as `planPath` used to)
+  // sent gatherers after a road the player might yet cancel or re-route.
+  for (const idx of pending) {
+    const v = s.paths[idx];
+    if (v !== PATH_DIRT_PLAN && v !== PATH_STONE_PLAN) continue; // land paths only; a bridge/tunnel has nothing to reap
+    const t = getTile(s.tiles, idx % MAP_W, (idx / MAP_W) | 0);
+    if (t) markGroundHarvest(s, idx, t);
+  }
   s.pendingPaths = [];
   s.pendingPrev = [];
   return n;

@@ -28,7 +28,6 @@ import {
   BUILDER_REST_SECONDS,
   drawFromTradeExtra,
   demoWorkOf,
-  autoBuilderDemand,
   workRadiusOf,
   MAP_W,
   MAP_H,
@@ -67,6 +66,7 @@ import {
   TUNNEL_STONE_COST,
   BRIDGE_WOOD_COST,
   HARVEST_NONE,
+  isPlannedPath,
   PATH_NONE,
   EVENT_LOG_MAX,
   HARVEST_WOOD,
@@ -81,7 +81,9 @@ import {
   CLOTHING_PER_CITIZEN_WINTER,
   TOOL_WEAR_PER_WORKER,
   NO_TOOLS_PENALTY,
-  SICKNESS_CHANCE,
+  COLD_WORK_FACTOR,
+  UNCLOTHED_HEALTH_PENALTY,
+  UNCLOTHED_HAPPY_PENALTY,
   FARM_FOOD_PER_WORKER,
   CROP_META,
   ANIMAL_META,
@@ -123,7 +125,7 @@ import {
   limitedOutput,
   LimitKey,
   LOW_STOCK_FRACTION,
-  PER_CITIZEN_SEASON_NEED,
+  WARN_STOCK_FRACTION,
   HUD_RESOURCES,
   LIMIT_META,
   worksIndoors,
@@ -173,6 +175,11 @@ import {
   SICK_RECOVER_MEDICINE,
   SICK_RECOVER_HOSPITAL,
   SICK_DEATH_CHANCE,
+  SICK_CURE_HOSPITAL_DOSES,
+  SICK_CURE_CHANCE_CAP,
+  HOSPITAL_HEALTH_BONUS,
+  HOSPITAL_MEDICINE_PER_CITIZEN,
+  HUNT_HIDE_FRACTION,
   MED_LOAD,
   FIRE_CHANCE,
   WELL_RADIUS,
@@ -313,6 +320,8 @@ function reachableFrom(p: { x: number; y: number }, tx: number, ty: number): boo
 export function update(s: GameState, dt: number, log: LogFn): void {
   if (s.gameOver) return;
   routeBudget = 0;
+  anyPlannedPath = scanAnyPlannedPath(s); // gates the idle-adult work scans below
+  anyHarvestOrder = scanAnyHarvestOrder(s);
   ensureNavLabels(s); // walkable connectivity, recomputed only when it actually changed
   reconcileWorkers(s);
   assignHomesAndJobs(s);
@@ -339,6 +348,14 @@ export function update(s: GameState, dt: number, log: LogFn): void {
   eat(s, dt, log);
   heat(s, dt, log);
   lives(s, dt, log);
+
+  // A running low-stock sweep, throttled so it costs a handful of totals every few seconds rather
+  // than every tick. Warns the moment a store crosses the critical mark, not at the season turn.
+  s.warnTimer = (s.warnTimer ?? 0) + dt;
+  if (s.warnTimer >= WARN_SWEEP_INTERVAL) {
+    s.warnTimer = 0;
+    warnLowStocks(s, log);
+  }
 
   s.seasonTimer += dt;
   if (s.seasonTimer >= SEASON_LENGTH) {
@@ -486,20 +503,20 @@ export function atLimit(s: GameState, key: LimitKey): boolean {
 }
 
 /**
- * How little of this the village must hold before it counts as running low.
+ * How little of this the village must hold before its chip reads low: a flat share of its own cap
+ * (`LOW_STOCK_FRACTION`).
  *
- * The higher of a share of its own cap (`LOW_STOCK_FRACTION`) and what the population gets through
- * in a season (`PER_CITIZEN_SEASON_NEED`), so the rule reads the same for every resource while
- * still meaning something for the ones that are actually eaten and burned.
+ * It used to also floor at a season's population need, which is what left a store reading "low"
+ * while it was plainly full — a resource the village eats through can have a per-season need close
+ * to its whole cap, so anything short of the brim tripped the mark. A fifth of the cap, and nothing
+ * else, is what the player set the cap to mean.
  */
 export function lowStockMark(s: GameState, key: LimitKey): number {
-  const byCap = (s.limits?.[key] ?? 0) * LOW_STOCK_FRACTION;
-  const byNeed = s.citizens.length * (PER_CITIZEN_SEASON_NEED[key] ?? 0);
-  return Math.max(byCap, byNeed);
+  return (s.limits?.[key] ?? 0) * LOW_STOCK_FRACTION;
 }
 
 /**
- * Is the village running low on this?
+ * Is the village running low on this? — the chip-reddening test, at a fifth of the cap.
  *
  * Deliberately counts only what is **free in the barns and markets** (`limitStock`), not what
  * households have already carried home. A larder is spoken for — it is that family's winter, not
@@ -508,6 +525,15 @@ export function lowStockMark(s: GameState, key: LimitKey): number {
  */
 export function isLowStock(s: GameState, key: LimitKey): boolean {
   const mark = lowStockMark(s, key);
+  return mark > 0 && limitStock(s, key) < mark && !atLimit(s, key);
+}
+
+/**
+ * The tighter test that earns a line in the log rather than just a red chip: under a tenth of the
+ * cap of free stock — genuinely running out, not merely getting low.
+ */
+export function isCriticalStock(s: GameState, key: LimitKey): boolean {
+  const mark = (s.limits?.[key] ?? 0) * WARN_STOCK_FRACTION;
   return mark > 0 && limitStock(s, key) < mark && !atLimit(s, key);
 }
 
@@ -769,12 +795,14 @@ function assignHomesAndJobs(s: GameState): void {
       if (c) c.jobId = null;
     }
   }
-  // How many builders the village wants: what the outstanding work is asking for — sites to raise
-  // and roads to lay — plus whatever the player has dialled on top (or taken off). Derived every
-  // tick rather than nudged up and down on each placement, so it cannot fall out of step with the
-  // work actually outstanding.
+  // How many builders the village wants: exactly what the player has assigned, capped at the adult
+  // headcount. Builders are the one job the game never fills on its own — they are the most fluid
+  // hands in the village, first to be pulled to whatever is outstanding, so auto-assigning them
+  // let them quietly drain every workplace. Every *other* trade still auto-staffs; construction is
+  // the one the player must ask for by hand. The number is only clamped here, never derived, so it
+  // stays put at what the Job Board was set to.
   const adults = s.citizens.reduce((n, c) => n + (isAdult(c) ? 1 : 0), 0);
-  s.desiredBuilders = Math.max(0, Math.min(adults, autoBuilderDemand(s) + (s.builderExtra ?? 0)));
+  s.desiredBuilders = Math.max(0, Math.min(adults, s.desiredBuilders ?? 0));
 
   // If the workplaces have already taken everyone, hand some back. Trimming above only releases
   // workers the player has dialled *down*; without this a village that filled every job before
@@ -833,6 +861,24 @@ function assignHomesAndJobs(s: GameState): void {
 // destination tile changes, so this cap is rarely approached.
 let routeBudget = 0;
 const ROUTE_BUDGET_MAX = 80;
+
+// Once-per-tick gates for the two whole-map scans a free adult would otherwise run every tick:
+// is there *any* planned path to lay, and *any* harvest order to gather? Computed once in `update`
+// and read by `buildPath`/`pickHarvest`, so a village with idle hands — several assigned builders
+// and nothing to raise, which is now an ordinary state — does not walk all 5,000-odd tiles per
+// villager per tick hunting for work that is not there. Nothing in a single `update` pass creates
+// a plan or an order (only the player does, between ticks), so a value taken at the top of the
+// pass holds for the whole of it.
+let anyPlannedPath = false;
+let anyHarvestOrder = false;
+function scanAnyPlannedPath(s: GameState): boolean {
+  for (let i = 0; i < s.paths.length; i++) if (isPlannedPath(s.paths[i])) return true;
+  return false;
+}
+function scanAnyHarvestOrder(s: GameState): boolean {
+  for (let i = 0; i < s.harvest.length; i++) if (s.harvest[i] !== HARVEST_NONE) return true;
+  return false;
+}
 const WAYPOINT_ARRIVE = 0.18;
 /** How close (in tiles) a planned path must be before an *employed* worker will detour to lay it.
  * Free adults (laborers / idle builders) lay paths anywhere; this only bounds busy workers so a
@@ -1284,9 +1330,11 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workFactor
       const out = workOutput(s, b, dt, workFactor, c);
       c.workAt = undefined; // next cycle picks somewhere new
       if (out && out.amount > 0.01) {
-        // Healthier, happier, and educated workers produce more.
+        // Healthier, happier, and educated workers produce more; a worker facing winter without a
+        // coat produces less — numb hands are slow hands, though it no longer costs them their life.
         const wellbeing = (0.7 + 0.3 * (c.health / 100)) * (0.85 + 0.15 * (c.happiness / 100));
-        const prod = wellbeing * (c.graduate ? GRADUATE_BONUS : c.educated ? EDUCATED_BONUS : 1);
+        const cold = SEASONS[s.season] === 'Winter' && !c.clothed ? COLD_WORK_FACTOR : 1;
+        const prod = wellbeing * (c.graduate ? GRADUATE_BONUS : c.educated ? EDUCATED_BONUS : 1) * cold;
         const limit = carryLimit(out.kind);
         // Keep working until the load is full, rather than setting off with whatever one cycle
         // produced. A single cycle yields well under a full load, so workers were walking the
@@ -1695,11 +1743,13 @@ function workOutput(
       return { kind: 'fish', amount: LOAD_FOOD * factorWater(s, b) * tf };
     case 'hunting': {
       const f = factorCircle(s, b) * tf;
-      // Game off the hunt, and the hide that comes with it — the one leather that is not a
-      // ranch's, and still only ever off something killed.
-      return rand(s) < 0.7
-        ? { kind: 'venison', amount: LOAD_FOOD * f }
-        : { kind: 'leather', amount: LOAD_MAT * f };
+      // Game off the hunt, and the hide that comes with it — the one leather that is not a ranch's,
+      // and still only ever off something killed. The meat is the load the hunter carries home; the
+      // hide comes with it as a byproduct, dropped straight to the barns, so the tailor is never
+      // short of leather to cut into coats even where the village keeps no herds.
+      const hide = LOAD_MAT * HUNT_HIDE_FRACTION * f;
+      if (hide > 0.05) addNearest(s, { x: b.x + 1, y: b.y + 1 }, 'leather', hide);
+      return { kind: 'venison', amount: LOAD_FOOD * f };
     }
     case 'ranch': {
       const animal = b.animal ?? 'cattle';
@@ -2109,10 +2159,13 @@ function blockingHarvest(s: GameState): Set<number> {
  * away they are; distance only breaks ties within each class.
  */
 export function pickHarvestFor(s: GameState, c: Citizen): number {
-  return pickHarvest(s, c);
+  // An outside caller (a debug hook) can land between ticks, so scan fresh rather than trust the
+  // per-tick gate `update` leaves behind.
+  return pickHarvest(s, c, scanAnyHarvestOrder(s));
 }
 
-function pickHarvest(s: GameState, c: Citizen): number {
+function pickHarvest(s: GameState, c: Citizen, hasOrders = anyHarvestOrder): number {
+  if (!hasOrders) return -1; // no orders anywhere — skip the whole-map scan
   let best = -1;
   let bestD = Infinity;
   let bestBlocking = false;
@@ -2257,6 +2310,7 @@ function adjacentStand(s: GameState, c: Citizen, tx: number, ty: number): { x: n
  * will travel to reach one — used to keep busy workers from crossing the map for a distant path;
  * the labor pool passes no cap. Returns false when there's nothing (in range) to build. */
 function buildPath(s: GameState, c: Citizen, dt: number, maxD2 = Infinity): boolean {
+  if (!anyPlannedPath) return false; // nothing planned anywhere — skip the whole-map scan
   let bestIdx = -1;
   let bestD = Infinity;
   let bestStand: { x: number; y: number } | null = null;
@@ -2605,22 +2659,12 @@ function endSeason(s: GameState, log: LogFn): void {
       }
       c.clothed = need <= 0.001;
       c.fineclothed = c.clothed && wornFine;
-      if (!c.clothed) unclothed.push(c);
     }
 
-    // Heat is billed by `heat` every tick, not here — see the note at the top of this block.
-    // Freezing to death is likewise continuous, so only the clothing risk is settled at the
-    // boundary.
-    if (season === 'Winter') {
-      // Only the villagers who actually went without warm clothing are at risk.
-      const sickChance = Math.min(1, SICKNESS_CHANCE * (1 + (1 - avgHealth(s) / 100)));
-      const fallen: Citizen[] = [];
-      for (const c of unclothed) if (rand(s) < sickChance) fallen.push(c);
-      if (fallen.length > 0) {
-        killFrom(s, fallen, fallen.length);
-        log(`${fallen.length} villager${fallen.length > 1 ? 's' : ''} fell ill without warm clothing`, 'bad');
-      }
-    }
+    // Going without a coat no longer kills. A villager the fire keeps warm survives the winter
+    // uncoated — freezing to death is a fuel shortage, billed continuously by `heat`, not a
+    // clothing one. What being uncoated costs instead is health, happiness (both in
+    // `updateWellbeing`, read off `c.clothed`) and a slower winter's work (in `runCitizen`).
   }
 
   // Proactive survival hints — warn the player *before* the shortfall bites, once per season
@@ -2757,6 +2801,28 @@ function recordSeasonStats(s: GameState): void {
  */
 const WARN_STOCKS: LimitKey[] = ['food', ...HUD_RESOURCES];
 
+/** How often (seconds of game time) the running low-stock sweep checks the barns. */
+const WARN_SWEEP_INTERVAL = 3;
+
+/**
+ * Say "X is low" the moment a store crosses the critical mark, once, and stay quiet until it climbs
+ * back out and falls again. Run off the main clock rather than the season boundary so the warning
+ * lands when the stock actually runs out, not up to a whole season later; the `lowWarned` latch is
+ * what keeps a store that simply sits low from repeating the line every sweep.
+ */
+function warnLowStocks(s: GameState, log: LogFn): void {
+  s.lowWarned ??= {};
+  for (const key of WARN_STOCKS) {
+    if (!isCriticalStock(s, key)) {
+      delete s.lowWarned[key]; // recovered — say so again if it falls back
+      continue;
+    }
+    if (s.lowWarned[key]) continue; // already told them, and nothing has changed
+    s.lowWarned[key] = true;
+    log(`${LIMIT_META[key].icon} ${LIMIT_META[key].label} is low`, 'bad');
+  }
+}
+
 /**
  * Emit proactive, one-off warnings so the player can react before a shortfall kills anyone.
  * Called once per season from endSeason (the throttle). Reads current stores after this season's
@@ -2781,24 +2847,10 @@ function warnOfShortfalls(s: GameState, season: Season, log: LogFn): void {
     }
   }
 
-  // Any season, every resource, one line each and always the same shape: the player learns to read
-  // "X is low" once rather than a different sentence per good. Judged on what is free in the barns
-  // (see `isLowStock`), so goods sitting in household larders do not paper over an empty store.
-  //
-  // Firewood and clothing are skipped in Autumn because the two warnings just above already name
-  // them, with the timing that actually matters — the same shortfall twice in one season is noise.
-  s.lowWarned ??= {};
-  for (const key of WARN_STOCKS) {
-    const low = isLowStock(s, key);
-    if (!low) {
-      delete s.lowWarned[key]; // recovered — say so again if it falls back
-      continue;
-    }
-    if (s.lowWarned[key]) continue; // already told them, and nothing has changed
-    s.lowWarned[key] = true;
-    if (season === 'Autumn' && (key === 'firewood' || key === 'clothing')) continue;
-    log(`${LIMIT_META[key].icon} ${LIMIT_META[key].label} is low`, 'bad');
-  }
+  // The "X is low" lines used to live here, fired once per season on `isLowStock`. They have moved
+  // to `warnLowStocks`, which runs on a short cadence off the main clock and speaks at the tighter
+  // critical mark — so the player hears about a store genuinely running out *when* it runs out,
+  // rather than being told at the turn of a season that something dipped under the chip's mark.
 
   // Fuel the village owns but cannot deliver. Fuel is only burned in a hearth now, so a household
   // whose hauler cannot reach a barn — walled in behind new buildings, or cut off across a river —
@@ -3716,7 +3768,19 @@ function updateWellbeing(s: GameState, foodShort: boolean, deaths: number, taver
   if (policyActive(s, 'rationing')) happyTarget -= POLICY_RATION_HAPPY;
   const healthPenalty = policyActive(s, 'longHours') ? POLICY_HOURS_HEALTH : 0;
   happyTarget = clamp(happyTarget, 0, 100);
-  const healthAim = clamp(healthTarget - healthPenalty, 0, 100);
+  // A staffed hospital keeps the village a shade healthier all year, not only during an outbreak —
+  // the doctors draw on the medicine store to do it, a little per head, and it lifts the health
+  // everyone settles at by up to `HOSPITAL_HEALTH_BONUS`, scaled by how much of that medicine the
+  // stores could actually cover this season.
+  let hospitalHealth = 0;
+  const hospitalStaffed = s.buildings.some((b) => b.built && !b.razed && b.type === 'hospital' && b.workers.length > 0);
+  if (hospitalStaffed) {
+    const need = pop * HOSPITAL_MEDICINE_PER_CITIZEN;
+    const short = need > 0 ? consume(s, 'medicine', need) : need;
+    const met = need > 0 ? 1 - short / need : 0;
+    hospitalHealth = HOSPITAL_HEALTH_BONUS * met;
+  }
+  const healthAim = clamp(healthTarget + hospitalHealth - healthPenalty, 0, 100);
   // Sleeping on a bunk is charged to the villager, not to the village: the shelter's residents
   // settle lower than everyone else, and the rest of the village is no worse off for the building
   // existing. `housingCapacity` counts homes only, so the headroom bonus above is already out of
@@ -3733,7 +3797,15 @@ function updateWellbeing(s: GameState, foodShort: boolean, deaths: number, taver
     let aim = happyTarget;
     if (c.homeId !== null && bunks.has(c.homeId)) aim -= SHELTER_HAPPY;
     if (c.homeId !== null && grand.has(c.homeId)) aim += GRAND_HOUSE_HAPPY;
-    c.health += (healthAim - c.health) * 0.25;
+    // A villager who went without a coat this season is cold and low for it — per-citizen, since
+    // one household may be dressed while its neighbour is not. `c.clothed` was set moments ago in
+    // the clothing block; it costs health and cheer, not a life (see the cold-clothing constants).
+    let healthAimC = healthAim;
+    if (!c.clothed) {
+      aim -= UNCLOTHED_HAPPY_PENALTY;
+      healthAimC -= UNCLOTHED_HEALTH_PENALTY;
+    }
+    c.health += (clamp(healthAimC, 0, 100) - c.health) * 0.25;
     c.happiness += (clamp(aim, 0, 100) - c.happiness) * 0.25;
   }
 }
@@ -3824,16 +3896,19 @@ function diseaseSeason(s: GameState, log: LogFn): void {
   for (const c of [...s.citizens]) {
     if (!c.sick) continue;
     let chance = SICK_RECOVER_BASE + (c.health / 100) * 0.2;
-    // Reach for the medicine kept at home first, then the village stock.
+    if (hospital) chance += SICK_RECOVER_HOSPITAL;
+    // Dose the patient — each dose of medicine lifts the odds. A staffed hospital administers a
+    // full course of up to `SICK_CURE_HOSPITAL_DOSES`; without one, a household makes do with a
+    // single dose from its own chest. Home medicine is reached for first, then the village stock.
     const home = c.homeId !== null ? s.buildings.find((b) => b.id === c.homeId) : null;
-    if (home && (home.store['medicine'] ?? 0) >= 1) {
-      takeFromLarder(s, home, 'medicine', 1);
-      chance += SICK_RECOVER_MEDICINE;
-    } else if (totalStored(s, 'medicine') >= 1) {
-      consume(s, 'medicine', 1);
+    const maxDoses = hospital ? SICK_CURE_HOSPITAL_DOSES : 1;
+    for (let dose = 0; dose < maxDoses; dose++) {
+      if (home && (home.store['medicine'] ?? 0) >= 1) takeFromLarder(s, home, 'medicine', 1);
+      else if (totalStored(s, 'medicine') >= 1) consume(s, 'medicine', 1);
+      else break; // no medicine left to administer
       chance += SICK_RECOVER_MEDICINE;
     }
-    if (hospital) chance += SICK_RECOVER_HOSPITAL;
+    chance = Math.min(chance, SICK_CURE_CHANCE_CAP);
     if (rand(s) < chance) {
       c.sick = false;
       c.health = Math.min(100, c.health + 15);

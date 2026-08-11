@@ -33,7 +33,6 @@ import {
   UI_REFRESH_MS,
   REFUND_FRACTION,
   BUILDER_SHIFT_WORK,
-  autoBuilderDemand,
   FOOD_PER_CITIZEN_PER_SEASON,
   HEAT_PER_CITIZEN_WINTER,
   workRadiusOf,
@@ -134,10 +133,13 @@ import {
   coupleNeedsAHome,
   pickHarvestFor,
   limitStock,
+  isLowStock,
+  isCriticalStock,
   cappedOut,
   debugWorkSpotFor,
   debugApproach,
   debugReachable,
+  avgHealth,
   avgHappiness,
   debugConverterInputs,
   debugEndSeason,
@@ -598,15 +600,12 @@ class Game {
     this.persist();
   }
 
-  /** Adjust the global Builders target (clamped to the number of adults). */
+  /** Adjust the global Builders target (clamped between nobody and every adult). */
   private setBuilders(delta: number): void {
     const adults = this.state.citizens.reduce((n, c) => n + (c.age >= ADULT_AGE ? 1 : 0), 0);
-    // The stepper moves the player's own offset; the total is derived from that plus whatever
-    // the open sites are asking for (see `autoBuilderDemand`). Clamped so it can be dialled down
-    // to nobody but not below, however many sites are open.
-    const extra = (this.state.builderExtra ?? 0) + delta;
-    const floor = -autoBuilderDemand(this.state);
-    this.state.builderExtra = Math.max(floor, Math.min(adults, extra));
+    // Builders are assigned by hand and stay put — the game never conscripts them for outstanding
+    // work the way it once did — so the stepper moves the target itself, plain and simple.
+    this.state.desiredBuilders = Math.max(0, Math.min(adults, (this.state.desiredBuilders ?? 0) + delta));
     this.persist();
   }
 
@@ -2010,6 +2009,20 @@ class Game {
     return avgHappiness(this.state);
   }
 
+  /** Debug/testing helper: the town's average health. */
+  debugAvgHealth(): number {
+    return avgHealth(this.state);
+  }
+
+  /** Debug/testing helper: a resource's free stock and where it sits against the two warning marks. */
+  debugStockState(key: LimitKey): { stock: number; low: boolean; critical: boolean } {
+    return {
+      stock: limitStock(this.state, key),
+      low: isLowStock(this.state, key),
+      critical: isCriticalStock(this.state, key),
+    };
+  }
+
   /** Debug/testing helper: souls the village's priests can keep between them. */
   debugCongregation(): number {
     let n = 0;
@@ -2196,16 +2209,11 @@ class Game {
   /**
    * Debug/testing helper: pin the global Builders target to exactly `n`.
    *
-   * `desiredBuilders` is derived each tick from what the open sites ask for plus the player's
-   * offset, so writing it directly would be overwritten on the next update. This sets the offset
-   * that *produces* `n` instead, which keeps the helper meaning what it always meant — including
-   * `debugSetBuilders(0)` for "nobody builds", now that placing a site asks for builders by
-   * itself.
+   * Builders are a manual assignment now — `desiredBuilders` is the player's own number, only
+   * clamped to the adult headcount each tick, never derived — so writing it is all this takes.
    */
   debugSetBuilders(n: number): void {
-    const want = Math.max(0, n);
-    this.state.builderExtra = want - autoBuilderDemand(this.state);
-    this.state.desiredBuilders = want;
+    this.state.desiredBuilders = Math.max(0, n);
   }
 
   /** Debug/testing helper: a ranch's current head capacity (from its size + animal). */

@@ -3481,6 +3481,17 @@ test.describe('construction stages', () => {
             if (g.debugCanPlace('house', x, y).ok) id = g.debugPlace('house', x, y);
           }
       const b = s.buildings.find((x: any) => x.id === id);
+      // The frame stage is the model rising out of the groundworks, so it only appears once the
+      // house model itself has loaded. glTF loads are async and best-effort; wait for it (with a
+      // ceiling) before sampling, or an early tick falls back to the model-less "plot" stage.
+      await new Promise<void>((resolve) => {
+        const t0 = Date.now();
+        const tick = () => {
+          if (g.renderer.models?.buildingClone?.('house') || Date.now() - t0 > 8000) resolve();
+          else requestAnimationFrame(tick);
+        };
+        tick();
+      });
       // Ask the game for the whole job. `progress` counts builder-work, not seconds, so a "70%"
       // computed from anything but the total the game itself reports is
       // really 35% — and the frame stage never appears.

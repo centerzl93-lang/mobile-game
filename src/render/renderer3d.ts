@@ -62,12 +62,12 @@ const SAND_START = 0.06;
 const FOOTHILL_H = 0.5; // low rocky band at a mountain's base
 const MOUNTAIN_BASE_H = 1.3; // shortest mountain (edge) height
 const MOUNTAIN_STEP_H = 1.1; // extra height per tile of depth into the mountain — a gentler climb
-const MOUNTAIN_MAX_H = 11.0; // tallest peak
-// Where the permanent snow starts, and where it is fully white. Both are set against the heights
-// the generator actually produces — with the gentler slope, peaks come out around 3.5 to 5.7 —
-// rather than the theoretical MOUNTAIN_MAX_H ceiling, which nothing ever reaches.
-const SNOWLINE_H = 3.0;
-const SNOWCAP_FULL_H = 5.0;
+const MOUNTAIN_MAX_H = 8.0; // tallest peak — lower than before, so a gentle range is not a tower
+// Where the permanent snow starts, and where it is fully white. A gentler climb means a shorter
+// mountain reaches neither: a low hill stays bare rock, and only a deep range that piles up past
+// the snowline wears a cap — which is set high on purpose so most of the rock face still shows.
+const SNOWLINE_H = 5.0;
+const SNOWCAP_FULL_H = 7.5;
 const TOP = LAND_H; // y of the walkable surface props sit on
 const TREE_MODEL_SIZE = 0.55; // world scale for a normalized (footprint=1) tree model — see tools/models/pine.py
 /**

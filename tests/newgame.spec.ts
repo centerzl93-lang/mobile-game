@@ -4081,6 +4081,17 @@ test.describe('sand, glass, jewellery and the harbour', () => {
         for (const k of ['wood', 'stone']) barn.store[k] = 40;
         for (const k of ['gold', 'glass', 'dye', 'silk']) barn.store[k] = 300;
         w.desiredWorkers = g.debugJobCount('luxury');
+        // This is the longest-running bench test — two 2500s phases, so two winters. A founding
+        // village has no woodcutter, so keep it warm and clothed or it freezes out mid-run (which
+        // has nothing to do with whether the fine bench works). Stock the *houses' larders*, not
+        // the barn: overfilling the delivery barn would leave the bench nowhere to put its output.
+        for (const b of s.buildings) {
+          if (b.type !== 'house' && b.type !== 'stonehouse') continue;
+          b.store = b.store || {};
+          b.store.firewood = 2000;
+          b.store.clothing = 200;
+          b.store.grain = 600;
+        }
 
         w.recipe = 'finejewelry';
         let base = g.debugTotalStored('finejewelry');

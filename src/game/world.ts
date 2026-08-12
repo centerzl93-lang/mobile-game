@@ -542,8 +542,8 @@ export function clearStartArea(tiles: Tile[], cx: number, cy: number): void {
   // Clearing can remove a mountain tile that a foothill was hugging, which would leave that
   // foothill orphaned — foothills exist only as the buildable skirt of a mountain, and mines
   // rely on that. Demote any foothill that just lost its mountain.
-  for (let y = Math.floor(cy - r - 3); y <= Math.ceil(cy + r + 3); y++) {
-    for (let x = Math.floor(cx - r - 3); x <= Math.ceil(cx + r + 3); x++) {
+  for (let y = Math.floor(cy - r - FOOTHILL_RADIUS); y <= Math.ceil(cy + r + FOOTHILL_RADIUS); y++) {
+    for (let x = Math.floor(cx - r - FOOTHILL_RADIUS); x <= Math.ceil(cx + r + FOOTHILL_RADIUS); x++) {
       if (!inBounds(x, y)) continue;
       const t = tiles[tileIndex(x, y)];
       if (t.type !== 'foothill') continue;

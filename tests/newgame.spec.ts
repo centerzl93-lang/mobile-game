@@ -96,7 +96,7 @@ test.describe('difficulties', () => {
     await open(page);
     const pop = await page.evaluate(() => {
       const g = (window as any).__village;
-      const ADULT_AGE = 12;
+      const ADULT_AGE = 16; // childhood now ends at sixteen; founders still spawn 20–29 / 6–15
       const counts: Record<string, any> = {};
       for (const diff of ['easy', 'normal', 'hard']) {
         g.startNewGame('small', diff, true);
@@ -883,7 +883,7 @@ test.describe('available workers count', () => {
     await page.click('#btn-village');
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      const ADULT_AGE = 12;
+      const ADULT_AGE = 16;
       const s = g.state;
       g.ui.refreshPanels(s); // populate the just-opened board deterministically
       const line = document.querySelector('#village .hd-note')?.textContent ?? '';
@@ -1341,7 +1341,7 @@ test.describe('household larders', () => {
       return s.buildings
         .filter((b: any) => b.type === 'house' && b.built)
         .map((h: any) => ({
-          adults: s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 12).length,
+          adults: s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 16).length,
           food: FOODS.reduce((n: number, k: string) => n + (h.store[k] ?? 0), 0),
           firewood: h.store.firewood ?? 0,
           medicine: h.store.medicine ?? 0,
@@ -1391,7 +1391,7 @@ test.describe('household larders', () => {
       for (let i = 0; i < 60; i++) g.debugAdvance(0.1); // assign homes
       const house = s.buildings
         .filter((b: any) => b.type === 'house' && b.built)
-        .map((b: any) => ({ b, adults: s.citizens.filter((c: any) => c.homeId === b.id && c.age >= 12).length }))
+        .map((b: any) => ({ b, adults: s.citizens.filter((c: any) => c.homeId === b.id && c.age >= 16).length }))
         .sort((x: any, y: any) => y.adults - x.adults)[0];
       // Barns hold nothing, so anything consumed must have come out of the larder. Only this
       // household remains, so no *other* villager's shortfall can take its residents down with it.
@@ -1441,7 +1441,7 @@ test.describe('household larders', () => {
       // Trim the stocked house to its couple. Households are settled every couple of seconds now,
       // so any *surplus* adult there would be moved out mid-season — into a house with no larder,
       // where they would starve, and the test would read that as the larder having failed.
-      const stockedAdults = stocked.residents.filter((c: any) => c.age >= 12);
+      const stockedAdults = stocked.residents.filter((c: any) => c.age >= 16);
       const keepM = stockedAdults.find((c: any) => c.sex === 'm');
       const keepF = stockedAdults.find((c: any) => c.sex === 'f');
       const surplus = new Set(
@@ -1453,7 +1453,7 @@ test.describe('household larders', () => {
       // 610s window a child on the cusp of 4 comes of age, gets rehoused into one of the empty
       // houses and starves there — a birthday, not a failed larder. Adults sit below
       // OLD_AGE_START for the same reason: nobody in this house may die of anything but hunger.
-      for (const c of stocked.residents) c.age = c.age >= 12 ? 20 : 2;
+      for (const c of stocked.residents) c.age = c.age >= 16 ? 20 : 2;
       // Clothing is village-wide, not a larder item, so leave it stocked — otherwise winter
       // illness for the unclothed would confound what we're measuring (food and fuel).
       for (const b of s.buildings) if (b.type === 'barn' || b.type === 'market') b.store = { clothing: 1e6 };
@@ -1493,7 +1493,7 @@ test.describe('seasonal firewood and clothing burn', () => {
         for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
         const picked = s.buildings
           .filter((b: any) => b.type === 'house' && b.built)
-          .map((b: any) => ({ b, adults: s.citizens.filter((c: any) => c.homeId === b.id && c.age >= 12).length }))
+          .map((b: any) => ({ b, adults: s.citizens.filter((c: any) => c.homeId === b.id && c.age >= 16).length }))
           .sort((x: any, y: any) => y.adults - x.adults)[0];
         // Reduce the village to this one household so no other consumption is in the figure, and
         // put everyone at a settled adult age. Otherwise entering Spring rolls the year over,
@@ -1545,8 +1545,8 @@ test.describe('seasonal firewood and clothing burn', () => {
         // rate that is equal by definition.
         //
         // Each resident is moved clear of every threshold they could cross in 500s — which is
-        // 0.21 of a year — while the household keeps its shape. Children go to 1, well below
-        // SCHOOL_START_AGE and ADULT_AGE (12). Adults go to 50: past the fertile window
+        // 0.21 of a year — while the household keeps its shape. Children go to 2, well below
+        // SCHOOL_START_AGE (12) and ADULT_AGE (16). Adults go to 50: past the fertile window
         // (FERTILE_MAX_AGE 45) so the house cannot bear a child, and still short of
         // OLD_AGE_START (60) at the end of the window, so nobody is rolling for old age either.
         //
@@ -1555,12 +1555,12 @@ test.describe('seasonal firewood and clothing burn', () => {
         // children into adults instead would leave the house full of surplus adults and rehousing
         // would move one out, which is exactly what `stayed` is watching for. Heating is charged
         // per head regardless of age, so none of this touches what is being measured.
-        for (const c of residents) c.age = c.age < 12 ? 2 : 50;
+        for (const c of residents) c.age = c.age < 16 ? 2 : 50;
         g.debugAdvance(500); // well inside the season — no second turnover in the figure
         const burned = fw0 - (picked.b.store.firewood ?? 0);
         return {
-          adults: residents.filter((c: any) => c.age >= 12).length,
-          children: residents.filter((c: any) => c.age < 12).length,
+          adults: residents.filter((c: any) => c.age >= 16).length,
+          children: residents.filter((c: any) => c.age < 16).length,
           issued, // villagers who drew a clothing ration at the turnover, before the flag was pinned
           season: s.season, // must still be the season asked for, or the figure is a blend
           // Anyone rehoused mid-window would stop drawing on this larder and quietly deflate the
@@ -1742,7 +1742,7 @@ test.describe('villager breeding', () => {
         }
         // A house should never be home to two separate couples.
         const housesWithTwoCouples = houses.filter((h: any) => {
-          const adults = s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 12);
+          const adults = s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 16);
           const pairs = new Set<string>();
           for (const a of adults as any[]) {
             if (a.partnerId != null && adults.some((o: any) => o.id === a.partnerId)) {
@@ -1751,23 +1751,23 @@ test.describe('villager breeding', () => {
           }
           return pairs.size > 1;
         }).length;
-        const children = s.citizens.filter((c: any) => c.age < 12 && c.parents);
+        const children = s.citizens.filter((c: any) => c.age < 16 && c.parents);
         const childrenWithAParent = children.filter((c: any) =>
           s.citizens.some((p: any) => c.parents.includes(p.id) && p.homeId === c.homeId),
         ).length;
         // Every child — founding children and orphans included — must live with a grown-up.
-        const allChildren = s.citizens.filter((c: any) => c.age < 12);
+        const allChildren = s.citizens.filter((c: any) => c.age < 16);
         const childrenWithNoAdultAtHome = allChildren.filter(
-          (c: any) => !s.citizens.some((o: any) => o.homeId === c.homeId && o.age >= 12),
+          (c: any) => !s.citizens.some((o: any) => o.homeId === c.homeId && o.age >= 16),
         ).length;
         const homelessChildren = allChildren.filter((c: any) => c.homeId === null).length;
         const childrenPerHouse = houses.map(
-          (h: any) => s.citizens.filter((c: any) => c.homeId === h.id && c.age < 12).length,
+          (h: any) => s.citizens.filter((c: any) => c.homeId === h.id && c.age < 16).length,
         );
-        const singles = s.citizens.filter((c: any) => c.age >= 12 && c.partnerId == null);
+        const singles = s.citizens.filter((c: any) => c.age >= 16 && c.partnerId == null);
         // Houses that hold a resident couple — only these are households that can bear children.
         const households = houses.filter((h: any) => {
-          const adults = s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 12);
+          const adults = s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 16);
           return adults.some((a: any) => a.partnerId != null && adults.some((o: any) => o.id === a.partnerId));
         }).length;
 
@@ -1798,7 +1798,7 @@ test.describe('villager breeding', () => {
           maxChildrenInOneHouse: Math.max(0, ...childrenPerHouse),
           // Adults per household, to check rehousing settled them into couples.
           adultsPerHouse: houses
-            .map((h: any) => s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 12).length)
+            .map((h: any) => s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 16).length)
             .filter((n: number) => n > 0),
         };
       },
@@ -2064,7 +2064,7 @@ test.describe('paths and placement', () => {
       // ground, not about pathfinding or walking speed: left to walk there on their own, on an
       // unlucky map every candidate can sit across a river, nothing gets paved inside the step
       // budget, and the test fails for a reason it isn't testing.
-      const adults = s.citizens.filter((c: any) => c.age >= 12);
+      const adults = s.citizens.filter((c: any) => c.age >= 16);
       candidates.forEach((i: number, n: number) => {
         const w = adults[n % adults.length];
         if (!w) return;
@@ -2987,7 +2987,7 @@ test.describe('confirm before it happens', () => {
     const after = await page.evaluate((painted: number[]) => {
       const g = (window as any).__village;
       const s = g.state;
-      const adults = s.citizens.filter((c: any) => c.age >= 12);
+      const adults = s.citizens.filter((c: any) => c.age >= 16);
       painted.forEach((i: number, n: number) => {
         const w = adults[n % adults.length];
         if (!w) return;
@@ -3436,7 +3436,7 @@ test.describe('birth rate', () => {
         let n = 0;
         for (const h of s.buildings) {
           if (!h.built || (h.type !== 'house' && h.type !== 'stonehouse')) continue;
-          const adults = s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 12);
+          const adults = s.citizens.filter((c: any) => c.homeId === h.id && c.age >= 16);
           if (adults.some((a: any) => a.partnerId != null && adults.some((o: any) => o.id === a.partnerId))) n++;
         }
         return n;
@@ -4760,7 +4760,7 @@ test.describe('policies', () => {
     th.progress = g.debugBuildWork('townhall');
     th.desiredWorkers = n;
     // Sit clerks at the desks directly: this is about the rule, not about hiring.
-    th.workers = s.citizens.filter((c) => c.age >= 12).slice(0, n).map((c) => c.id);
+    th.workers = s.citizens.filter((c) => c.age >= 16).slice(0, n).map((c) => c.id);
     return th;
   }`;
 
@@ -4779,7 +4779,7 @@ test.describe('policies', () => {
       };
 
       th.workers = th.workers.concat(
-        g.state.citizens.filter((c: any) => !th.workers.includes(c.id) && c.age >= 12).slice(0, 1).map((c: any) => c.id),
+        g.state.citizens.filter((c: any) => !th.workers.includes(c.id) && c.age >= 16).slice(0, 1).map((c: any) => c.id),
       );
       const withTwo = { second: g.debugSetPolicy('longHours', true), state: g.debugPolicies() };
 
@@ -4788,7 +4788,7 @@ test.describe('policies', () => {
       const empty = g.debugPolicies();
 
       // And they come back when someone takes the desk again, without being re-chosen.
-      th.workers = g.state.citizens.filter((c: any) => c.age >= 12).slice(0, 2).map((c: any) => c.id);
+      th.workers = g.state.citizens.filter((c: any) => c.age >= 16).slice(0, 2).map((c: any) => c.id);
       const restaffed = g.debugPolicies();
 
       return { withOneClerk, withTwo, empty, restaffed };
@@ -4856,7 +4856,7 @@ test.describe('policies', () => {
       const th = eval(mk)(g, 0); // built, but nobody at a desk
       const unstaffed = g.debugFestival();
 
-      th.workers = g.state.citizens.filter((c: any) => c.age >= 12).slice(0, 1).map((c: any) => c.id);
+      th.workers = g.state.citizens.filter((c: any) => c.age >= 16).slice(0, 1).map((c: any) => c.id);
       const foodBefore = g.debugTotalFood();
       const happyBefore = g.state.citizens.reduce((t: number, c: any) => t + c.happiness, 0) / g.state.citizens.length;
       const held = g.debugFestival();
@@ -5675,7 +5675,7 @@ test.describe('roads get laid', () => {
             huts.push(id);
           }
       g.debugAdvance(2);
-      const freeBefore = s.citizens.filter((c: any) => c.age >= 12 && c.jobId === null && !c.builder).length;
+      const freeBefore = s.citizens.filter((c: any) => c.age >= 16 && c.jobId === null && !c.builder).length;
 
       // Order a road on clear ground near the barn.
       const occupied = (x: number, y: number) => s.buildings.some((b: any) => {
@@ -7204,7 +7204,7 @@ test.describe('households keep their hearths stocked', () => {
       // youngest go, so no established hauler is pulled mid-errand), it stays the village it was.
       const trim = () => {
         for (let i = s.citizens.length - 1; i >= 0 && s.citizens.length > 7; i--) {
-          if (s.citizens[i].age >= 12) continue; // keep everyone who can work or haul; drop the young
+          if (s.citizens[i].age >= 16) continue; // keep everyone who can work or haul; drop the young
           const gone = s.citizens.splice(i, 1)[0];
           for (const c of s.citizens) if (c.partnerId === gone.id) c.partnerId = null;
         }

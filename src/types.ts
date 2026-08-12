@@ -586,6 +586,13 @@ export interface BuildingDef {
   /** At least one footprint tile must be one of these types (e.g. mines touch a foothill). */
   requiresTileAny?: TileType[];
   /**
+   * The **back half** of the footprint — the rows at the far end, away from the door — must sit on
+   * this terrain. A mine is cut *into* the hillside: its working face is dug back into a mountain's
+   * foothills while its mouth opens onto level ground for the carts, so it is not enough for a
+   * corner to clip the rock — the back of it has to be buried in the slope.
+   */
+  requiresBackHalf?: TileType;
+  /**
    * Fraction of the footprint that must sit on water (a dock — e.g. the trading post reaches out
    * over the water for boats). The rest of the footprint must be on buildable land.
    */
@@ -1527,6 +1534,11 @@ export function isPlannedPath(v: number): boolean {
   );
 }
 
+/** A path tile that has actually been laid — not bare ground, not a plan still waiting on a builder. */
+export function isBuiltPath(v: number): boolean {
+  return v !== PATH_NONE && !isPlannedPath(v);
+}
+
 // Harvest layer values (per tile): what unemployed villagers should gather here.
 export const HARVEST_NONE = 0;
 export const HARVEST_WOOD = 1; // a marked forest tile (chop for wood, clear-cuts to grass)
@@ -1703,6 +1715,13 @@ export interface GameState {
    * over an existing dirt road and then changing your mind leaves the dirt road there.
    */
   pendingPrev?: number[];
+  /**
+   * Built path tiles the player has marked to tear up. Like a demolition order on a building, the
+   * road stays put and passable until a builder or free laborer reaches it and pulls it — at which
+   * point its masonry (if any) is salvaged back to the barns. Indices into `paths`; empty/absent
+   * means nothing is queued.
+   */
+  razePaths?: number[];
   /** How many free adults the player wants assigned as Builders. Only Builders construct work
    * buildings; paths can be laid by any adult. Idle builders pitch in as laborers. */
   desiredBuilders: number;
@@ -2149,7 +2168,15 @@ export const START_CLEARING_RADIUS = 9;
 export const FOREST_MOISTURE = 0.3;
 
 // ---- Mountains & foothills ----
-export const FOOTHILL_RADIUS = 1; // one-tile foothill ring hugging the edge of each mountain
+/**
+ * How wide the buildable rocky skirt around each mountain is, in tiles.
+ *
+ * Three deep, not one: a mine is only allowed to stand where its back half (three rows of a 6×6)
+ * can bury itself in the foothills, so a one-tile ring left nowhere to put one. A wider skirt also
+ * reads better against the gentler mountains — the range comes down to the plain over a band of
+ * broken ground rather than a cliff dropping straight onto grass.
+ */
+export const FOOTHILL_RADIUS = 3;
 
 // ---- Consumption (per season) — sized for the per-trip hauling economy ----
 /**
@@ -2345,17 +2372,24 @@ export const LARDER_CARRY_VOLUME = CARRY_VOLUME * 3;
  * divide by this to get the play time. A child is grown in three years, or four with schooling.
  */
 export const AGE_PER_YEAR = 4;
-/** Children become working adults at this age — unless they are at school (see `SCHOOL_LEAVING_AGE`). */
-export const ADULT_AGE = 12;
 /**
- * Enrolment age, and the age a *schooled* child leaves for work.
+ * The age childhood ends. A child neither works, keeps a house, nor starts a family before this —
+ * they live with their parents until they come of age at sixteen, schooled or not.
  *
- * Schooling is two years of study for one more year of childhood: an enrolled child keeps growing
- * up past `ADULT_AGE` instead of going to work at it, and starts adult life at 16 rather than 12.
- * Only a staffed school will do — enrolment is what sets `educated`, so a child has to actually
- * attend rather than merely happen to come of age while a school stands somewhere.
+ * This used to be twelve, with only a schooled child staying on to sixteen. It is sixteen for
+ * everyone now: growing up and leaving home is a fixed age, and school is a thing you do *during*
+ * those years rather than the price of an extra few of them.
  */
-export const SCHOOL_START_AGE = 8;
+export const ADULT_AGE = 16;
+/**
+ * Enrolment age: a child old enough to go to school, if the village has a staffed one.
+ *
+ * School fills the last years of childhood (twelve to sixteen) rather than buying extra ones — a
+ * child comes of age at `ADULT_AGE` whether or not they attended. Enrolment is still what sets
+ * `educated`, so a child has to actually sit in class, not merely grow up while a school stands
+ * somewhere.
+ */
+export const SCHOOL_START_AGE = 12;
 export const SCHOOL_LEAVING_AGE = 16;
 /** A university year, and the age a student who sits it finally goes to work. */
 export const UNIVERSITY_YEARS = 1;
@@ -2897,8 +2931,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   mine: {
     type: 'mine', name: 'Mine', emoji: '🕳️', category: 'resources', w: 6, h: 6,
-    cost: { wood: 120, stone: 180, iron: 48 }, jobs: 10, work: 240, requiresTileAny: ['foothill'],
-    desc: 'Digs coal or iron — pick which in its own panel or on the job board. Part of it must be cut into a mountain\'s foothills.',
+    cost: { wood: 120, stone: 180, iron: 48 }, jobs: 10, work: 240, requiresBackHalf: 'foothill',
+    desc: 'Digs coal or iron — pick which in its own panel or on the job board. Its back half must be cut into a mountain\'s foothills, with the mouth on open ground — turn it so the door faces away from the slope.',
   },
   blacksmith: {
     type: 'blacksmith', name: 'Blacksmith', emoji: '⚒️', category: 'resources', w: 3, h: 3,

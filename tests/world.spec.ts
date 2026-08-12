@@ -45,11 +45,14 @@ test.describe('world generation, placement & pathfinding', () => {
           }
         return false;
       };
+      // Foothills are the buildable skirt of a mountain, up to FOOTHILL_RADIUS (3) tiles from the
+      // rock now — wide enough to bury a mine's back half. So "near a mountain" is checked at that
+      // reach, not the one-tile ring it used to be.
       let orphanFoothill = 0, foothillHasStone = 0;
       for (let y = 0; y < H; y++)
         for (let x = 0; x < W; x++) {
           if (T[idx(x, y)].type !== 'foothill') continue;
-          if (near(x, y, 'stone', 1)) foothillHasStone++; else orphanFoothill++;
+          if (near(x, y, 'stone', 3)) foothillHasStone++; else orphanFoothill++;
         }
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       // The founding barn must sit in genuinely open ground, not be walled in by the woodland.
@@ -242,18 +245,23 @@ test.describe('world generation, placement & pathfinding', () => {
       let T = g.state.tiles;
       const idx = (x: number, y: number) => y * W + x;
       const is = (x: number, y: number, t: string) => x >= 0 && y >= 0 && x < W && y < H && T[idx(x, y)].type === t;
-      // A mine is 6x6 now, so its whole footprint has to be clear of rock and water *and* still
-      // catch a foothill — a much narrower band of ground than the old 2x2 needed.
+      // A mine is 6x6 now, and its rule tightened: the whole footprint clear of rock and water,
+      // *and* one half of it — the back half, three rows — sitting entirely on foothill. That is
+      // what "cut into the hillside" means, and it is a far narrower band than catching a single
+      // foothill tile. A site qualifies if any one of the four back-half orientations is all
+      // foothill (the mine is turned so that half faces the slope); `cp` then confirms a rotation.
       const MINE = 6;
+      const BACK = MINE / 2;
       const buildableMine = (x: number, y: number) => {
-        let footTiles = 0;
         for (let dy = 0; dy < MINE; dy++)
           for (let dx = 0; dx < MINE; dx++) {
             const ty = T[idx(x + dx, y + dy)].type;
             if (ty === 'water' || ty === 'stone') return false;
-            if (ty === 'foothill') footTiles++;
           }
-        return footTiles > 0;
+        const isFoot = (px: number, py: number) => T[idx(px, py)].type === 'foothill';
+        const rows = (y0: number, y1: number) => { for (let yy = y0; yy < y1; yy++) for (let xx = 0; xx < MINE; xx++) if (!isFoot(x + xx, y + yy)) return false; return true; };
+        const cols = (x0: number, x1: number) => { for (let xx = x0; xx < x1; xx++) for (let yy = 0; yy < MINE; yy++) if (!isFoot(x + xx, y + yy)) return false; return true; };
+        return rows(0, BACK) || rows(MINE - BACK, MINE) || cols(0, BACK) || cols(MINE - BACK, MINE);
       };
       /** A `MINE`-square patch with no foothill anywhere in it — where a mine must be refused. */
       const openNoFoothill = (x: number, y: number) => {
@@ -558,19 +566,23 @@ test.describe('path editing', () => {
       for (const x of xs) s.paths[idx(x, y)] = P.STONE;
       const downgraded = xs.map((x) => g.debugPlanPath('dirt', x, y));
 
-      // And pull the whole run up in one drag.
+      // And mark the whole run for teardown in one drag. The road is not ripped up on the spot any
+      // more — it is queued, and stays passable, until a builder or free laborer reaches it.
       for (const x of xs) s.paths[idx(x, y)] = P.STONE;
-      const removed = g.debugDemolishPathRect(xs[0], y, xs[xs.length - 1], y);
-      const afterDrag = xs.map((x) => s.paths[idx(x, y)]);
-      return { whileDrawn, afterCancel, downgraded, removed, afterDrag, DIRT: P.DIRT, STONE_PLAN: P.STONE_PLAN };
+      const marked = g.debugDemolishPathRect(xs[0], y, xs[xs.length - 1], y);
+      const stillThere = xs.map((x) => s.paths[idx(x, y)]);
+      const queued = xs.map((x) => (s.razePaths ?? []).includes(idx(x, y)));
+      return { whileDrawn, afterCancel, downgraded, marked, stillThere, queued, DIRT: P.DIRT, STONE: P.STONE, STONE_PLAN: P.STONE_PLAN };
     }, [W] as const);
 
     expect(res.whileDrawn, 'the upgrade is planned over the road').toEqual(res.whileDrawn.map(() => res.STONE_PLAN));
     // Cancelling an upgrade puts the road back rather than scrubbing the tile to bare ground.
     expect(res.afterCancel, 'cancelling leaves the dirt road intact').toEqual(res.afterCancel.map(() => res.DIRT));
     expect(res.downgraded, 'dirt can be drawn over stone').toEqual(res.downgraded.map(() => true));
-    expect(res.removed, 'one drag pulls up the whole run').toBe(4);
-    expect(res.afterDrag, 'the tiles are bare afterwards').toEqual(res.afterDrag.map(() => 0));
+    expect(res.marked, 'one drag marks the whole run for teardown').toBe(4);
+    // Marked, not gone: the stone road is still there, now queued for a builder to pull up.
+    expect(res.stillThere, 'the road stays put until a builder pulls it').toEqual(res.stillThere.map(() => res.STONE));
+    expect(res.queued, 'every tile in the run is queued for teardown').toEqual(res.queued.map(() => true));
   });
 });
 

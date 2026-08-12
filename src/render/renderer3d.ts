@@ -60,14 +60,14 @@ const WET_DEEP = 0.85;
 /** Wetness where the sand margin starts fading in, a little inland of the shore. */
 const SAND_START = 0.06;
 const FOOTHILL_H = 0.5; // low rocky band at a mountain's base
-const MOUNTAIN_BASE_H = 1.8; // shortest mountain (edge) height
-const MOUNTAIN_STEP_H = 2.2; // extra height per tile of depth into the mountain
+const MOUNTAIN_BASE_H = 1.3; // shortest mountain (edge) height
+const MOUNTAIN_STEP_H = 1.1; // extra height per tile of depth into the mountain — a gentler climb
 const MOUNTAIN_MAX_H = 11.0; // tallest peak
 // Where the permanent snow starts, and where it is fully white. Both are set against the heights
-// the generator actually produces — peaks come out around 6.7 to 8.9 — rather than the theoretical
-// MOUNTAIN_MAX_H ceiling, which nothing ever reaches.
-const SNOWLINE_H = 4.6;
-const SNOWCAP_FULL_H = 7.6;
+// the generator actually produces — with the gentler slope, peaks come out around 3.5 to 5.7 —
+// rather than the theoretical MOUNTAIN_MAX_H ceiling, which nothing ever reaches.
+const SNOWLINE_H = 3.0;
+const SNOWCAP_FULL_H = 5.0;
 const TOP = LAND_H; // y of the walkable surface props sit on
 const TREE_MODEL_SIZE = 0.55; // world scale for a normalized (footprint=1) tree model — see tools/models/pine.py
 /**
@@ -1389,6 +1389,10 @@ export class Renderer3D {
     // Rolling numeric hash over set tiles — sub-millisecond even at 37k tiles (Large map).
     let sig = 0;
     for (let i = 0; i < s.paths.length; i++) if (s.paths[i]) sig = (Math.imul(sig, 31) + (i + 1) * s.paths[i]) >>> 0;
+    // Teardown marks recolour a road without changing its value, so fold them into the signature or
+    // the cache would never notice one being marked or called off.
+    const raze = s.razePaths?.length ? new Set(s.razePaths) : null;
+    if (raze) for (const i of s.razePaths!) sig = (Math.imul(sig, 31) + (i + 1) * 7919) >>> 0;
     if (sig === this.sig.path) return;
     this.sig.path = sig;
 
@@ -1401,6 +1405,9 @@ export class Renderer3D {
     let portals = 0;
     const built = (v: number) =>
       v === PATH_DIRT || v === PATH_STONE || v === PATH_BRIDGE || v === PATH_BRIDGE_STONE || v === PATH_TUNNEL;
+    // A laid road tinted for teardown reads red; a plan stays green; anything else is its own colour.
+    const tintFor = (v: number, idx: number): number =>
+      raze?.has(idx) ? RAZE_TINT : built(v) ? 0xffffff : PLAN_TINT;
     for (let i = 0; i < s.paths.length; i++) {
       const v = s.paths[i];
       if (!v) continue;
@@ -1430,7 +1437,7 @@ export class Renderer3D {
         }
         this.dummy.updateMatrix();
         layerB.setMatrixAt(kB, this.dummy.matrix);
-        layerB.setColorAt(kB, built(v) ? this.color.set(0xffffff) : this.color.set(PLAN_TINT));
+        layerB.setColorAt(kB, this.color.set(tintFor(v, i)));
 
         // What holds the deck up. Masonry gets the arch ring: piers standing in the water at each
         // bank, and above the opening a thin ring following the curve of the road. Timber gets a
@@ -1448,7 +1455,7 @@ export class Renderer3D {
         this.dummy.scale.set(deck.alongX[i] ? along : across, h, deck.alongX[i] ? across : along);
         this.dummy.updateMatrix();
         archLayer.setMatrixAt(kA, this.dummy.matrix);
-        archLayer.setColorAt(kA, built(v) ? this.color.set(0xffffff) : this.color.set(PLAN_TINT));
+        archLayer.setColorAt(kA, this.color.set(tintFor(v, i)));
         continue;
       }
       if (v === PATH_TUNNEL || v === PATH_TUNNEL_PLAN) {
@@ -1476,7 +1483,7 @@ export class Renderer3D {
       // finished surface was.
       // A wash rather than a flat fill: the surface's own texture still shows through, so a
       // planned road reads as "this road, not yet laid" instead of as a green tile.
-      layer.setColorAt(k, built(v) ? this.color.set(0xffffff) : this.color.set(PLAN_TINT));
+      layer.setColorAt(k, this.color.set(tintFor(v, i)));
 
       // A finished tunnel gets a timbered portal wherever it opens onto something that is not
       // more tunnel — the only part of it visible from outside the mountain.
@@ -2097,8 +2104,12 @@ export class Renderer3D {
         const bw = footprintW(b);
         const bh = footprintH(b);
         selPos = { x: b.x + bw / 2, y: b.y + bh / 2, r: Math.max(bw, bh) * 0.6 };
-        const wr = workRadiusOf(b);
-        if (wr && b.built) {
+        // Show the reach whether it is finished or still a site: a construction site tapped to
+        // check where it will work should show the same circle it drew while being placed, rather
+        // than losing it the moment the first material lands. A built place uses its worker-scaled
+        // reach; a site shows the full reach it will have once it is staffed.
+        const wr = b.built ? workRadiusOf(b) : fullWorkRadiusOf(b.type);
+        if (wr) {
           const wc = workCentre(b);
           workCircle = { x: wc.x, y: wc.y, r: wr };
         }
@@ -2311,6 +2322,9 @@ const GHOST_OPACITY = 0.42;
 
 /** Tint for a path, bridge or tunnel tile that is drawn but not yet built. */
 const PLAN_TINT = 0x7fe08c;
+
+/** Tint for a laid road/bridge/tunnel tile marked for teardown — a warning red, "coming up soon". */
+const RAZE_TINT = 0xff6f5b;
 
 /**
  * How deep each finished-tunnel tile sits, counted in tiles from the nearest mouth.

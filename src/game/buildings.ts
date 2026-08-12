@@ -138,6 +138,34 @@ export function canPlace(
       return { ok: false, reason: foot ? "Must be placed in a mountain's foothills" : 'Wrong ground here' };
     }
   }
+  // Back-half gating: the rows at the far end (away from the door) must sit on a required terrain.
+  // A mine is dug *into* the slope — its working face buried in the foothills, its mouth open to the
+  // carts — so a single clipped corner is not enough; the whole back of it has to be in the rock.
+  if (def.requiresBackHalf) {
+    const turn = ((rot % 4) + 4) % 4;
+    const span = turn % 2 === 1 ? fw : fh; // tiles deep along the door axis
+    const backRows = Math.floor(span / 2);
+    let back = 0;
+    let onIt = 0;
+    for (let dy = 0; dy < fh; dy++) {
+      for (let dx = 0; dx < fw; dx++) {
+        // Distance from the far end (0 = backmost row) — the dock's measure, reused.
+        const depth = turn === 1 ? fw - 1 - dx : turn === 2 ? fh - 1 - dy : turn === 3 ? dx : dy;
+        if (depth >= backRows) continue;
+        back++;
+        if (getTile(s.tiles, x + dx, y + dy)!.type === def.requiresBackHalf) onIt++;
+      }
+    }
+    if (back === 0 || onIt < back) {
+      const foot = def.requiresBackHalf === 'foothill';
+      return {
+        ok: false,
+        reason: foot
+          ? "Its back must be cut into a mountain's foothills — back it against the slope"
+          : 'Its back must sit on the right ground',
+      };
+    }
+  }
   // Doors, both ways. Villagers walk around a finished building and in through its door, so a
   // door opening onto water, rock or another building's wall is a building nobody can reach —
   // and a site dropped across someone else's door strands them just as surely. Turning the

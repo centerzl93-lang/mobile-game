@@ -1071,13 +1071,13 @@ export class UI {
       this.el.nomad.innerHTML = '';
       return;
     }
-    const warn = offer.sick > 0 ? `<div class="nomad-warn">⚠️ Some of them look unwell.</div>` : '';
+    // What is wrong with them — sickness or anything else — is not advertised. Taking strangers in
+    // is a gamble; the player decides on the offer itself, not on a health inspection at the gate.
     this.el.nomad.innerHTML = `
       <div class="nomad-card">
         <h2>Nomads at the gate</h2>
         <p class="big">🧳</p>
         <p>A band of <strong>${offer.count}</strong> wandering adults asks to settle in your village. They will need food and housing like everyone else.</p>
-        ${warn}
         <div class="nomad-actions">
           <button class="reject" id="nomad-reject">Turn away</button>
           <button class="accept" id="nomad-accept">Welcome them</button>

@@ -67,6 +67,7 @@ import {
   BRIDGE_WOOD_COST,
   HARVEST_NONE,
   isPlannedPath,
+  isBuiltPath,
   PATH_NONE,
   EVENT_LOG_MAX,
   HARVEST_WOOD,
@@ -199,7 +200,7 @@ import {
   isFireproof,
   freshStats,
 } from '../types';
-import { TIERS, TIER_META, villageTier } from './tiers';
+import { TIERS, TIER_META, villageTier, meetsTier, VillageTier } from './tiers';
 import { housingCapacity, buildingCenter, makeCitizen } from './state';
 import {
   forestInCircle,
@@ -211,7 +212,7 @@ import {
   rubbleEmpty,
 } from './buildings';
 import { getTile, tileIndex, inBounds, riverColumnX } from './world';
-import { pathSpeedMult, hasPath } from './paths';
+import { pathSpeedMult, hasPath, dropPathRaze } from './paths';
 import { findPath, isWalkable, labelComponents } from './pathfind';
 import { rand } from './rng';
 import {
@@ -610,12 +611,13 @@ function lives(s: GameState, dt: number, log: LogFn): void {
     const wasChild = !isAdult(c);
     c.age += years * AGE_PER_YEAR;
     if (wasChild) {
-      // Enrolment, and the one place adulthood is not a fixed age. A child at a staffed school
-      // keeps growing up to `SCHOOL_LEAVING_AGE`; one without goes to work at `ADULT_AGE`.
+      // Enrolment. Childhood ends at a fixed `ADULT_AGE` for everyone; school fills its last years
+      // (`SCHOOL_START_AGE` to `SCHOOL_LEAVING_AGE`) rather than buying more of them, so a schooled
+      // and an unschooled child both come of age together — one educated, one not.
       const oldEnough = c.age >= SCHOOL_START_AGE && c.age < SCHOOL_LEAVING_AGE;
       // A seat is either already yours or has to be free. A school that loses its teacher turns
-      // its pupils back into children — and any of them already past `ADULT_AGE` go straight to
-      // work below, with whatever schooling they managed to sit.
+      // its pupils back into children, who then keep growing up to `ADULT_AGE` with whatever
+      // schooling they managed to sit.
       if (c.student || c.age < ADULT_AGE) {
         const keep = c.student && schoolPlaces > 0;
         const take = !c.student && oldEnough && schoolFree > 0;
@@ -2310,14 +2312,16 @@ function adjacentStand(s: GameState, c: Citizen, tx: number, ty: number): { x: n
  * will travel to reach one — used to keep busy workers from crossing the map for a distant path;
  * the labor pool passes no cap. Returns false when there's nothing (in range) to build. */
 function buildPath(s: GameState, c: Citizen, dt: number, maxD2 = Infinity): boolean {
-  if (!anyPlannedPath) return false; // nothing planned anywhere — skip the whole-map scan
+  const razing = s.razePaths?.length ? s.razePaths : null;
+  if (!anyPlannedPath && !razing) return false; // nothing to lay or pull — skip the whole-map scan
   let bestIdx = -1;
   let bestD = Infinity;
   let bestStand: { x: number; y: number } | null = null;
+  let bestRaze = false;
   // Tiles the player has drawn but not yet confirmed are not work orders yet. Built as a Set
   // because this scans every tile on the map, for every villager, every tick.
   const pending = s.pendingPaths?.length ? new Set(s.pendingPaths) : null;
-  for (let i = 0; i < s.paths.length; i++) {
+  if (anyPlannedPath) for (let i = 0; i < s.paths.length; i++) {
     if (pending?.has(i)) continue;
     const v = s.paths[i];
     const tx = i % MAP_W;
@@ -2343,6 +2347,29 @@ function buildPath(s: GameState, c: Citizen, dt: number, maxD2 = Infinity): bool
       bestD = d;
       bestIdx = i;
       bestStand = stand;
+      bestRaze = false;
+    }
+  }
+  // Teardown orders: a short explicit list, so scan it rather than the whole map. A land road is
+  // pulled up standing on it; a bridge or tunnel from a walkable neighbour, the same as laying one.
+  if (razing) for (const i of razing) {
+    const v = s.paths[i];
+    if (!isBuiltPath(v)) continue; // stale — already gone, or never built
+    const tx = i % MAP_W;
+    const ty = (i / MAP_W) | 0;
+    let stand: { x: number; y: number } | null;
+    if (v === PATH_BRIDGE || v === PATH_BRIDGE_STONE || v === PATH_TUNNEL) {
+      stand = adjacentStand(s, c, tx, ty);
+    } else {
+      stand = reachableTile(c, tx, ty) ? { x: tx + 0.5, y: ty + 0.5 } : null;
+    }
+    if (!stand) continue;
+    const d = (tx + 0.5 - c.x) ** 2 + (ty + 0.5 - c.y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      bestIdx = i;
+      bestStand = stand;
+      bestRaze = true;
     }
   }
   if (bestIdx < 0 || !bestStand || bestD > maxD2) return false;
@@ -2351,6 +2378,10 @@ function buildPath(s: GameState, c: Citizen, dt: number, maxD2 = Infinity): bool
   c.tx = bestStand.x;
   c.ty = bestStand.y;
   if (stepTo(s, c, dt)) {
+    if (bestRaze) {
+      tearDownPath(s, bestIdx);
+      return true;
+    }
     const v = s.paths[bestIdx];
     if (v === PATH_STONE_PLAN) {
       if (takeNearest(s, { x: tx, y: ty }, 'stone', 1) >= 1) {
@@ -2385,6 +2416,29 @@ function buildPath(s: GameState, c: Citizen, dt: number, maxD2 = Infinity): bool
     }
   }
   return true;
+}
+
+/**
+ * Pull up a path tile a worker has reached, salvaging what a road gives back and clearing the
+ * teardown order. Masonry comes home at a quarter of what it cost — a stone road returns stone, a
+ * stone bridge its stone and its timber — while a dirt road and a timber bridge leave nothing worth
+ * hauling. A bridge or tunnel changes where villagers can walk, so nav is bumped.
+ */
+function tearDownPath(s: GameState, idx: number): void {
+  const v = s.paths[idx];
+  dropPathRaze(s, idx);
+  if (v === PATH_NONE) return;
+  const at = { x: idx % MAP_W, y: (idx / MAP_W) | 0 };
+  const wasCrossing = v === PATH_BRIDGE || v === PATH_BRIDGE_STONE || v === PATH_TUNNEL;
+  s.paths[idx] = PATH_NONE;
+  if (v === PATH_STONE) {
+    addNearest(s, at, 'stone', 0.25);
+  } else if (v === PATH_BRIDGE_STONE) {
+    // The tile holds four times a road's masonry, so it returns four times as much.
+    addNearest(s, at, 'stone', 0.25 * BRIDGE_STONE_STONE_COST);
+    addNearest(s, at, 'wood', 0.25 * BRIDGE_STONE_WOOD_COST);
+  }
+  if (wasCrossing) s.navVersion = (s.navVersion ?? 0) + 1;
 }
 
 /**
@@ -3811,12 +3865,19 @@ function updateWellbeing(s: GameState, foodShort: boolean, deaths: number, taver
 }
 
 /**
- * A comfortable food surplus occasionally draws a band of nomads to the village gate.
- * They don't move in on their own — the player must accept or turn them away — and they
- * come whether or not there is spare housing.
+ * A comfortable food surplus occasionally draws a band of nomads to the village gate. They don't
+ * move in on their own — the player accepts or turns them away — and they come whether or not there
+ * is spare housing.
+ *
+ * Word only reaches wanderers once a place is worth the walk: no band shows up until the settlement
+ * has grown into a proper `NOMAD_MIN_TIER` village, so the opening years are the player's own to
+ * build. Whatever is wrong with a band — sickness or otherwise — is not surfaced to the player;
+ * taking strangers in is a gamble, decided on the offer, not on an inspection.
  */
+const NOMAD_MIN_TIER: VillageTier = 'village';
 function immigrate(s: GameState, log: LogFn): void {
   if (s.pendingNomads) return; // an offer is already awaiting the player's decision
+  if (!meetsTier(s, NOMAD_MIN_TIER)) return; // too small a place to draw settlers yet
   const pop = s.citizens.length;
   if (pop === 0) return;
   // Needs a comfortable surplus. Counts larders too — see the reproduction block.
@@ -3837,14 +3898,11 @@ function immigrate(s: GameState, log: LogFn): void {
   log(`${count} nomads ask to join your village`, 'info');
 }
 
-/** Player accepted the waiting nomads — settle them (some may be sick). */
-export function acceptNomads(s: GameState, log: LogFn): void {
-  const offer = s.pendingNomads;
-  if (!offer) return;
-  s.pendingNomads = null;
+/** Put a band of `count` newcomers on the map by the village centre; `sick` of them arrive ill. */
+function settleNomads(s: GameState, count: number, sick: number, log: LogFn): void {
   const centre = centreOfVillage(s);
   let placedSick = 0;
-  for (let i = 0; i < offer.count; i++) {
+  for (let i = 0; i < count; i++) {
     const age = Math.floor(ADULT_AGE + 2 + rand(s) * (OLD_AGE_START - ADULT_AGE - 4));
     const c = makeCitizen(
       s,
@@ -3853,14 +3911,25 @@ export function acceptNomads(s: GameState, log: LogFn): void {
       centre.x + (rand(s) - 0.5) * 2,
       centre.y + (rand(s) - 0.5) * 2,
     );
-    if (placedSick < offer.sick) {
+    if (placedSick < sick) {
       c.sick = true;
       placedSick++;
     }
     s.citizens.push(c);
   }
-  log(`${offer.count} nomad${offer.count > 1 ? 's' : ''} settled in your village`, 'good');
-  if (offer.sick > 0) log(`${offer.sick} newcomer${offer.sick > 1 ? 's' : ''} arrived sick`, 'bad');
+  log(`${count} newcomer${count > 1 ? 's' : ''} settled in your village`, 'good');
+  if (sick > 0) log(`${sick} of them arrived sick`, 'bad');
+}
+
+/**
+ * Accept a band still waiting on a decision. New villages settle newcomers on arrival (see
+ * `immigrate`), so this only ever fires for a save made while the old accept/reject prompt was up.
+ */
+export function acceptNomads(s: GameState, log: LogFn): void {
+  const offer = s.pendingNomads;
+  if (!offer) return;
+  s.pendingNomads = null;
+  settleNomads(s, offer.count, offer.sick, log);
 }
 
 /** Player turned the waiting nomads away. */

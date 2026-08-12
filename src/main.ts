@@ -95,12 +95,8 @@ import {
   PATH_NONE,
   PATH_DIRT,
   PATH_STONE,
-  PATH_STONE_PLAN,
   PATH_TUNNEL,
   PATH_BRIDGE,
-  BRIDGE_STONE_STONE_COST,
-  BRIDGE_STONE_WOOD_COST,
-  PATH_BRIDGE_STONE_PLAN,
   PATH_BRIDGE_STONE,
   entranceTiles,
 } from './types';
@@ -173,6 +169,7 @@ import {
 import {
   planPath, markPending, pendingPathCount, confirmPendingPaths, cancelPendingPaths,
   isSpanTier, spanLine, routePath, unplanTiles, demolishPathRect, pathSpeedMult,
+  markPathRaze, isRazing, dropPathRaze,
 } from './game/paths';
 import { saveGame, loadGame, hasSave, clearSave, slotInfo, slotName, setSlotName, lastSlot, SLOTS } from './game/save';
 import {
@@ -907,21 +904,11 @@ class Game {
       else if (n > 1) this.ui.log(`${n} buildings marked for demolition`, 'info');
       if (refused > 0) this.ui.flashHint('Your last barn has to stay standing');
     } else {
-      const idx = target.ids[0];
-      const v = this.state.paths[idx];
-      const wasStone = v === PATH_STONE || v === PATH_STONE_PLAN;
-      const wasBridge = v === PATH_BRIDGE || v === PATH_BRIDGE_STONE;
-      this.state.paths[idx] = PATH_NONE;
-      const tx = idx % MAP_W;
-      const ty = Math.floor(idx / MAP_W);
-      if (wasStone) addNearest(this.state, { x: tx, y: ty }, 'stone', 0.25);
-      // Masonry pulled out of a bridge comes back at the same quarter rate a stone road does —
-      // the tile just holds four times as much of it.
-      if (v === PATH_BRIDGE_STONE) {
-        addNearest(this.state, { x: tx, y: ty }, 'stone', 0.25 * BRIDGE_STONE_STONE_COST);
-        addNearest(this.state, { x: tx, y: ty }, 'wood', 0.25 * BRIDGE_STONE_WOOD_COST);
-      }
-      if (wasBridge) this.state.navVersion = (this.state.navVersion ?? 0) + 1; // walkability changed
+      // Marked, not gone: a standing road keeps carrying villagers until a builder or free laborer
+      // reaches it and pulls it up, hauling the salvage off — the same "mark now, work later" a
+      // building demolition uses. A tile that was only ever a plan is simply un-drawn.
+      const marked = markPathRaze(this.state, target.ids[0]);
+      if (marked === 'razed') this.ui.log('Path marked for removal', 'info');
     }
     this.clearInspect();
     this.persist();
@@ -1263,7 +1250,13 @@ class Game {
     const ty = Math.floor(wy);
     const idx = ty * MAP_W + tx;
     if (idx < 0 || idx >= this.state.paths.length) return;
-    if (this.state.paths[idx] !== PATH_NONE) {
+    if (isRazing(this.state, idx)) {
+      // Tapping a road already queued for teardown calls the order off — nothing was lost, so like
+      // un-marking a harvest it needs no confirmation.
+      dropPathRaze(this.state, idx);
+      this.pendingDemolish = null;
+      this.persist();
+    } else if (this.state.paths[idx] !== PATH_NONE) {
       this.pendingDemolish = { kind: 'path', ids: [idx], label: 'this path tile' };
     } else if (this.state.harvest[idx] !== 0) {
       this.state.harvest[idx] = 0; // un-mark a harvest order — nothing is lost, so no confirmation
@@ -1285,6 +1278,36 @@ class Game {
       return;
     }
     this.clearInspect();
+  }
+
+  /**
+   * A short, live description of what a villager is doing this moment — errands, work, a break —
+   * read off their runtime state rather than any stored plan. The inspect sheet refreshes on the UI
+   * clock, so this keeps pace as they move between tasks.
+   */
+  private citizenDoing(c: Citizen): string {
+    // Children and the unwell come first: neither is part of the workforce.
+    if (c.age < ADULT_AGE) return c.student ? '📚 At school' : '🧒 Playing';
+    if (c.sick) return '🤒 Laid up ill';
+    // Groceries beat production: a `toLarder`/`toHouse` carry is household supplies, not output.
+    if (c.task?.kind === 'toLarder') return '🏠 Carrying supplies home';
+    if (c.task?.kind === 'toHouse') return '🛒 Delivering groceries';
+    if ((c.rest ?? 0) > 0) return '☕ Taking a break';
+    if (c.carry) return `📦 Hauling ${c.carry.kind} to the barns`;
+    const job = c.jobId != null ? this.state.buildings.find((b) => b.id === c.jobId) : null;
+    if (job && job.built) {
+      const name = buildingName(job);
+      if (c.inside) return `⚒️ Working — ${name}`;
+      // Outdoor trades never step inside; treat being anywhere in the work circle as on the job,
+      // and only the walk out to it as heading there.
+      const cx = job.x + footprintW(job) / 2;
+      const cy = job.y + footprintH(job) / 2;
+      const reach = (fullWorkRadiusOf(job.type) ?? 3) + 2;
+      const near = (c.x - cx) ** 2 + (c.y - cy) ** 2 <= reach * reach;
+      return near ? `⚒️ Working — ${name}` : `🚶 Heading to ${name}`;
+    }
+    // A dedicated builder, or a free hand pitching in on the sites and the roads.
+    return c.builder ? '🔨 On the build crew' : '🧺 Lending a hand';
   }
 
   private refreshInspect(): void {
@@ -1542,6 +1565,8 @@ class Game {
       const adult = c.age >= ADULT_AGE;
       const job = c.jobId !== null ? this.state.buildings.find((b) => b.id === c.jobId) : null;
       const home = c.homeId !== null ? this.state.buildings.find((b) => b.id === c.homeId) : null;
+      // What they are up to right now, at the top where a glance finds it.
+      rows.push({ label: 'Doing', value: this.citizenDoing(c) });
       rows.push({ label: 'Sex', value: c.sex === 'm' ? '♂ Male' : '♀ Female' });
       rows.push({ label: 'Home', value: home ? `${BUILDING_DEFS[home.type].name} #${home.id}` : 'Homeless' });
       rows.push({ label: 'Stage', value: adult ? 'Adult' : `Child · grows up at ${ADULT_AGE}` });

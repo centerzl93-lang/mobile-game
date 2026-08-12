@@ -433,6 +433,7 @@ export function clearPathsUnder(s: GameState, x: number, y: number, w: number, h
       const wasCrossing =
         s.paths[idx] === PATH_BRIDGE || s.paths[idx] === PATH_BRIDGE_STONE || s.paths[idx] === PATH_TUNNEL;
       s.paths[idx] = PATH_NONE;
+      dropPathRaze(s, idx); // a teardown order on this tile is moot now the building took it
       cleared++;
       if (wasCrossing) s.navVersion = (s.navVersion ?? 0) + 1;
     }
@@ -441,30 +442,63 @@ export function clearPathsUnder(s: GameState, x: number, y: number, w: number, h
 }
 
 /**
- * Rip up every path tile in a rectangle. Returns how many were removed.
+ * Mark a single path tile for teardown, or cancel it outright if it was only ever a plan.
  *
- * The counterpart to the harvest marquee: taking a road out one tile at a time was tedious
- * enough that players simply left roads they no longer wanted.
+ * A standing road is queued (`'razed'`) and keeps carrying villagers until a builder or free
+ * laborer reaches it and pulls it up — the same "mark now, work later" a building demolition uses.
+ * A plan not yet laid has nothing to tear down, so it is simply un-drawn (`'unplanned'`). Bare
+ * ground is `'none'`.
+ */
+export function markPathRaze(s: GameState, idx: number): 'razed' | 'unplanned' | 'none' {
+  const v = s.paths[idx];
+  if (v === PATH_NONE) return 'none';
+  if (isPlannedPath(v)) {
+    // A never-laid order: cancel it on the spot. No work, nothing to salvage.
+    s.paths[idx] = PATH_NONE;
+    dropPathRaze(s, idx);
+    return 'unplanned';
+  }
+  (s.razePaths ??= []);
+  if (!s.razePaths.includes(idx)) s.razePaths.push(idx);
+  return 'razed';
+}
+
+/** Drop a tile from the raze queue, if present. Called when the teardown is finished or undone. */
+export function dropPathRaze(s: GameState, idx: number): void {
+  const q = s.razePaths;
+  if (!q) return;
+  const k = q.indexOf(idx);
+  if (k >= 0) q.splice(k, 1);
+}
+
+/** How many built path tiles are queued for teardown. */
+export function pathRazeCount(s: GameState): number {
+  return s.razePaths?.length ?? 0;
+}
+
+/** Whether a tile is queued for teardown (for the renderer's warning tint). */
+export function isRazing(s: GameState, idx: number): boolean {
+  return !!s.razePaths && s.razePaths.includes(idx);
+}
+
+/**
+ * Mark every path tile in a rectangle for teardown. Returns how many tiles were queued or cancelled.
+ *
+ * The counterpart to the harvest marquee: taking a road out one tile at a time was tedious enough
+ * that players simply left roads they no longer wanted. Nothing is torn up here — a builder or free
+ * laborer does the pulling, so a road stays passable until then.
  */
 export function demolishPathRect(s: GameState, x0: number, y0: number, x1: number, y1: number): number {
   const lo = { x: Math.min(x0, x1), y: Math.min(y0, y1) };
   const hi = { x: Math.max(x0, x1), y: Math.max(y0, y1) };
-  let removed = 0;
+  let marked = 0;
   for (let y = lo.y; y <= hi.y; y++) {
     for (let x = lo.x; x <= hi.x; x++) {
       if (!inBounds(x, y)) continue;
-      const idx = tileIndex(x, y);
-      if (s.paths[idx] === PATH_NONE) continue;
-      // Bridges and tunnels are the only walkable water and mountain tiles, so pulling one
-      // changes where villagers can go.
-      const wasCrossing =
-        s.paths[idx] === PATH_BRIDGE || s.paths[idx] === PATH_BRIDGE_STONE || s.paths[idx] === PATH_TUNNEL;
-      s.paths[idx] = PATH_NONE;
-      removed++;
-      if (wasCrossing) s.navVersion = (s.navVersion ?? 0) + 1;
+      if (markPathRaze(s, tileIndex(x, y)) !== 'none') marked++;
     }
   }
-  return removed;
+  return marked;
 }
 
 /** Movement multiplier from a built path at a world position (1 = bare ground). */

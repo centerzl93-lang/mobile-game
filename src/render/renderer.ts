@@ -166,6 +166,24 @@ export class Renderer {
       }
     }
 
+    // Roads queued for teardown — a red wash so a marked stretch reads at a glance while it waits
+    // on a builder. The road itself is still drawn above; this only overlays the ones marked.
+    if (s.razePaths) {
+      for (const idx of s.razePaths) {
+        const tx = idx % MAP_W;
+        const ty = (idx / MAP_W) | 0;
+        if (tx < minX || tx > maxX || ty < minY || ty > maxY || !s.paths[idx]) continue;
+        const [sx, sy] = this.camera.worldToScreen(tx, ty, w, h);
+        ctx.globalAlpha = 0.3;
+        ctx.fillStyle = '#ff6f5b';
+        ctx.fillRect(sx, sy, p + 1, p + 1);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = 'rgba(255,90,70,0.95)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(sx + 1.5, sy + 1.5, p - 2, p - 2);
+      }
+    }
+
     // Harvest orders (marked trees / loose stone) — a tint + outline on each marked tile.
     for (let ty = minY; ty <= maxY; ty++) {
       for (let tx = minX; tx <= maxX; tx++) {
@@ -360,9 +378,10 @@ export class Renderer {
         ctx.lineWidth = 2.5;
         roundRect(ctx, sx, sy, footprintW(b) * p, footprintH(b) * p, 5);
         ctx.stroke();
-        // Work-area circle for forest-worked buildings.
-        const wr = workRadiusOf(b);
-        if (wr && b.built) {
+        // Work-area circle for forest-worked buildings. A site still under construction shows the
+        // full reach it will have once staffed, matching the circle drawn while placing it.
+        const wr = b.built ? workRadiusOf(b) : fullWorkRadiusOf(b.type);
+        if (wr) {
           const [ccx, ccy] = this.camera.worldToScreen(b.x + footprintW(b) / 2, b.y + footprintH(b) / 2, w, h);
           ctx.beginPath();
           ctx.arc(ccx, ccy, wr * p, 0, Math.PI * 2);

@@ -1,5 +1,4 @@
 import {
-  ADULT_AGE,
   AGE_PER_YEAR,
   GameState, MAP_W, MAP_H, MapSize, setMapSize, CROPS, RANCH_MIN, ranchCapacity, EVENT_LOG_MAX,
   isWorkplace, nextBuildingName, SEASON_LENGTH, Building,
@@ -186,8 +185,12 @@ export function loadGame(slot = 0): GameState | null {
     // either way, and they simply live longer in seasons than they would have.
     if (typeof s.ageScale !== 'number') {
       const OLD_ADULT_AGE = 4;
+      // Childhood ran 0..12 when this migration was written — frozen here, not read from the live
+      // `ADULT_AGE`, which has since moved to 16. A migration must keep describing the change it
+      // made, so an ancient save is stretched onto the same 0..12 childhood it always was.
+      const CHILDHOOD_SPAN = 12;
       for (const c of s.citizens) {
-        if (c.age < OLD_ADULT_AGE) c.age *= ADULT_AGE / OLD_ADULT_AGE;
+        if (c.age < OLD_ADULT_AGE) c.age *= CHILDHOOD_SPAN / OLD_ADULT_AGE;
       }
       s.ageScale = AGE_PER_YEAR;
     }

@@ -53,6 +53,87 @@ test.describe('paths: harvest waits for confirmation', () => {
   });
 });
 
+test.describe('paths: teardown waits for a builder', () => {
+  test('a road marked for demolition is pulled up by a builder, and its stone salvaged', { tag: '@slow' }, async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const s = g.state;
+      const W = s.w;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // A finished stone road on cleared ground a few tiles from the barn.
+      const x = barn.x + 3, y = barn.y;
+      const idx = y * W + x;
+      const t = s.tiles[idx];
+      t.type = 'grass'; t.trees = 0; delete t.stone; delete t.iron;
+      s.harvest[idx] = 0;
+      s.paths[idx] = 4; // PATH_STONE
+      g.debugSetBuilders(4); // dedicated hands to do the pulling
+      const stone0 = g.debugTotalStored('stone');
+      const marked = g.debugDemolishPathRect(x, y, x, y);
+      const queuedNow = (s.razePaths ?? []).includes(idx);
+      const roadStill = s.paths[idx]; // still there the instant it is marked
+      for (let i = 0; i < 400 && s.paths[idx] !== 0; i++) g.debugAdvance(1);
+      return {
+        marked, queuedNow, roadStill,
+        gone: s.paths[idx] === 0,
+        stillQueued: (s.razePaths ?? []).includes(idx),
+        salvaged: g.debugTotalStored('stone') - stone0,
+      };
+    });
+    expect(out.marked, 'the drag queues the tile').toBe(1);
+    expect(out.queuedNow, 'the road is queued the moment it is marked').toBe(true);
+    expect(out.roadStill, 'and still standing until a builder reaches it').toBe(4);
+    expect(out.gone, 'a builder pulls the road up').toBe(true);
+    expect(out.stillQueued, 'and the order clears once it is done').toBe(false);
+    expect(out.salvaged, 'the stone comes back to the barns').toBeGreaterThan(0);
+  });
+});
+
+test.describe('growing up waits for sixteen', () => {
+  test('no worker at thirteen, of age at sixteen, and enrolled at twelve', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const s = g.state;
+      g.debugSetBuilders(20); // plenty of builder demand, so any idle adult is put to work
+      // A lone subject: idle, unpartnered, no schooling behind them.
+      const kid = s.citizens[0];
+      kid.jobId = null; kid.builder = false; kid.student = false; kid.undergrad = false;
+      kid.partnerId = null; kid.sick = false; kid.schooling = 0;
+      // At thirteen a child is still a dependent — the sim never puts them to work.
+      kid.age = 13;
+      for (let i = 0; i < 60; i++) g.debugAdvance(1);
+      const workerAt13 = kid.builder === true || kid.jobId != null;
+      const ageAfter13 = kid.age;
+      // At sixteen and a little they come of age and join the workforce.
+      kid.age = 16.3; kid.student = false; kid.undergrad = false;
+      for (let i = 0; i < 60; i++) g.debugAdvance(1);
+      const workerAt16 = kid.builder === true || kid.jobId != null;
+      // Enrolment begins at twelve, given a staffed school. Release the builders first, or the job
+      // board reserves every adult as a builder and the schoolhouse can never keep a teacher.
+      g.debugSetBuilders(0);
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      const teacher = s.citizens.find((c: any) => c.age >= 20)!;
+      const school = { id: s.nextId++, type: 'school', x: barn.x, y: barn.y, built: true, progress: 999,
+        workers: [teacher.id], desiredWorkers: 1, growth: 0, store: {} };
+      teacher.jobId = school.id;
+      s.buildings.push(school);
+      const pupil = s.citizens.find((c: any) => c.id !== teacher.id)!;
+      pupil.student = false; pupil.jobId = null; pupil.age = 12.4; pupil.sick = false; pupil.undergrad = false;
+      for (let i = 0; i < 30; i++) { school.workers = [teacher.id]; g.debugAdvance(1); }
+      const enrolledAt12 = pupil.student === true;
+      return { workerAt13, ageAfter13, workerAt16, enrolledAt12 };
+    });
+    expect(out.ageAfter13, 'thirteen stays a child across the window').toBeLessThan(16);
+    expect(out.workerAt13, 'a thirteen-year-old is not put to work').toBe(false);
+    expect(out.workerAt16, 'a sixteen-year-old comes of age and works').toBe(true);
+    expect(out.enrolledAt12, 'a staffed school takes a twelve-year-old').toBe(true);
+  });
+});
+
 test.describe('low stock: a fifth reddens, a tenth warns', () => {
   test('a store low but not critical reddens its chip without a warning; critical warns once', async ({ page }) => {
     await open(page);

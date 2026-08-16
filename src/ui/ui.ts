@@ -132,6 +132,11 @@ export interface InspectControls {
   rename?: string;
   /** Worker allocation stepper (current desired vs the job cap). */
   workers?: { value: number; max: number };
+  /**
+   * Switch this workplace on or off. `on` is its current state; disabled sends its workers to
+   * labour elsewhere and halts production while keeping the worker count for when it comes back.
+   */
+  enable?: { on: boolean };
   /** A single option toggle (mine output / smith recipe / forester replant / farm crop / ranch animal). */
   toggle?: { group: 'mine' | 'smith' | 'tailor' | 'luxury' | 'forester' | 'crop' | 'animal'; options: { v: string; label: string; on: boolean }[] };
   /**
@@ -200,6 +205,8 @@ export interface UICallbacks {
   onSetTailorRecipe: (buildingId: number, recipe: TailorRecipe) => void;
   onSetLuxuryRecipe: (buildingId: number, recipe: LuxuryRecipe) => void;
   onSetForesterReplant: (buildingId: number, on: boolean) => void;
+  /** Switch a workplace on or off. Off frees its workers to labour and stops production. */
+  onSetBuildingEnabled: (buildingId: number, on: boolean) => void;
   onSetCrop: (buildingId: number, crop: Crop) => void;
   onSetAnimal: (buildingId: number, animal: RanchAnimal) => void;
   onSizeChange: (dim: 'w' | 'h', delta: number) => void;
@@ -821,6 +828,14 @@ export class UI {
       ctrlHtml += `<div class="inv-ctrl"><span>Workers <small>(max ${wk.max})</small></span>
         <div class="stepper"><button data-step="-1">−</button><span class="count">${wk.value}</span><button data-step="1">+</button></div></div>`;
     }
+    if (controls?.enable) {
+      // On/off is deliberately its own line, worded as the state and the action: a disabled
+      // workplace reads "Disabled" and offers to switch it on, so the player can tell it apart from
+      // one that is simply short of hands.
+      const on = controls.enable.on;
+      ctrlHtml += `<div class="inv-ctrl"><span>${on ? 'Working' : '⏸ Disabled'}</span>
+        <button class="ranch-btn${on ? '' : ' danger'}" id="insp-enable">${on ? '⏸ Disable' : '▶ Enable'}</button></div>`;
+    }
     if (controls?.toggle) {
       const opts = controls.toggle.options
         .map((o) => `<button data-v="${o.v}" class="${o.on ? 'on' : ''}">${o.label}</button>`)
@@ -927,6 +942,9 @@ export class UI {
       }
       this.el.inspect.querySelector('[data-step="-1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, -1));
       this.el.inspect.querySelector('[data-step="1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, 1));
+      this.el.inspect
+        .querySelector('#insp-enable')
+        ?.addEventListener('click', () => this.cb.onSetBuildingEnabled(id, controls.enable?.on === false));
       this.el.inspect.querySelector('#insp-tp')?.addEventListener('click', () => this.openTradingPost(id));
       this.el.inspect
         .querySelector('#insp-demolish')

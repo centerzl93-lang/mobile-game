@@ -10,11 +10,13 @@
     "preview": "vite preview",
     "test": "playwright test",
     "test:fast": "playwright test --grep-invert @slow --reporter=dot",
-    "test:slow": "playwright test --grep @slow"
+    "test:slow": "playwright test --grep @slow",
+    "test:sim": "tsx --test sim-tests/*.test.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",
     "@types/node": "^26.1.1",
+    "tsx": "^4.19.2",
     "typescript": "^5.5.4",
     "vite": "^5.4.2",
     "vite-plugin-pwa": "^0.20.5"

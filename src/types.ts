@@ -733,6 +733,17 @@ export interface Building {
    * trader hauls goods from the barns up to these levels and returns any surplus.
    */
   orders?: Partial<Record<ResourceKind, number>>;
+  /**
+   * Whether the player wants this workplace operating. `false` is a deliberate shutdown: its
+   * workers are let go to labour elsewhere and it produces nothing, but its `desiredWorkers` is
+   * kept so flipping it back on restores the old staffing. Undefined/true means running as normal.
+   *
+   * This is a *different state* from unstaffed. An unstaffed building is enabled but short of hands;
+   * a disabled one is switched off on purpose and asks for none. Only `staffWanted` reads it, so the
+   * whole job system treats a disabled building as one that wants zero workers this moment — no
+   * second workforce, just a gate on the one that already exists.
+   */
+  enabled?: boolean;
 }
 
 /** What a villager is doing right now in the logistics loop. */
@@ -794,6 +805,15 @@ export interface Citizen {
   partnerId?: number | null;
   /** Ids of the two villagers whose household this one was born into. Absent for founders/nomads. */
   parents?: [number, number];
+  /**
+   * Children this villager (as a mother) has borne, capped at `MAX_CHILDREN_PER_COUPLE`.
+   *
+   * Set on the woman of a couple, because she is in one household at a time and it is her count that
+   * bounds a couple's family — a widow who re-partners does not get a fresh allowance. It drives the
+   * declining per-child birth odds (`BIRTH_PARITY_FACTOR`) and the hard cap. Absent (treated as 0)
+   * on founders, men, and any citizen from a save written before this existed.
+   */
+  childrenBorne?: number;
   health: number; // 0..100
   happiness: number; // 0..100
   educated: boolean; // attended school in the year before coming of age -> more productive
@@ -2191,6 +2211,24 @@ export const STARVE_RECOVERY = 2;
 export const FREEZE_SECONDS = SEASON_LENGTH / 3;
 /** How fast the cold clock unwinds once a villager's hearth is lit again, per second. */
 export const FREEZE_RECOVERY = 2;
+/**
+ * Cold is meant to be dangerous, not a guillotine. Everyone unheated crosses `FREEZE_SECONDS` at the
+ * same moment, so a village that runs out of fuel used to lose its *whole* population in one frame —
+ * the death spiral that leaves no time to react. These three soften the curve into a slope:
+ *
+ * - `FREEZE_DEATH_RATE` — once past the threshold, death is a per-second risk that ramps with how
+ *   long a villager has been over it (`hazard = over/FREEZE_SECONDS × this`), not a cliff. Tuned so
+ *   the first villager dies well after the threshold and the rest follow spread out, giving the
+ *   player a visible warning — one funeral — with time to act before it becomes many.
+ * - `COLD_WORK_MIN` — the slowest a chilled (but not yet freezing) villager works. Cold hands are
+ *   slow hands, so a fuel shortage bites into production before it kills, and eases the moment the
+ *   hearths are lit again.
+ * - `COLD_HEALTH_DRAIN` — health lost per second while freezing, so the cold shows in the health
+ *   readout (and in the ageing odds) as a mounting problem rather than appearing only as a corpse.
+ */
+export const FREEZE_DEATH_RATE = 0.007;
+export const COLD_WORK_MIN = 0.6;
+export const COLD_HEALTH_DRAIN = 0.04;
 
 /**
  * How much slower a villager eats and burns fuel than the original tuning.
@@ -2489,6 +2527,21 @@ export const CHILD_FOOD_FACTOR = 0.5; // children eat this fraction of an adult 
  * between growth and none. Falling under a season of food is what stops births outright.
  */
 export const BIRTH_CHANCE = 0.5;
+/**
+ * Hard ceiling on how many children one couple raises. A family stops growing here however well-fed
+ * and housed it is — the single strongest brake on a village turning exponential.
+ */
+export const MAX_CHILDREN_PER_COUPLE = 4;
+/**
+ * How the odds of the *next* child fall as a family fills, indexed by children already borne.
+ *
+ * A couple takes the first child readily and the fourth only rarely, so a village grows steadily
+ * rather than every fertile pair running straight to the cap. These multiply the season's base
+ * birth chance (`BIRTH_CHANCE` after its food/wellbeing modifiers), so the shape below is what the
+ * player feels: first ~0.9, then 0.75, 0.5, 0.15 of the base rate, and nothing past four. The
+ * fourth child is deliberately a long shot — most families settle at two or three.
+ */
+export const BIRTH_PARITY_FACTOR = [0.9, 0.75, 0.5, 0.15];
 /** Share of the birth chance a household keeps with no food surplus beyond the one-season gate. */
 export const BIRTH_SURPLUS_FLOOR = 0.7;
 /** Share of the birth chance a household keeps at rock-bottom health and happiness. */

@@ -36,6 +36,8 @@ import {
   STARVE_RECOVERY,
   FREEZE_SECONDS,
   FREEZE_RECOVERY,
+  FREEZE_DEATH_RATE,
+  COLD_HEALTH_DRAIN,
   SEASONS,
   Season,
   BASE_WALK_SPEED,
@@ -83,6 +85,7 @@ import {
   TOOL_WEAR_PER_WORKER,
   NO_TOOLS_PENALTY,
   COLD_WORK_FACTOR,
+  COLD_WORK_MIN,
   UNCLOTHED_HEALTH_PENALTY,
   UNCLOTHED_HAPPY_PENALTY,
   FARM_FOOD_PER_WORKER,
@@ -117,6 +120,8 @@ import {
   BIRTH_CHANCE,
   BIRTH_SURPLUS_FLOOR,
   BIRTH_WELLBEING_FLOOR,
+  BIRTH_PARITY_FACTOR,
+  MAX_CHILDREN_PER_COUPLE,
   BIRTH_FOOD_SURPLUS_TARGET,
   isFertile,
   entranceTile,
@@ -468,11 +473,21 @@ function heat(s: GameState, dt: number, log: LogFn): void {
       if (need > 0.000001) need = consume(s, 'coal', need / COAL_HEAT) * COAL_HEAT;
     }
     // Only winter kills. Going short of fuel in summer is uncomfortable, not fatal, and an
-    // unheated villager has to stay unheated for FREEZE_SECONDS before they die — a gap while a
-    // hauler is walking is survivable, a genuine fuel crisis is not.
+    // unheated villager has to stay unheated for FREEZE_SECONDS before they are even in danger — a
+    // gap while a hauler is walking is survivable, a genuine fuel crisis is not.
     if (need > 0.000001 && season === 'Winter') {
       c.chill = (c.chill ?? 0) + dt;
-      if (c.chill >= FREEZE_SECONDS) froze.push(c);
+      // Cold shows in the health readout before it shows in the graveyard, so a freezing village
+      // reads as a mounting emergency the player can see and answer.
+      c.health = Math.max(5, c.health - dt * COLD_HEALTH_DRAIN);
+      if (c.chill >= FREEZE_SECONDS) {
+        // Past the threshold death is a per-second risk that climbs the longer they stay over it —
+        // not a cliff the whole village falls off together. The first to go is a warning shot with
+        // time still on the clock; a die-off only follows if nothing is done for a long while.
+        const over = c.chill - FREEZE_SECONDS;
+        const hazard = clamp(over / FREEZE_SECONDS, 0, 1) * FREEZE_DEATH_RATE;
+        if (rand(s) < hazard * dt) froze.push(c);
+      }
     } else if (c.chill) {
       c.chill = Math.max(0, c.chill - dt * FREEZE_RECOVERY);
     }
@@ -489,7 +504,11 @@ function heat(s: GameState, dt: number, log: LogFn): void {
 
 /** How many workers a building should be holding: the player's setting, capped by the job count. */
 function staffWanted(s: GameState, b: Building): number {
-  if (!b.built) return 0;
+  // A disabled workplace asks for nobody, so `assignHomesAndJobs` lets its hands go to labour
+  // elsewhere — but `desiredWorkers` is untouched, so switching it back on re-staffs it exactly as
+  // it was. This is the one place the enabled flag is read; the rest of the job system needs no
+  // knowledge of it.
+  if (!b.built || b.enabled === false) return 0;
   return Math.min(BUILDING_DEFS[b.type].jobs, b.desiredWorkers);
 }
 
@@ -729,7 +748,13 @@ function births(s: GameState, elapsed: number, log: LogFn): void {
     if (residentsOf(s, h).length >= houseCapacityOf(h.type)) continue;
     const couple = householdCouple(s, h);
     if (!couple || !isFertile(couple[0]) || !isFertile(couple[1])) continue;
-    if (rand(s) < chance) {
+    // Family size is the strongest brake on runaway growth: a couple takes the first child readily
+    // and each one after less so, and stops for good at the cap. The count lives on the mother
+    // (couple[1]), so a re-partnered widow keeps hers rather than starting a fresh family.
+    const parity = couple[1].childrenBorne ?? 0;
+    if (parity >= MAX_CHILDREN_PER_COUPLE) continue;
+    const parityFactor = BIRTH_PARITY_FACTOR[parity] ?? 0;
+    if (rand(s) < chance * parityFactor) {
       spawnChild(s, h, couple);
       born++;
     }
@@ -1070,11 +1095,11 @@ function runCitizen(s: GameState, c: Citizen, dt: number, workFactor: number): v
     // resume the moment the stock drops — they simply do not stand at a bench making more of it.
     // A load already in hand is still delivered first, which `runWorker` handles.
     if (!c.carry && cappedOut(s, job)) {
-      runBuilder(s, c, dt);
+      runBuilder(s, c, dt, workFactor);
       return;
     }
     runWorker(s, c, job, dt, workFactor);
-  } else runBuilder(s, c, dt);
+  } else runBuilder(s, c, dt, workFactor);
 }
 
 /**
@@ -1285,8 +1310,12 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workFactor
     }
     goTo(c, buildingApproach(s, barn, c));
     if (stepTo(s, c, dt)) {
-      const left = addNearest(s, { x: c.x, y: c.y }, c.carry.kind, c.carry.amount);
-      c.carry = left > 0 ? { kind: c.carry.kind, amount: left } : null;
+      // Anything the barns can't take is set down rather than carried forever — a worker holding a
+      // load nowhere will fit must still be able to put it down and go back to work, or it stops
+      // working for good. In practice the barns have room and nothing is dropped; this is the guard
+      // against the pathological full-store case, not the normal path.
+      addNearest(s, { x: c.x, y: c.y }, c.carry.kind, c.carry.amount);
+      c.carry = null;
     }
     return;
   }
@@ -1337,7 +1366,12 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workFactor
         // coat produces less — numb hands are slow hands, though it no longer costs them their life.
         const wellbeing = (0.7 + 0.3 * (c.health / 100)) * (0.85 + 0.15 * (c.happiness / 100));
         const cold = SEASONS[s.season] === 'Winter' && !c.clothed ? COLD_WORK_FACTOR : 1;
-        const prod = wellbeing * (c.graduate ? GRADUATE_BONUS : c.educated ? EDUCATED_BONUS : 1) * cold;
+        // A villager actually going cold — the hearth is out, `chill` is climbing — works slower the
+        // colder they get, down to COLD_WORK_MIN at the freezing point. This is what makes a fuel
+        // shortage bite before it kills; it eases the moment they are warm again.
+        const chillFrac = clamp((c.chill ?? 0) / FREEZE_SECONDS, 0, 1);
+        const chilled = 1 - (1 - COLD_WORK_MIN) * chillFrac;
+        const prod = wellbeing * (c.graduate ? GRADUATE_BONUS : c.educated ? EDUCATED_BONUS : 1) * cold * chilled;
         const limit = carryLimit(out.kind);
         // Keep working until the load is full, rather than setting off with whatever one cycle
         // produced. A single cycle yields well under a full load, so workers were walking the
@@ -1893,6 +1927,26 @@ interface SiteAction {
   kind?: ResourceKind;
 }
 
+/**
+ * How much of `kind` is already on its way to construction sites — carried by builders right now.
+ *
+ * Without this, every free builder sizes its fetch against the site's *whole* outstanding need and
+ * they all grab a full load at once: twelve builders haul twelve loads for a job one trip covers,
+ * then spend the rest of the build shuttling the excess back to the barns while the site sits with
+ * one hand on it. Counting what is already in transit lets a builder fetch only the shortfall that
+ * nobody else is bringing, so the loads sent out sum to what the site actually needs.
+ *
+ * It counts *all* builder carries of the kind rather than only those bound for this site. Sites are
+ * few and a builder heads for the nearest one that needs what it holds, so in the common case they
+ * are all bound here anyway; erring toward over-counting only means a builder waits a beat and
+ * fetches next tick, which is the safe direction to be wrong in.
+ */
+function carriedToward(s: GameState, kind: ResourceKind): number {
+  let n = 0;
+  for (const c of s.citizens) if (c.builder && c.carry?.kind === kind) n += c.carry.amount;
+  return n;
+}
+
 function pickSite(s: GameState, c: Citizen): SiteAction | null {
   let best: SiteAction | null = null;
   let bestD = Infinity;
@@ -1916,13 +1970,19 @@ function pickSite(s: GameState, c: Citizen): SiteAction | null {
       let fully = true;
       for (const k in cost) {
         const kind = k as ResourceKind;
-        if ((b.store[kind] ?? 0) < (cost[kind] ?? 0)) {
-          fully = false;
-          if (totalStored(s, kind) > 0 && fetchKind === null) fetchKind = kind;
+        const have = b.store[kind] ?? 0;
+        if (have < (cost[kind] ?? 0)) fully = false;
+        // Only fetch what is still short *after* counting the loads already on their way here, so a
+        // crowd of builders doesn't each set off for the same sack.
+        const committed = have + carriedToward(s, kind);
+        if (committed < (cost[kind] ?? 0) - 0.001 && totalStored(s, kind) > 0 && fetchKind === null) {
+          fetchKind = kind;
         }
       }
       // Materials are all delivered, but don't raise the building until any trees / loose stone
-      // under its footprint have been harvested away (the free-adult workforce clears them).
+      // under its footprint have been harvested away (the free-adult workforce clears them). When
+      // everything short is already in transit (fetchKind null but not `fully`), there is nothing to
+      // do here yet — the builder falls through to harvest/paths until the loads land.
       action = fully
         ? footprintClear(s, b)
           ? { site: b, action: 'build' }
@@ -1953,9 +2013,12 @@ function pickSite(s: GameState, c: Citizen): SiteAction | null {
  * again afterwards. Deliberately *not* capped to the site's remaining work: a builder who lands
  * the last blow on a house has still done a shift's labour and should knock off having done it.
  */
-function labour(c: Citizen, dt: number): number {
+function labour(c: Citizen, dt: number, factor = 1): number {
   const left = BUILDER_SHIFT_WORK - (c.effort ?? 0);
-  const done = Math.min(dt * BUILD_WORK_RATE, Math.max(0, left));
+  // `factor` carries the same productivity dial the rest of the economy runs on — chiefly the
+  // tool penalty (see `NO_TOOLS_PENALTY`). A village out of tools raises buildings more slowly but
+  // never stops: at 0.6, construction takes about a third longer, not a year.
+  const done = Math.min(dt * BUILD_WORK_RATE * factor, Math.max(0, left));
   c.effort = (c.effort ?? 0) + done;
   if (c.effort >= BUILDER_SHIFT_WORK) {
     c.effort = 0;
@@ -1964,7 +2027,7 @@ function labour(c: Citizen, dt: number): number {
   return done;
 }
 
-function runBuilder(s: GameState, c: Citizen, dt: number): void {
+function runBuilder(s: GameState, c: Citizen, dt: number, workFactor = 1): void {
   // Deliver carried material to a site that needs it, else return it to a barn.
   if (c.carry) {
     const kind = c.carry.kind;
@@ -1986,8 +2049,12 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
     if (barn) {
       goTo(c, buildingApproach(s, barn, c));
       if (stepTo(s, c, dt)) {
-        const left = addNearest(s, { x: c.x, y: c.y }, kind, c.carry.amount);
-        c.carry = left > 0 ? { kind, amount: left } : null;
+        // Whatever the barns can't take (they are full for this kind) is dropped rather than kept
+        // and carried in an endless loop. A builder who over-fetched a load the site no longer
+        // needs must be able to put it down and get back to building — the alternative is a hand
+        // that hauls the same sack between a full site and a full barn for the rest of the game.
+        addNearest(s, { x: c.x, y: c.y }, kind, c.carry.amount);
+        c.carry = null;
       }
     } else {
       c.carry = null; // nowhere to put it; drop
@@ -2005,7 +2072,9 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
         goTo(c, buildingApproach(s, barn, c));
         if (stepTo(s, c, dt)) {
           const cost = costOf(pick.site);
-          const need = (cost[kind] ?? 0) - (pick.site.store[kind] ?? 0);
+          // Take only the shortfall no other builder is already bringing (see `carriedToward`), so
+          // the loads sent out sum to the site's need instead of one apiece.
+          const need = (cost[kind] ?? 0) - (pick.site.store[kind] ?? 0) - carriedToward(s, kind);
           const want = Math.min(carryLimit(kind), need, barn.store[kind] ?? 0);
           if (want > 0) {
             barn.store[kind] = (barn.store[kind] ?? 0) - want;
@@ -2042,10 +2111,11 @@ function runBuilder(s: GameState, c: Citizen, dt: number): void {
       }
       return;
     }
-    // build: stand at the site and labour.
+    // build: stand at the site and labour. Construction runs on the same productivity dial as every
+    // other job — chiefly the tool penalty — so a village out of tools raises buildings more slowly.
     goTo(c, buildingApproach(s, pick.site, c));
     if (stepTo(s, c, dt)) {
-      pick.site.progress += labour(c, dt);
+      pick.site.progress += labour(c, dt, workFactor);
       if (pick.site.progress >= buildWorkOf(pick.site.type)) {
         finishConstruction(s, pick.site);
       }
@@ -3735,6 +3805,8 @@ function spawnChild(s: GameState, house: Building, couple: [Citizen, Citizen]): 
   const c = makeCitizen(s, rand(s) < 0.5 ? 'm' : 'f', 0, at.x + (rand(s) - 0.5), at.y + (rand(s) - 0.5));
   c.homeId = house.id;
   c.parents = [couple[0].id, couple[1].id];
+  // Tally the birth against the mother, for the parity odds and the four-child cap.
+  couple[1].childrenBorne = (couple[1].childrenBorne ?? 0) + 1;
   s.citizens.push(c);
 }
 

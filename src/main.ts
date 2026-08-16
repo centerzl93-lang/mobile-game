@@ -283,6 +283,7 @@ class Game {
       onSetTailorRecipe: (id, r) => this.setTailorRecipe(id, r),
       onSetLuxuryRecipe: (id, r) => this.setLuxuryRecipe(id, r),
       onSetForesterReplant: (id, on) => this.setForesterReplant(id, on),
+      onSetBuildingEnabled: (id, on) => this.setBuildingEnabled(id, on),
       onSetCrop: (id, crop) => this.setCrop(id, crop),
       onSetAnimal: (id, animal) => this.setAnimal(id, animal),
       onSizeChange: (dim, delta) => this.onSizeChange(dim, delta),
@@ -641,6 +642,18 @@ class Game {
     const b = this.state.buildings.find((x) => x.id === id);
     if (b) {
       b.replant = on;
+      this.persist();
+    }
+  }
+
+  private setBuildingEnabled(id: number, on: boolean): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (b) {
+      // Store the flag only when it is off, so a running building carries no extra field and old
+      // saves (no flag) read as enabled. The next `assignHomesAndJobs` releases or re-hires its
+      // workers; `desiredWorkers` is left alone so the staffing is restored when it comes back on.
+      if (on) delete b.enabled;
+      else b.enabled = false;
       this.persist();
     }
   }
@@ -1426,7 +1439,14 @@ class Game {
         controls = { buildingId: b.id, rename: buildingName(b) };
       }
       if (b.built && def.jobs > 0) {
-        controls = { ...controls, buildingId: b.id, workers: { value: b.desiredWorkers, max: def.jobs } };
+        controls = {
+          ...controls,
+          buildingId: b.id,
+          workers: { value: b.desiredWorkers, max: def.jobs },
+          // Every staffed workplace can be switched off; a disabled one reads as such and keeps its
+          // worker count for when it is switched back on.
+          enable: { on: b.enabled !== false },
+        };
         // The books and the rules are what a Town Hall is *for*, so they arrive with the building
         // and are found by tapping it rather than taking up room in the HUD.
         if (b.type === 'townhall' && b.built) {

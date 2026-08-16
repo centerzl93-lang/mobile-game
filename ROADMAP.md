@@ -44,6 +44,13 @@ Concrete, code-grounded items (see `PLAYTEST.md` for detail):
   hauler round, not the fuel stock.
 
 ### Phase 2 — Construction & workforce ⏳
+- ✅ **Construction cancellation.** Cancelling an unfinished site (`cancelConstruction`) removes it,
+  refunds `CANCEL_REFUND_FRACTION` (0.9) of the materials already delivered, releases the crew /
+  standing staffing order, and cancels the in-flight hauling — behind a player confirmation, with a
+  **Cancel construction** control on the site's inspect sheet.
+- ✅ **Clear-then-deliver ordering.** Materials are no longer hauled to an obstructed plot: both
+  fetching and building now gate on `footprintClear`, so the sequence is place → clear → deliver →
+  construct. Verified builder assignment/release and disabled-workplace release with regression tests.
 - 🎯 **Do the big buildings cost too little?** (a decision, not a build) — an 8×8 quarry, 6×6 mine and
   5×9 trading post kept their small-footprint costs when footprints grew. Counter-argument: the
   *land* is now the real cost. One-line edits in `BUILDING_DEFS` if raised.

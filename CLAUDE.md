@@ -181,15 +181,27 @@ A `Citizen` carries position, `age`, `health`, `happiness`, `sex`, `homeId`, `jo
 
 ## Construction system
 
-- A placed building is a **site** (`built:false`, `progress:0`). Builders fetch its `cost` materials
-  from barns (`toDeliver`) into the site's `store`, then lay builder-work: `BUILD_WORK_RATE` (1) work
-  per builder-second, capped at `BUILDER_SHIFT_WORK` (30) per shift before a `BUILDER_REST_SECONDS`
-  break — which is why *where builders live* relative to a big site matters.
+- A placed building is a **site** (`built:false`, `progress:0`). The site is worked in order:
+  **place → clear the footprint → deliver materials → construct.** `markFootprintHarvest` marks any
+  trees / loose stone under the plot at placement, and `pickSite`/`nearestUnbuiltNeeding` gate *both*
+  fetching and building on `footprintClear` — nothing is hauled to an obstructed plot, so a load is
+  never stranded on ground that still can't be built on. Once clear, builders fetch its `cost`
+  materials from barns into the site's `store`, then lay builder-work: `BUILD_WORK_RATE` (1) work per
+  builder-second, capped at `BUILDER_SHIFT_WORK` (30) per shift before a `BUILDER_REST_SECONDS` break
+  — which is why *where builders live* relative to a big site matters.
 - `work` (in `BUILDING_DEFS`) is the honest size of a job: a well is 10, a cathedral 360.
 - **Three visual stages** (`buildStage`): site → framing (`BUILD_FRAMING_AT` 0.5) → done.
-- **Demolition is a job**: marking sets `demolish`; a builder tears it down over `DEMO_WORK_FRACTION`
-  (0.5) of the build work, salvage + contents become rubble (`razed`) hauled back to barns,
-  refunding `REFUND_FRACTION` (0.25). The last barn can't be demolished.
+- **Cancelling a site** (`cancelConstruction`, reached via `markDemolish` on a `!built` plot) is
+  instant — there are no walls to tear down. It removes the site, returns `CANCEL_REFUND_FRACTION`
+  (0.9) of the materials *already delivered* to the nearest barn (the other 10% is wastage), hands
+  any pre-staffed order back to the trade overflow, and clears the plot. In-flight builders re-pick
+  the next tick (a carried load returns to a barn), so the hauling/build tasks cancel themselves.
+  The UI routes it through the confirm bar (a Demolish-tool tap or the inspect sheet's **Cancel
+  construction** button) so it always takes a confirmation. Cancellation rules never touch a finished
+  building — that goes the demolition route below.
+- **Demolition is a job** (finished buildings only): marking sets `demolish`; a builder tears it down
+  over `DEMO_WORK_FRACTION` (0.5) of the build work, salvage + contents become rubble (`razed`)
+  hauled back to barns, refunding `REFUND_FRACTION` (0.25). The last barn can't be demolished.
 - **House upgrade**: `upgradeTo` razes the old house and raises the new type in place.
 
 ## Progression system

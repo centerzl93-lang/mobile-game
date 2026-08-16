@@ -1153,6 +1153,267 @@ test.describe('clearing land before building', () => {
     expect(out.placed).toBe(true);
     expect(out.marked).toBe(out.footprint);
   });
+
+  test('materials are not hauled to an obstructed site — clearing comes first, then delivery', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((findSpotSrc) => {
+      const g = (window as any).__village;
+      // Full wood stockpile, no disasters: the barns can supply the site the moment it is allowed
+      // to be supplied, so an empty store means "not yet allowed", never "nothing to haul".
+      g.startNewGame('small', 'easy', true, 0, 4242);
+      const s = g.state;
+      const [px, py] = eval(findSpotSrc)(g);
+      const { w: fw, h: fh } = g.debugFootprint('barn');
+      // Wall the whole footprint with trees, so the plot must be hand-cleared before it can be built.
+      for (let dy = 0; dy < fh; dy++)
+        for (let dx = 0; dx < fw; dx++) {
+          const t = s.tiles[(py + dy) * s.w + (px + dx)];
+          t.type = 'forest';
+          t.trees = 0.3;
+          t.stone = 0;
+        }
+      const id = g.debugPlace('barn', px, py);
+      const b = s.buildings.find((x: any) => x.id === id);
+      const treesLeft = () => {
+        for (let dy = 0; dy < fh; dy++)
+          for (let dx = 0; dx < fw; dx++) {
+            const t = s.tiles[(py + dy) * s.w + (px + dx)];
+            if (t.type === 'forest' && t.trees > 0.05) return true;
+          }
+        return false;
+      };
+      const delivered = () => {
+        let n = 0;
+        for (const k in b.store) n += b.store[k] ?? 0;
+        return n;
+      };
+      // Drive the workforce. While anything still stands on the plot, no material may be delivered
+      // to it: the desired sequence is place → clear → deliver → construct.
+      g.debugSetBuilders(6);
+      let deliveredWhileObstructed = false;
+      let clearedThenDelivered = false;
+      for (let step = 0; step < 200 && !b.built; step++) {
+        g.debugAdvance(5);
+        if (treesLeft() && delivered() > 0) deliveredWhileObstructed = true;
+        if (!treesLeft() && delivered() > 0) clearedThenDelivered = true;
+      }
+      return { placed: id != null, deliveredWhileObstructed, clearedThenDelivered, built: b.built };
+    }, findSpot);
+    expect(out.placed).toBe(true);
+    // The core assertion: not one unit reaches the store until the trees are down.
+    expect(out.deliveredWhileObstructed).toBe(false);
+    // ...and once the ground is clear, delivery does happen (so the site isn't merely stuck).
+    expect(out.clearedThenDelivered || out.built).toBe(true);
+    expect(out.built).toBe(true);
+  });
+});
+
+test.describe('construction cancellation', () => {
+  // Place a work building near the barn as a construction site; returns its id (or null).
+  const placeGatherer = `() => {
+    const g = window.__village;
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    for (let r = 2; r < Math.max(s.w, s.h); r++)
+      for (let dy = -r; dy <= r; dy++)
+        for (let dx = -r; dx <= r; dx++) {
+          const x = barn.x + dx, y = barn.y + dy;
+          if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue;
+          if (g.debugCanPlace('gatherer', x, y).ok) {
+            const id = g.debugPlace('gatherer', x, y);
+            if (id != null) return id;
+          }
+        }
+    throw new Error('no placeable gatherer site anywhere on this map');
+  }`;
+
+  test('cancelling a site removes it and refunds ~90% of the delivered materials', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((place) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true);
+      const s = g.state;
+      const id = eval(place)();
+      const b = s.buildings.find((x: any) => x.id === id);
+      // Stage a known part-delivery straight into the site's store. An unbuilt site is not a
+      // storage node, so this stock is *not* yet counted in the village total — cancelling is what
+      // moves the refunded share into a barn.
+      b.store = { wood: 40 };
+      const before = g.debugTotalStored('wood');
+      // Cancel it (the same path the Demolish tool and the inspect "Cancel construction" button
+      // take: markDemolish on an unfinished site → cancelConstruction).
+      const ok = g.debugDemolish(id);
+      const after = g.debugTotalStored('wood');
+      return {
+        ok,
+        gone: !s.buildings.find((x: any) => x.id === id),
+        refunded: after - before,
+        expected: Math.floor(40 * 0.9),
+      };
+    }, placeGatherer);
+    expect(out.ok).toBe(true);
+    expect(out.gone).toBe(true);
+    // 90% back, 10% lost as wastage — 36 of the 40 delivered.
+    expect(out.refunded).toBe(out.expected);
+    expect(out.refunded).toBe(36);
+  });
+
+  test('cancelling releases the plot and keeps the trade\'s standing staffing order', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((place) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true);
+      const s = g.state;
+      const id = eval(place)();
+      const b = s.buildings.find((x: any) => x.id === id);
+      // Pre-staff the site: the village wants two gatherers even before the hut is up.
+      b.desiredWorkers = 2;
+      const beforeStaff = g.debugTradeStaff('gatherer');
+      g.debugDemolish(id);
+      return {
+        gone: !s.buildings.find((x: any) => x.id === id),
+        beforeStaff,
+        afterStaff: g.debugTradeStaff('gatherer'),
+      };
+    }, placeGatherer);
+    expect(out.gone).toBe(true);
+    expect(out.beforeStaff).toBe(2);
+    // Losing the site does not quietly cancel the village's plans — the ask survives in the overflow.
+    expect(out.afterStaff).toBe(2);
+  });
+
+  test('cancelling a site frees builders hauling to it and returns their carried load', { tag: '@slow' }, async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((place) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true, 0, 4242); // full wood stockpile in the barn
+      const s = g.state;
+      const id = eval(place)();
+      const b = s.buildings.find((x: any) => x.id === id);
+      // Put a crew on it and let them start hauling wood to the site.
+      g.debugSetBuilders(4);
+      for (let i = 0; i < 400; i++) {
+        g.debugAdvance(0.5);
+        const carrying = s.citizens.some((c: any) => c.builder && c.carry);
+        const delivered = (b.store.wood ?? 0) > 0;
+        if (carrying || delivered) break;
+      }
+      const woodBefore = g.debugTotalStored('wood');
+      const carriedBefore = s.citizens.reduce((n: number, c: any) => n + (c.carry?.kind === 'wood' ? c.carry.amount : 0), 0);
+      const deliveredBefore = b.store.wood ?? 0;
+      // Cancel while work is in flight.
+      g.debugDemolish(id);
+      const gone = !s.buildings.find((x: any) => x.id === id);
+      // Let the crew resettle — a builder carrying wood for the now-gone site returns it to a barn.
+      for (let i = 0; i < 400; i++) g.debugAdvance(0.5);
+      const woodAfter = g.debugTotalStored('wood');
+      const anyBuilderStranded = s.citizens.some((c: any) => c.jobId === id || c.homeId === id);
+      return {
+        gone,
+        deliveredBefore,
+        carriedBefore,
+        woodBefore,
+        woodAfter,
+        anyBuilderStranded,
+      };
+    }, placeGatherer);
+    expect(out.gone).toBe(true);
+    expect(out.anyBuilderStranded).toBe(false);
+    // No wood evaporates beyond the ~10% wastage on what had actually been delivered: the carried
+    // loads come home in full and 90% of the delivered share is refunded, so the total after is at
+    // least the untouched barn stock (woodBefore, which excludes the not-yet-counted site store).
+    const minKept = out.woodBefore + Math.floor(out.deliveredBefore * 0.9) + Math.floor(out.carriedBefore);
+    expect(out.woodAfter).toBeGreaterThanOrEqual(out.woodBefore);
+    expect(out.woodAfter).toBeGreaterThanOrEqual(minKept - 1); // allow a single unit of rounding slack
+  });
+
+  test('a finished building is not subject to construction cancellation', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((place) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true);
+      const s = g.state;
+      const id = eval(place)();
+      const b = s.buildings.find((x: any) => x.id === id);
+      // Stand it up finished.
+      b.built = true;
+      b.progress = g.debugBuildWork(b.type);
+      b.store = {};
+      const woodBefore = g.debugTotalStored('wood');
+      // Demolishing a *finished* building is a reversible mark carried out by builders — not the
+      // instant construction-cancellation path. The building must still be there, now flagged.
+      const ok = g.debugDemolish(id);
+      const still = s.buildings.find((x: any) => x.id === id);
+      return {
+        ok,
+        present: !!still,
+        marked: !!still?.demolish,
+        razedImmediately: !!still?.razed,
+        // Nothing is refunded instantly: the salvage only appears once builders tear it down.
+        woodUnchanged: g.debugTotalStored('wood') === woodBefore,
+      };
+    }, placeGatherer);
+    expect(out.ok).toBe(true);
+    expect(out.present).toBe(true);
+    expect(out.marked).toBe(true);
+    expect(out.razedImmediately).toBe(false);
+    expect(out.woodUnchanged).toBe(true);
+  });
+});
+
+test.describe('workplace staffing release', () => {
+  const placeGatherer = `() => {
+    const g = window.__village;
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    for (let r = 2; r < Math.max(s.w, s.h); r++)
+      for (let dy = -r; dy <= r; dy++)
+        for (let dx = -r; dx <= r; dx++) {
+          const x = barn.x + dx, y = barn.y + dy;
+          if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue;
+          if (g.debugCanPlace('gatherer', x, y).ok) {
+            const id = g.debugPlace('gatherer', x, y);
+            if (id != null) return id;
+          }
+        }
+    throw new Error('no placeable gatherer site anywhere on this map');
+  }`;
+
+  test('disabling a workplace releases its workers back to the free pool', { tag: '@slow' }, async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((place) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const id = eval(place)();
+      const b = s.buildings.find((x: any) => x.id === id);
+      // Stand it up finished and ask for two hands; let the sim post them.
+      b.built = true;
+      b.progress = g.debugBuildWork(b.type);
+      b.desiredWorkers = 2;
+      for (let i = 0; i < 60; i++) g.debugAdvance(0.5);
+      const staffed = {
+        workers: b.workers.length,
+        withJob: s.citizens.filter((c: any) => c.jobId === id).length,
+      };
+      // Dial the workplace down to zero — the same as the job board's stepper hitting the floor.
+      g.setWorkers(id, -2);
+      g.debugAdvance(1);
+      const released = {
+        desired: b.desiredWorkers,
+        workers: b.workers.length,
+        withJob: s.citizens.filter((c: any) => c.jobId === id).length,
+      };
+      return { staffed, released };
+    }, placeGatherer);
+    // It really was staffed first, so "released" means something.
+    expect(out.staffed.workers).toBe(2);
+    expect(out.staffed.withJob).toBe(2);
+    // Disabled: nobody wanted, nobody posted, and no citizen still points at it.
+    expect(out.released.desired).toBe(0);
+    expect(out.released.workers).toBe(0);
+    expect(out.released.withJob).toBe(0);
+  });
 });
 
 test.describe('camera rotate buttons', () => {

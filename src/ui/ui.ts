@@ -147,8 +147,10 @@ export interface InspectControls {
   /**
    * Pull it down, or call it off. `blocked` is the village's last barn, which has to stay
    * standing; `marked` swaps the button for a cancel, right up until the walls actually come down.
+   * `construction` flags an unfinished site: there is nothing to pull down, so the button reads
+   * "Cancel construction" and takes the site away at once (materials mostly refunded) once confirmed.
    */
-  demolish?: { marked: boolean; blocked: boolean; underway: boolean };
+  demolish?: { marked: boolean; blocked: boolean; underway: boolean; construction?: boolean };
   /** Wooden house: trade up to stone. A builder razes it and raises the replacement in its place. */
   upgrade?: { to: string; cost: string };
   /** Ranch: herd management — cap stepper, cull, and split/transfer to another pen. */
@@ -909,13 +911,15 @@ export class UI {
       const d = controls.demolish;
       // Once the walls are coming down there is nothing to cancel — the button says so rather
       // than offering an undo that would leave a half-dismantled building standing.
-      const label = d.underway
-        ? '🧱 Being pulled down'
-        : d.marked
-          ? '✖️ Cancel demolition'
-          : d.blocked
-            ? '🛖 Last barn — cannot demolish'
-            : '💥 Demolish';
+      const label = d.construction
+        ? '✖️ Cancel construction'
+        : d.underway
+          ? '🧱 Being pulled down'
+          : d.marked
+            ? '✖️ Cancel demolition'
+            : d.blocked
+              ? '🛖 Last barn — cannot demolish'
+              : '💥 Demolish';
       const cls = d.marked && !d.underway ? 'ranch-btn' : 'ranch-btn danger';
       const dis = d.blocked || d.underway ? ' disabled' : '';
       ctrlHtml += `<div class="inv-ctrl"><button class="${cls}" id="insp-demolish"${dis}>${label}</button></div>`;

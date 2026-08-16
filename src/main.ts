@@ -691,6 +691,17 @@ class Game {
     const b = this.state.buildings.find((x) => x.id === id);
     if (!b) return;
     if (on) {
+      // Cancelling a construction site is instant and irreversible — the site vanishes and only
+      // ~90% of the delivered materials come back — so it goes through the confirm bar rather than
+      // firing on the tap. A finished building's demolition is a reversible *mark*, so it does not.
+      if (!b.built && !b.razed) {
+        if (!canDemolish(this.state, b)) {
+          this.ui.flashHint('Your last barn has to stay standing');
+          return;
+        }
+        this.pendingDemolish = { kind: 'building', ids: [id], label: buildingName(b) };
+        return; // the confirm bar carries it out — see refreshConfirmBar / confirmDemolish
+      }
       if (!markDemolish(this.state, b)) {
         this.ui.flashHint('Your last barn has to stay standing');
         return;
@@ -901,17 +912,23 @@ class Game {
     if (target.kind === 'building') {
       let n = 0;
       let refused = 0;
+      let cancelled = 0; // construction sites, which vanish rather than being marked
       let last = '';
       for (const id of target.ids) {
         const b = this.state.buildings.find((x) => x.id === id);
         if (!b) continue;
         last = buildingName(b);
-        if (markDemolish(this.state, b)) n++;
-        else refused++;
+        const wasSite = !b.built && !b.razed;
+        if (markDemolish(this.state, b)) {
+          n++;
+          if (wasSite) cancelled++;
+        } else refused++;
       }
-      // Marked, not gone: builders have to come and pull it down. A construction site is the
-      // exception and vanishes on the spot — there is nothing standing to tear apart.
-      if (n === 1) this.ui.log(`${last} marked for demolition`, 'info');
+      // Marked, not gone: builders have to come and pull a finished building down. A construction
+      // site is the exception and vanishes on the spot — there is nothing standing to tear apart —
+      // so it reads as cancelled, not marked.
+      if (cancelled === n && n === 1) this.ui.log(`${last} construction cancelled`, 'info');
+      else if (n === 1) this.ui.log(`${last} marked for demolition`, 'info');
       else if (n > 1) this.ui.log(`${n} buildings marked for demolition`, 'info');
       if (refused > 0) this.ui.flashHint('Your last barn has to stay standing');
     } else {
@@ -1565,6 +1582,16 @@ class Game {
             .join(' ');
           controls.upgrade = { to: BUILDING_DEFS.stonehouse.name, cost };
         }
+      } else if (!b.razed) {
+        // An unfinished construction site: no walls to pull down, so the sheet offers to cancel it
+        // outright. `construction` swaps the button to "Cancel construction"; the click is routed
+        // through the confirm bar (see `setBuildingDemolish`) because the refund is only partial and
+        // the site vanishes at once — there is no undo once it is gone.
+        controls = {
+          ...controls,
+          buildingId: b.id,
+          demolish: { marked: false, blocked: !canDemolish(this.state, b), underway: false, construction: true },
+        };
       } else if (b.razed) {
         // Rubble: what is still to be carted off, and what happens to the plot afterwards.
         let left = 0;
@@ -2335,9 +2362,17 @@ class Game {
       return;
     }
     if (this.pendingDemolish) {
+      // A construction site is cancelled, not demolished — word the bar for what is actually about
+      // to happen (the site vanishes and most of its materials return) rather than "demolish".
+      const site =
+        this.pendingDemolish.kind === 'building' &&
+        this.pendingDemolish.ids.every((id) => {
+          const b = this.state.buildings.find((x) => x.id === id);
+          return b && !b.built && !b.razed;
+        });
       this.ui.showConfirm(
-        `Demolish ${this.pendingDemolish.label}?`,
-        'Demolish',
+        site ? `Cancel ${this.pendingDemolish.label}? Most materials refunded.` : `Demolish ${this.pendingDemolish.label}?`,
+        site ? 'Cancel build' : 'Demolish',
         () => this.confirmDemolish(),
         () => {
           this.pendingDemolish = null;

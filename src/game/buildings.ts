@@ -9,6 +9,7 @@ import {
   ResourceKind,
   TileType,
   REFUND_FRACTION,
+  CANCEL_REFUND_FRACTION,
   workRadiusOf,
   workCentre,
   footprintW,
@@ -337,14 +338,14 @@ export function canDemolish(s: GameState, b: Building): boolean {
  * Mark a building for demolition. Builders do the actual work — see `runBuilder`.
  *
  * A construction site is the exception: there is no structure to tear down, so cancelling one
- * takes it away at once and returns what has already been delivered to it. Returns false when the
- * building may not be demolished at all.
+ * takes it away at once and returns most of what has already been delivered to it (see
+ * `cancelConstruction`). Returns false when the building may not be demolished at all.
  */
 export function markDemolish(s: GameState, b: Building, upgradeTo?: BuildingType): boolean {
   if (!canDemolish(s, b)) return false;
   if (!b.built) {
     if (b.razed) return false; // already rubble; the haulers are on their way
-    demolishBuilding(s, b);
+    cancelConstruction(s, b);
     return true;
   }
   b.demolish = true;
@@ -427,12 +428,53 @@ export function clearRubble(s: GameState, b: Building): void {
 }
 
 /**
+ * Cancel an unfinished construction site outright, returning `CANCEL_REFUND_FRACTION` of the
+ * materials *already delivered* to it (rounded down) to the nearest storage. The rest is wastage.
+ *
+ * A site is not a structure: there are no walls to pull down over time, so — unlike a finished
+ * building's demolition, which builders carry out — this takes the site away on the spot. The
+ * refund is metered against what actually reached the site's store, never the full recipe, because
+ * only the delivered materials existed to lose. Any builder still hauling toward the site or
+ * standing on it simply finds no site next tick: `pickSite`/`nearestUnbuiltNeeding` stop offering
+ * it, so a carried load returns to a barn and the crew re-picks — the tasks cancel themselves once
+ * the site is gone. Pre-assigned staff and the plot's reachability are settled here.
+ *
+ * Only valid for a site that is still an open plot (`!built && !razed`).
+ */
+export function cancelConstruction(s: GameState, b: Building): void {
+  const at = { x: b.x + footprintW(b) / 2, y: b.y + footprintH(b) / 2 };
+  const idx = s.buildings.indexOf(b);
+  if (idx >= 0) s.buildings.splice(idx, 1); // remove first so its own space isn't a target
+  // Return most of what was delivered; the 10% not refunded is the wastage of undoing the work.
+  for (const k in b.store) {
+    const kind = k as ResourceKind;
+    const delivered = b.store[kind] ?? 0;
+    const refund = Math.floor(delivered * CANCEL_REFUND_FRACTION);
+    if (refund > 0) addNearest(s, at, kind, refund);
+  }
+  // Release any hands tied to the site. A plot has no residents and its builders are global rather
+  // than posted here, but a pre-staffed workplace carries a standing order — hand it back to the
+  // trade overflow (as `razeBuilding` does) so cancelling the site does not silently shrink the
+  // village's plans for that trade.
+  if (b.desiredWorkers > 0) {
+    const extras = (s.tradeExtra ??= {});
+    extras[b.type] = (extras[b.type] ?? 0) + b.desiredWorkers;
+    b.desiredWorkers = 0;
+  }
+  for (const c of s.citizens) {
+    if (c.jobId === b.id) c.jobId = null;
+    if (c.homeId === b.id) c.homeId = null;
+  }
+  s.navVersion = (s.navVersion ?? 0) + 1; // builders walked over the plot; routing is unchanged, but keep labels fresh
+}
+
+/**
  * Remove a building, returning REFUND_FRACTION of its build cost (rounded down) to
  * storage. A barn's own contents are spilled into the remaining barns first.
  *
- * This is the *instant* removal, which now only covers the cases where nothing is standing to be
- * torn down: cancelling a construction site, and a building lost to something other than a
- * demolition order. A player-ordered demolition of a finished building goes through
+ * This is the *instant* removal for a building lost to something other than a demolition order
+ * (nothing is standing to be torn down over time). A player cancelling a construction site goes
+ * through `cancelConstruction`; a player-ordered demolition of a finished building goes through
  * `markDemolish` and is carried out by builders.
  */
 export function demolishBuilding(s: GameState, b: Building): void {

@@ -2056,6 +2056,14 @@ export function carryLimit(kind: ResourceKind, volume: number = CARRY_VOLUME): n
 }
 export const REFUND_FRACTION = 0.25; // fraction of build cost reclaimed on demolish
 /**
+ * Fraction of the materials *already delivered* to a construction site that is returned when the
+ * player cancels it. Cancelling an unfinished site takes it away at once — unlike demolishing a
+ * finished building, which salvages `REFUND_FRACTION` of the whole build cost — so this is metered
+ * against what actually made it into the site's store, not the full recipe. The remainder is the
+ * wastage of tearing pegged-out work back up.
+ */
+export const CANCEL_REFUND_FRACTION = 0.9;
+/**
  * How often the HUD and any open panel are rebuilt, in milliseconds.
  *
  * Not once per animation frame: none of what they show — stock totals, worker counts, the season —

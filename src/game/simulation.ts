@@ -1964,7 +1964,12 @@ function pickSite(s: GameState, c: Citizen): SiteAction | null {
       action = kind ? { site: b, action: 'salvage', kind } : null;
     } else if (b.demolish) {
       action = { site: b, action: 'raze' };
-    } else if (!b.built) {
+    } else if (!b.built && footprintClear(s, b)) {
+      // The plot has to be cleared *before* materials are hauled in, not after: place → clear the
+      // trees / loose stone under the footprint → deliver materials → construct. Nothing is
+      // fetched to an obstructed site, so a load is never left sitting on a plot that still can't
+      // be built on. The free-adult workforce clears the footprint (see `markFootprintHarvest`);
+      // while anything stands on it this branch is skipped and the site simply waits.
       const cost = costOf(b);
       let fetchKind: ResourceKind | null = null;
       let fully = true;
@@ -1984,9 +1989,7 @@ function pickSite(s: GameState, c: Citizen): SiteAction | null {
       // everything short is already in transit (fetchKind null but not `fully`), there is nothing to
       // do here yet — the builder falls through to harvest/paths until the loads land.
       action = fully
-        ? footprintClear(s, b)
-          ? { site: b, action: 'build' }
-          : null
+        ? { site: b, action: 'build' }
         : fetchKind
           ? { site: b, action: 'fetch', kind: fetchKind }
           : null;
@@ -2328,6 +2331,9 @@ function nearestUnbuiltNeeding(s: GameState, c: Citizen, kind: ResourceKind): Bu
   let bestD = Infinity;
   for (const b of s.buildings) {
     if (b.built) continue;
+    // Don't carry materials onto a plot that still has to be cleared — the same "clear first, then
+    // deliver" rule `pickSite` follows when it decides to fetch.
+    if (!footprintClear(s, b)) continue;
     const cost = costOf(b);
     if ((b.store[kind] ?? 0) >= (cost[kind] ?? 0)) continue;
     const p = buildingApproach(s, b, c);

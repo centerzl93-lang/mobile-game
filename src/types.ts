@@ -2737,8 +2737,10 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
   silk: 8,
   // The fine bench's own goods — the most valuable things a town can make. Gold set in glass, and
   // dyed silk worked into a gown, each worth well more than the raw luxuries that went into it.
+  // Fine clothes are dear to make (a whole dye and two silk, all bought off a ship), so they must
+  // clear that cost by a real margin the way every other bench does — see the chain note below.
   finejewelry: 40,
-  fineclothes: 24,
+  fineclothes: 34,
   fruit: 1,
   grain: 1,
   corn: 1,
@@ -2814,11 +2816,14 @@ export const MERCHANT_CATEGORY_STOCK: Record<MerchantCategory, Partial<Record<Re
   foods: { grain: 160, corn: 120, potato: 120, fish: 140, beef: 80, venison: 60, mutton: 70, pork: 70, chicken: 70, milk: 90, eggs: 80 },
   goods: { tools: 60, clothing: 60, leather: 90, wool: 80, medicine: 40 },
   // The Port's holds are deeper than a river boat's — larger quantities, and the imported goods
-  // no village can make for itself.
+  // no village can make for itself. The luxury goods (gold/dye/silk) are the *only* feed for the
+  // fine benches, and the luxury fleet calls just once a year — so its hold has to be deep enough
+  // that a city can keep a fine bench busy on one visit, and the winter fleet carries a second,
+  // smaller top-up so the top of the chain is not starved for eleven months of the twelve.
   portgrain: { grain: 400, corn: 320, barley: 260, rice: 240 },
-  portluxury: { gold: 20, silk: 15, dye: 25 },
+  portluxury: { gold: 40, silk: 30, dye: 45 },
   portindustrial: { iron: 240, coal: 260, tools: 140 },
-  portgeneral: { medicine: 120, gold: 8, silk: 6, dye: 10, tools: 80 },
+  portgeneral: { medicine: 120, gold: 16, silk: 12, dye: 18, tools: 80 },
 };
 
 /** Label + emoji for each merchant category (shown in the trade UI header). */
@@ -2869,7 +2874,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     type: 'port', name: 'Port', emoji: '⚓', category: 'trade', w: 7, h: 5,
     cost: { wood: 100, stone: 100, iron: 40 }, jobs: 5, work: 260, builders: 3,
     requiresWaterFraction: 1 / 3,
-    desc: 'A deep-water quay: bigger traders, calling more reliably. Two of them can be put on a standing order to return in a season you name, so trade becomes something you can plan around rather than wait for.',
+    desc: 'A deep-water quay: bigger traders, calling more reliably, and the only source of gold, dye and silk. Its fleets keep a calendar — one to a season — so trade becomes something you can plan a year around rather than wait for.',
   },
   cathedral: {
     type: 'cathedral', name: 'Cathedral', emoji: '🕍', category: 'civic', w: 7, h: 7,
@@ -2879,7 +2884,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   luxury: {
     type: 'luxury', name: 'Luxury Workshop', emoji: '💎', category: 'resources', w: 5, h: 4,
     cost: { wood: 70, stone: 80, iron: 40 }, jobs: 3, work: 180, builders: 3,
-    desc: 'Glass from sand and coal, or jewellery from glass and iron — pick which bench is running. Jewellery is the most valuable thing a town can make, and the only reason anyone wants the grit a quarry brings up.',
+    desc: 'One bench at a time: glass from sand and coal, jewellery from glass and iron, or — with luxuries off a ship — fine jewellery from gold and glass and fine clothes from dye and silk. Jewellery is the reason anyone wants the grit a quarry brings up; the fine goods are the most valuable things a town can make.',
   },
   monument: {
     type: 'monument', name: 'Monument', emoji: '🗿', category: 'civic', w: 3, h: 3,

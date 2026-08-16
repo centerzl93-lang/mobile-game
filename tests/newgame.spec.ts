@@ -4119,7 +4119,7 @@ test.describe('sand, glass, jewellery and the harbour', () => {
     expect(out.fineClothInputs).toEqual([['dye', 1], ['silk', 2]]);
     // The most valuable things a town can make — dearer than the plain jewellery below them.
     expect(out.jewelVal).toBe(40);
-    expect(out.clothVal).toBe(24);
+    expect(out.clothVal).toBe(34);
   });
 
   test('fine clothes are worn like a coat, for less of the warmth', { tag: '@slow' }, async ({ page }) => {

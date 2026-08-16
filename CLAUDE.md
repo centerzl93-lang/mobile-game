@@ -221,8 +221,10 @@ The **Port** (city tier, deep-water quay, `requiresWaterFraction: 1/3`) adds **s
 fleets** on top of the river trade: four categories (`PORT_CATEGORIES` — grain / luxury / industrial /
 general), one bound to each season (`PORT_SEASON_MERCHANT`), each rolling `PORT_ARRIVAL_CHANCE` (0.7)
 to sail. Their holds are deeper than a river boat's, and they are the **only source of gold, dye and
-silk**. Two port posts can be put on a **standing order** to return in a named season, making trade
-plannable. `portTradeCount` / `stats.portTradeValue` tally port trade.
+silk** — the feed for the fine benches. The season→fleet binding is fixed (`PORT_SEASON_MERCHANT`),
+so the luxury fleet calls once a year (summer); the winter general fleet carries a smaller luxury
+top-up, and the `Harbour` panel shows the year's calendar (`portCalendar`) so a player can plan
+around it. `portTradeCount` / `stats.portTradeValue` tally port trade.
 
 ## Luxury economy
 
@@ -233,9 +235,10 @@ A production chain layered on the base economy:
   (glass + iron) → and the fine bench's `finejewelry` (gold + glass) and `fineclothes` (dyed silk).
 - The fine bench needs **imported** gold/dye/silk (port only). **Fine clothes double as a winter
   coat** (`FINE_CLOTHED_HEAT_FACTOR` — warmer than nothing, less than wool).
-- Value chain (`TRADE_VALUE`): sand 1 → glass 5 → jewelry 20 → fine jewelry 40; fine clothes 24.
-  The `LuxuryRecipe` union is deliberately open for the chain to grow (e.g. furniture) as another
-  bench, not a new building.
+- Value chain (`TRADE_VALUE`): sand 1 → glass 5 → jewelry 20 → fine jewelry 40; fine clothes 34.
+  Every bench multiplies value, fine clothes included (dye 6 + silk 16 in → 34 out), so no step is a
+  break-even chore. The `LuxuryRecipe` union is deliberately open for the chain to grow (e.g.
+  furniture) as another bench, not a new building.
 
 ## Achievement system
 

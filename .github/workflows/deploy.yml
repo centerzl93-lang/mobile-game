@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - claude/banished-ios-app-b4zott
   workflow_dispatch:
 
 # Allow the workflow to publish to Pages.

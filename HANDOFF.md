@@ -1,7 +1,9 @@
 # Session Handoff — Little Village (Village-Builder PWA)
 
 > Living doc. Update the **State** and **Next steps** sections at the end of each session.
-> Last updated: 2026-08-06 (worker counts, building price list + builder shifts, taller toolbar buttons,
+> Last updated: 2026-08-16 (repo cleanup: `main` made canonical, stale branches deleted,
+> workflow triggers narrowed to `main`, handoff branch notes refreshed).
+> Prior: 2026-08-06 (worker counts, building price list + builder shifts, taller toolbar buttons,
 > ages run 4x the calendar, the full herd model,
 > sheep/wool/mutton, larder-hauling collapse fixed, real Hard difficulty, low-stock warnings,
 > two-door barn, taller school; see Current State)
@@ -11,15 +13,16 @@
 Vite + vite-plugin-pwa, installable on iPhone, deployed to GitHub Pages.
 
 - **Repo:** `centerzl93-lang/mobile-game`
-- **Working branch:** `claude/banished-ios-app-b4zott` (only push here; don't open PRs unless
-  asked). Earlier sessions used `claude/game-opportunities-impl-8qxrqc` /
-  `claude/hud-workers-building-updates-32npee`; all share the same history.
-  **Push here specifically, whatever branch a session is told to develop on** — this is the only
-  non-`main` branch in the `branches:` trigger of *both* `.github/workflows/deploy.yml` and
-  `test.yml`, so it is the only one where a push actually deploys to Pages and runs CI. Work
-  pushed to a session-named branch is safe but invisible: no site update, no test run, no signal.
-  The footprint session was told to develop on `claude/banished-ios-handoff-ejj6dh` and the player
-  chose to publish from here instead of widening the triggers.
+- **Working branch:** `main` is the single canonical branch. It is the only branch in the
+  `branches:` trigger of *both* `.github/workflows/deploy.yml` and `test.yml`, so a push to `main`
+  is the only push that deploys to Pages and runs CI. Develop on a fresh `claude/…` session branch
+  and land it on `main` (PR, or a fast-forward merge) to publish — work that never reaches `main`
+  is safe but invisible: no site update, no test run, no signal.
+  *History:* earlier sessions pushed straight to `claude/banished-ios-app-b4zott` (and before it
+  `claude/game-opportunities-impl-8qxrqc` / `claude/hud-workers-building-updates-32npee`, all one
+  shared history). On 2026-08-16 that branch was fast-forwarded into `main` to make it canonical,
+  the stale branches were deleted, and the snapshot was preserved as the `backup/v0.1.0` branch and
+  the `v0.1.0-pre-canonical` tag.
 - **Asset rule:** CC0/permissive only — never any commercial game's copyrighted assets.
 
 ## Current State
@@ -1920,16 +1923,12 @@ Never put the model ID in commits/PRs/code/comments — chat replies only.
   renamed, update the repo name in lockstep or GitHub Pages breaks: `vite.config.ts` `BASE`,
   `playwright.config.ts` `BASE`, the two `.../mobile-game/` URLs in `README.md`, and the **Repo** line
   above. (Package name is already `little-village`.)
-- **Deploying from a session-named branch.** Each session is handed a fresh
+- **Deploying from a session-named branch (resolved 2026-08-16).** Each session is handed a fresh
   `claude/…` branch to develop on, and none of them is in the workflow triggers — so a push there
-  deploys nothing and tests nothing. Today the answer is "push to
-  `claude/banished-ios-app-b4zott` regardless" (see Project above), which works but quietly makes
-  the branch instruction a formality. The durable fixes, in rising order of commitment: add each
-  session branch to the two `branches:` lists as it is created; switch the triggers to a wildcard
-  (`claude/**`); or merge to `main` at the end of a session and let `main` be the thing that
-  deploys. Worth asking the player which they want rather than carrying the workaround forever.
-  Renaming the branches away from the "banished" string needs the same trigger edit, so the two
-  jobs are best done together.
+  deploys nothing and tests nothing. This was settled by taking the last of the durable fixes:
+  `main` is now the single canonical branch and the only trigger, and a session lands its work on
+  `main` (PR or fast-forward) to publish. The old workaround of pushing straight to
+  `claude/banished-ios-app-b4zott` is gone along with that branch.
 - **Per-crop designs:** `CROP_DESIGN` (color + reserved `model` slot) and the render hook in
   `drawFarm`/`makeFencedPlot` exist, but fields draw generically. Next step is real per-crop art at the
   hook, or a cheap first pass tinting the field by `cropDesign(crop).color` (~a couple of lines).

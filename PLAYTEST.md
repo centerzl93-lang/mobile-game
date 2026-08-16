@@ -1,0 +1,64 @@
+# PLAYTEST.md — known issues & status
+
+Known playtest issues, test flakiness, and open balance questions, with their current status. Every
+item here is real and sourced from the code, the test suite, or `HANDOFF.md` — nothing speculative.
+Balance items marked **needs-playtest** are deliberately *not* decided in code; they want real
+playthroughs (or a player call), not a guess.
+
+Status: 🔴 open · 🟡 mitigated / watching · 🟢 by-design (working as intended, flagged to watch) ·
+⚪ won't-fix (documented workaround) · 🔵 decision needed.
+
+---
+
+## Test stability
+
+| # | Issue | Status | Notes |
+|---|---|---|---|
+| T1 | **Path-confirm test flakes.** `tests/newgame.spec.ts` › "cancelling a drawn path clears it back to bare ground" (`@slow`) intermittently fails — `#confirm` bar not visible within the 5 s timeout. | 🔴 open | Camera/timing-sensitive. Passed on the identical tree in a prior run and on re-run; a re-run currently confirms it green. Top Phase-1 target — harden rather than re-run. |
+| T2 | **"Walking-budget" flakiness pattern.** A cluster of sim tests (household larders, trading-post stock order, mid-season merchant, breeding-without-housing) have each failed once in a full run and passed alone. | 🟡 mitigated | Root cause: a villager must *walk* somewhere within a step budget, which an unlucky random map breaks. Fix pattern: stand villagers where the work happens (`debugWorkSpot`) and count carried loads everywhere, not only in barns. Re-run a lone failure before believing it. |
+| T3 | **Headless 3D is ~2 fps**, so click-driven specs are slow and can burn their budget. | 🟡 mitigated | UI/menu specs run on `?2d&gfx=low`; only renderer-assertion specs stay in 3D. Keep new click-through specs on `?2d`. |
+
+## Simulation & survival
+
+| # | Issue | Status | Notes |
+|---|---|---|---|
+| S1 | **Fuel delivery, not supply.** With the barn fall-back removed, a household its hauler never reaches can freeze in winter beside a full barn. | 🟢 by-design | Made together with `CONSUMPTION_SLOWDOWN` 3 (3× the woodpile runway). If villagers freeze beside full barns, look at `stockLarder` / the hauler round — not the fuel stock. Watch in Phase 1. |
+| S2 | **Housing is the growth lever.** A couple needs a free house to form; grown children stay home until the player builds. | 🟢 by-design | Intended pacing. Watch that it reads as a clear "build houses" prompt, not as the village being stuck. |
+| S3 | **A house of only children gets no larder** (no adult to run errands), so those children eat from the barns via the normal fallback. | 🟢 by-design | Harmless today; would disappear if home assignment kept children with a parent. |
+
+## Balance (open questions — need playtesting/decision)
+
+| # | Question | Status | Lever |
+|---|---|---|---|
+| B1 | **Do the big buildings cost too little?** 8×8 quarry / 6×6 mine / 5×9 trading post kept their small-footprint costs. | 🔵 decision | One-line edits in `BUILDING_DEFS`. Counter-argument: the land is now the real cost (finding the clear tiles). |
+| B2 | **Work circles didn't grow with footprints** — big foraging buildings spend more of their circle on their own footprint, so yields sag a little. | 🔵 decision | A couple of lines in `workRadiusOf`, but it's a balance change wanting play. Fishing hut already handled via `dockDepth`. |
+| B3 | **`CONSUMPTION_SLOWDOWN` = 3** cut demand by two-thirds with no supply-side change — the village may now be *too* easy to feed/heat. | 🔵 needs-playtest | Newest and largest economy dial. |
+| B4 | **Difficulty is only a leg-up, not a ration** now (food/fuel/tools/coats identical across difficulties). Flattens the ladder. | 🔵 needs-playtest | If Normal must bite harder, adjust starting *materials* / `EASY_START_HOUSES`, not per-difficulty rations. |
+| B5 | Other moved dials wanting play: housing capacity (8/10), `HOUSE_LARDER_SEASONS` (0.5) + ×3 basket, the `SEASON_BURN` table, birth rates (`BIRTH_CHANCE` 0.5 + surplus/wellbeing). | 🔵 needs-playtest | Balance review (Phase 8). |
+
+## UI / rendering
+
+| # | Issue | Status | Notes |
+|---|---|---|---|
+| U1 | **Top-line HUD wraps to two rows** at 430px with the nine requested chips. | 🔵 decision | One row would need materially smaller chips or a horizontal scroll (which hides items on mobile). |
+| U2 | **Per-crop field art draws generically** — `CROP_DESIGN` has a distinct color + reserved `model` per crop, but fields render generic. | 🟡 planned | Scaffolding in place; next step is real art at the `drawFarm`/`makeFencedPlot` hook, or a cheap color tint first. (Phase 7) |
+| U3 | **3D ranch pen shows no live animal glyphs/count** (the 2D renderer does). | 🟡 minor | Cosmetic gap between renderers. (Phase 7) |
+| U4 | **Rotate-button direction.** Verified correct against the glyphs and covered by a test. | 🟢 by-design | If a player still wants it inverted after trying it, it's a one-line sign flip in `Game.rotateView` (+ the two rotate-suite assertions). |
+
+## Placement / world
+
+| # | Issue | Status | Notes |
+|---|---|---|---|
+| P1 | **Quarry placement reliability.** At 8×8 a big pit is hard to site on a small map; both quarry tests retry across up to 8 generated worlds to find a site. | 🟡 watching | If those start failing, the pit has outgrown the map (small maps went to 72 tiles a side to compensate) rather than the test going flaky. |
+| P2 | **Old saves keep tile positions but pick up new (larger) footprints**, so a pre-resize village can have overlapping buildings or a covered door. | ⚪ won't-fix | Documented workaround: start a new game. Same as the earlier quarry resize; no migration machinery for one save. Tell the player if they hit it. |
+
+## Housekeeping
+
+| # | Item | Status | Notes |
+|---|---|---|---|
+| H1 | **Repo rename** `mobile-game` → `little-village` (manual, GitHub Settings). | ⏳ pending (user) | *After* rename, update `vite.config.ts` `BASE`, `playwright.config.ts` `BASE`, `README.md` URLs, and the `HANDOFF.md` Repo line, or Pages breaks. Package name already `little-village`. (Phase 9) |
+
+---
+
+*Update the status column as issues are resolved or decided. Add a new row when a real issue is
+found in play — keep speculation out.*

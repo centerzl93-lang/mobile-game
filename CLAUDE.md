@@ -271,9 +271,22 @@ Saves are a version envelope `{ v, state }`:
 - **Two upgrade mechanisms**: numbered `MIGRATIONS` keyed by the version they upgrade *from* (walked
   in order), plus **load-time field defaults** for optional fields added without a version bump.
   Migrations must stay narrow and never reach for a live constant that might move (see the frozen
-  `LEGACY_BUILD_TIME` / `ageScale` / `workScale` rescalers).
-- Autosave writes the current slot on a cadence. Slot **names** are stored beside the save
-  (`…-name`), not inside it. Achievement unlocks are stored separately and are *not* part of a slot.
+  `LEGACY_BUILD_TIME` / `ageScale` / `workScale` rescalers). The legacy rescalers only fire when
+  their stamp field is absent, so `newGame` stamps **both** `ageScale` and `workScale` — a current
+  save must never be mistaken for a pre-rescale one, or its in-progress construction gets inflated.
+- **New fields get safe defaults, not holes.** `stats` is merged onto a fresh full `freshStats()` on
+  load (`mergeStats`), so a `VillageStats` field added later reads as a real `0`/`false`/`[]` on
+  every old save instead of turning to `NaN` at the next turnover. `limits` defaults to `{}`
+  (no caps). `nextId` is clamped past every existing id so a post-load spawn can't collide.
+- **Save-time guard.** `saveGame` refuses a structurally unsound state (`validState`) and returns a
+  boolean, so autosave can never overwrite a good save on disk with a half-built/corrupt one, and a
+  failed write (full/blocked storage) surfaces to the player instead of silently dropping saves.
+- **Transient fields are stripped on write** (the per-citizen nav cache, partial loads, and the
+  season-recomputed survival/clothing flags — `TRANSIENT_CITIZEN_FIELDS`), honouring their
+  "not saved" contract and keeping the blob small; all are rebuilt on the first tick after load.
+- Autosave writes the current slot every **5 minutes** (`AUTOSAVE_SECONDS`, real-clock). Manual
+  saves and the game-over write are immediate. Slot **names** are stored beside the save (`…-name`),
+  not inside it. Achievement unlocks are stored separately and are *not* part of a slot.
 
 ## UI architecture
 

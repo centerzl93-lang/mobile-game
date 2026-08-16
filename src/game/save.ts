@@ -1,11 +1,90 @@
 import {
   AGE_PER_YEAR,
   GameState, MAP_W, MAP_H, MapSize, setMapSize, CROPS, RANCH_MIN, ranchCapacity, EVENT_LOG_MAX,
-  isWorkplace, nextBuildingName, SEASON_LENGTH, Building,
+  isWorkplace, nextBuildingName, SEASON_LENGTH, Building, Citizen, VillageStats,
   buildWorkOf, BUILD_WORK_RATE, freshStats,
 } from '../types';
 import { randomName } from './names';
 import { newSeed } from './rng';
+
+/**
+ * Per-citizen fields the simulation rebuilds from scratch after a load and therefore has no reason
+ * to persist. Stripping them serves two ends: it honours the "Transient — not saved" contract each
+ * of these carries in `types.ts` (a plain `JSON.stringify` of the state would otherwise write them
+ * all), and it keeps the save small — the cached A* route arrays (`route`) are by far the largest
+ * avoidable weight in a city-sized village, and localStorage is a few megabytes for every slot put
+ * together. Everything here is recomputed on the first tick after load (`reconcileWorkers`,
+ * `assignHomesAndJobs`, `ensureNavLabels`) or refilled the next time it is needed, so dropping it
+ * costs a villager at most one partial load or one grace-timer reset.
+ */
+const TRANSIENT_CITIZEN_FIELDS: (keyof Citizen)[] = [
+  'pending', 'inside', 'clothed', 'starve', 'chill',
+  'builder', 'effort', 'workAt', 'rest', 'route', 'routeI', 'rdx', 'rdy',
+];
+
+/** A shallow copy of a citizen with the transient fields above removed. */
+function stripCitizen(c: Citizen): Citizen {
+  const copy = { ...c };
+  for (const k of TRANSIENT_CITIZEN_FIELDS) delete copy[k];
+  return copy;
+}
+
+/**
+ * Serialise a state into a save envelope, dropping the transient per-citizen fields.
+ *
+ * Only the `citizens` array is rebuilt (each entry shallow-copied without its transient keys); every
+ * other field — including the big `tiles`/`paths`/`harvest` arrays — is referenced as-is, so this is
+ * cheap even on the large map.
+ */
+function serialize(s: GameState): string {
+  const citizens = s.citizens.map(stripCitizen);
+  const envelope: SaveEnvelope = { v: VERSION, state: { ...s, citizens } };
+  return JSON.stringify(envelope);
+}
+
+/**
+ * Whether a state is structurally sound enough to write over an existing save.
+ *
+ * This is the guard that keeps autosave from replacing a good save with a half-built or corrupt one
+ * (a state caught mid-construction by a bug, or one whose arrays came out the wrong length). It is
+ * the same shape check `loadGame` applies on the way back in, run here on the way out so a state
+ * that could never load is never written in the first place. Lengths are checked against the state's
+ * own `w`/`h` rather than the module's live `MAP_W`/`MAP_H`, so it is correct regardless of which
+ * map size is currently active.
+ */
+function validState(s: GameState): boolean {
+  if (!s || typeof s.w !== 'number' || typeof s.h !== 'number') return false;
+  const n = s.w * s.h;
+  if (!Array.isArray(s.tiles) || s.tiles.length !== n) return false;
+  if (!Array.isArray(s.paths) || s.paths.length !== n) return false;
+  if (!Array.isArray(s.harvest) || s.harvest.length !== n) return false;
+  if (!Array.isArray(s.buildings) || !Array.isArray(s.citizens)) return false;
+  if (!s.merchant || typeof s.pathProgress !== 'number') return false;
+  if (typeof s.seed !== 'number' || typeof s.rng !== 'number') return false;
+  return true;
+}
+
+/**
+ * Merge a loaded (possibly older, possibly partial) stats object onto a fresh full one, so every
+ * `VillageStats` field is present with a sensible zero/false/empty default.
+ *
+ * This is the structural safety net for adding stats fields: `endSeason` advances peaks with
+ * `Math.max(st.field, v)` and counters with `st.field++`, and a field left `undefined` by an older
+ * save would turn to `NaN` on the first turnover and stay `NaN` forever — silently making the
+ * achievements that read it unwinnable. Starting from `freshStats()` and layering the saved values
+ * on top guarantees a field added later is a real `0`/`false`/`[]` on every existing save, not a
+ * hole. `produced` is merged one level down for the same reason.
+ */
+function mergeStats(saved: Partial<VillageStats> | undefined): VillageStats {
+  const base = freshStats();
+  if (!saved || typeof saved !== 'object') return base;
+  const produced = (saved.produced && typeof saved.produced === 'object')
+    ? { ...base.produced, ...saved.produced }
+    : base.produced;
+  const placedTypes = Array.isArray(saved.placedTypes) ? saved.placedTypes : base.placedTypes;
+  const builtTypes = Array.isArray(saved.builtTypes) ? saved.builtTypes : base.builtTypes;
+  return { ...base, ...saved, produced, placedTypes, builtTypes };
+}
 
 /**
  * Construction times as they were before builder-work replaced them, in the raw units the old
@@ -110,14 +189,23 @@ interface SaveEnvelope {
   state: GameState;
 }
 
-/** Persist a game to a slot (default slot 0) and remember it as the most recently used. */
-export function saveGame(s: GameState, slot = 0): void {
+/**
+ * Persist a game to a slot (default slot 0) and remember it as the most recently used.
+ *
+ * Returns whether the write actually happened, so a caller (autosave) can notice storage that has
+ * gone full or unavailable and tell the player, rather than silently dropping every save from here
+ * on. A structurally unsound state is refused **before** the write, so a transient bug that corrupts
+ * the in-memory state can never overwrite a good save on disk with an unloadable one.
+ */
+export function saveGame(s: GameState, slot = 0): boolean {
+  if (!validState(s)) return false;
   try {
-    const envelope: SaveEnvelope = { v: VERSION, state: s };
-    localStorage.setItem(slotKey(slot), JSON.stringify(envelope));
+    localStorage.setItem(slotKey(slot), serialize(s));
     setLastSlot(slot);
+    return true;
   } catch {
-    /* storage full or unavailable — ignore, game keeps running in memory */
+    /* storage full or unavailable — report it; the game keeps running in memory */
+    return false;
   }
 }
 
@@ -296,9 +384,45 @@ export function loadGame(slot = 0): GameState | null {
       if (typeof b.w !== 'number') b.w = RANCH_MIN;
       if (typeof b.h !== 'number') b.h = RANCH_MIN;
     }
+    // Lifetime tallies: layer whatever the save carries onto a fresh full set, so every field is
+    // present even on a save written before that field existed (see `mergeStats`). The v13→v14
+    // migration seeds one when there is none at all; this backfills any fields added since.
+    s.stats = mergeStats(s.stats);
+    // Stockpile caps default to "no limits" (an empty table) when absent — the same thing 0 means
+    // per key — so a save from before caps existed keeps running everything flat out, unchanged.
+    if (!s.limits || typeof s.limits !== 'object') s.limits = {};
+    // Keep the id counter ahead of every id already in the save, so the next villager or building
+    // spawned after a load can never collide with an existing one (a collision wedges households
+    // and logistics, which key off ids). Harmless when the save is already consistent.
+    let maxId = 0;
+    for (const b of s.buildings) if (b.id > maxId) maxId = b.id;
+    for (const c of s.citizens) if (c.id > maxId) maxId = c.id;
+    if (typeof s.nextId !== 'number' || s.nextId <= maxId) s.nextId = maxId + 1;
     return s;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Test/debug only: the raw stored envelope bytes for a slot, straight from storage with no
+ * migration applied. Paired with `writeRawSlot` so a test can read a real save, downgrade it to an
+ * older format, and put it back to exercise the migration path.
+ */
+export function rawSlot(slot = 0): string | null {
+  try {
+    return localStorage.getItem(slotKey(slot));
+  } catch {
+    return null;
+  }
+}
+
+/** Test/debug only: overwrite a slot's raw stored bytes (e.g. to inject an older-format save). */
+export function writeRawSlot(slot: number, raw: string): void {
+  try {
+    localStorage.setItem(slotKey(slot), raw);
+  } catch {
+    /* ignore */
   }
 }
 

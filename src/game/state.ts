@@ -36,6 +36,7 @@ import {
   CHILD_MIN_AGE,
   ADULT_AGE,
   AGE_PER_YEAR,
+  BUILD_WORK_RATE,
   freshStats,
 } from '../types';
 import { generateWorld, findStartTile, getTile, emptyPaths, emptyHarvest, clearStartArea } from './world';
@@ -146,6 +147,11 @@ export function newGame(
     // player edits these in the stockpile panel and two villages must not move together.
     limits: { ...START_LIMITS[difficulty] },
     ageScale: AGE_PER_YEAR,
+    // Stamp the construction scale the same way `ageScale` is stamped, so the loader knows this save
+    // already counts builder-work and never runs the legacy seconds→work rescaler over it. Without
+    // this, the first save/load of any new game would rescale every in-progress site's `progress`
+    // as if it were old-style seconds, inflating construction that is genuinely current.
+    workScale: BUILD_WORK_RATE,
     seed: worldSeed,
     rng: roll.rng,
     stats: freshStats(),

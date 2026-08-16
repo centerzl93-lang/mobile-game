@@ -169,7 +169,7 @@ import {
   isSpanTier, spanLine, routePath, unplanTiles, demolishPathRect, pathSpeedMult,
   markPathRaze, isRazing, dropPathRaze,
 } from './game/paths';
-import { saveGame, loadGame, hasSave, clearSave, slotInfo, slotName, setSlotName, lastSlot, SLOTS } from './game/save';
+import { saveGame, loadGame, hasSave, clearSave, slotInfo, slotName, setSlotName, lastSlot, SLOTS, rawSlot, writeRawSlot } from './game/save';
 import {
   ACHIEVEMENTS,
   ACHIEVEMENT_COUNT,
@@ -197,6 +197,15 @@ const SPEEDS = [1, 2, 3];
  * travel is legible: a discrete jump teleports the scene and reads as an arbitrary flip.
  */
 const ROTATE_SPEED = Math.PI / 4;
+
+/**
+ * How often autosave writes the current slot, in real seconds. Five minutes: frequent enough that a
+ * closed tab loses little, infrequent enough that it is not rewriting a multi-megabyte blob every
+ * few seconds on the large map. Counted on the real clock (`saveAccum`), not the sim clock, so it is
+ * the same wall-clock cadence at any game speed. Manual saves and the game-over write are separate
+ * and immediate.
+ */
+const AUTOSAVE_SECONDS = 300;
 
 class Game {
   canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -1074,8 +1083,8 @@ class Game {
           this.continueGame(slot);
         } else {
           this.currentSlot = slot;
-          this.persist();
-          this.ui.flashHint(`Saved to ${label(slot)}`);
+          const ok = this.persist();
+          this.ui.flashHint(ok ? `Saved to ${label(slot)}` : 'Could not save — storage may be full');
           this.openPauseMenu();
         }
       },
@@ -1878,9 +1887,15 @@ class Game {
    * `RESOURCE_ICON` is a `Record<ResourceKind, …>` the compiler will not let you leave short. A
    * kind in the second and not the first is invisible in game and perfectly typed.
    */
-  /** Debug/testing helper: write the current village to a slot, as autosave does. */
-  debugSaveSlot(slot = 0): void {
-    saveGame(this.state, slot);
+  /** Debug/testing helper: write the current village to a slot, as autosave does. Returns whether
+   * the write happened (false when the state is unsound or storage refused it). */
+  debugSaveSlot(slot = 0): boolean {
+    return saveGame(this.state, slot);
+  }
+
+  /** Debug/testing helper: the autosave cadence in seconds, so a test can pin the interval. */
+  debugAutosaveSeconds(): number {
+    return AUTOSAVE_SECONDS;
   }
 
   /** Debug/testing helper: load a slot through the same path Continue uses. */
@@ -1890,6 +1905,16 @@ class Game {
     this.currentSlot = slot;
     this.state = saved;
     return true;
+  }
+
+  /** Debug/testing helper: the raw stored bytes for a slot (no migration), for save-format tests. */
+  debugRawSlot(slot = 0): string | null {
+    return rawSlot(slot);
+  }
+
+  /** Debug/testing helper: overwrite a slot's raw bytes, e.g. to inject an older-format save. */
+  debugWriteRawSlot(slot: number, raw: string): void {
+    writeRawSlot(slot, raw);
   }
 
   debugResourceLists(): { listed: string[]; all: string[] } {
@@ -2054,8 +2079,8 @@ class Game {
   }
 
   /** Debug/testing helpers: round-trip the village through storage. */
-  debugSave(): void {
-    saveGame(this.state, this.currentSlot);
+  debugSave(): boolean {
+    return saveGame(this.state, this.currentSlot);
   }
   debugLoad(): boolean {
     const loaded = loadGame(this.currentSlot);
@@ -2384,8 +2409,19 @@ class Game {
     this.ui.hideConfirm();
   }
 
-  private persist(): void {
-    saveGame(this.state, this.currentSlot);
+  /** Latched so the "can't save" warning fires once when saving breaks, not on every attempt. */
+  private saveFailed = false;
+
+  private persist(): boolean {
+    const ok = saveGame(this.state, this.currentSlot);
+    if (!ok && !this.saveFailed) {
+      this.saveFailed = true;
+      this.log('Could not save your village — storage may be full. Progress is not being saved.', 'bad');
+    } else if (ok && this.saveFailed) {
+      this.saveFailed = false;
+      this.log('Saving is working again — your village is being saved.', 'good');
+    }
+    return ok;
   }
 
   /**
@@ -2436,7 +2472,7 @@ class Game {
       const wasOver = this.state.gameOver;
       update(this.state, scaled, this.log);
       this.saveAccum += dt;
-      if (this.saveAccum > 5) {
+      if (this.saveAccum > AUTOSAVE_SECONDS) {
         this.saveAccum = 0;
         this.persist();
       }

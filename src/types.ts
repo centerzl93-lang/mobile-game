@@ -839,13 +839,6 @@ export interface Citizen {
    */
   clothed?: boolean;
   /**
-   * The coat they got was a fine gown (dyed silk), not a proper wool one. Worn all the same, and
-   * it keeps winter illness off exactly as a plain coat does — but it holds less heat in, so a
-   * fine-clad villager saves less fuel (see `FINE_CLOTHED_HEAT_FACTOR`). Transient, like `clothed`:
-   * only set when `clothed` is, recomputed each season, never saved.
-   */
-  fineclothed?: boolean;
-  /**
    * Seconds this villager has gone unfed. Death comes at STARVE_SECONDS, so a short gap while a
    * hauler restocks the larder is survivable. Transient — not saved.
    */
@@ -2289,13 +2282,6 @@ export const SEASON_BURN: Record<Season, number> = {
  * means less fuel burned, so clothing production pays for itself twice over.
  */
 export const CLOTHED_HEAT_FACTOR = 0.75;
-/**
- * The same multiplier for a villager whose coat this winter was a fine gown rather than a proper
- * one. Fine clothes are a showpiece, cut for the look of the thing, so they keep less of the cold
- * out — halfway between a plain coat and none at all. They still ward off winter illness (a gown
- * is a garment); they simply save less fuel than wool would.
- */
-export const FINE_CLOTHED_HEAT_FACTOR = 0.88;
 
 // ---- Household larders (villagers keep their own supplies at home) ----
 /**
@@ -2735,10 +2721,10 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
   gold: 10,
   dye: 6,
   silk: 8,
-  // The fine bench's own goods — the most valuable things a town can make. Gold set in glass, and
-  // dyed silk worked into a gown, each worth well more than the raw luxuries that went into it.
-  // Fine clothes are dear to make (a whole dye and two silk, all bought off a ship), so they must
-  // clear that cost by a real margin the way every other bench does — see the chain note below.
+  // The fine bench's own goods — the most valuable things a town can make. A finished jewel reset
+  // with gold, and dyed silk worked into a gown, each worth well more than what went into it. Fine
+  // clothes are dear to make (a whole dye and two silk, all bought off a ship), so they must clear
+  // that cost by a real margin the way every other bench does — see the chain note below.
   finejewelry: 40,
   fineclothes: 34,
   fruit: 1,
@@ -2884,7 +2870,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   luxury: {
     type: 'luxury', name: 'Luxury Workshop', emoji: '💎', category: 'resources', w: 5, h: 4,
     cost: { wood: 70, stone: 80, iron: 40 }, jobs: 3, work: 180, builders: 3,
-    desc: 'One bench at a time: glass from sand and coal, jewellery from glass and iron, or — with luxuries off a ship — fine jewellery from gold and glass and fine clothes from dye and silk. Jewellery is the reason anyone wants the grit a quarry brings up; the fine goods are the most valuable things a town can make.',
+    desc: 'One bench at a time: glass from sand and coal, jewellery from glass and iron, or — with luxuries off a ship — fine jewellery from jewellery and gold, and fine clothes from dye and silk. Jewellery is the reason anyone wants the grit a quarry brings up; the fine goods are the most valuable things a town can make, and are only ever sold, never worn.',
   },
   monument: {
     type: 'monument', name: 'Monument', emoji: '🗿', category: 'civic', w: 3, h: 3,

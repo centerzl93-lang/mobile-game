@@ -44,8 +44,6 @@ import {
   MERCHANT_CATEGORY_STOCK,
   MerchantCategory,
   TRADE_VALUE,
-  CLOTHED_HEAT_FACTOR,
-  FINE_CLOTHED_HEAT_FACTOR,
   Season,
   SEASONS,
   CONGREGATION_PER_PRIEST,
@@ -1386,7 +1384,7 @@ class Game {
           const bench: Record<LuxuryRecipe, string> = {
             glass: '🔷 glass, from sand and coal',
             jewelry: '💍 jewellery, from glass and iron',
-            finejewelry: '👑 fine jewellery, from gold and glass',
+            finejewelry: '👑 fine jewellery, from jewellery and gold',
             fineclothes: '👗 fine clothes, from dye and silk',
           };
           rows.push({ label: 'At the bench', value: bench[(b.recipe as LuxuryRecipe) ?? 'glass'] });
@@ -2001,11 +1999,6 @@ class Game {
   /** Debug/testing helper: what a resource is worth in trade. */
   debugTradeValue(kind: ResourceKind): number {
     return TRADE_VALUE[kind];
-  }
-
-  /** Debug/testing helper: the winter-fuel multiplier for a coat — plain, or the weaker fine kind. */
-  debugClothFactor(fine: boolean): number {
-    return fine ? FINE_CLOTHED_HEAT_FACTOR : CLOTHED_HEAT_FACTOR;
   }
 
   /** Debug/testing helper: every stockpile the limits panel offers a cap on. */

@@ -232,9 +232,10 @@ A production chain layered on the base economy:
 
 - A **Quarry** yields `sand` on `QUARRY_SAND_SHARE` (0.22) of its loads (instead of stone that trip).
 - The **Luxury Workshop** runs one `LuxuryRecipe` bench at a time: `glass` (sand + coal) → `jewelry`
-  (glass + iron) → and the fine bench's `finejewelry` (gold + glass) and `fineclothes` (dyed silk).
-- The fine bench needs **imported** gold/dye/silk (port only). **Fine clothes double as a winter
-  coat** (`FINE_CLOTHED_HEAT_FACTOR` — warmer than nothing, less than wool).
+  (glass + iron) → and the fine bench's `finejewelry` (jewelry + gold) and `fineclothes` (dyed silk).
+- The fine bench needs **imported** gold/dye/silk (port only). The fine goods are **export-only** —
+  `finejewelry` and `fineclothes` are made to sell, never consumed by the village (a villager's only
+  winter coat is a wool one; fine clothes are not eligible to wear).
 - Value chain (`TRADE_VALUE`): sand 1 → glass 5 → jewelry 20 → fine jewelry 40; fine clothes 34.
   Every bench multiplies value, fine clothes included (dye 6 + silk 16 in → 34 out), so no step is a
   break-even chore. The `LuxuryRecipe` union is deliberately open for the chain to grow (e.g.

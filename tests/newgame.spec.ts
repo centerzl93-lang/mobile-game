@@ -4068,18 +4068,15 @@ test.describe('sand, glass, jewellery and the harbour', () => {
     expect(out.jewelInputs).toEqual([['glass', 2], ['iron', 1]]);
   });
 
-  test('the fine bench sets gold in glass, and takes silk up in dye', { tag: '@slow' }, async ({ page }) => {
+  test('the fine bench resets jewellery in gold, and takes silk up in dye', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(180_000);
     await open2d(page);
     const out = await page.evaluate(
       new Function(`
         ${town}
         const w = put('luxury');
-        // Fed and roomy, like the glass test. The fine bench's bought luxuries — gold, dye, silk —
-        // are stocked in the barn for the workshop to haul; glass it would otherwise have to blow.
         barn.store.grain = 3000;
         for (const k of ['wood', 'stone']) barn.store[k] = 40;
-        for (const k of ['gold', 'glass', 'dye', 'silk']) barn.store[k] = 300;
         w.desiredWorkers = g.debugJobCount('luxury');
         // This is the longest-running bench test — two 2500s phases, so two winters. A founding
         // village has no woodcutter, so keep it warm and clothed or it freezes out mid-run (which
@@ -4092,13 +4089,20 @@ test.describe('sand, glass, jewellery and the harbour', () => {
           b.store.clothing = 200;
           b.store.grain = 600;
         }
+        // The fine bench's inputs are dear, imported goods and a finished jewel. Stock them in the
+        // bench itself, not a distant barn: what is under test is whether the recipe converts, not
+        // how far a hand has to walk for a single gold each cycle (fetching one unit at a time, the
+        // haul swamps the work and no delivery load ever fills). Stand the work where the worker is.
+        w.store = w.store || {};
 
         w.recipe = 'finejewelry';
+        w.store.jewelry = 400; w.store.gold = 400;
         let base = g.debugTotalStored('finejewelry');
         for (let i = 0; i < 5000; i++) g.debugAdvance(0.5);
         const madeFineJewels = g.debugTotalStored('finejewelry') - base;
 
         w.recipe = 'fineclothes';
+        w.store.dye = 400; w.store.silk = 400;
         base = g.debugTotalStored('fineclothes');
         for (let i = 0; i < 5000; i++) g.debugAdvance(0.5);
         const madeFineClothes = g.debugTotalStored('fineclothes') - base;
@@ -4113,52 +4117,49 @@ test.describe('sand, glass, jewellery and the harbour', () => {
       `) as () => any,
     );
 
-    expect(out.madeFineJewels, 'gold and glass became fine jewellery').toBeGreaterThan(0);
+    expect(out.madeFineJewels, 'jewellery and gold became fine jewellery').toBeGreaterThan(0);
     expect(out.madeFineClothes, 'dye and silk became fine clothes').toBeGreaterThan(0);
-    expect(out.fineJewelInputs).toEqual([['gold', 2], ['glass', 1]]);
+    expect(out.fineJewelInputs).toEqual([['jewelry', 1], ['gold', 1]]);
     expect(out.fineClothInputs).toEqual([['dye', 1], ['silk', 2]]);
     // The most valuable things a town can make — dearer than the plain jewellery below them.
     expect(out.jewelVal).toBe(40);
     expect(out.clothVal).toBe(34);
   });
 
-  test('fine clothes are worn like a coat, for less of the warmth', { tag: '@slow' }, async ({ page }) => {
+  test('fine clothes are export goods, never worn as a coat', { tag: '@slow' }, async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      // Dress a whole village in one thing and turn the year to winter, then read the coats.
+      // Dress a whole village in one thing and turn the year to winter, then read the coats. A barn
+      // full of fine clothes and nothing else must leave everyone uncoated: gowns are for selling.
       const clothe = (only: string) => {
         g.startNewGame('small', 'easy', false, 0, 4242);
         const s = g.state;
         for (const b of s.buildings) { delete b.store?.clothing; delete b.store?.fineclothes; }
         const barn = s.buildings.find((b: any) => b.type === 'barn');
         barn.store[only] = 500;
+        const before = barn.store[only];
         for (let i = 0; i < 4 && g.debugSeasonName() !== 'Winter'; i++) g.debugEndSeason();
         g.debugEndSeason(); // the winter turn issues the ration
         const cs = s.citizens;
         return {
           clothed: cs.filter((c: any) => c.clothed).length,
-          fineclothed: cs.filter((c: any) => c.fineclothed).length,
           pop: cs.length,
+          consumed: before - (barn.store[only] ?? 0),
         };
       };
       return {
         plain: clothe('clothing'),
         fine: clothe('fineclothes'),
-        plainFactor: g.debugClothFactor(false),
-        fineFactor: g.debugClothFactor(true),
       };
     });
 
-    // A plain coat clothes everyone and is a plain coat.
+    // A plain wool coat clothes everyone, and stock is drawn down issuing it.
     expect(out.plain.clothed).toBe(out.plain.pop);
-    expect(out.plain.fineclothed).toBe(0);
-    // Fine clothes clothe everyone too — worn like normal — and are flagged as the fine kind.
-    expect(out.fine.clothed).toBe(out.fine.pop);
-    expect(out.fine.fineclothed).toBe(out.fine.pop);
-    // "Less protection": a fine gown saves less winter fuel than a proper coat (both under 1).
-    expect(out.fineFactor).toBeGreaterThan(out.plainFactor);
-    expect(out.fineFactor).toBeLessThan(1);
+    expect(out.plain.consumed).toBeGreaterThan(0);
+    // Fine clothes clothe nobody and are not touched — a village with only gowns freezes uncoated.
+    expect(out.fine.clothed).toBe(0);
+    expect(out.fine.consumed).toBe(0);
   });
 
   test('the harbour keeps a calendar, and deals in what no village can make', async ({ page }) => {

@@ -195,7 +195,6 @@ import {
   BuildingType,
   SEASON_BURN,
   CLOTHED_HEAT_FACTOR,
-  FINE_CLOTHED_HEAT_FACTOR,
   isAdult,
   isFireproof,
   freshStats,
@@ -276,10 +275,11 @@ const TAILOR_LEATHER_IN = 5, TAILOR_WOOL_IN = 4, TAILOR_OUT = 4;
 // an iron make one piece of jewellery.
 const LUX_GLASS_SAND = 2, LUX_GLASS_COAL = 1, LUX_GLASS_OUT = 2;
 const LUX_JEWEL_GLASS = 2, LUX_JEWEL_IRON = 1, LUX_JEWEL_OUT = 1;
-// The fine bench: gold set in glass, and dyed silk worked into a gown. Both take two of a
-// bought luxury and one of a town-made good, and yield a single piece a cycle — dear to run and
-// worth it, since a merchant pays more for one than for anything else the town can make.
-const LUX_FINEJEWEL_GOLD = 2, LUX_FINEJEWEL_GLASS = 1, LUX_FINEJEWEL_OUT = 1;
+// The fine bench: a finished jewel reset with imported gold, and dyed silk worked into a gown.
+// Each yields a single piece a cycle — dear to run and worth it, since a merchant pays more for one
+// than for anything else the town can make. Fine jewellery takes a whole piece of jewellery (itself
+// the top of the base chain) and the gold to mount it, so it sits one clean step above jewellery.
+const LUX_FINEJEWEL_JEWELRY = 1, LUX_FINEJEWEL_GOLD = 1, LUX_FINEJEWEL_OUT = 1;
 const LUX_FINECLOTH_DYE = 1, LUX_FINECLOTH_SILK = 2, LUX_FINECLOTH_OUT = 1;
 
 const ARRIVE = 0.25; // tile distance considered "arrived"
@@ -439,8 +439,9 @@ function heat(s: GameState, dt: number, log: LogFn): void {
   for (const c of s.citizens) {
     const home = c.homeId !== null ? homeById.get(c.homeId) : undefined;
     const stoneFactor = home?.type === 'stonehouse' ? STONE_HOUSE_HEAT_FACTOR : 1;
-    // A fine gown saves less than a proper coat — see `FINE_CLOTHED_HEAT_FACTOR`.
-    const clothFactor = c.clothed ? (c.fineclothed ? FINE_CLOTHED_HEAT_FACTOR : CLOTHED_HEAT_FACTOR) : 1;
+    // A wool coat saves fuel; nothing else does. Fine clothes are never worn (they are export
+    // goods), so the only two states left are coated and not.
+    const clothFactor = c.clothed ? CLOTHED_HEAT_FACTOR : 1;
     let need = HEAT_PER_CITIZEN_WINTER * rate * stoneFactor * clothFactor; // heat units
     // Fuel is burned where it is kept: in the hearth of the house the villager lives in. A housed
     // villager has no fall-back to the village fuel pile — a barn is a woodshed, not a fire, and
@@ -1242,7 +1243,7 @@ function converterInputs(b: Building): [ResourceKind, number][] {
         case 'jewelry':
           return [['glass', LUX_JEWEL_GLASS], ['iron', LUX_JEWEL_IRON]];
         case 'finejewelry':
-          return [['gold', LUX_FINEJEWEL_GOLD], ['glass', LUX_FINEJEWEL_GLASS]];
+          return [['jewelry', LUX_FINEJEWEL_JEWELRY], ['gold', LUX_FINEJEWEL_GOLD]];
         case 'fineclothes':
           return [['dye', LUX_FINECLOTH_DYE], ['silk', LUX_FINECLOTH_SILK]];
         default:
@@ -1837,15 +1838,15 @@ function workOutput(
       return consumeStore(b, [['iron', SMITH_IRON_IN]]) ? { kind: 'tools', amount: SMITH_IRON_OUT * tf } : null;
     case 'luxury':
       // Four benches, one workshop. Glass is the first step, jewellery the second, and the two
-      // fine goods are the top of the chain — gold set in glass, and dyed silk. A town with one
-      // workshop chooses which bench it is running; several can run several.
+      // fine goods are the top of the chain — jewellery reset with gold, and dyed silk. A town with
+      // one workshop chooses which bench it is running; several can run several.
       switch (b.recipe) {
         case 'jewelry':
           return consumeStore(b, [['glass', LUX_JEWEL_GLASS], ['iron', LUX_JEWEL_IRON]])
             ? { kind: 'jewelry', amount: LUX_JEWEL_OUT * tf }
             : null;
         case 'finejewelry':
-          return consumeStore(b, [['gold', LUX_FINEJEWEL_GOLD], ['glass', LUX_FINEJEWEL_GLASS]])
+          return consumeStore(b, [['jewelry', LUX_FINEJEWEL_JEWELRY], ['gold', LUX_FINEJEWEL_GOLD]])
             ? { kind: 'finejewelry', amount: LUX_FINEJEWEL_OUT * tf }
             : null;
         case 'fineclothes':
@@ -2691,28 +2692,10 @@ function endSeason(s: GameState, log: LogFn): void {
         }
       }
       if (need > 0) need = consume(s, 'clothing', need);
-      // A proper wool coat comes first. Fine clothes make up any shortfall — a village that runs
-      // its fine bench can dress its people in gowns when the tailor falls behind. They are still
-      // a garment, so they ward the winter illness off just the same; they only hold less heat in,
-      // which the fuel bill above reads through `c.fineclothed`.
-      let wornFine = false;
-      if (need > 0.001) {
-        if (home) {
-          const fromLarder = Math.min(need, home.store['fineclothes'] ?? 0);
-          if (fromLarder > 0) {
-            takeFromLarder(s, home, 'fineclothes', fromLarder);
-            need -= fromLarder;
-            wornFine = true;
-          }
-        }
-        if (need > 0.001) {
-          const before = need;
-          need = consume(s, 'fineclothes', need);
-          if (need < before - 0.001) wornFine = true;
-        }
-      }
+      // Only a proper wool coat clothes a villager. Fine clothes are a showpiece the town makes to
+      // sell, never to wear — a gown does not go into the winter press, so a village short of coats
+      // stays cold no matter how many fine clothes sit in its barns.
       c.clothed = need <= 0.001;
-      c.fineclothed = c.clothed && wornFine;
     }
 
     // Going without a coat no longer kills. A villager the fire keeps warm survives the winter

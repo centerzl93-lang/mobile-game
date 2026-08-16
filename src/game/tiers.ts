@@ -1,7 +1,7 @@
 /**
  * How far along a village is, and what that lets it build.
  *
- * A village passes through four tiers. Each one asks for a population, for certain trades to be
+ * A village passes through five tiers. Each one asks for a population, for certain trades to be
  * standing, and — at the top — for a body of schooled adults; each one opens a block of buildings
  * and roadworks. The point is pacing: a founding settlement should not be able to lay out a market
  * square, and the way to a Town Hall should run through a blacksmith and a tailor.
@@ -32,13 +32,21 @@ export interface TierReq {
 }
 
 export const TIER_META: Record<VillageTier, TierReq> = {
+  // Settlement: just staying alive — no gate at all, the tier a village is born into.
   settlement: { name: 'Settlement', emoji: '🏕️', pop: 0, needs: [] },
+  // Hamlet: the first infrastructure. A woodcutter standing at the founding camp, and twenty
+  // souls to work the stone and metal the tier opens.
   hamlet: { name: 'Hamlet', emoji: '🏘️', pop: 20, needs: ['woodcutter'] },
-  village: { name: 'Village', emoji: '🏞️', pop: 50, needs: ['blacksmith', 'tailor'] },
+  // Village: self-sufficient. Metal and cloth of its own, and — the tier's own step — food it
+  // grows and raises rather than forages, so a field and a ranch join the two trades.
+  village: { name: 'Village', emoji: '🏞️', pop: 50, needs: ['blacksmith', 'tailor', 'farm', 'ranch'] },
+  // Town: an advanced society — a hall to govern from, a post to trade through, and a body of
+  // schooled adults to run it.
   town: { name: 'Town', emoji: '🏙️', pop: 100, needs: ['townhall', 'trading'], educated: 40 },
-  // A city is a town that built out what the town tier opened: twice the people, and the two
-  // buildings that most say a place has arrived.
-  city: { name: 'City', emoji: '🌆', pop: 200, needs: ['university', 'cathedral'] },
+  // City: a town that built out what the town tier opened — twice the people, its learning and
+  // faith crowned by a university and a cathedral, and a luxury workshop turning out fine goods.
+  // The port a city unlocks is *reach*, not a gate: a city is a city before a single fleet calls.
+  city: { name: 'City', emoji: '🌆', pop: 200, needs: ['university', 'cathedral', 'luxury'] },
 };
 
 /**
@@ -59,7 +67,9 @@ export const BUILDING_TIER: Record<BuildingType, VillageTier> = {
   fishing: 'settlement',
   herbalist: 'settlement',
   well: 'settlement',
-  // Hamlet: stone and metal — quarrying, mining, and the trades that work what they bring back.
+  // Hamlet: the resource infrastructure. Quarrying and mining, the trades that work what they
+  // bring back, and the farmland and pens that let a growing hamlet grow its own food — so that
+  // by the time it is a Village it is feeding itself.
   quarry: 'hamlet',
   mine: 'hamlet',
   blacksmith: 'hamlet',
@@ -67,8 +77,9 @@ export const BUILDING_TIER: Record<BuildingType, VillageTier> = {
   stonehouse: 'hamlet',
   shelter: 'hamlet',
   cemetery: 'hamlet',
-  // Village: the institutions. Somewhere to govern, worship, heal, learn, trade and drink, and
-  // the farmland that feeds a place too big to forage.
+  ranch: 'hamlet',
+  farm: 'hamlet',
+  // Village: the institutions. Somewhere to govern, worship, heal, learn, trade and drink.
   townhall: 'village',
   chapel: 'village',
   hospital: 'village',
@@ -76,8 +87,6 @@ export const BUILDING_TIER: Record<BuildingType, VillageTier> = {
   market: 'village',
   tavern: 'village',
   trading: 'village',
-  ranch: 'village',
-  farm: 'village',
   // Town: what a place stops being a village to build. Learning past school, deep water, houses
   // for people with money, a church for thousands, fine goods, and stone raised for pride alone.
   university: 'town',

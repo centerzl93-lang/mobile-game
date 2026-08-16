@@ -4499,7 +4499,10 @@ test.describe('a village climbs through tiers', () => {
       note('fifty, but no trades');
       const smith = put('blacksmith');
       put('tailor');
-      note('fifty with both trades');
+      note('fifty with both trades, but no farmland');
+      put('farm');
+      put('ranch');
+      note('fifty, self-sufficient');
       // Now take it away again: the tier reads the village as it stands.
       smith.built = false;
       note('the blacksmith is a building site again');
@@ -4516,10 +4519,89 @@ test.describe('a village climbs through tiers', () => {
     expect(at('woodcutter, too few people'), 'a trade alone is not a hamlet').toBe('settlement');
     expect(at('twenty with a woodcutter'), 'twenty people and a woodcutter is').toBe('hamlet');
     expect(at('fifty, but no trades'), 'numbers alone do not make a village').toBe('hamlet');
-    expect(at('fifty with both trades'), 'a blacksmith and a tailor do').toBe('village');
+    expect(at('fifty with both trades, but no farmland'), 'trades without grown food are still a hamlet').toBe('hamlet');
+    expect(at('fifty, self-sufficient'), 'metal, cloth, a field and a ranch make a village').toBe('village');
     expect(at('the blacksmith is a building site again'), 'an unfinished trade does not count').toBe('hamlet');
     expect(at('a plague takes it under fifty'), 'and the people have to be there too').toBe('hamlet');
     expect(at('and the woodcutter is rubble'), 'back to where it started').toBe('settlement');
+  });
+
+  test('each rung of the ladder is earned in turn, settlement up to city', { tag: '@slow' }, async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // Deep pockets: the ladder wants a lot of buildings and we are testing the gate, not logistics.
+      for (const k of ['wood', 'stone', 'iron', 'coal', 'sand']) barn.store[k] = 999999;
+      const put = (type: string) => {
+        for (let r = 3; r < 26; r++)
+          for (let dy = -r; dy <= r; dy++)
+            for (let dx = -r; dx <= r; dx++) {
+              if (!g.debugCanPlace(type, barn.x + dx, barn.y + dy).ok) continue;
+              const id = g.debugPlace(type, barn.x + dx, barn.y + dy);
+              if (id == null) continue;
+              const b = s.buildings.find((v: any) => v.id === id);
+              b.built = true;
+              b.progress = 9999;
+              return b;
+            }
+        return null;
+      };
+      const grow = (to: number) => {
+        // Copy a grown villager up to the target headcount — and school every copy, so the Town
+        // tier's forty schooled adults are there the moment the people are.
+        const src = s.citizens.find((c: any) => c.age >= 20);
+        while (s.citizens.length < to) {
+          const c = JSON.parse(JSON.stringify(src));
+          c.id = s.nextId++;
+          c.homeId = null;
+          c.partnerId = null;
+          c.parents = null;
+          c.educated = true;
+          s.citizens.push(c);
+        }
+      };
+      const steps: any[] = [];
+      const note = (label: string) => steps.push({ label, tier: g.debugTier() });
+
+      note('founded');
+      // Hamlet: twenty souls and a woodcutter standing.
+      grow(20);
+      put('woodcutter');
+      note('hamlet');
+      // Village: fifty, the two trades, and food it grows and raises for itself.
+      grow(50);
+      put('blacksmith');
+      put('tailor');
+      put('farm');
+      put('ranch');
+      note('village');
+      // Town: a hundred, a hall to govern from and a post to trade through (schooling is in hand).
+      grow(100);
+      put('townhall');
+      put('trading');
+      note('town');
+      // City: two hundred, learning and faith crowned, and a luxury workshop — but no port.
+      grow(200);
+      put('university');
+      put('cathedral');
+      put('luxury');
+      note('city, without a port');
+      // And the port is reach, not a rung: a city stays a city with one, so it must without one too.
+      put('port');
+      note('city, with a port');
+      return steps;
+    });
+
+    const at = (label: string) => out.find((v: any) => v.label === label)!.tier;
+    expect(at('founded'), 'a village is born a settlement').toBe('settlement');
+    expect(at('hamlet'), 'twenty and a woodcutter climb to a hamlet').toBe('hamlet');
+    expect(at('village'), 'trades and grown food climb to a village').toBe('village');
+    expect(at('town'), 'a hall, a trading post and schooled adults climb to a town').toBe('town');
+    expect(at('city, without a port'), 'a university, cathedral and luxury workshop climb to a city').toBe('city');
+    expect(at('city, with a port'), 'the port a city unlocks does not un-make the city').toBe('city');
   });
 
   test('the progression panel shows the ladder, what each rung asks for and what it opens', async ({ page }) => {
@@ -4544,6 +4626,14 @@ test.describe('a village climbs through tiers', () => {
     await expect(hamlet, 'the trade it wants').toContainText('Woodcutter');
     await expect(hamlet, 'and what it opens').toContainText('Quarry');
     await expect(hamlet, 'roadworks too').toContainText('Stone Bridge');
+
+    // The Village rung asks for self-sufficiency: the two trades, plus food it grows and raises.
+    const village = blocks.nth(2);
+    await expect(village).toContainText('Village');
+    await expect(village, 'the trades it wants').toContainText('Blacksmith');
+    await expect(village).toContainText('Tailor');
+    await expect(village, 'a field to grow food').toContainText('Field');
+    await expect(village, 'and a ranch to raise it').toContainText('Ranch');
 
     // Town is reachable and named, but its buildings do not exist yet.
     const town = blocks.nth(3);

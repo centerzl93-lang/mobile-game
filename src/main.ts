@@ -190,7 +190,19 @@ const TIPS_KEY = 'village-tips';
 const AUTO_STAFF_KEY = 'village-auto-staff';
 const autoStaffPref = (): boolean => localStorage.getItem(AUTO_STAFF_KEY) !== 'off';
 
-const SPEEDS = [1, 2, 3];
+const SPEEDS = [1, 2, 5, 10];
+/**
+ * The largest simulation step, in seconds, that `update()` is ever handed in a single call. This
+ * is the same 0.1 s the per-frame `dt` is clamped to at 1× (see `frame`), and the sim is written
+ * and tested against steps of that size. Higher speeds don't hand the sim a proportionally bigger
+ * step — a 1.0 s tick at 10× would behave differently from ten 0.1 s ticks at 1× (dt-scaled
+ * hazard rolls like the freeze-death chance are not step-size invariant, and per-tick logistics
+ * such as waypoint-by-waypoint movement can only advance one waypoint per call). Instead the
+ * scaled time for the frame is spent in fixed sub-steps of at most this size, so ten seconds of
+ * sim time at 10× is exactly ten seconds of the same 0.1 s ticks the game runs at 1×. Speed
+ * changes elapsed sim time, never how any one tick behaves.
+ */
+const SIM_MAX_STEP = 0.1;
 /**
  * Yaw speed (radians/sec) while a corner rotate button is held — 45°/s, so a full turn takes
  * eight seconds of holding. Rotation is continuous (not a per-tap jump) so the direction of
@@ -1699,6 +1711,37 @@ class Game {
   }
 
   /**
+   * Debug/testing helper: run the sim for a single raw tick of `seconds`, with no sub-stepping.
+   * Only used to demonstrate that a coarse step diverges from the sub-stepped path — production
+   * code never hands `update` a step larger than `SIM_MAX_STEP`.
+   */
+  debugTick(seconds: number): void {
+    update(this.state, seconds, this.log);
+  }
+
+  /**
+   * Debug/testing helper: advance `seconds` of *simulation* time exactly as the frame loop would
+   * at the given speed multiplier — emulating real frames (each the 0.1 s the frame clamp allows)
+   * scaled by `speed` and spent in `SIM_MAX_STEP` sub-steps. The point of the sub-stepping is that
+   * the resulting village is independent of `speed`: 60 s of sim time at 10× lands on exactly the
+   * same state as 60 s at 1×, because both are the same 0.1 s ticks underneath. Tests use this to
+   * pin that invariant — advancing the same sim time at 1× and at 10× must agree.
+   */
+  debugAdvanceAtSpeed(seconds: number, speed = 1): void {
+    const frameScaled = SIM_MAX_STEP * speed; // sim seconds one clamped real frame yields at `speed`
+    let elapsed = 0;
+    while (elapsed < seconds - 1e-9 && !this.state.gameOver) {
+      let remaining = Math.min(frameScaled, seconds - elapsed);
+      while (remaining > 1e-9 && !this.state.gameOver) {
+        const step = Math.min(remaining, SIM_MAX_STEP);
+        update(this.state, step, this.log);
+        remaining -= step;
+        elapsed += step;
+      }
+    }
+  }
+
+  /**
    * Debug/testing helper: the footprint a placement would use, in tiles.
    *
    * Tests that lay out a site need the size, and hard-coding it in the spec means every
@@ -2468,9 +2511,18 @@ class Game {
     if (this.rotateDir !== 0) this.camera.rotateBy?.(this.rotateDir * ROTATE_SPEED * dt);
 
     if (this.running && !this.paused && !this.state.gameOver) {
-      const scaled = dt * SPEEDS[this.speedIndex];
       const wasOver = this.state.gameOver;
-      update(this.state, scaled, this.log);
+      // Spend the frame's scaled sim time in sub-steps no larger than SIM_MAX_STEP, so a fast
+      // speed just runs more of the same-size ticks rather than one oversized one. `dt` is already
+      // clamped to 0.1 s, so at 1× this is a single step (identical to the old single `update`);
+      // at 10× it is up to ten. `update` early-returns once the village is game-over, so a death
+      // mid-frame stops the remaining sub-steps rather than ticking a dead village.
+      let remaining = dt * SPEEDS[this.speedIndex];
+      while (remaining > 1e-9 && !this.state.gameOver) {
+        const step = Math.min(remaining, SIM_MAX_STEP);
+        update(this.state, step, this.log);
+        remaining -= step;
+      }
       this.saveAccum += dt;
       if (this.saveAccum > AUTOSAVE_SECONDS) {
         this.saveAccum = 0;

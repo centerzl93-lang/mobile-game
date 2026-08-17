@@ -1,44 +1,25 @@
 import {
   AGE_PER_YEAR,
   GameState, MAP_W, MAP_H, MapSize, setMapSize, CROPS, RANCH_MIN, ranchCapacity, EVENT_LOG_MAX,
-  isWorkplace, nextBuildingName, SEASON_LENGTH, Building, Citizen, VillageStats,
+  isWorkplace, nextBuildingName, SEASON_LENGTH, Building, VillageStats,
   buildWorkOf, BUILD_WORK_RATE, freshStats,
 } from '../types';
 import { randomName } from './names';
 import { newSeed } from './rng';
 
 /**
- * Per-citizen fields the simulation rebuilds from scratch after a load and therefore has no reason
- * to persist. Stripping them serves two ends: it honours the "Transient — not saved" contract each
- * of these carries in `types.ts` (a plain `JSON.stringify` of the state would otherwise write them
- * all), and it keeps the save small — the cached A* route arrays (`route`) are by far the largest
- * avoidable weight in a city-sized village, and localStorage is a few megabytes for every slot put
- * together. Everything here is recomputed on the first tick after load (`reconcileWorkers`,
- * `assignHomesAndJobs`, `ensureNavLabels`) or refilled the next time it is needed, so dropping it
- * costs a villager at most one partial load or one grace-timer reset.
- */
-const TRANSIENT_CITIZEN_FIELDS: (keyof Citizen)[] = [
-  'pending', 'inside', 'clothed', 'starve', 'chill',
-  'builder', 'effort', 'workAt', 'rest', 'route', 'routeI', 'rdx', 'rdy',
-];
-
-/** A shallow copy of a citizen with the transient fields above removed. */
-function stripCitizen(c: Citizen): Citizen {
-  const copy = { ...c };
-  for (const k of TRANSIENT_CITIZEN_FIELDS) delete copy[k];
-  return copy;
-}
-
-/**
- * Serialise a state into a save envelope, dropping the transient per-citizen fields.
+ * Serialise a state into a save envelope.
  *
- * Only the `citizens` array is rebuilt (each entry shallow-copied without its transient keys); every
- * other field — including the big `tiles`/`paths`/`harvest` arrays — is referenced as-is, so this is
- * cheap even on the large map.
+ * The **whole** state is written, transient-looking per-citizen fields included. It is tempting to
+ * strip the recomputable ones (the A* route cache, a worker's partial `pending` load, the survival
+ * counters) to shrink the blob, but a save must reproduce the *running* village exactly: dropping
+ * `pending` loses real in-flight resources, and even dropping the pure nav cache shifts a villager's
+ * path timing on reload just enough to diverge the shared RNG stream from an uninterrupted run. The
+ * determinism spec in `tests/newgame.spec.ts` ("survives a save and load") pins that guarantee, so
+ * nothing is stripped here — the size is the price of an exact resume.
  */
 function serialize(s: GameState): string {
-  const citizens = s.citizens.map(stripCitizen);
-  const envelope: SaveEnvelope = { v: VERSION, state: { ...s, citizens } };
+  const envelope: SaveEnvelope = { v: VERSION, state: s };
   return JSON.stringify(envelope);
 }
 

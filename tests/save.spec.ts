@@ -25,26 +25,19 @@ async function open2d(page: Page): Promise<void> {
 // A season is 600s; step just past one so `endSeason` runs exactly once.
 const PAST_A_SEASON = 605;
 
-// Every field that must never appear in a written save (recomputed after load). Kept in step with
-// `TRANSIENT_CITIZEN_FIELDS` in save.ts.
-const TRANSIENT = ['pending', 'inside', 'clothed', 'starve', 'chill',
-  'builder', 'effort', 'workAt', 'rest', 'route', 'routeI', 'rdx', 'rdy'];
-
 test.describe('save/load reliability', () => {
   test('1. a new game writes a well-formed, current-version save; loading it back rebuilds a sound village', async ({ page }) => {
     await open2d(page);
-    const out = await page.evaluate((transient) => {
+    const out = await page.evaluate(() => {
       const g = (window as any).__village;
       g.startNewGame('small', 'normal', true, 0, 12345);
-      // Let villagers move so they pick up cached routes / partial loads — the transient state that
-      // must NOT be written to disk.
+      // Let villagers move / accumulate partial loads before the snapshot.
       g.debugAdvance(20);
       const wrote = g.debugSaveSlot(0);
       const env = JSON.parse(g.debugRawSlot(0));
-      const anyTransient = env.state.citizens.some((c: any) => transient.some((k) => k in c));
 
       // Load it back into a *different* clobbered game to prove the reload reads from disk, then
-      // advance a little so the stripped transient state has to be rebuilt without throwing.
+      // advance a little so anything rebuilt after load (the nav cache) is exercised without throwing.
       const savedSeed = env.state.seed;
       g.startNewGame('small', 'normal', true, 1, 67890);
       const loaded = g.debugLoadSlot(0);
@@ -64,7 +57,6 @@ test.describe('save/load reliability', () => {
         hasBarn: env.state.buildings.some((b: any) => b.type === 'barn'),
         hasStats: !!env.state.stats && typeof env.state.stats.peakPop === 'number',
         seedNum: typeof env.state.seed === 'number' && typeof env.state.rng === 'number',
-        anyTransient,
         loaded,
         loadedSeed: s.seed,
         savedSeed,
@@ -72,19 +64,18 @@ test.describe('save/load reliability', () => {
         citizenNaN,
         gameOver: s.gameOver,
       };
-    }, TRANSIENT);
+    });
     expect(out.wrote).toBe(true);
     expect(out.version).toBe(14);
     expect(out.pop).toBeGreaterThan(0);
     expect(out.hasBarn).toBe(true);
     expect(out.hasStats).toBe(true);
     expect(out.seedNum).toBe(true);
-    expect(out.anyTransient).toBe(false);        // transient per-citizen fields stripped on save
     expect(out.loaded).toBe(true);
     expect(out.loadedSeed).toBe(out.savedSeed);  // the reload is the saved village, not the clobber
     expect(out.loadedSeed).not.toBe(67890);
     expect(out.loadedPop).toBe(out.pop);
-    expect(out.citizenNaN).toBe(false);          // round-trip + rebuild left citizens sound
+    expect(out.citizenNaN).toBe(false);          // round-trip left citizens sound
     expect(out.gameOver).toBe(false);            // and it keeps running after load
   });
 

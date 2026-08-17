@@ -281,9 +281,10 @@ Saves are a version envelope `{ v, state }`:
 - **Save-time guard.** `saveGame` refuses a structurally unsound state (`validState`) and returns a
   boolean, so autosave can never overwrite a good save on disk with a half-built/corrupt one, and a
   failed write (full/blocked storage) surfaces to the player instead of silently dropping saves.
-- **Transient fields are stripped on write** (the per-citizen nav cache, partial loads, and the
-  season-recomputed survival/clothing flags — `TRANSIENT_CITIZEN_FIELDS`), honouring their
-  "not saved" contract and keeping the blob small; all are rebuilt on the first tick after load.
+- **The whole state is written** — transient-looking per-citizen fields (nav cache, partial `pending`
+  loads, survival counters) included. A save must reproduce the *running* village exactly: dropping
+  even the pure nav cache shifts path timing on reload and diverges the shared RNG stream from an
+  uninterrupted run, which the "survives a save and load" determinism spec pins down.
 - Autosave writes the current slot every **5 minutes** (`AUTOSAVE_SECONDS`, real-clock). Manual
   saves and the game-over write are immediate. Slot **names** are stored beside the save (`…-name`),
   not inside it. Achievement unlocks are stored separately and are *not* part of a slot.

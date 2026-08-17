@@ -58,7 +58,16 @@ const produced = (s: GameState, k: ResourceKind): number => st(s).produced[k] ??
 const producedFood = (s: GameState): number => FOOD_KINDS.reduce((n, k) => n + produced(s, k), 0);
 const builtNow = (s: GameState, t: BuildingType): boolean =>
   s.buildings.some((b) => b.type === t && b.built && !b.razed);
-const placedEver = (s: GameState, t: BuildingType): boolean => st(s).placedTypes.includes(t);
+/**
+ * Has this building type ever been commissioned? Reads the **live** buildings first so a freshly
+ * placed site counts the instant it is laid down — the achievement check runs on the 100ms UI clock,
+ * but the persisted `placedTypes` tally is only stamped at season turnover, so a site placed
+ * mid-season would otherwise wait up to a whole season (ten minutes) before "Build your first house"
+ * and its siblings could fire. The persisted tally is still consulted as a fallback: it remembers a
+ * type that was placed and later demolished in some past season, and survives save/load.
+ */
+const placedEver = (s: GameState, t: BuildingType): boolean =>
+  s.buildings.some((b) => b.type === t) || st(s).placedTypes.includes(t);
 const reached = (s: GameState, tier: 'town' | 'city'): boolean => st(s).maxTier >= TIERS.indexOf(tier);
 const isCityNow = (s: GameState): boolean => villageTier(s) === 'city';
 

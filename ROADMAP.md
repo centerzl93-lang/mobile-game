@@ -21,7 +21,7 @@ The project is being taken through these phases in order:
 | **3** | Save/load reliability | ⏳ |
 | **4** | Progression balancing | ⏳ |
 | **5** | Luxury economy & Port balancing | ⏳ |
-| **6** | Achievements | ⏳ |
+| **6** | Achievements | ✅ done |
 | **7** | UI/UX polish | ⏳ |
 | **8** | Full balance / playtesting | ⏳ |
 | **9** | Final polish / release | ⏳ |
@@ -83,9 +83,24 @@ Concrete, code-grounded items (see `PLAYTEST.md` for detail):
 - ⏳ **Port standing/reputation** — `portTradeCount` is kept as the bare tally a future
   reputation-with-a-fleet system would build on ("a system for later").
 
-### Phase 6 — Achievements ⏳
-- ⏳ Review the 80 achievements (`src/game/achievements.ts`) for reachability and correct
-  live-vs-tally sourcing; verify none are unobtainable after the recent economy changes.
+### Phase 6 — Achievements ✅
+- ✅ Reviewed the 80 achievements (`src/game/achievements.ts`) for reachability and correct
+  live-vs-tally sourcing. The existing infrastructure — the 80 milestone table, the per-village
+  `VillageStats` tallies stamped in `recordSeasonStats`, the global `localStorage` unlocked set, the
+  100ms `checkAchievements` clock, and the achievements panel — is sound and covers every category
+  (building, resource, population, trade, port, luxury, tier, happiness, survival). No new
+  architecture was added; nothing is unobtainable after the economy changes.
+- ✅ **Fixed the "Build your first house" reliability bug.** `checkAchievements` runs on the 100ms UI
+  clock, but the `placedTypes`/`builtTypes` tallies are only stamped at *season turnover*
+  (`recordSeasonStats`). Every "Build your first X" check read `placedEver` off that tally, so a
+  freshly placed building did not light its milestone until the next season boundary — up to ten real
+  minutes later. `placedEver` now reads the **live** buildings first (a site counts the instant it is
+  laid down) and falls back to the persisted tally (so a type placed-and-demolished in a past season
+  still counts, and it survives save/load). This is a one-helper change — no per-building logic was
+  scattered around the code.
+- ✅ Added `tests/achievements.spec.ts` coverage: placing a house unlocks `house1` on the next clock
+  tick off the live village (regression), an earned achievement never re-fires/re-celebrates/duplicates
+  in storage, and the `placedTypes` tally works as a save/load fallback.
 
 ### Phase 7 — UI/UX polish ⏳
 - 🎯 **Top-line HUD wraps to two rows** at 430px with the nine requested chips; fitting one row needs

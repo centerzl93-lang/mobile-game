@@ -78,6 +78,117 @@ test.describe('achievements ledger', () => {
     expect(out.storedHas300).toBe(true);
   });
 
+  // Placement scan shared by the tests below: a `normal` village opens with only a barn, so a test
+  // that needs a house on the map lays one on the first valid spot ringing out from the clearing.
+  const PLACE_HOUSE = `(() => {
+    const g = window.__village, s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    // A site is free to place, but placement still checks the materials exist in storage. A lean
+    // normal-difficulty barn can't afford a house, so stock it before scanning for a spot.
+    barn.store.wood = (barn.store.wood || 0) + 500;
+    barn.store.stone = (barn.store.stone || 0) + 500;
+    for (let r = 2; r < 16; r++)
+      for (let dy = -r; dy <= r; dy++)
+        for (let dx = -r; dx <= r; dx++) {
+          const x = barn.x + dx, y = barn.y + dy;
+          if (g.debugCanPlace('house', x, y).ok && g.debugPlace('house', x, y) !== null) return true;
+        }
+    return false;
+  })()`;
+
+  test('placing a house unlocks "Build your first house" on the next clock tick, off the live village', async ({ page }) => {
+    // Regression: `checkAchievements` runs on the 100ms UI clock, but the persisted `placedTypes`
+    // tally is only stamped at season turnover. Reading only that tally left "Build your first house"
+    // locked for up to a whole season (ten real minutes) after the house was actually placed. The
+    // check must read the *live* buildings so the site counts the instant it is laid down.
+    await open(page);
+    const out = await page.evaluate((placeHouse) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true, 0);
+      g.unlockedAchievements.clear(); // ignore anything a prior test persisted
+      localStorage.removeItem('lv_achievements');
+
+      const before = g.unlockedAchievements.has('house1'); // a normal village has no house yet
+      const placed = (0, eval)(placeHouse);
+      const hasHouseNow = g.state.buildings.some((b: any) => b.type === 'house');
+      const tallyEmptyOfHouse = !(g.state.stats.placedTypes ?? []).includes('house');
+      g.checkAchievements(); // the same call the frame loop makes — no season has turned over
+      return {
+        before,
+        placed,
+        hasHouseNow,
+        tallyEmptyOfHouse,
+        unlockedHouse1: g.unlockedAchievements.has('house1'),
+        storedHouse1: JSON.parse(localStorage.getItem('lv_achievements') || '[]').includes('house1'),
+      };
+    }, PLACE_HOUSE);
+    expect(out.before).toBe(false); // locked before the house was placed
+    expect(out.placed).toBe(true); // the house found a home
+    expect(out.hasHouseNow).toBe(true); // it is on the live map
+    expect(out.tallyEmptyOfHouse).toBe(true); // …but the season-turnover tally hasn't recorded it
+    expect(out.unlockedHouse1).toBe(true); // and it fires anyway, from the live read
+    expect(out.storedHouse1).toBe(true); // and is persisted immediately
+  });
+
+  test('an already-earned achievement does not fire, celebrate, or persist a second time', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((placeHouse) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true, 0);
+      g.unlockedAchievements.clear();
+      localStorage.removeItem('lv_achievements');
+      (0, eval)(placeHouse); // stand a house so house1 is genuinely earned
+
+      g.checkAchievements(); // first pass unlocks house1 (and any other opening feats)
+      const sizeAfterFirst = g.unlockedAchievements.size;
+      const storedAfterFirst = JSON.parse(localStorage.getItem('lv_achievements') || '[]');
+      document.querySelector('.ach-pop')?.remove(); // clear the celebration the first pass raised
+
+      g.checkAchievements(); // nothing new is true — this must be a no-op
+      const sizeAfterSecond = g.unlockedAchievements.size;
+      const storedAfterSecond = JSON.parse(localStorage.getItem('lv_achievements') || '[]');
+      return {
+        hadHouse1: g.unlockedAchievements.has('house1'),
+        sizeAfterFirst,
+        sizeAfterSecond,
+        // the id is stored exactly once, never duplicated
+        house1Count: storedAfterSecond.filter((x: string) => x === 'house1').length,
+        // no fresh celebration popup was raised on the second pass
+        noNewPopup: !document.querySelector('.ach-pop'),
+        storedStable: JSON.stringify(storedAfterFirst.sort()) === JSON.stringify(storedAfterSecond.sort()),
+      };
+    }, PLACE_HOUSE);
+    expect(out.hadHouse1).toBe(true);
+    expect(out.sizeAfterSecond).toBe(out.sizeAfterFirst); // no growth on the repeat pass
+    expect(out.house1Count).toBe(1); // stored once, not appended again
+    expect(out.noNewPopup).toBe(true); // no re-celebration
+    expect(out.storedStable).toBe(true);
+  });
+
+  test('the tally is a save/load fallback: a type only in placedTypes still counts', async ({ page }) => {
+    // A building placed and demolished in a past season is gone from the live list but remembered in
+    // the persisted `placedTypes` tally (which rides along in the save). Its achievement must stay
+    // reachable from that tally alone.
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true, 0);
+      g.unlockedAchievements.clear();
+      localStorage.removeItem('lv_achievements');
+
+      // No monument stands, but the tally remembers one was raised once.
+      const monumentNow = g.state.buildings.some((b: any) => b.type === 'monument');
+      if (!g.state.stats.placedTypes.includes('monument')) g.state.stats.placedTypes.push('monument');
+      g.checkAchievements();
+      return {
+        monumentNow,
+        unlockedFromTally: g.unlockedAchievements.has('monumentBuild'),
+      };
+    });
+    expect(out.monumentNow).toBe(false); // nothing stands
+    expect(out.unlockedFromTally).toBe(true); // the persisted tally alone earns it
+  });
+
   test('the unlocked set is global: it survives a reload into a brand new village', async ({ page }) => {
     await open(page);
     await page.evaluate(() => {

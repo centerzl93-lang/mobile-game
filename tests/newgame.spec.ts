@@ -751,10 +751,12 @@ test.describe('jobs & builders', () => {
   });
 
   test('with zero builders a site never builds; assigning builders constructs it', { tag: '@slow' }, async ({ page }) => {
-    await open(page);
+    // 2D + a fixed seed + disasters off: this asserts only on game state (no 3D), and a stray fire
+    // on a random map used to destroy the site mid-test, leaving the id lookup dereferencing undefined.
+    await open2d(page);
     const out = await page.evaluate((place) => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', true); // full stockpile of wood in the barn
+      g.startNewGame('small', 'easy', false, 0, 4242); // full stockpile of wood in the barn
       const id = eval(place)();
       // Placing a site now asks for builders on its own, so "zero builders" is something the
       // player has to choose. Dial it down and nothing happens.
@@ -5823,7 +5825,9 @@ test.describe('auto-staffing', () => {
       const g = (window as any).__village;
       const run = (auto: boolean) => {
         localStorage.setItem('village-auto-staff', auto ? 'on' : 'off');
-        g.startNewGame('small', 'easy', false);
+        // Fixed seed: on an unlucky random map the builders' haul-and-raise could stall, leaving the
+        // hut unbuilt when the assertion below expects it up. A known-good map removes that flake.
+        g.startNewGame('small', 'easy', false, 0, 4242);
         const b = eval(raise)();
         return {
           pref: g.state.autoStaff,

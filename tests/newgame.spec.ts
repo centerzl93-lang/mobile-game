@@ -5975,7 +5975,7 @@ test.describe('auto-staffing', () => {
 });
 
 test.describe('consumption and fuel', () => {
-  test('a season costs a third of what it used to', async ({ page }) => {
+  test('food and fuel rations: food set directly, fuel a third of the old burn', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -5984,7 +5984,9 @@ test.describe('consumption and fuel', () => {
     });
     // The rates the rest of the economy is derived from — larder targets, the low-stores warnings
     // and the "seasons banked" mood check all scale off these two.
-    expect(out.food).toBeCloseTo(60 / 3, 6);
+    // Food is now set directly (35/adult), decoupled from CONSUMPTION_SLOWDOWN, so a growing village
+    // needs a second food source (see PLAYTEST B6). Fuel stays at a third of the old winter burn.
+    expect(out.food).toBeCloseTo(35, 6);
     expect(out.heat).toBeCloseTo(40 / 3, 6);
   });
 

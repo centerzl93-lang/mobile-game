@@ -2248,7 +2248,19 @@ export const COLD_HEALTH_DRAIN = 0.04;
  * survival pressure — one number to turn if it wants tightening again.
  */
 export const CONSUMPTION_SLOWDOWN = 3;
-export const FOOD_PER_CITIZEN_PER_SEASON = 60 / CONSUMPTION_SLOWDOWN;
+/**
+ * Food eaten per adult per season (a child eats `CHILD_FOOD_FACTOR` of it).
+ *
+ * Set *directly*, decoupled from `CONSUMPTION_SLOWDOWN`, because food and fuel want tuning apart:
+ * the slowdown stays 3 for heat, but food is deliberately tighter than the 20 that divisor would
+ * give. Measured production is ~142 food per worker per season, so one three-job food building (~426)
+ * still feeds the founding twelve with room to spare — but its ceiling is ~12 adults, so the first
+ * wave of births pushes a growing village past it and a *second* food building becomes the thing to
+ * build before the opening food stock (1200) runs down. That is the intended pressure: food scales
+ * with the village rather than being solved once by a single hut. Turning this up tightens it
+ * further; down loosens it. (See PLAYTEST B6 for the balance work behind the number.)
+ */
+export const FOOD_PER_CITIZEN_PER_SEASON = 35;
 export const HEAT_PER_CITIZEN_WINTER = 40 / CONSUMPTION_SLOWDOWN; // heat units; firewood = 1, coal = 2
 export const FIREWOOD_HEAT = 1;
 export const COAL_HEAT = 2;

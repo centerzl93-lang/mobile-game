@@ -17,6 +17,7 @@ import { update } from '../src/game/simulation';
 import { placeBuilding } from '../src/game/buildings';
 import {
   BUILDING_DEFS, FOOD_KINDS, SEASONS, MAX_CHILDREN_PER_COUPLE, FREEZE_SECONDS, SEASON_LENGTH,
+  FOOD_PER_CITIZEN_PER_SEASON, CHILD_FOOD_FACTOR,
 } from '../src/types';
 import type { GameState, Building, BuildingType, ResourceKind, Citizen } from '../src/types';
 
@@ -252,8 +253,9 @@ test('freezing: an unheated winter drains health before it kills', () => {
 // PRIORITY 2 — food production / consumption sanity
 // ---------------------------------------------------------------------------------------------
 test('food: consumption scales with population (adults eat more than children)', () => {
-  // A direct check on the consumption model the balance analysis rests on: a mixed village of
-  // adults and children draws food down at (20/adult + 10/child) per season.
+  // A direct check on the consumption model the balance analysis rests on: a mixed village draws
+  // food down at (FOOD_PER_CITIZEN_PER_SEASON per adult, ×CHILD_FOOD_FACTOR per child) each season.
+  // The rates come from the game, not the test, so a rebalance moves both together (see B6/R=35).
   const s = mk(2024);
   const barn = barnOf(s);
   barn.store.fruit = 5000;
@@ -266,7 +268,69 @@ test('food: consumption scales with population (adults eat more than children)',
   for (let t = 0; t < SEASON_LENGTH; t += 0.5) update(s, 0.5, noLog);
   const after = FOOD_KINDS.reduce((n, k) => n + (barn.store[k as ResourceKind] ?? 0), 0);
   const eaten = before - after;
-  const expected = adults * 20 + children * 10;
+  const expected = adults * FOOD_PER_CITIZEN_PER_SEASON + children * FOOD_PER_CITIZEN_PER_SEASON * CHILD_FOOD_FACTOR;
   assert.ok(Math.abs(eaten - expected) < expected * 0.15,
     `a season's consumption (~${eaten.toFixed(0)}) matches ${adults} adults + ${children} children = ${expected}`);
+});
+
+/**
+ * True food output of one fully-staffed food building per season, measured past the barn-delivery
+ * hauling bottleneck (a pre-existing headless artifact) by teleport-delivering carried/pending food
+ * each tick. Cabin sits by the barn with forest painted into its work circle: the idealised ceiling.
+ */
+function cabinCapacity(type: BuildingType, seasons = 3): number {
+  const s = mk(12345);
+  const barn = barnOf(s);
+  s.limits!.food = 1e9;
+  barn.store.tools = 2000; barn.store.wood = 500; barn.store.stone = 500;
+  const def = BUILDING_DEFS[type];
+  let cabin: Building | null = null;
+  for (let r = 2; r < 10 && !cabin; r++)
+    for (let dy = -r; dy <= r && !cabin; dy++)
+      for (let dx = -r; dx <= r && !cabin; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        cabin = placeBuilding(s, type, barn.x + dx, barn.y + dy);
+      }
+  if (!cabin) throw new Error('no place for cabin');
+  const rad = (def.workRadius ?? 6) + 1;
+  for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
+    const x = cabin.x + 1 + dx, y = cabin.y + 1 + dy; const t = s.tiles[y * s.w + x];
+    if (!t) continue;
+    if (x >= barn.x && x < barn.x + 5 && y >= barn.y && y < barn.y + 5) continue;
+    if (t.type === 'grass') { t.type = 'forest'; (t as { trees?: number }).trees = 1; }
+  }
+  cabin.built = true; cabin.progress = def.work; s.navVersion = (s.navVersion ?? 0) + 1;
+  cabin.desiredWorkers = def.jobs;
+  addAdults(s, def.jobs + 3); // plenty of hands so the cabin always staffs to its cap
+  const isFood = (k: string) => (FOOD_KINDS as readonly string[]).includes(k);
+  let produced = 0;
+  const drain = () => {
+    for (const c of s.citizens) {
+      if (c.carry && isFood(c.carry.kind)) { produced += c.carry.amount; c.carry = null; }
+      const p = (c as unknown as { pending?: { kind: string; amount: number } | null }).pending;
+      if (p && isFood(p.kind)) { produced += p.amount; (c as unknown as { pending: null }).pending = null; }
+    }
+    barn.store.firewood = 4000; barn.store.fruit = 4000; // keep the workforce alive & fed
+  };
+  for (let i = 0; i < 100; i++) { update(s, 0.5, noLog); drain(); }
+  produced = 0;
+  for (let t = 0; t < seasons * SEASON_LENGTH; t += 0.5) { update(s, 0.5, noLog); drain(); }
+  return produced / seasons;
+}
+
+test('food balance: one food building sustains the founding village but not a grown one', () => {
+  // The R=35 design target (PLAYTEST B6): a single food building carries the opening twelve, but its
+  // ceiling is low enough that the first wave of births pushes a growing village past it — forcing a
+  // second food source. Guards against food drifting back to "one hut feeds everyone".
+  const cap = cabinCapacity('hunting');
+  const R = FOOD_PER_CITIZEN_PER_SEASON;
+  const founding = 8 * R + 4 * R * CHILD_FOOD_FACTOR; // 8 adults + 4 children
+  // A "grown" village: roughly doubled, mostly adults (≈18 adult-equivalents).
+  const grown = 18 * R;
+
+  assert.ok(cap > founding * 1.1, `one cabin (${cap.toFixed(0)}/season) comfortably feeds the founding village (${founding})`);
+  assert.ok(cap < grown, `one cabin (${cap.toFixed(0)}/season) does NOT feed a grown village (${grown}) — a second is needed`);
+  // And the per-worker ceiling stays in the sane band the analysis assumed (~120–160/worker).
+  const perWorker = cap / BUILDING_DEFS.hunting.jobs;
+  assert.ok(perWorker > 110 && perWorker < 180, `production ~${perWorker.toFixed(0)}/worker is in the expected band`);
 });

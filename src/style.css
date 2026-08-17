@@ -7,6 +7,9 @@
   --muted: #a7b5a0;
   --accent: #6bbf59;
   --danger: #e06a5a;
+  /* A caution — a step short of danger: a workplace waiting on hands, or slowed for want of tools.
+     Amber sits between the accent green and the danger red the HUD already speaks in. */
+  --warn: #e0a83a;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
@@ -1675,6 +1678,47 @@ body {
 }
 .inv-row span:first-child {
   color: var(--muted);
+}
+/*
+ * A status row — why a workplace is or isn't producing, or how a site is coming along. It carries a
+ * colour the plain readings don't, and the whole line is weighted so the one row that says what to
+ * do stands out from the readings around it. The four tones mirror the HUD's own vocabulary: red is
+ * a stop, amber a caution, and the accent green does double duty for "all well" and for a stock
+ * sitting at its cap (which is the village doing exactly as told, not a fault).
+ */
+.inv-row[class*='tone-'] {
+  font-weight: 600;
+}
+.inv-row[class*='tone-'] span:first-child {
+  color: inherit;
+}
+.inv-row.tone-bad {
+  color: var(--danger);
+}
+.inv-row.tone-warn {
+  color: var(--warn);
+}
+.inv-row.tone-good,
+.inv-row.tone-capped {
+  color: var(--accent);
+}
+/*
+ * The compact stock grid: a barn's contents two to a line instead of one per row, so a full
+ * storehouse reads at a glance rather than scrolling off the sheet. Each cell keeps the `.inv-row`
+ * label/value shape; only the packing changes.
+ */
+.inv-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 14px;
+}
+.inv-grid .inv-row {
+  min-width: 0;
+}
+.inv-grid .inv-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* Interactive controls at the foot of the inspect sheet (worker stepper + toggle). */
 .inv-ctrl {

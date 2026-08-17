@@ -130,6 +130,7 @@ import {
   isLowStock,
   isCriticalStock,
   cappedOut,
+  workplaceStatus,
   debugWorkSpotFor,
   debugApproach,
   debugReachable,
@@ -1235,18 +1236,15 @@ class Game {
     const placed = placeBuilding(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot);
     const name = BUILDING_DEFS[this.selectedBuild].name;
     const needsClearing = placed !== null && !footprintClear(this.state, placed);
-    this.ui.log(
-      // An unreachable site outranks the other notes: builders can't get to it to raise it, so
-      // "assign builders" would be a lie. Say what is actually wrong.
-      unreachable
-        ? `${name} site marked — but nothing can reach it; lay a road or bridge to it first`
-        : needsClearing
-          ? `${name} site marked — clear the trees and stone under it first`
-          : this.state.desiredBuilders > 0
-            ? `${name} site marked — builders will haul materials`
-            : `${name} site marked — assign Builders on the Job Board to construct it`,
-      unreachable ? 'bad' : 'info',
-    );
+    // Only speak up when the siting needs the player to *do* something: nothing can reach the plot,
+    // or there is ground to clear under it first. A plain, buildable site says nothing — the ghost
+    // snapping into place is confirmation enough, builders are demanded automatically, and a line
+    // per placement only buried the warnings that matter under a stream of "site marked" noise.
+    if (unreachable) {
+      this.ui.log(`${name} site marked — but nothing can reach it; lay a road or bridge to it first`, 'bad');
+    } else if (needsClearing) {
+      this.ui.log(`${name} site marked — clear the trees and stone under it first`, 'info');
+    }
     this.persist();
     // A placed building closes the build menu and drops back to the plain screen. Siting one is a
     // deliberate act with its own Build button, not a brush you sweep across the map, and leaving
@@ -1371,12 +1369,22 @@ class Game {
         // all, and a site stuck at 0% otherwise looks like one nobody has been assigned to.
         const left = footprintToClear(this.state, b);
         const clearing = left.trees + left.stone + left.iron;
+        const pct = Math.floor((b.progress / buildWorkOf(b.type)) * 100);
+        // Colour the status so a site plainly in the way (ground to clear) reads as such, and give a
+        // clear plot at 0% a reason rather than the bare number — a plot that never moves reads as
+        // broken until the sheet names what it is waiting on.
         rows.push({
           label: 'Status',
-          value: clearing > 0
-            ? 'Clearing the ground'
-            : `Building ${Math.floor((b.progress / buildWorkOf(b.type)) * 100)}%`,
+          value: clearing > 0 ? 'Clearing the ground' : `Building ${pct}%`,
+          tone: clearing > 0 ? 'warn' : 'good',
         });
+        // The stall the materials list below cannot show: nobody free to raise it. Builders are any
+        // idle adult, so an empty count means every hand is spoken for elsewhere — the fix is on the
+        // Job Board, not on this plot.
+        const builders = this.state.citizens.reduce((n, c) => n + (c.builder ? 1 : 0), 0);
+        if (clearing === 0 && pct < 100 && builders === 0) {
+          rows.push({ label: '—', value: 'No free builders — raise them on the Job Board', tone: 'warn' });
+        }
         if (clearing > 0) {
           rows.push({ label: '—', value: `${clearing} tile${clearing > 1 ? 's' : ''} to clear first` });
           if (left.trees > 0) rows.push({ label: '🌲 Trees', value: `${left.trees} to fell` });
@@ -1387,6 +1395,11 @@ class Game {
           rows.push({ label: `${RESOURCE_ICON[k]} ${k}`, value: `${Math.floor(b.store[k] ?? 0)}/${amt} delivered` });
         }
       } else {
+        // Why this workplace is (or isn't) producing, in one coloured line above the numbers: switched
+        // off, short of hands, out of a material, capped, or slowed for want of tools. It is the answer
+        // to "everyone's here, so why is nothing coming out?" — see `workplaceStatus`.
+        const status = workplaceStatus(this.state, b);
+        if (status) rows.push({ label: 'Status', value: status.text, tone: status.tone });
         if (def.jobs > 0) rows.push({ label: 'Workers', value: `${b.workers.length}/${b.desiredWorkers}` });
         if (isDwelling(b.type)) {
           const residents = this.state.citizens.filter((c) => c.homeId === b.id);
@@ -1462,11 +1475,13 @@ class Game {
           });
         }
         // Houses already report their larder above, against its targets — skip the raw dump so the
-        // sheet doesn't list the same supplies twice.
+        // sheet doesn't list the same supplies twice. The rest — chiefly a barn, which can hold two
+        // dozen kinds at once — pack two to a line (`grid`) so a full storehouse reads at a glance
+        // instead of scrolling off the sheet.
         if (!isDwelling(b.type)) {
           for (const k of RESOURCE_KINDS) {
             const v = b.store[k] ?? 0;
-            if (v > 0.5) rows.push({ label: `${RESOURCE_ICON[k]} ${k}`, value: `${Math.floor(v)}` });
+            if (v > 0.5) rows.push({ label: `${RESOURCE_ICON[k]} ${k}`, value: `${Math.floor(v)}`, grid: true });
           }
         }
       }

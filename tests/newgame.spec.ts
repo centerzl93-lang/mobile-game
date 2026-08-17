@@ -1418,6 +1418,64 @@ test.describe('workplace staffing release', () => {
   });
 });
 
+test.describe('why a workplace is idle', () => {
+  // The inspect sheet's job is to answer "everyone's here, so why is nothing coming out?" — see
+  // `workplaceStatus`. These pin the reasons a player can act on: switched off, and slowed for want
+  // of tools (the village-wide penalty that makes every trade drag).
+  const placeGatherer = `() => {
+    const g = window.__village;
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    for (let r = 2; r < Math.max(s.w, s.h); r++)
+      for (let dy = -r; dy <= r; dy++)
+        for (let dx = -r; dx <= r; dx++) {
+          const x = barn.x + dx, y = barn.y + dy;
+          if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue;
+          if (g.debugCanPlace('gatherer', x, y).ok) {
+            const id = g.debugPlace('gatherer', x, y);
+            if (id != null) return id;
+          }
+        }
+    throw new Error('no placeable gatherer site anywhere on this map');
+  }`;
+
+  // Stand a gatherer up finished and staffed, so the only thing left to explain is the shortage.
+  const staffedGatherer = (page: Page, prep: string) =>
+    page.evaluate(([place, prepStr]) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const id = eval(place as string)();
+      const b = s.buildings.find((x: any) => x.id === id);
+      b.built = true;
+      b.progress = g.debugBuildWork(b.type);
+      b.desiredWorkers = 2;
+      for (let i = 0; i < 60; i++) g.debugAdvance(0.5);
+      eval(prepStr as string); // per-test tweak: disable it, or empty the barns of tools
+      g.inspectSel = { kind: 'building', id };
+      g.refreshInspect();
+      return {
+        workers: b.workers.length,
+        text: document.getElementById('inspect')!.innerText,
+      };
+    }, [place, prep] as const);
+  const place = placeGatherer;
+
+  test('a workplace switched off says so, not just "no workers"', async ({ page }) => {
+    await open2d(page);
+    const out = await staffedGatherer(page, 'b.enabled = false;');
+    expect(out.text).toContain('Disabled');
+  });
+
+  test('with the barns out of tools, a workplace reads as slowed for want of them', async ({ page }) => {
+    await open2d(page);
+    // Empty every store of tools so the village-wide penalty (`NO_TOOLS_PENALTY`) is in force.
+    const out = await staffedGatherer(page, 'for (const bl of s.buildings) delete bl.store.tools;');
+    expect(out.workers, 'the gatherer really is staffed').toBeGreaterThan(0);
+    expect(out.text.toLowerCase()).toContain('lack tools');
+  });
+});
+
 test.describe('camera rotate buttons', () => {
   // These assert the *mechanism* (a held button turns the view a bit more on every animation
   // frame) rather than a wall-clock turn rate: headless Chromium schedules rAF slowly and

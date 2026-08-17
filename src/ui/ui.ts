@@ -123,6 +123,18 @@ export const BUILD_STAMP = __BUILD_STAMP__;
 export interface InspectRow {
   label: string;
   value: string;
+  /**
+   * Colour a row that carries a status rather than a plain reading: a stop (bad, red), a caution
+   * (warn, amber), an intended pause (capped, the HUD's "full" green), or all-well (good, green).
+   * Left unset for the ordinary label/value rows, which stay muted.
+   */
+  tone?: 'good' | 'warn' | 'bad' | 'capped';
+  /**
+   * Pack this row into a compact two-column grid alongside its neighbours instead of giving it a
+   * full-width line of its own. Used for the raw stock dump on a barn, where a resource per line
+   * ran the sheet off the screen — see `.inv-grid`.
+   */
+  grid?: boolean;
 }
 
 /** Interactive controls shown at the foot of the inspect sheet for a built workplace. */
@@ -283,6 +295,8 @@ export class UI {
   private openCategory: BuildCategory | 'paths' | 'harvest' | null = null;
   /** The village's tier as of the last HUD refresh — what the build menus grey themselves against. */
   private tier: VillageTier = 'settlement';
+  /** The latest state seen by `updateHud`, kept so a tapped lock can read the live tier requirements. */
+  private lastState: GameState | null = null;
   private villagePanelOpen = false;
   private villageSig = '';
   /** Which tab of the one village menu is showing. Remembered across openings. */
@@ -436,6 +450,7 @@ export class UI {
   }
 
   updateHud(s: GameState, speed: number, paused: boolean): void {
+    this.lastState = s;
     this.updatePolicyStrip(s);
     // How far along the village is, which decides what the build menus offer. Re-rendered rather
     // than left stale: crossing a tier should ungrey the buildings it opened there and then, and
@@ -599,7 +614,7 @@ export class UI {
       const shown = this.selectedPath ? kinds.filter(([t]) => t === this.selectedPath) : kinds;
       for (const [tier, emoji, label, cost] of shown) {
         const locked = this.tier && !tierReaches(this.tier, PATH_TIER_AT[tier])
-          ? TIER_META[PATH_TIER_AT[tier]].name
+          ? PATH_TIER_AT[tier]
           : undefined;
         po.appendChild(
           this.buildBtn(emoji, label, cost, tier === this.selectedPath, () => this.selectPath(tier), locked),
@@ -631,7 +646,7 @@ export class UI {
           .map(([k, a]) => `${RESOURCE_ICON[k]}${a}`)
           .join(' ');
         const locked = this.tier && !tierReaches(this.tier, BUILDING_TIER[type])
-          ? TIER_META[BUILDING_TIER[type]].name
+          ? BUILDING_TIER[type]
           : undefined;
         po.appendChild(
           this.buildBtn(
@@ -648,14 +663,13 @@ export class UI {
     this.raiseHints(true);
   }
 
-  /** A pop-out choice. `cost` is optional: some choices cost nothing and have nothing to say. */
   /**
    * A pop-out choice. `cost` is optional: some choices cost nothing and have nothing to say.
    *
-   * `lockedAt` names the tier a building is still waiting on. It replaces the cost line rather
-   * than joining it — what a market costs is beside the point when the village cannot build one,
-   * and the tier name is all the button says: what it takes to *reach* that tier belongs
-   * somewhere with room to explain it, not on a chip this size.
+   * `lockedAt` is the tier a building is still waiting on. On the button it shows as the tier's
+   * name in place of the cost — what a market costs is beside the point when the village cannot
+   * build one. Tapping the locked button spells out *what the village still lacks* to reach that
+   * tier (see `lockedHint`), the room to explain it that the chip itself does not have.
    */
   private buildBtn(
     emoji: string,
@@ -663,25 +677,56 @@ export class UI {
     cost: string,
     selected: boolean,
     fn: () => void,
-    lockedAt?: string,
+    lockedAt?: VillageTier,
   ): HTMLElement {
     const btn = document.createElement('button');
     btn.className = 'build-btn' + (selected ? ' selected' : '') + (lockedAt ? ' locked' : '');
     btn.innerHTML =
       `<span class="emoji">${emoji}</span><span class="name">${name}</span>` +
       (lockedAt
-        ? `<span class="cost lock">🔒 ${lockedAt}</span>`
+        ? `<span class="cost lock">🔒 ${TIER_META[lockedAt].name}</span>`
         : cost
           ? `<span class="cost">${cost}</span>`
           : '');
     if (lockedAt) {
       btn.disabled = true;
-      // Still worth a tap: a disabled button that does nothing at all reads as broken.
-      btn.addEventListener('click', () => this.flashHint(`${name} unlocks at ${lockedAt}`));
+      // Still worth a tap: a disabled button that does nothing at all reads as broken, and this is
+      // where the player learns *why* it is locked and what would open it.
+      btn.addEventListener('click', () => this.flashHint(this.lockedHint(name, lockedAt)));
     } else {
       btn.addEventListener('click', fn);
     }
     return btn;
+  }
+
+  /**
+   * Why a building is still locked, and what would open it: the requirements the village has yet to
+   * meet on its way up to `target`, in plain words.
+   *
+   * Tiers accumulate — you cannot skip a rung — so this walks every tier from the one above the
+   * village's current standing up to the target and gathers the checks that are not yet met, with
+   * the village's own numbers against them ("Villagers 32 / 50"). Duplicated labels are dropped so
+   * the nearest population gate is named once rather than repeated at every tier that wants more,
+   * and the list is trimmed to a handful so it fits the hint bar.
+   */
+  private lockedHint(name: string, target: VillageTier): string {
+    const s = this.lastState;
+    const targetName = TIER_META[target].name;
+    if (!s) return `${name} unlocks at ${targetName}`;
+    const now = villageTier(s);
+    const seen = new Set<string>();
+    const unmet: string[] = [];
+    for (const t of TIERS) {
+      if (!tierReaches(target, t) || tierReaches(now, t)) continue; // only unmet tiers up to target
+      for (const c of tierChecks(s, t)) {
+        if (c.met || seen.has(c.label)) continue;
+        seen.add(c.label);
+        unmet.push(c.detail ? `${c.label} ${c.detail}` : c.label);
+      }
+    }
+    if (unmet.length === 0) return `${name} unlocks at ${targetName}`;
+    const shown = unmet.slice(0, 3).join(', ') + (unmet.length > 3 ? '…' : '');
+    return `${name} needs ${targetName}: ${shown}`;
   }
 
   private setInspect(): void {
@@ -819,7 +864,22 @@ export class UI {
     if (sig === this.inspectSig) return;
     this.inspectSig = sig;
 
-    const body = rows.map((r) => `<div class="inv-row"><span>${r.label}</span><span>${r.value}</span></div>`).join('');
+    // Runs of `grid` rows are wrapped in one `.inv-grid` so they lay out two-up; everything else is
+    // a full-width line. Each cell is still an `.inv-row`, so nothing that reads the sheet by row
+    // has to know about the packing.
+    const rowHtml = (r: InspectRow): string =>
+      `<div class="inv-row${r.tone ? ` tone-${r.tone}` : ''}"><span>${r.label}</span><span>${r.value}</span></div>`;
+    let body = '';
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].grid) {
+        let j = i;
+        while (j < rows.length && rows[j].grid) j++;
+        body += `<div class="inv-grid">${rows.slice(i, j).map(rowHtml).join('')}</div>`;
+        i = j - 1;
+      } else {
+        body += rowHtml(rows[i]);
+      }
+    }
     let ctrlHtml = '';
     if (controls?.rename !== undefined) {
       ctrlHtml += `<div class="inv-ctrl"><span>Name</span>

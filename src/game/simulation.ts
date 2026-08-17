@@ -571,6 +571,60 @@ export function cappedOut(s: GameState, b: Building): boolean {
   return !!key && atLimit(s, key);
 }
 
+/** How the inspect sheet colours a production status: a stop, a caution, an intended pause, or fine. */
+export type WorkTone = 'good' | 'warn' | 'bad' | 'capped';
+export interface WorkStatus {
+  /** One line, ready to show — leads with an icon of its own. */
+  text: string;
+  tone: WorkTone;
+}
+
+/**
+ * Which workplaces this status can speak about: everything with a product a limit knows
+ * (`limitedOutput`), plus the field and the pen, which grow and breed rather than convert and so
+ * answer to no cap. Service buildings (a school, a chapel) have jobs but no output to report on.
+ */
+function isProducer(b: Building): boolean {
+  return limitedOutput(b) !== null || b.type === 'farm' || b.type === 'ranch';
+}
+
+/**
+ * Why a built workplace is — or isn't — producing, in one line the player can act on.
+ *
+ * This is the "help me understand *why* it stopped" the HUD alone cannot give: a hut full of
+ * workers and no output looks identical whether it was switched off, is short of hands, has run the
+ * village out of iron, has hit the cap the player set, or is simply slow for want of tools. Each of
+ * those reads differently here, in the order they matter — the loudest, most-mistaken reasons first.
+ * Returns null for anything that isn't a producer (a store, a school, an unbuilt site).
+ */
+export function workplaceStatus(s: GameState, b: Building): WorkStatus | null {
+  if (!b.built || b.razed || !isProducer(b)) return null;
+  // Off by the player's own hand — the reason most often mistaken for "nobody is working here".
+  if (b.enabled === false) return { text: '⏸️ Disabled — not producing', tone: 'bad' };
+  // Wanted by nobody, or wanted but still walking over: two different fixes, so two different lines.
+  if (staffWanted(s, b) <= 0) return { text: '🚫 No workers — staff it on the Job Board', tone: 'warn' };
+  if (b.workers.length === 0) return { text: '⌛ Waiting for a worker to arrive', tone: 'warn' };
+  if (b.type === 'farm' && !b.crop) return { text: '🌱 No seed — buy a crop from a trader', tone: 'warn' };
+  // A converter the whole village cannot feed — no iron for the smith, no sand for the glassblower.
+  // Only when the barns are empty of it too: if any barn still holds some, a hand is already
+  // fetching it and the shop is between loads, not stuck.
+  const missing = firstMissingInput(b);
+  if (missing && totalStored(s, missing) <= 0) {
+    return { text: `${LIMIT_META[missing].icon} Out of ${LIMIT_META[missing].label.toLowerCase()} to work`, tone: 'bad' };
+  }
+  // Doing exactly what it was told: its stock sits at the cap the player set, so it has stood down.
+  const capKey = limitedOutput(b);
+  if (capKey && atLimit(s, capKey)) {
+    return { text: `✅ ${LIMIT_META[capKey].label} at your limit — paused`, tone: 'capped' };
+  }
+  // The village-wide tool penalty (`NO_TOOLS_PENALTY`): with not one tool in the barns every trade
+  // works slowly. A field answers to no chisel, so it is left out — everything else here is slowed.
+  if (b.type !== 'farm' && totalStored(s, 'tools') <= 0) {
+    return { text: '🔧 Slowed — villagers lack tools', tone: 'warn' };
+  }
+  return { text: '✓ Working', tone: 'good' };
+}
+
 // ---- lives (ageing, schooling, old age, births) ----
 
 /** How often births are considered, in seconds. See `GameState.birthTimer`. */
@@ -2932,8 +2986,21 @@ function warnLowStocks(s: GameState, log: LogFn): void {
     }
     if (s.lowWarned[key]) continue; // already told them, and nothing has changed
     s.lowWarned[key] = true;
-    log(`${LIMIT_META[key].icon} ${LIMIT_META[key].label} is low`, 'bad');
+    log(lowStockLine(key), 'bad');
   }
+}
+
+/**
+ * The "running low" line for a stock, worded so it reads as English and says why it matters.
+ *
+ * `tools` is the one plural label in the warn list — "Tools is low" was simply wrong — and it is
+ * also the one shortage with a village-wide consequence (`NO_TOOLS_PENALTY` slows *every* trade),
+ * so it earns a clause the others don't. Everything else is a mass noun that takes "is".
+ */
+function lowStockLine(key: LimitKey): string {
+  const { icon, label } = LIMIT_META[key];
+  if (key === 'tools') return `${icon} Tools are low — every trade works slower without them`;
+  return `${icon} ${label} is low`;
 }
 
 /**

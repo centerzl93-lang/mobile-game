@@ -304,7 +304,7 @@ panel, the **Town Hall** (policies / ledger / festival), the **achievements** pa
 
 **Playwright**, config `playwright.config.ts`. The `webServer` runs `npm run build && npm run
 preview` on port 4173 under `/mobile-game/`; `worker: 1`, `fullyParallel: false`, `retries: 0`.
-**233 tests across 5 specs** (`newgame` 196, `world` 14, `menus` 10, `updates` 8, `achievements` 5),
+**235 tests across 5 specs** (`newgame` 198, `world` 14, `menus` 10, `updates` 8, `achievements` 5),
 **89 tagged `@slow`**. Scripts: `test` (all), `test:fast` (`--grep-invert @slow`), `test:slow`.
 
 - **Two lanes.** Headless Chromium renders the 3D view in software at ~2 fps, and Playwright's click

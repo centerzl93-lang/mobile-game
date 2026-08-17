@@ -21,6 +21,12 @@ export default defineConfig({
   // pip 30s and fail on the clock rather than on an assertion. 90s is generous headroom without
   // letting a genuinely hung test sit forever; a few specs that need even more set their own.
   timeout: 90_000,
+  // Per-assertion ceiling (web-first `expect(locator)…` waits). The default is 5s, but DOM overlays
+  // like the confirm bar fill on a UI-refresh frame, and the ~2 fps software 3D renderer can push
+  // that past 5s on a loaded runner — a visibility/text assertion then fails on the clock while the
+  // element is a frame away. 15s absorbs that without hiding a genuine failure (a broken assertion
+  // still fails, just later); the few 3D specs that need more already set their own per-call timeout.
+  expect: { timeout: 15_000 },
   workers: 1,
   reporter: process.env.CI ? 'github' : 'list',
   use: {

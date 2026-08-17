@@ -3205,7 +3205,10 @@ test.describe('toolbar', () => {
 
 test.describe('confirm before it happens', () => {
   test('drawn paths wait for confirmation, and villagers ignore them until then', { tag: '@slow' }, async ({ page }) => {
-    await open(page);
+    // 2D: this asserts on the #confirm DOM overlay and path state, not the 3D scene. The confirm
+    // bar fills on a UI-refresh frame, and under the ~2 fps software 3D renderer a loaded CI run
+    // could miss the 5s toBeVisible window (its demolition sibling needed a 20s + force workaround).
+    await open2d(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
     const drawn = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -3266,7 +3269,8 @@ test.describe('confirm before it happens', () => {
   });
 
   test('cancelling a drawn path clears it back to bare ground', { tag: '@slow' }, async ({ page }) => {
-    await open(page);
+    // 2D: asserts on the #confirm overlay and path state, not the 3D scene (same reason as above).
+    await open2d(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
     const drew = await page.evaluate(() => {
       const g = (window as any).__village;

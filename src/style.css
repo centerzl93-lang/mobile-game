@@ -816,6 +816,33 @@ body {
   opacity: 0.8;
 }
 
+/* ---- Replace-a-slot picker + overwrite confirmation ---- */
+.menu-card .slot-note {
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.menu-card .ow-village {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.15));
+  border-radius: 8px;
+  text-align: center;
+}
+.menu-card .ow-village strong {
+  font-size: 15px;
+}
+.menu-card .ow-warn {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+  text-align: center;
+}
+
 /* ---- New Village setup ---- */
 /* Every setting on one card, so the whole card has to fit a phone without the Start button
    falling off the bottom. Tighter than the other menus for that reason, and it scrolls if a

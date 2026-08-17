@@ -2116,7 +2116,7 @@ export class UI {
    * text field nested in a button cannot be focused without also triggering the button.
    */
   showSlotSelect(opts: {
-    mode: 'load' | 'save';
+    mode: 'load' | 'save' | 'overwrite';
     slots: { index: number; info: { year: number; pop: number; size: MapSize; name: string | null } | null }[];
     onPick: (slot: number) => void;
     onRename: (slot: number, name: string) => void;
@@ -2128,6 +2128,8 @@ export class UI {
       .map(({ index, info }) => {
         const fallback = `Slot ${index + 1}`;
         if (!info) {
+          // Empty slots are only pickable where picking one *writes* to it: loading needs an
+          // occupied slot, so those stay disabled; saving and overwriting can start a fresh village.
           const disabled = opts.mode === 'load' ? ' disabled' : '';
           return `<button id="slot-${index}"${disabled}>${fallback}<span class="sub">Empty</span></button>`;
         }
@@ -2144,9 +2146,15 @@ export class UI {
         );
       })
       .join('');
+    const heading = opts.mode === 'load' ? 'Load Game' : opts.mode === 'save' ? 'Save Game' : 'Replace a Village';
+    // Overwrite mode is only reached when every slot already holds a village, so say why the player
+    // is being asked to choose one — the rows themselves name each occupied village.
+    const note = opts.mode === 'overwrite'
+      ? `<p class="slot-note">Every slot is full. Choose a village to replace — you will be asked to confirm.</p>`
+      : '';
     this.overlayCard(
-      `<h2>${opts.mode === 'load' ? 'Load Game' : 'Save Game'}</h2>` +
-        `<div class="menu-list">${rows}<button class="ghost" id="slot-back">Back</button></div>`,
+      `<h2>${heading}</h2>` +
+        `<div class="menu-list">${note}${rows}<button class="ghost" id="slot-back">Back</button></div>`,
       'menu-card',
     );
     for (const { index, info } of opts.slots) {
@@ -2164,6 +2172,35 @@ export class UI {
       byId(`slot-del-${index}`).addEventListener('click', () => opts.onDelete(index));
     }
     byId('slot-back').addEventListener('click', () => opts.onBack());
+  }
+
+  /**
+   * Last line of defence before a new village is written over an existing one: a modal that names
+   * the village being replaced and makes Overwrite and Cancel plainly separate actions. Cancel is
+   * the safe default (the ghost button) and must leave the save untouched; only Overwrite proceeds.
+   */
+  showOverwriteConfirm(opts: {
+    title: string;
+    year: number;
+    pop: number;
+    size: MapSize;
+    onConfirm: () => void;
+    onCancel: () => void;
+  }): void {
+    const sizeLabel: Record<MapSize, string> = { small: 'Small', large: 'Large' };
+    this.overlayCard(
+      `<h2>Overwrite save?</h2>` +
+        `<div class="menu-list">` +
+        `<div class="ow-village"><strong>${escapeHtml(opts.title)}</strong>` +
+        `<span class="sub">Yr ${opts.year} · ${opts.pop} people · ${sizeLabel[opts.size]}</span></div>` +
+        `<p class="ow-warn">This village will be permanently replaced.</p>` +
+        `<button id="ow-confirm">Overwrite</button>` +
+        `<button class="ghost" id="ow-cancel">Cancel</button>` +
+        `</div>`,
+      'menu-card',
+    );
+    byId('ow-confirm').addEventListener('click', () => opts.onConfirm());
+    byId('ow-cancel').addEventListener('click', () => opts.onCancel());
   }
 
   /** Settings: graphics tier (applies on reload) and clear-all-saves. */

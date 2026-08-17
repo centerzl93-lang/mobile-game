@@ -1055,12 +1055,14 @@ class Game {
       this.newGameOpts.name = '';
     }
     this.running = false;
-    const slot = this.firstEmptySlot();
+    const empty = this.firstEmptySlot();
     this.ui.showNewGameSetup({
       ...this.newGameOpts,
       // What the save list would call this village if it went unnamed, shown as the placeholder so
-      // the field reads as optional rather than as something that must be filled in.
-      slotLabel: `Slot ${slot + 1}`,
+      // the field reads as optional rather than as something that must be filled in. When every slot
+      // is full the destination is not chosen yet — the player picks one to replace after Start — so
+      // fall back to a neutral placeholder rather than naming a slot we might not use.
+      slotLabel: empty !== null ? `Slot ${empty + 1}` : 'Little Village',
       onChange: (patch) => {
         Object.assign(this.newGameOpts, patch);
         this.openNewGameSetup(); // re-render with the new selection
@@ -1068,20 +1070,85 @@ class Game {
       onStart: ({ seed, name }) => {
         this.newGameOpts.seed = seed;
         this.newGameOpts.name = name;
-        const { size, difficulty, disasters } = this.newGameOpts;
-        this.startNewGame(size, difficulty, disasters, slot, seed);
-        // Named after the village is founded, because the slot is what carries the name and
-        // `startNewGame` is what decides the village is in it.
-        setSlotName(slot, name);
+        if (empty !== null) {
+          // At least one slot is free: found the village in the first empty one, as before.
+          this.beginNewGame(empty, name);
+        } else {
+          // Every slot holds a village. Never silently reuse slot 0 — make the player choose which
+          // village to replace and confirm it, so a new game can't wipe an existing save by accident.
+          this.openReplaceSlotPicker(name);
+        }
       },
       onBack: () => (this.newGameFromGame ? this.openPauseMenu() : this.openMainMenu()),
     });
   }
 
-  /** First unoccupied slot for a new game (falls back to slot 0 when every slot is full). */
-  private firstEmptySlot(): number {
+  /** Found a new village in `slot`, name it, and start play. The single place the new-game flow
+   * commits to a slot — reached either directly (a free slot) or after an overwrite confirmation. */
+  private beginNewGame(slot: number, name: string): void {
+    const { size, difficulty, disasters, seed } = this.newGameOpts;
+    this.startNewGame(size, difficulty, disasters, slot, seed);
+    // Named after the village is founded, because the slot is what carries the name and
+    // `startNewGame` is what decides the village is in it.
+    setSlotName(slot, name);
+  }
+
+  /**
+   * All slots full: let the player pick which village to replace. Reuses the slot list (so each
+   * occupied slot is shown by name/year/population) in an 'overwrite' mode, and routes the pick
+   * through a confirmation. Back returns to the New Game setup without touching any save.
+   */
+  private openReplaceSlotPicker(name: string): void {
+    const slots = Array.from({ length: SLOTS }, (_, i) => ({ index: i, info: slotInfo(i) }));
+    this.ui.showSlotSelect({
+      mode: 'overwrite',
+      slots,
+      onPick: (slot) => {
+        // A slot freed in the meantime (deleted from this very list) needs no confirmation.
+        if (!hasSave(slot)) this.beginNewGame(slot, name);
+        else this.confirmOverwrite(slot, name);
+      },
+      onRename: (slot, n) => {
+        if (n.trim() === (slotName(slot) ?? '')) return;
+        setSlotName(slot, n);
+        this.openReplaceSlotPicker(name); // redraw so the row title follows the field
+      },
+      onDelete: (slot) => {
+        if (!confirm(`Delete ${slotName(slot) ?? `Slot ${slot + 1}`}? This cannot be undone.`)) return;
+        clearSave(slot);
+        this.ui.flashHint(`${slotName(slot) ?? `Slot ${slot + 1}`} deleted`);
+        this.openReplaceSlotPicker(name);
+      },
+      onBack: () => this.openNewGameSetup(),
+    });
+  }
+
+  /**
+   * Confirm replacing the village in `slot` before a new game overwrites it. Cancel returns to the
+   * picker and leaves every save untouched; only Overwrite commits, and only from here.
+   */
+  private confirmOverwrite(slot: number, name: string): void {
+    const info = slotInfo(slot);
+    if (!info) {
+      // Nothing there after all (or unreadable) — there is nothing to overwrite, so just start.
+      this.beginNewGame(slot, name);
+      return;
+    }
+    this.ui.showOverwriteConfirm({
+      title: info.name ?? `Slot ${slot + 1}`,
+      year: info.year,
+      pop: info.pop,
+      size: info.size,
+      onConfirm: () => this.beginNewGame(slot, name),
+      onCancel: () => this.openReplaceSlotPicker(name),
+    });
+  }
+
+  /** First unoccupied slot for a new game, or null when every slot is full (the caller must then
+   * ask the player which village to replace rather than picking one — see `openReplaceSlotPicker`). */
+  private firstEmptySlot(): number | null {
     for (let i = 0; i < SLOTS; i++) if (!hasSave(i)) return i;
-    return 0;
+    return null;
   }
 
   /** Slot picker for loading or saving. `back` returns to whichever menu opened it. */

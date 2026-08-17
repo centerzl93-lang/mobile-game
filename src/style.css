@@ -96,6 +96,9 @@ body {
   font-variant-numeric: tabular-nums;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  /* Anchor for the low/full arrows, which are pinned to the chip's corner rather than laid out
+     inline — see `.stat .cap` / `.stat .dn`. */
+  position: relative;
 }
 .stat .ico {
   font-size: 12px;
@@ -220,9 +223,28 @@ body {
  * trouble, so a cap — which is the village doing exactly what it was told — gets the one
  * positive colour, and the arrow carries the meaning where colour alone would not.
  */
-.stat .cap {
+/*
+ * The low/full arrows are pinned to the chip's top-right corner, out of the normal flow, so
+ * lighting one adds *no* width to the chip. Inline, each arrow grew its chip by the glyph plus a
+ * gap — a few pixels a chip, but enough that a row of full or empty stocks reflowed and spilled
+ * onto an extra line. Absolute positioning means the resources row occupies exactly the same space
+ * whether every chip is capped, every chip is empty, or none is — it never grows a line.
+ *
+ * `top`/`right` are negative so the mark rides the rounded corner (which is empty slack on a pill),
+ * clear of the number rather than over it; the two share the same corner because a chip is only
+ * ever one or the other (full *or* low), never both at once.
+ */
+.stat .cap,
+.stat .dn {
   display: none;
-  font-size: 9px;
+  position: absolute;
+  top: -3px;
+  right: -1px;
+  font-size: 8px;
+  line-height: 1;
+  pointer-events: none;
+}
+.stat .cap {
   color: var(--accent);
 }
 .stat.full {
@@ -233,18 +255,16 @@ body {
   font-weight: 700;
 }
 .stat.full .cap {
-  display: inline;
+  display: block;
 }
 /* The ▼ mirror of the ▲ above: red and pointing down is "running out", green and pointing up is
    "full up". Two shapes as well as two colours, so the pair reads the same to a colour-blind
    player and at a glance on a phone. */
 .stat .dn {
-  display: none;
-  font-size: 9px;
   color: var(--danger);
 }
 .stat.low .dn {
-  display: inline;
+  display: block;
 }
 .hud .spacer {
   flex: 1 1 auto;

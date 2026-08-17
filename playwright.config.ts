@@ -16,6 +16,11 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: 0,
+  // Per-test ceiling. The default is 30s, but several `@slow` specs drive thousands of simulation
+  // ticks in one go, and on a loaded CI runner (software-GL 3D competing for the CPU) that can just
+  // pip 30s and fail on the clock rather than on an assertion. 90s is generous headroom without
+  // letting a genuinely hung test sit forever; a few specs that need even more set their own.
+  timeout: 90_000,
   workers: 1,
   reporter: process.env.CI ? 'github' : 'list',
   use: {

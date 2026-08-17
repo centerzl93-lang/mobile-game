@@ -3383,7 +3383,10 @@ test.describe('build stamp', () => {
 
 test.describe('village history', () => {
   test('events are recorded newest-first with the season they happened in', { tag: '@slow' }, async ({ page }) => {
-    await open(page);
+    // 2D: this asserts on the event log, not the 3D scene. Five season turnovers is ~30k sim ticks,
+    // and running them while the ~2 fps software 3D renderer competes for the CPU can blow the test
+    // timeout on a loaded runner (as its sibling below already found). The flat renderer is fast.
+    await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', true);
@@ -3453,7 +3456,10 @@ test.describe('village history', () => {
   });
 
   test('the chronicle survives a save and reload', { tag: '@slow' }, async ({ page }) => {
-    await open(page);
+    // 2D: this asserts on the chronicle surviving a reload, not on the 3D scene. Advancing three
+    // seasons while the ~2 fps software 3D renderer competed for the CPU used to blow the test
+    // timeout on CI; the flat renderer runs the same sim in a fraction of the time.
+    await open2d(page);
     const before = await page.evaluate(() => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', true);

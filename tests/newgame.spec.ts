@@ -1257,6 +1257,53 @@ test.describe('clearing land before building', () => {
     expect(out.clearedThenDelivered || out.built).toBe(true);
     expect(out.built).toBe(true);
   });
+
+  test('a rising site blocks pathing once its frame is up, but the door stays open to builders', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((findSpotSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true, 0, 4242);
+      const s = g.state;
+      const [px, py] = eval(findSpotSrc)(g);
+      const { w: fw, h: fh } = g.debugFootprint('barn');
+      // Clear the footprint outright — this test is about the building's own footprint blocking,
+      // not the clear-first rule, so nothing should stand on the plot to gate it.
+      for (let dy = 0; dy < fh; dy++)
+        for (let dx = 0; dx < fw; dx++) {
+          const t = s.tiles[(py + dy) * s.w + (px + dx)];
+          t.type = 'grass';
+          t.trees = 0;
+          t.stone = 0;
+        }
+      const id = g.debugPlace('barn', px, py);
+      const b = s.buildings.find((x: any) => x.id === id);
+      const cx = px + (fw >> 1); // an interior footprint tile (not a door — doors sit outside)
+      const cy = py + (fh >> 1);
+      const total = g.debugBuildWork('barn');
+
+      // As a fresh site (progress 0) the plot is open ground: builders and laborers walk across it.
+      const walkableAsSite = g.debugIsWalkable(cx, cy);
+
+      // Raise it just past the framing line: the frame is now visually up.
+      b.progress = total * 0.6;
+      s.navVersion = (s.navVersion ?? 0) + 1; // walkability changed — refresh the solid grid
+      const blockedInFraming = !g.debugIsWalkable(cx, cy);
+      // ...but every door stays walkable, so builders can still stand at it to finish the job.
+      const doorsOpen = g.debugEntrances(id).some((e: any) => g.debugIsWalkable(e.x, e.y));
+
+      // And the site still completes: fill its store and let builders work it from the door.
+      b.store = g.debugCost('barn');
+      g.debugSetBuilders(6);
+      for (let step = 0; step < 60 && !b.built; step++) g.debugAdvance(5);
+
+      return { placed: id != null, walkableAsSite, blockedInFraming, doorsOpen, built: b.built };
+    }, findSpot);
+    expect(out.placed).toBe(true);
+    expect(out.walkableAsSite).toBe(true); // a bare site is walked over
+    expect(out.blockedInFraming).toBe(true); // a rising frame is walked around
+    expect(out.doorsOpen).toBe(true); // the door never closes on the builders
+    expect(out.built).toBe(true); // and they still finish it
+  });
 });
 
 test.describe('construction cancellation', () => {

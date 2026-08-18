@@ -2521,7 +2521,11 @@ test.describe('volume-based hauling', () => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false);
+      // Seeded: how far the field lands from the nearest barn is the map's decision, and the haul
+      // throughput this asserts on ("a full field brought in within a season") rode on it — on an
+      // unlucky random map the round trip was long enough to leave more than half the harvest in the
+      // ground, so the test failed roughly one run in three. A fixed seed pins the geometry.
+      g.startNewGame('small', 'easy', false, 0, 4242);
       const s = g.state;
       for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
       const barn = s.buildings.find((b: any) => b.type === 'barn');
@@ -4179,6 +4183,11 @@ test.describe('what a town builds', () => {
         // its target over seasons, so the honest way to see what a building is worth is a control.
         const run = (withMonument) => {
           ${stock}
+          // Keep the village fed for the whole 2500-tick run: food now scales with the population,
+          // so on the opening stock alone this village starves to nothing before the measurement
+          // and two dead villages read identically. This stocks grain, not balance — the happiness
+          // the test is comparing is untouched (see debugStockFood).
+          g.debugStockFood();
           if (withMonument) put('monument');
           for (let i = 0; i < 2500; i++) g.debugAdvance(1);
           return g.debugAvgHappiness();
@@ -4188,6 +4197,7 @@ test.describe('what a town builds', () => {
 
         // And the grand house, whose 10 is charged to its household rather than to the town.
         ${stock}
+        g.debugStockFood();
         const grand = put('grandhouse');
         for (let i = 0; i < 2500; i++) g.debugAdvance(1);
         const inGrand = s.citizens.filter((c) => c.homeId === grand.id);
@@ -5257,9 +5267,16 @@ test.describe('policies', () => {
       const run = (ration: boolean) => {
         g.startNewGame('small', 'easy', false, 0, 31415);
         eval(mk)(g, 2);
+        // Keep the village fed across the three seasons this measures: food now scales with the
+        // population, and on the opening stock alone this village starved to death partway through —
+        // at which point `gameOver` froze the clock and the "advance until three ledgers" loop spun
+        // forever, timing the test out. Stocking grain (not balance) lets it live to be measured; the
+        // consumption *rate* the test compares is untouched. The gameOver guard is a belt-and-braces
+        // stop so a dead village can never hang the loop again.
+        g.debugStockFood();
         if (ration) g.debugSetPolicy('rationing', true);
         const before = g.debugTotalFood();
-        while ((g.state.ledger ?? []).length < 3) g.debugAdvance(5);
+        while ((g.state.ledger ?? []).length < 3 && !g.state.gameOver) g.debugAdvance(5);
         // How much food the village got through, larders included. Not the ledger's `out`: early
         // on, food leaves the stores by being *shopped for* — a transfer into a household larder,
         // which is where it is actually eaten — so the books' consumption column is rightly zero
@@ -7978,12 +7995,21 @@ test.describe('sheep, wool and mutton', () => {
       pen.animals = pen.maxAnimals; // full from the start: every birth from here is overflow
       s.navVersion = (s.navVersion ?? 0) + 1;
       for (const b of s.buildings) for (const k of ['pork', 'leather']) delete b.store[k];
-      for (let q = 0; q < 6; q++) g.debugAdvance(305);
+      // Track the *peak* the butcher put on the shelves, not the closing balance: pork is a food,
+      // and a village that now eats more of it (food scales with population) will have eaten the
+      // overflow back down before the run ends — so a snapshot at the finish reads zero pork even
+      // though the pen butchered plenty. The high-water mark is the honest measure of "it was made".
+      let maxPork = 0, maxLeather = 0;
+      for (let q = 0; q < 6; q++) {
+        g.debugAdvance(305);
+        maxPork = Math.max(maxPork, g.debugTotalStored('pork'));
+        maxLeather = Math.max(maxLeather, g.debugTotalStored('leather'));
+      }
       return {
         head: Math.round(pen.animals),
         cap: pen.maxAnimals,
-        pork: Math.round(g.debugTotalStored('pork')),
-        leather: Math.round(g.debugTotalStored('leather')),
+        pork: Math.round(maxPork),
+        leather: Math.round(maxLeather),
       };
     });
     expect(out, 'a ranch could be placed').not.toBeNull();

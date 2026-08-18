@@ -2129,6 +2129,23 @@ class Game {
     return limitStock(this.state, 'food');
   }
 
+  /**
+   * Debug/testing helper: drop a large grain buffer into every built barn so a village survives a
+   * long, multi-season run instead of starving partway through.
+   *
+   * Food consumption scales with the population (`FOOD_PER_CITIZEN_PER_SEASON`), so a test that
+   * advances thousands of ticks on a founding village's opening stock now watches it eat through
+   * that stock and die — which turns a test about happiness, breeding or consumption into a test
+   * about famine, and (once everyone is dead) reads nonsense back. This is the deterministic knob
+   * for "the run is not about running out of food": it stocks grain, not the balance, so the
+   * consumption *rate* the test is measuring is untouched — the village simply cannot go hungry.
+   */
+  debugStockFood(amount = 99000): void {
+    for (const b of this.state.buildings) {
+      if (b.built && b.type === 'barn') b.store.grain = (b.store.grain ?? 0) + amount;
+    }
+  }
+
   /** Debug/testing helper: is this building's product at its stockpile limit? */
   debugCappedOut(id: number): boolean {
     const b = this.state.buildings.find((x) => x.id === id);

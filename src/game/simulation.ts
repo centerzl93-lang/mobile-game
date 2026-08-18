@@ -752,7 +752,13 @@ function lives(s: GameState, dt: number, log: LogFn): void {
   // founding houses held.
   if (cameOfAge.length > 0) {
     const houses = s.buildings.filter((b) => b.built && !b.demolish && isHouse(b.type));
-    for (const c of cameOfAge) placeAdult(s, c, houses);
+    for (const c of cameOfAge) {
+      placeAdult(s, c, houses);
+      // A plain notice — not an alert — as each child enters the workforce, named so the player
+      // knows who just became hireable. Fired here, at the single point a villager joins the adult
+      // pool, so a university student isn't announced until they leave the lecture halls.
+      log(`${c.name} grew up and is now available for work.`, 'info');
+    }
   }
   if (dying.length > 0) {
     for (const c of dying) removeCitizen(s, c);

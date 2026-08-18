@@ -6,6 +6,7 @@ import {
   ResourceKind,
   BUILDING_DEFS,
   buildWorkOf,
+  BUILD_FRAMING_AT,
   costOf,
   PolicyId,
   policyCapacity,
@@ -2217,9 +2218,18 @@ function runBuilder(s: GameState, c: Citizen, dt: number, workFactor = 1): void 
     // other job — chiefly the tool penalty — so a village out of tools raises buildings more slowly.
     goTo(c, buildingApproach(s, pick.site, c));
     if (stepTo(s, c, dt)) {
+      const before = pick.site.progress;
       pick.site.progress += labour(c, dt, workFactor);
       if (pick.site.progress >= buildWorkOf(pick.site.type)) {
         finishConstruction(s, pick.site);
+      } else {
+        // The frame going up turns the footprint into a wall (`blocksMovement`), one stage before
+        // completion. Refresh routes/reachability the moment it crosses that line — the same nav
+        // bump a finished building triggers — so villagers start routing around the rising site.
+        const total = buildWorkOf(pick.site.type);
+        if (total > 0 && before / total < BUILD_FRAMING_AT && pick.site.progress / total >= BUILD_FRAMING_AT) {
+          s.navVersion = (s.navVersion ?? 0) + 1;
+        }
       }
     }
     return;

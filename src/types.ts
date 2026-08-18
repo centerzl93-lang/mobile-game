@@ -1542,7 +1542,13 @@ export function worksIndoors(type: BuildingType): boolean {
   return hasDoor(type) && !CIRCLE_WORK.includes(type) && type !== 'fishing';
 }
 export function blocksMovement(b: Building): boolean {
-  return b.built && !OPEN_FOOTPRINT.includes(b.type);
+  if (OPEN_FOOTPRINT.includes(b.type)) return false; // fields and pens are walked through, ever
+  if (b.built) return true;
+  // A rising site becomes a wall the moment its frame goes up (`buildStage` 'framing') rather than
+  // waiting for completion: once the walls are visually there, villagers route around them. Before
+  // that the footprint is still open dirt being cleared and hauled onto, and must stay walkable so
+  // laborers can fell the trees on it and builders can carry materials in.
+  return buildStage(b) === 'framing';
 }
 
 // Path layer values (per tile).

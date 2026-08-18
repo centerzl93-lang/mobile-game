@@ -935,6 +935,21 @@ export function isHouse(type: BuildingType): boolean {
   return type === 'house' || type === 'stonehouse' || type === 'grandhouse';
 }
 
+/**
+ * The housing ladder: each home rebuilds in place as the next one up — house → stone house → grand
+ * house. A grand house is the top rung and has nothing above it; the shelter is a boarding house,
+ * not a home, and is not on the ladder at all.
+ *
+ * This is only *which* type is next, not *whether* the village may build it yet. The rung a home
+ * can climb to is gated by the settlement tier exactly as putting that type up new is (a settlement
+ * cannot leap its houses to stone before it is a hamlet); that gate is `buildingUnlocked`, applied
+ * where the upgrade is offered, so housing progression follows the tier like every other building.
+ */
+export const HOUSE_UPGRADE: Partial<Record<BuildingType, BuildingType>> = {
+  house: 'stonehouse',
+  stonehouse: 'grandhouse',
+};
+
 /** The boarding house: beds for villagers with nowhere else, and nothing more than beds. */
 export function isShelter(type: BuildingType): boolean {
   return type === 'shelter';
@@ -2922,7 +2937,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   grandhouse: {
     type: 'grandhouse', name: 'Grand House', emoji: '🏰', category: 'housing', w: 2, h: 2,
     cost: { wood: 50, stone: 70, iron: 20 }, jobs: 0, work: 120, builders: 2,
-    desc: 'A fine town house for up to 10. Double-skinned walls and glazed windows: its household burns less fuel again than a stone house, and living somewhere this good is worth 10 happiness to everyone under its roof.',
+    desc: 'A fine town house for up to 10. Double-skinned walls and glazed windows: its household burns less fuel again than a stone house, and living somewhere this good is worth 10 happiness to everyone under its roof. A stone house can be upgraded to one in place.',
   },
   university: {
     type: 'university', name: 'University', emoji: '🎓', category: 'civic', w: 5, h: 5,

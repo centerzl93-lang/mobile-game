@@ -60,6 +60,7 @@ import {
   SIZABLE,
   RANCH_SPLIT_MIN,
   isHouse,
+  HOUSE_UPGRADE,
   isDwelling,
   dwellingCapacityOf,
   SHELTER_CAPACITY,
@@ -740,15 +741,22 @@ class Game {
   }
 
   /**
-   * Trade a wooden house up to a stone one. It is a demolition with a note attached: builders pull
-   * the old house down and cart the salvage off exactly as they would for any other, and then the
-   * plot becomes the construction site for its replacement rather than going back to grass.
+   * Climb a home up the housing ladder — house → stone house → grand house. It is a demolition with
+   * a note attached: builders pull the old house down and cart the salvage off exactly as they
+   * would for any other, and then the plot becomes the construction site for its replacement rather
+   * than going back to grass.
+   *
+   * The next rung is only offered once the village has reached the tier that unlocks it, the same
+   * gate as building that type new — so this guards on `buildingUnlocked` too, in case the handler
+   * is reached (a stale sheet, the debug hook) after the tier has slipped below it.
    */
   private upgradeBuilding(id: number): void {
     const b = this.state.buildings.find((x) => x.id === id);
-    if (!b || b.type !== 'house' || !b.built) return;
-    markDemolish(this.state, b, 'stonehouse');
-    this.ui.log(`${buildingName(b)} is being rebuilt in stone`, 'info');
+    if (!b || !b.built) return;
+    const to = HOUSE_UPGRADE[b.type];
+    if (!to || !buildingUnlocked(this.state, to)) return;
+    markDemolish(this.state, b, to);
+    this.ui.log(`${buildingName(b)} is being rebuilt as a ${BUILDING_DEFS[to].name}`, 'info');
     this.persist();
     if (this.inspectSel) this.refreshInspect();
   }
@@ -1679,11 +1687,16 @@ class Game {
             underway: (b.demoProgress ?? 0) > 0,
           },
         };
-        if (b.type === 'house' && !b.demolish) {
-          const cost = (Object.entries(BUILDING_DEFS.stonehouse.cost) as [ResourceKind, number][])
+        // Offer the next rung of the housing ladder, but only once the village's tier has unlocked
+        // it — the same gate as building that home type new, so housing progression follows the
+        // settlement tier like everything else (no leaping a settlement's houses to stone before it
+        // is a hamlet). A grand house is the top rung and offers nothing further.
+        const up = HOUSE_UPGRADE[b.type];
+        if (up && !b.demolish && buildingUnlocked(this.state, up)) {
+          const cost = (Object.entries(BUILDING_DEFS[up].cost) as [ResourceKind, number][])
             .map(([k, a]) => `${RESOURCE_ICON[k]}${a}`)
             .join(' ');
-          controls.upgrade = { to: BUILDING_DEFS.stonehouse.name, cost };
+          controls.upgrade = { to: BUILDING_DEFS[up].name, cost };
         }
       } else if (!b.razed) {
         // An unfinished construction site: no walls to pull down, so the sheet offers to cancel it

@@ -6831,6 +6831,9 @@ test.describe('demolition is a job', () => {
           b.store.stone = 500;
         }
       }
+      // A Stone House is a Hamlet building, so upgrading a house into one waits on the Hamlet tier
+      // exactly as building a new one does — pin it so the offer stands (see the tier-gating test).
+      g.debugPinTier('hamlet');
       const house = s.buildings.find((b: any) => b.type === 'house' && b.built);
       const at = { id: house.id, x: house.x, y: house.y };
 
@@ -6877,6 +6880,46 @@ test.describe('demolition is a job', () => {
     expect(out.built, 'and the builders raise it').toBe(true);
     expect(out.samePlace, 'on the same tiles the old house stood on').toBe(true);
     expect(out.residents, 'people move back in').toBeGreaterThan(0);
+  });
+
+  test('housing upgrades follow the settlement tier', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      const s = eval(mk)('easy');
+      const house = s.buildings.find((b: any) => b.type === 'house' && b.built);
+
+      // Read the upgrade offer off the sheet at a given tier — the label the button shows, or null
+      // when the tier hasn't unlocked the next home type and no button is drawn.
+      const offerAt = (tier: string | null) => {
+        g.debugPinTier(tier);
+        g.inspectSel = { kind: 'building', id: house.id };
+        g.refreshInspect();
+        const btn = document.getElementById('insp-upgrade') as HTMLButtonElement | null;
+        return btn ? btn.textContent : null;
+      };
+
+      // A house at settlement tier: a Stone House is a Hamlet building, so there is no upgrade yet.
+      const atSettlement = offerAt('settlement');
+      // At Hamlet the Stone House opens up, and the house can climb to it.
+      const atHamlet = offerAt('hamlet');
+      // Turn the house into a stone one in place, then read its own offer: a Grand House is a Town
+      // building, so a stone house at Hamlet has nothing further to climb to yet…
+      house.type = 'stonehouse';
+      const stoneAtHamlet = offerAt('hamlet');
+      // …until Town, where the Grand House opens up.
+      const stoneAtTown = offerAt('town');
+      // A grand house is the top rung — nothing above it even at City.
+      house.type = 'grandhouse';
+      const grandAtCity = offerAt('city');
+      return { atSettlement, atHamlet, stoneAtHamlet, stoneAtTown, grandAtCity };
+    }, setup);
+
+    expect(out.atSettlement, 'no stone upgrade before the Hamlet tier that unlocks it').toBeNull();
+    expect(out.atHamlet, 'the Hamlet tier opens the Stone House upgrade').toContain('Stone House');
+    expect(out.stoneAtHamlet, 'no grand upgrade before the Town tier that unlocks it').toBeNull();
+    expect(out.stoneAtTown, 'the Town tier opens the Grand House upgrade').toContain('Grand House');
+    expect(out.grandAtCity, 'a grand house is the top of the housing ladder').toBeNull();
   });
 });
 

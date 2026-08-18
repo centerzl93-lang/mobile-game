@@ -57,6 +57,7 @@ import {
   footprintW,
   footprintH,
   ranchCapacity,
+  cullWorkPerHead,
   SIZABLE,
   RANCH_SPLIT_MIN,
   isHouse,
@@ -313,6 +314,7 @@ class Game {
       onRotateBuild: () => this.onRotateBuild(),
       onPlaceBuild: () => this.placeAtReticle(),
       onSetRanchMax: (id, delta) => this.setRanchMax(id, delta),
+      onSetRanchMaxTo: (id, value) => this.setRanchMaxTo(id, value),
       onCullRanch: (id) => this.cullRanch(id),
       onSplitRanch: (from, to) => this.splitRanch(from, to),
       onTransferRanch: (from, to) => this.transferRanch(from, to),
@@ -765,7 +767,19 @@ class Game {
   private setRanchMax(id: number, delta: number): void {
     const b = this.state.buildings.find((x) => x.id === id);
     if (!b || b.type !== 'ranch') return;
-    b.maxAnimals = Math.max(0, Math.min(ranchCapacity(b), (b.maxAnimals ?? ranchCapacity(b)) + delta));
+    this.applyRanchMax(b, (b.maxAnimals ?? ranchCapacity(b)) + delta);
+  }
+
+  /** Set a ranch's herd limit to an exact figure — what the limit slider commits. */
+  private setRanchMaxTo(id: number, value: number): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (!b || b.type !== 'ranch') return;
+    this.applyRanchMax(b, value);
+  }
+
+  /** Clamp and store a ranch's herd limit (0..capacity). Anything over it the rancher culls. */
+  private applyRanchMax(b: Building, value: number): void {
+    b.maxAnimals = Math.max(0, Math.min(ranchCapacity(b), Math.round(value)));
     this.persist();
     if (this.inspectSel) this.refreshInspect();
   }
@@ -1537,7 +1551,12 @@ class Game {
           const a = ANIMAL_META[b.animal ?? 'cattle'];
           rows.push({ label: 'Raising', value: `${a.emoji} ${a.label}` });
           rows.push({ label: 'Herd', value: `${Math.floor(b.animals ?? 0)} / ${ranchCapacity(b)} (${footprintW(b)}×${footprintH(b)})` });
-          rows.push({ label: 'Breed up to', value: `${b.maxAnimals ?? ranchCapacity(b)}` });
+          const limit = b.maxAnimals ?? ranchCapacity(b);
+          rows.push({ label: 'Herd limit', value: `${limit}` });
+          // Over the limit? The rancher is thinning it by hand — surface how many head are still for
+          // the knife so the slaughter is visible progress, not a silent stall.
+          const overCap = Math.floor(b.animals ?? 0) - limit;
+          if (overCap > 0) rows.push({ label: 'Culling', value: `🔪 ${overCap} head`, tone: 'warn' });
         }
         if (b.type === 'barn' || b.type === 'market') {
           // Space used, not a unit count: a sack of grain takes a quarter of a log's room, so a
@@ -2103,6 +2122,11 @@ class Game {
    */
   debugFoodPerCitizen(): number {
     return FOOD_PER_CITIZEN_PER_SEASON;
+  }
+  /** Debug/testing helper: rancher-seconds of work to cull one head from this pen (scales with size). */
+  debugCullWorkPerHead(id: number): number {
+    const b = this.state.buildings.find((x) => x.id === id)!;
+    return cullWorkPerHead(b);
   }
   debugHeatPerCitizen(): number {
     return HEAT_PER_CITIZEN_WINTER;

@@ -165,7 +165,7 @@ export interface InspectControls {
   demolish?: { marked: boolean; blocked: boolean; underway: boolean; construction?: boolean };
   /** Wooden house: trade up to stone. A builder razes it and raises the replacement in its place. */
   upgrade?: { to: string; cost: string };
-  /** Ranch: herd management — cap stepper, cull, and split/transfer to another pen. */
+  /** Ranch: herd management — limit slider, cull, and split/transfer to another pen. */
   ranch?: {
     animals: number;
     capacity: number;
@@ -229,6 +229,8 @@ export interface UICallbacks {
   /** Build the pending building where the ghost is standing. */
   onPlaceBuild: () => void;
   onSetRanchMax: (buildingId: number, delta: number) => void;
+  /** Set a ranch's herd limit to an exact figure — what the limit slider commits on release. */
+  onSetRanchMaxTo: (buildingId: number, value: number) => void;
   onCullRanch: (buildingId: number) => void;
   onSplitRanch: (fromId: number, toId: number) => void;
   onTransferRanch: (fromId: number, toId: number) => void;
@@ -913,8 +915,15 @@ export class UI {
     }
     if (controls?.ranch) {
       const r = controls.ranch;
-      ctrlHtml += `<div class="inv-ctrl"><span>Breed up to <small>(cap ${r.capacity})</small></span>
-        <div class="stepper"><button data-rmax="-1">−</button><span class="count">${r.max}</span><button data-rmax="1">+</button></div></div>
+      // Herd-limit slider: all the way right pens the animal to the plot's full capacity; drag it
+      // left and the pen keeps fewer head — anything already penned above the new limit the rancher
+      // culls for meat and hide, one at a time. The label reads out the live thumb value (and how
+      // many head that leaves for the knife) as it is dragged; the value is only committed on
+      // release, so the sheet's 100 ms rebuild never fights the drag. See `rmaxLabel`.
+      ctrlHtml += `<div class="inv-ctrl ranch-limit"><span>Herd limit</span>
+          <span class="ranch-avail" id="insp-rmax-label">${rmaxLabel(r.max, r.capacity, r.animals)}</span></div>
+        <div class="inv-ctrl"><input type="range" class="ranch-slider" id="insp-rmax"
+          min="0" max="${r.capacity}" step="1" value="${r.max}" /></div>
         <div class="inv-ctrl ranch-actions">
           <button class="ranch-btn danger" id="insp-cull"${r.animals > 0 ? '' : ' disabled'}>🔪 Cull all</button>
           <button class="ranch-btn" id="insp-split"${r.canSplit ? '' : ' disabled'}>Split herd</button>
@@ -1018,8 +1027,17 @@ export class UI {
         ?.addEventListener('click', () => this.cb.onUpgradeBuilding(id));
       if (controls.ranch) {
         const rc = controls.ranch;
-        this.el.inspect.querySelector('[data-rmax="-1"]')?.addEventListener('click', () => this.cb.onSetRanchMax(id, -1));
-        this.el.inspect.querySelector('[data-rmax="1"]')?.addEventListener('click', () => this.cb.onSetRanchMax(id, 1));
+        const slider = this.el.inspect.querySelector('#insp-rmax') as HTMLInputElement | null;
+        const label = this.el.inspect.querySelector('#insp-rmax-label') as HTMLElement | null;
+        if (slider) {
+          // Live read-out while dragging, without committing: the value is set on release (`change`),
+          // so the sheet's periodic rebuild — keyed on the *committed* limit — leaves the thumb alone
+          // mid-drag. Updating the label directly (not through a rebuild) keeps the drag smooth.
+          slider.addEventListener('input', () => {
+            if (label) label.textContent = rmaxLabel(Number(slider.value), rc.capacity, rc.animals);
+          });
+          slider.addEventListener('change', () => this.cb.onSetRanchMaxTo(id, Number(slider.value)));
+        }
         this.el.inspect.querySelector('#insp-cull')?.addEventListener('click', () => this.cb.onCullRanch(id));
         this.el.inspect.querySelector('#insp-split')?.addEventListener('click', () => this.openRanchPicker(id, 'split', rc.targets));
         this.el.inspect.querySelector('#insp-transfer')?.addEventListener('click', () => this.openRanchPicker(id, 'transfer', rc.targets));
@@ -2361,6 +2379,17 @@ function byId(id: string): HTMLElement {
 
 function clampInt(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, Math.round(v)));
+}
+
+/**
+ * The herd-limit slider's read-out: how many head the pen is set to keep of its full capacity, and
+ * — when the herd already stands over that limit — how many the rancher is culling to get there.
+ */
+function rmaxLabel(limit: number, capacity: number, animals: number): string {
+  const over = Math.floor(animals) - limit;
+  return over > 0
+    ? `keep ${limit} / ${capacity} · 🔪 culling ${over}`
+    : `keep ${limit} / ${capacity}`;
 }
 
 /** Escape a string for use inside a double-quoted HTML attribute (building names are player text). */

@@ -468,6 +468,19 @@ export const RANCH_BREED_BONUS_CHANCE = 0.2;
 export const RANCH_SPLIT_MIN = 10;
 /** Resource units produced per head sent to slaughter (culls + births over the cap). */
 export const SLAUGHTER_YIELD = 3;
+/**
+ * Rancher-seconds of work to slaughter and dress one head, *per tile the animal occupies*. A cull
+ * isn't free: the rancher has to catch, kill and butcher each beast, and a bigger animal is more
+ * of all three — so the cost scales with the animal's size (`ANIMAL_TILES`). At this rate a chicken
+ * (1 tile) is a few seconds' work and a cow (3) the best part of a full work-cycle, so pulling a
+ * pen's limit down thins the herd steadily rather than all at once. See `cullOverCap`.
+ */
+export const CULL_WORK_PER_TILE = 6;
+
+/** Rancher-seconds of work to cull one head from this pen, scaled by the animal's size. */
+export function cullWorkPerHead(b: Building): number {
+  return CULL_WORK_PER_TILE * ANIMAL_TILES[b.animal ?? 'cattle'];
+}
 
 /** Max head a ranch can hold, from its footprint and the animal's size. */
 export function ranchCapacity(b: Building): number {
@@ -728,6 +741,13 @@ export interface Building {
   maxAnimals?: number;
   /** Ranch: fractional accumulator toward the next birth (see breeding). */
   breedProgress?: number;
+  /**
+   * Ranch: rancher-seconds of slaughter work banked toward the next cull. When the herd stands
+   * over `maxAnimals` (the player pulled the limit slider down) the rancher thins it by hand, one
+   * head at a time; this is how far into the current kill they are. Zeroed whenever the pen is
+   * back within its limit, so a part-done kill never carries over to a herd that is no longer over.
+   */
+  cullProgress?: number;
   /**
    * Trading post: player-set stock targets (resource -> desired units). The assigned
    * trader hauls goods from the barns up to these levels and returns any surplus.

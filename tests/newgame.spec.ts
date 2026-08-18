@@ -4838,11 +4838,10 @@ test.describe('a village climbs through tiers', () => {
       note('twenty with a woodcutter');
       while (s.citizens.length < 50) clone();
       note('fifty, but no trades');
+      put('quarry');
+      put('mine');
+      note('fifty with the raw trades, but no smith');
       const smith = put('blacksmith');
-      put('tailor');
-      note('fifty with both trades, but no farmland');
-      put('farm');
-      put('ranch');
       note('fifty, self-sufficient');
       // Now take it away again: the tier reads the village as it stands.
       smith.built = false;
@@ -4860,8 +4859,8 @@ test.describe('a village climbs through tiers', () => {
     expect(at('woodcutter, too few people'), 'a trade alone is not a hamlet').toBe('settlement');
     expect(at('twenty with a woodcutter'), 'twenty people and a woodcutter is').toBe('hamlet');
     expect(at('fifty, but no trades'), 'numbers alone do not make a village').toBe('hamlet');
-    expect(at('fifty with both trades, but no farmland'), 'trades without grown food are still a hamlet').toBe('hamlet');
-    expect(at('fifty, self-sufficient'), 'metal, cloth, a field and a ranch make a village').toBe('village');
+    expect(at('fifty with the raw trades, but no smith'), 'raw trades without a smith are still a hamlet').toBe('hamlet');
+    expect(at('fifty, self-sufficient'), 'a quarry, a mine and a blacksmith make a village').toBe('village');
     expect(at('the blacksmith is a building site again'), 'an unfinished trade does not count').toBe('hamlet');
     expect(at('a plague takes it under fifty'), 'and the people have to be there too').toBe('hamlet');
     expect(at('and the woodcutter is rubble'), 'back to where it started').toBe('settlement');
@@ -4912,12 +4911,11 @@ test.describe('a village climbs through tiers', () => {
       grow(20);
       put('woodcutter');
       note('hamlet');
-      // Village: fifty, the two trades, and food it grows and raises for itself.
+      // Village: fifty, and the raw-material trades standing — a quarry, a mine and a blacksmith.
       grow(50);
+      put('quarry');
+      put('mine');
       put('blacksmith');
-      put('tailor');
-      put('farm');
-      put('ranch');
       note('village');
       // Town: a hundred, a hall to govern from and a post to trade through (schooling is in hand).
       grow(100);
@@ -4939,7 +4937,7 @@ test.describe('a village climbs through tiers', () => {
     const at = (label: string) => out.find((v: any) => v.label === label)!.tier;
     expect(at('founded'), 'a village is born a settlement').toBe('settlement');
     expect(at('hamlet'), 'twenty and a woodcutter climb to a hamlet').toBe('hamlet');
-    expect(at('village'), 'trades and grown food climb to a village').toBe('village');
+    expect(at('village'), 'the raw-material trades climb to a village').toBe('village');
     expect(at('town'), 'a hall, a trading post and schooled adults climb to a town').toBe('town');
     expect(at('city, without a port'), 'a university, cathedral and luxury workshop climb to a city').toBe('city');
     expect(at('city, with a port'), 'the port a city unlocks does not un-make the city').toBe('city');
@@ -4968,13 +4966,12 @@ test.describe('a village climbs through tiers', () => {
     await expect(hamlet, 'and what it opens').toContainText('Quarry');
     await expect(hamlet, 'roadworks too').toContainText('Stone Bridge');
 
-    // The Village rung asks for self-sufficiency: the two trades, plus food it grows and raises.
+    // The Village rung asks for self-sufficiency in raw materials: a quarry, a mine and a smith.
     const village = blocks.nth(2);
     await expect(village).toContainText('Village');
-    await expect(village, 'the trades it wants').toContainText('Blacksmith');
-    await expect(village).toContainText('Tailor');
-    await expect(village, 'a field to grow food').toContainText('Field');
-    await expect(village, 'and a ranch to raise it').toContainText('Ranch');
+    await expect(village, 'the raw trades it wants').toContainText('Quarry');
+    await expect(village).toContainText('Mine');
+    await expect(village, 'and a smith to work the metal').toContainText('Blacksmith');
 
     // Town is reachable and named, but its buildings do not exist yet.
     const town = blocks.nth(3);

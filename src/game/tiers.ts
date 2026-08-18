@@ -4,7 +4,7 @@
  * A village passes through five tiers. Each one asks for a population, for certain trades to be
  * standing, and — at the top — for a body of schooled adults; each one opens a block of buildings
  * and roadworks. The point is pacing: a founding settlement should not be able to lay out a market
- * square, and the way to a Town Hall should run through a blacksmith and a tailor.
+ * square, and the way to a Town Hall should run through a quarry, a mine and a blacksmith.
  *
  * The tier is *computed from the village as it stands*, never stored and never ratcheted. Lose the
  * population or let the blacksmith burn down and the tier goes with it, along with the right to
@@ -37,9 +37,11 @@ export const TIER_META: Record<VillageTier, TierReq> = {
   // Hamlet: the first infrastructure. A woodcutter standing at the founding camp, and twenty
   // souls to work the stone and metal the tier opens.
   hamlet: { name: 'Hamlet', emoji: '🏘️', pop: 20, needs: ['woodcutter'] },
-  // Village: self-sufficient. Metal and cloth of its own, and — the tier's own step — food it
-  // grows and raises rather than forages, so a field and a ranch join the two trades.
-  village: { name: 'Village', emoji: '🏞️', pop: 50, needs: ['blacksmith', 'tailor', 'farm', 'ranch'] },
+  // Village: self-sufficient in raw materials. The stone and metal trades of its own — a quarry, a
+  // mine and a blacksmith working what they bring back. Farming and herding wait on seeds and
+  // livestock, which only a Trading Post reliably supplies, and that post is itself a Village
+  // building — so a field and a ranch cannot gate the tier that unlocks their inputs.
+  village: { name: 'Village', emoji: '🏞️', pop: 50, needs: ['quarry', 'mine', 'blacksmith'] },
   // Town: an advanced society — a hall to govern from, a post to trade through, and a body of
   // schooled adults to run it.
   town: { name: 'Town', emoji: '🏙️', pop: 100, needs: ['townhall', 'trading'], educated: 40 },

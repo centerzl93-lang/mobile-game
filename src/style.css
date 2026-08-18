@@ -1447,6 +1447,22 @@ body {
   gap: 6px;
   flex-wrap: wrap;
 }
+/* The herd-limit slider: full width on its own row, its read-out sitting above it. */
+.inv-ctrl.ranch-limit {
+  margin-bottom: 2px;
+}
+.ranch-avail {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.ranch-slider {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  height: 26px; /* a comfortable touch target on a phone */
+  accent-color: var(--accent); /* colours the native track/thumb in every modern browser */
+  cursor: pointer;
+}
 .ranch-btn {
   flex: 1 1 auto;
   padding: 8px 6px;

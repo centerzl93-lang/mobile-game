@@ -596,6 +596,55 @@ test.describe('ranch', () => {
     expect(out.afterTransfer.to).toBe(12);
   });
 
+  test('pulling the herd limit below the herd culls the excess for resources over time, then stops at the limit', { tag: '@slow' }, async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      const id = eval(mk)('cattle', 12, 12, 6, 6);
+      const s = g.state;
+      s.disasters = false; // a fire on the pen would confound the headcount
+      const b = s.buildings.find((x: any) => x.id === id);
+      b.desiredWorkers = 1; // staff it so an idle adult takes the job
+      const barnMeat = () => {
+        let n = 0;
+        for (const bl of s.buildings) if (bl.type === 'barn') n += (bl.store.beef ?? 0) + (bl.store.leather ?? 0);
+        return n;
+      };
+      g.debugAdvance(30); // let a rancher be hired
+      const meatBefore = barnMeat();
+      g.setRanchMaxTo(id, 6); // pull the limit down below the current herd of 12
+      const start = b.animals;
+      g.debugAdvance(0.1); // a single tick — nowhere near the seconds a slaughter takes
+      const afterATick = b.animals;
+      g.debugAdvance(1200); // plenty of time to work the whole excess off, however often the rancher breaks off
+      const end = b.animals;
+      return { start, afterATick, end, gained: barnMeat() - meatBefore };
+    }, mkRanch);
+    expect(out.start).toBe(12);
+    expect(out.afterATick).toBe(12); // not instant — a cull is work that takes time, unlike "Cull all"
+    expect(out.end).toBe(6); // the excess is worked off and it settles exactly at the limit, then stops
+    expect(out.gained).toBeGreaterThan(0); // the culled head were butchered for meat and hide
+  });
+
+  test('cull work scales with animal size — a bigger beast is more work to slaughter', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      const s = g.state;
+      // Same 6×6 pen, different tenant. Cull work is per-tile-of-animal, so it tracks the beast's
+      // footprint (`ANIMAL_TILES`): cattle 3, pigs/sheep 2, chickens 1.
+      const perHead = (animal: string) => {
+        const id = eval(mk)(animal, 0, 0, 6, 6);
+        return g.debugCullWorkPerHead(id);
+      };
+      return { cattle: perHead('cattle'), pigs: perHead('pigs'), sheep: perHead('sheep'), chickens: perHead('chickens') };
+    }, mkRanch);
+    expect(out.chickens).toBeGreaterThan(0);
+    expect(out.pigs).toBe(2 * out.chickens); // a pig is two tiles to a chicken's one
+    expect(out.sheep).toBe(2 * out.chickens);
+    expect(out.cattle).toBe(3 * out.chickens); // a cow is the most work of all
+  });
+
   test('a rancher pens purchased livestock from the barn', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     const out = await page.evaluate((mk) => {

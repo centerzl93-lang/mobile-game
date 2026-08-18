@@ -97,6 +97,7 @@ import {
   RANCH_BREED_BONUS_CHANCE,
   RANCH_SPLIT_MIN,
   SLAUGHTER_YIELD,
+  cullWorkPerHead,
   FARM_BASE_AREA,
   footprintW,
   footprintH,
@@ -1359,7 +1360,12 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workFactor
     runTrader(s, c, b, dt);
     return;
   }
-  if (b.type === 'ranch' && penFromStorage(s, c, b, dt)) return;
+  if (b.type === 'ranch') {
+    // An over-full pen is thinned first — a herd above its limit is worked down before its rancher
+    // goes back to penning strays in or gathering the daily produce.
+    if (cullOverCap(s, c, b, dt)) return;
+    if (penFromStorage(s, c, b, dt)) return;
+  }
   // 1. Carrying output? Haul it to the nearest barn with room.
   if (c.carry) {
     const barn = nearestBarnWithRoom(s, { x: c.x, y: c.y });
@@ -1698,6 +1704,39 @@ function runVendor(s: GameState, c: Citizen, b: Building, dt: number): void {
       c.carry = { kind: want.kind, amount: take };
     }
   }
+}
+
+/**
+ * A rancher thinning an over-full pen. When the herd stands above the player's set limit — the
+ * player pulled the ranch's limit slider down below the current headcount — the surplus has to go,
+ * but by hand and one head at a time: the rancher stands at the pen and lays down slaughter work
+ * (`cullProgress`, in seconds), and each time it tops the per-head cost one animal is butchered
+ * for meat and hide. A bigger beast is more work to kill and dress (`cullWorkPerHead` scales with
+ * the animal's size), so a pen of cattle thins more slowly than a coop of chickens. Returns true
+ * on any tick spent culling, so an over-cap pen is brought back down before its rancher goes back
+ * to the daily round of milking and shearing. Skipped while a produced load is still in hand.
+ */
+function cullOverCap(s: GameState, c: Citizen, b: Building, dt: number): boolean {
+  if (c.carry) return false;
+  const cap = Math.min(b.maxAnimals ?? ranchCapacity(b), ranchCapacity(b));
+  if ((b.animals ?? 0) <= cap) {
+    b.cullProgress = 0; // back within the limit — drop any part-done kill
+    return false;
+  }
+  goTo(c, workSpot(s, c, b));
+  if (stepTo(s, c, dt)) {
+    const perHead = cullWorkPerHead(b);
+    let prog = (b.cullProgress ?? 0) + dt;
+    // A single dt can clear more than one small animal at a stroke; loop until the work banked is
+    // spent or the pen is back at its cap.
+    while (prog >= perHead && (b.animals ?? 0) > cap) {
+      prog -= perHead;
+      butcherProducts(s, b, 1);
+      b.animals = (b.animals ?? 0) - 1;
+    }
+    b.cullProgress = (b.animals ?? 0) > cap ? prog : 0;
+  }
+  return true;
 }
 
 const PEN_PER_TRIP = 4; // head of livestock a rancher walks in from the barn per trip

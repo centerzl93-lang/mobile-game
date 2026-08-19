@@ -223,9 +223,10 @@ test.describe('save migration', () => {
     // v13→v14 step is meant to restore — the exact shape an old device's save has.
     await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'normal', true, 0);
+      g.startNewGame('small', 'normal', true);
       g.persist();
-      const key = 'little-village-save-v12-slot0';
+      // Continue resumes the autosave slot, so downgrade that slot's envelope (the one it loads).
+      const key = `little-village-save-v12-slot${g.debugAutosaveSlot()}`;
       const env = JSON.parse(localStorage.getItem(key)!);
       env.v = 13;
       delete env.state.stats;

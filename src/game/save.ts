@@ -147,8 +147,15 @@ function migrateEnvelope(env: SaveEnvelope): GameState | null {
   return env.state;
 }
 
-/** Number of fixed save slots the player can use. */
+/** Number of manual (player-controlled hard-save) slots. */
 export const SLOTS = 3;
+/**
+ * The dedicated autosave slot — a fourth slot the running game continuously writes to, kept apart
+ * from the manual slots so autosave can never overwrite a hard save. It is not part of the `SLOTS`
+ * count, so every `for (i < SLOTS)` loop (the Save/Load lists, "any save?", clear-all's per-slot
+ * sweep) walks only the manual slots and leaves the autosave slot alone. Continue resumes it.
+ */
+export const AUTOSAVE_SLOT = SLOTS;
 const slotKey = (slot: number): string => `little-village-save-v12-slot${slot}`;
 /**
  * A slot's player-given name, kept beside the save rather than inside it.
@@ -495,6 +502,9 @@ export function clearSave(slot?: number): void {
       localStorage.removeItem(slotKey(i));
       localStorage.removeItem(slotNameKey(i));
     }
+    // Clear-all means everything, so the autosave slot goes too (it is outside the SLOTS loop).
+    localStorage.removeItem(slotKey(AUTOSAVE_SLOT));
+    localStorage.removeItem(slotNameKey(AUTOSAVE_SLOT));
     localStorage.removeItem(LAST_SLOT_KEY);
     localStorage.removeItem(LEGACY_KEY);
     localStorage.setItem(MIGRATED_KEY, '1'); // don't resurrect the legacy save after a clear-all

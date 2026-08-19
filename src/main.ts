@@ -135,6 +135,7 @@ import {
   workplaceStatus,
   villageToolTier,
   toolProdFactor,
+  wearTools,
   debugWorkSpotFor,
   debugApproach,
   debugReachable,
@@ -2183,6 +2184,11 @@ class Game {
   /** Debug/testing helper: the output multiplier that tool tier applies to every worker's labour. */
   debugToolProdFactor(): number {
     return toolProdFactor(this.state);
+  }
+
+  /** Debug/testing helper: bill `workerSeasons` of tool wear, steel-first, as the sim does per work. */
+  debugWearTools(workerSeasons: number): void {
+    wearTools(this.state, workerSeasons);
   }
 
   /** Debug/testing helper: food across every edible kind — what a `food` limit is judged against. */

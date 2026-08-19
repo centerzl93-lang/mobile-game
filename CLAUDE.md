@@ -144,10 +144,18 @@ adding a kind is a table edit. Core tables (all `src/types.ts`): `RESOURCE_ICON`
   bar folds them into a single 🛠️ figure, the barn/smith/villager sheets keep them apart. A worker
   labours at the village's best available tool: steel (`STEEL_TOOL_PROD` 1.15) beats iron
   (`IRON_TOOL_PROD` 1.0) beats bare hands (`NO_TOOLS_PENALTY` 0.6), read live by `villageToolTier` /
-  `toolProdFactor`. Steel also lasts `STEEL_DURABILITY` (2)× longer, so end-of-season tool wear draws
-  steel first at half rate, then iron. A smith set to `steel` forges `steeltools` from iron **+ coal**
-  (the reason a village keeps two mines — coal digs slower than iron, `MINE_COAL_FACTOR` <
-  `MINE_IRON_FACTOR`); set to `iron` it forges plain `tools` from iron alone.
+  `toolProdFactor`. A smith set to `steel` forges `steeltools` from iron **+ coal** (the reason a
+  village keeps two mines — coal digs slower than iron, `MINE_COAL_FACTOR` < `MINE_IRON_FACTOR`); set
+  to `iron` it forges plain `tools` from iron alone.
+- **Tool wear is work-based, not seasonal** (`wearTools`). Wear is billed as labour happens — a slice
+  (`TOOL_WEAR_PER_CYCLE`) each time a producer completes a work cycle, and per unit of builder-work
+  laid on a site (`TOOL_WEAR_PER_BUILD_WORK`, construction *and* demolition) — never in a lump at the
+  season turn. A producer blocked for want of inputs completes no cycles and so wears nothing. The
+  rates derive from `TOOL_WEAR_PER_WORKER` so a worker labouring flat out still wears ~one tool a
+  season (parity with the old flat rule); only idle time is now free. Every draw goes through
+  `wearTools`, which spends steel first — a steel tool absorbs `STEEL_DURABILITY` (2) worker-seasons,
+  so it wears half as fast — then falls back to iron, and books to the ledger via `consume` (the same
+  continuous billing as `eat`/`heat`).
 
 ## Building system
 
@@ -339,7 +347,7 @@ All in `src/types.ts` unless noted. These are the primary dials.
 | `CONSUMPTION_SLOWDOWN` | 3 | Divides food & fuel drain (the big recent economy dial). |
 | `FOOD_PER_CITIZEN_PER_SEASON` | 20 | Adult ration/season (`CHILD_FOOD_FACTOR` 0.5). |
 | `HEAT_PER_CITIZEN_WINTER` | ~13.3 | Winter heat units/season (firewood=1, coal=2). |
-| `CLOTHING_PER_CITIZEN_WINTER` / `TOOL_WEAR_PER_WORKER` | 2 / 1 | Coats & tools worn per season. |
+| `CLOTHING_PER_CITIZEN_WINTER` / `TOOL_WEAR_PER_WORKER` | 2 / 1 | Coats worn per season; tool wear anchor (≈1 tool per worker-season of *actual* labour — billed per work cycle / builder-work, not by headcount at the season turn). |
 | `STARVE_SECONDS` / `FREEZE_SECONDS` | SEASON/3 | Grace before hunger/cold kills. |
 | `BARN_CAPACITY` / `MARKET_CAPACITY` | 5000 / 2000 | Storage volume. |
 | `CARRY_VOLUME` | 12 | One hauling trip's volume. |

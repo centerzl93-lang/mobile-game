@@ -4860,6 +4860,10 @@ test.describe('iron and steel tools', () => {
         const iron = { tools: g.debugTotalStored('tools') - base.tools, steel: g.debugTotalStored('steeltools') - base.steel };
 
         w.recipe = 'steel';
+        // Clear the tools the iron window banked: with none in the barns, any change to the plain-tool
+        // count during the steel window is production, not the wear the working smith also incurs —
+        // and steel, once it starts stacking up, is what that wear draws from anyway.
+        for (const b of s.buildings) { delete b.store.tools; delete b.store.steeltools; }
         base = { tools: g.debugTotalStored('tools'), steel: g.debugTotalStored('steeltools'), coal: g.debugTotalStored('coal') };
         for (let i = 0; i < 4000; i++) g.debugAdvance(0.5);
         const steel = {
@@ -4917,39 +4921,115 @@ test.describe('iron and steel tools', () => {
     expect(out.both).toEqual({ tier: 'steel', factor: 1.15 });
   });
 
-  test('a steel tool lasts twice as long as an iron one', async ({ page }) => {
+  test('a steel tool absorbs twice the wear of an iron one, and steel is spent first', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      const clear = () => { for (const b of s.buildings) { delete b.store.tools; delete b.store.steeltools; } };
+
+      // The same ten worker-seasons of labour, billed against iron and then against steel. Iron
+      // wears one tool a worker-season; steel absorbs two, so ten seasons spend half as many steel.
+      clear(); barn.store.tools = 1000;
+      let before = g.debugTotalStored('tools');
+      g.debugWearTools(10);
+      const ironSpent = before - g.debugTotalStored('tools');
+
+      clear(); barn.store.steeltools = 1000;
+      before = g.debugTotalStored('steeltools');
+      g.debugWearTools(10);
+      const steelSpent = before - g.debugTotalStored('steeltools');
+
+      // With both stocked, steel is drawn first (the tier the village works in), and only what steel
+      // can't cover falls to iron. 4 steel here covers 8 worker-seasons; the last 2 go on iron.
+      clear(); barn.store.steeltools = 4; barn.store.tools = 1000;
+      const iron0 = g.debugTotalStored('tools');
+      g.debugWearTools(10);
+      const mixed = { steelLeft: g.debugTotalStored('steeltools'), ironSpent: iron0 - g.debugTotalStored('tools') };
+
+      return { ironSpent, steelSpent, mixed };
+    });
+
+    expect(out.ironSpent, 'iron wears one tool a worker-season').toBeCloseTo(10, 5);
+    expect(out.steelSpent, 'steel wears half as fast').toBeCloseTo(5, 5);
+    // Steel first, then iron for the remainder: 4 steel (8 seasons) spent to zero, 2 seasons on iron.
+    expect(out.mixed.steelLeft, 'all the steel is spent before iron is touched').toBeCloseTo(0, 5);
+    expect(out.mixed.ironSpent, 'the two seasons steel could not cover fall on iron').toBeCloseTo(2, 5);
+  });
+
+  test('an idle producer wears no tools; a working one does', { tag: '@slow' }, async ({ page }) => {
+    test.setTimeout(180_000);
     await open2d(page);
     const out = await page.evaluate(
       new Function(`
         ${forge}
-        // A staffed gatherer gives us workers who wear tools (and make food, not tools, so the
-        // season turn doesn't muddy the count). Let them settle onto the job first.
-        const gath = put('gatherer');
-        gath.desiredWorkers = g.debugJobCount('gatherer');
-        for (let i = 0; i < 120; i++) g.debugAdvance(0.5);
+        // A woodcutter turns wood into firewood — so it wears tools but never makes them, and it
+        // stands idle the moment it has no wood to work. That idleness is the whole test.
+        const wc = put('woodcutter');
+        wc.desiredWorkers = g.debugJobCount('woodcutter');
+        for (let i = 0; i < 3; i++) { const b = put('barn'); if (b) b.store.grain = 4000; }
+        for (const b of s.buildings) delete b.store.wood; // nothing to cut → no work
+        barn.store.tools = 100000;
+        for (let i = 0; i < 160; i++) g.debugAdvance(0.5); // let the worker arrive and stand about
 
-        // One season of work, wearing only iron, then only steel. Each turn is checked against its
-        // own headcount so a birth or death between the two seasons can't skew the ratio: iron wears
-        // one tool per worker-season, steel half that — two worker-seasons to a steel tool.
-        const wear = (kind) => {
-          for (const b of s.buildings) { delete b.store.tools; delete b.store.steeltools; }
-          barn.store[kind] = 1000;
-          let emp = 0;
-          for (const b of s.buildings) if (b.built) emp += b.workers.length;
-          const before = g.debugTotalStored(kind);
-          g.debugEndSeason();
-          return { worn: before - g.debugTotalStored(kind), emp };
-        };
-        const iron = wear('tools');
-        const steel = wear('steeltools');
-        return { iron, steel };
+        const idleBefore = g.debugTotalStored('tools');
+        for (let i = 0; i < 1400; i++) g.debugAdvance(0.5);
+        const idleWorn = idleBefore - g.debugTotalStored('tools');
+
+        // Now give it wood. It starts completing cycles, and tools start wearing.
+        barn.store.wood = 100000;
+        const busyBefore = g.debugTotalStored('tools');
+        for (let i = 0; i < 1400; i++) g.debugAdvance(0.5);
+        const busyWorn = busyBefore - g.debugTotalStored('tools');
+        return { idleWorn, busyWorn, made: g.debugTotalStored('firewood') };
       `) as () => any,
     );
 
-    expect(out.iron.emp, 'somebody is working, so tools wear').toBeGreaterThan(0);
-    expect(out.steel.emp, 'and still working the next season').toBeGreaterThan(0);
-    expect(out.iron.worn, 'iron tools wear at one per worker-season').toBeCloseTo(out.iron.emp, 5);
-    expect(out.steel.worn, 'steel wears half as fast').toBeCloseTo(out.steel.emp / 2, 5);
+    expect(out.idleWorn, 'a producer with nothing to work wears no tools').toBeCloseTo(0, 5);
+    expect(out.made, 'once fed it actually works').toBeGreaterThan(0);
+    expect(out.busyWorn, 'and working wears tools').toBeGreaterThan(0);
+  });
+
+  test('raising a building wears tools too', { tag: '@slow' }, async ({ page }) => {
+    test.setTimeout(180_000);
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${forge}
+        for (let i = 0; i < 3; i++) { const b = put('barn'); if (b) b.store.grain = 4000; }
+        // A real construction site — placed, not force-built — with the barns holding the materials
+        // and tools for the crew. Free adults become builders when a site is open, lay work, and now
+        // wear tools doing it. A chapel is a big job, so it won't finish inside the window.
+        const f = g.debugFootprint('chapel');
+        const clear = (x, y) => taken.every((t) =>
+          x > t.x + t.w || t.x > x + f.w || y > t.y + t.h || t.y > y + f.h);
+        let siteId = null;
+        for (let r = 3; r < 30 && siteId == null; r++)
+          for (let dy = -r; dy <= r && siteId == null; dy++)
+            for (let dx = -r; dx <= r && siteId == null; dx++) {
+              const x = barn.x + dx, y = barn.y + dy;
+              if (!clear(x, y) || !g.debugCanPlace('chapel', x, y).ok) continue;
+              siteId = g.debugPlace('chapel', x, y);
+            }
+        if (siteId == null) throw new Error('no placeable chapel site');
+        g.debugSetBuilders(6); // make sure there is a crew
+
+        barn.store.tools = 100000;
+        const site = s.buildings.find((b) => b.id === siteId);
+        const before = g.debugTotalStored('tools');
+        const progBefore = site.progress;
+        for (let i = 0; i < 1600; i++) g.debugAdvance(0.5);
+        return {
+          worn: before - g.debugTotalStored('tools'),
+          progressed: site.progress - progBefore,
+        };
+      `) as () => any,
+    );
+
+    expect(out.progressed, 'the crew actually laid work on the site').toBeGreaterThan(0);
+    expect(out.worn, 'and wore tools doing it').toBeGreaterThan(0);
   });
 
   test('a villager sheet names the tool in their hands, and follows the supply', async ({ page }) => {

@@ -83,7 +83,8 @@ import {
   FIREWOOD_HEAT,
   COAL_HEAT,
   CLOTHING_PER_CITIZEN_WINTER,
-  TOOL_WEAR_PER_WORKER,
+  TOOL_WEAR_PER_CYCLE,
+  TOOL_WEAR_PER_BUILD_WORK,
   NO_TOOLS_PENALTY,
   IRON_TOOL_PROD,
   STEEL_TOOL_PROD,
@@ -657,6 +658,25 @@ export function toolProdFactor(s: GameState): number {
     case 'iron': return IRON_TOOL_PROD;
     default: return NO_TOOLS_PENALTY;
   }
+}
+
+/**
+ * Draw `workerSeasons` of tool wear from the barns as work is performed — a slice each time a
+ * producer completes a cycle, and per unit of builder-work laid at a site. Steel wears first: a
+ * steel tool absorbs `STEEL_DURABILITY` worker-seasons before it is spent, so the same labour eats
+ * steel half as fast, and whatever steel can't cover falls back onto iron tools. Books through
+ * `consume`, so the wear lands in the Town Hall ledger like any other continuous draw (the way
+ * `eat`/`heat` bill food and fuel) rather than in a lump at the season boundary.
+ */
+export function wearTools(s: GameState, workerSeasons: number): void {
+  if (workerSeasons <= 0) return;
+  let owed = workerSeasons;
+  const coveredBySteel = Math.min(totalStored(s, 'steeltools') * STEEL_DURABILITY, owed);
+  if (coveredBySteel > 0) {
+    consume(s, 'steeltools', coveredBySteel / STEEL_DURABILITY);
+    owed -= coveredBySteel;
+  }
+  if (owed > 0) consume(s, 'tools', owed);
 }
 
 // ---- lives (ageing, schooling, old age, births) ----
@@ -1461,6 +1481,10 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workFactor
       const out = workOutput(s, b, dt, workFactor, c);
       c.workAt = undefined; // next cycle picks somewhere new
       if (out && out.amount > 0.01) {
+        // A cycle's worth of work wears a slice off the village's tools (steel first). Charged per
+        // completed cycle, so a producer blocked for want of inputs — who reaches this branch with
+        // nothing made and never enters it — pays nothing, which is the whole point of work-based wear.
+        wearTools(s, TOOL_WEAR_PER_CYCLE);
         // Healthier, happier, and educated workers produce more; a worker facing winter without a
         // coat produces less — numb hands are slow hands, though it no longer costs them their life.
         const wellbeing = (0.7 + 0.3 * (c.health / 100)) * (0.85 + 0.15 * (c.happiness / 100));
@@ -2225,7 +2249,9 @@ function runBuilder(s: GameState, c: Citizen, dt: number, workFactor = 1): void 
       // demolition is not construction run backwards.
       goTo(c, buildingApproach(s, pick.site, c));
       if (stepTo(s, c, dt)) {
-        pick.site.demoProgress = (pick.site.demoProgress ?? 0) + labour(c, dt);
+        const done = labour(c, dt);
+        pick.site.demoProgress = (pick.site.demoProgress ?? 0) + done;
+        wearTools(s, done * TOOL_WEAR_PER_BUILD_WORK); // tearing down is tool-work too
         if (pick.site.demoProgress >= demoWorkOf(pick.site.type)) razeBuilding(s, pick.site);
       }
       return;
@@ -2251,7 +2277,9 @@ function runBuilder(s: GameState, c: Citizen, dt: number, workFactor = 1): void 
     goTo(c, buildingApproach(s, pick.site, c));
     if (stepTo(s, c, dt)) {
       const before = pick.site.progress;
-      pick.site.progress += labour(c, dt, workFactor);
+      const done = labour(c, dt, workFactor);
+      pick.site.progress += done;
+      wearTools(s, done * TOOL_WEAR_PER_BUILD_WORK); // raising a building draws on the tool supply
       if (pick.site.progress >= buildWorkOf(pick.site.type)) {
         finishConstruction(s, pick.site);
       } else {
@@ -2871,20 +2899,9 @@ function endSeason(s: GameState, log: LogFn): void {
   let pop = s.citizens.length;
   if (pop === 0) return;
 
-  // Tools wear from labour, measured in worker-seasons (one worker, one season = one iron tool's
-  // worth). Steel wears first because steel is the tier the village is working in when it has any,
-  // but a steel tool absorbs `STEEL_DURABILITY` (2) worker-seasons before it is spent — so the same
-  // labour eats steel half as fast. Whatever the steel can't cover falls back onto iron tools.
-  let employed = 0;
-  for (const b of s.buildings) if (b.built) employed += b.workers.length;
-  let workerSeasons = employed * TOOL_WEAR_PER_WORKER;
-  const steelCovers = totalStored(s, 'steeltools') * STEEL_DURABILITY;
-  const coveredBySteel = Math.min(steelCovers, workerSeasons);
-  if (coveredBySteel > 0) {
-    consume(s, 'steeltools', coveredBySteel / STEEL_DURABILITY);
-    workerSeasons -= coveredBySteel;
-  }
-  if (workerSeasons > 0) consume(s, 'tools', workerSeasons);
+  // Tools no longer wear here in a lump. Wear is billed as work is performed — a slice per producer
+  // cycle and per unit of builder-work (see `wearTools`) — so an idle worker costs nothing and the
+  // season boundary has no tool bill of its own.
 
   // A villager's own home, for larder-first consumption below.
   const homeById = new Map<number, Building>();

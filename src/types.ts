@@ -2328,15 +2328,40 @@ export const COAL_HEAT = 2;
  */
 export const CLOTHING_PER_CITIZEN_WINTER = 2;
 /**
- * Tools consumed per employed worker per season — one tool, one season's work.
+ * Tools worn out by one worker-season of *actual labour* — one tool for a full season worked flat
+ * out. This is the anchor the work-based wear rates below derive from; it is no longer billed
+ * directly.
  *
- * A village starts with 48, which is twelve villagers' worth of a full year. Only working adults
- * wear tools out, so the founding eight actually get about six seasons from it; the margin closes
- * as the village grows and every new worker adds four tools a year to the bill. A blacksmith
- * turns out `SMITH_IRON_TOOLS_OUT` (8) a worker a season, so one staffed smithy keeps about
- * sixteen workers in tools — the village has to reach that before the opening stock runs dry.
+ * Wear is charged as work is performed, not once a season by headcount: a producer wears a slice of
+ * a tool each time they complete a work cycle, a builder as they lay construction-work. A worker who
+ * stood idle all season (a smith with no iron, a woodcutter with no wood) completes no cycles and so
+ * wears nothing — the flat old rule charged them a full tool regardless. Because the slices are
+ * calibrated to sum to exactly this at full tilt, a fully-fed village pays the same tool bill it
+ * always did; only idle time is now free, which quietly rewards keeping producers supplied.
+ *
+ * A village starts with 48 tools — twelve villagers' worth of a full year. A blacksmith turns out
+ * `SMITH_IRON_TOOLS_OUT` (8) a worker a season, so one staffed smithy keeps about sixteen workers in
+ * tools once they are all busy.
  */
 export const TOOL_WEAR_PER_WORKER = 1;
+
+/**
+ * Tool wear charged when a producer completes one work cycle (`WORK_SECONDS` of labour). Derived so
+ * that a worker cycling without pause for a whole season wears exactly `TOOL_WEAR_PER_WORKER` — the
+ * old flat rate — while a blocked or commuting worker, who completes fewer cycles, wears less. Wear
+ * is per *cycle*, not per unit produced, so an educated or steel-equipped worker (more output at the
+ * same cadence) wears at the same pace: a tool wears from use, not from yield.
+ */
+export const TOOL_WEAR_PER_CYCLE = (TOOL_WEAR_PER_WORKER * WORK_SECONDS) / SEASON_LENGTH;
+
+/**
+ * Tool wear charged per unit of builder-work laid down (`BUILD_WORK_RATE` is 1 unit a second at the
+ * site). Anchored to the same per-second-of-active-labour rate as a producer's cycle wear, so a
+ * builder hammering flat out for a season wears about one tool, and a quiet build queue costs little.
+ * Construction now draws on the tool supply the way every other trade does — a big build boom leans
+ * on the barns' tools, not just their timber.
+ */
+export const TOOL_WEAR_PER_BUILD_WORK = TOOL_WEAR_PER_WORKER / SEASON_LENGTH;
 
 /**
  * What one villager gets through in a season, for the goods where that is the real measure.

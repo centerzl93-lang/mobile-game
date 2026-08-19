@@ -154,6 +154,22 @@ export function nearestBarnOnlyWith(s: GameState, pos: Pos, kind: ResourceKind):
   );
 }
 
+/**
+ * Nearest place a rancher can fetch livestock from: a barn *or* the trading post / port a trader
+ * just sold the animals into. Bought herds are left standing in the post's inventory (they are
+ * penned by driving, not carried up to a barn first), so the rancher walks to whichever source
+ * is nearest and holds the beast — the barn if a keeper stocked it, else the dock it landed on.
+ */
+export function nearestStockWith(s: GameState, pos: Pos, kind: ResourceKind): Building | null {
+  return nearestHolding(
+    s.buildings.filter(
+      (b) => b.built && (b.type === 'barn' || b.type === 'trading' || b.type === 'port'),
+    ),
+    pos,
+    kind,
+  );
+}
+
 function nearestHolding(list: Building[], pos: Pos, kind: ResourceKind): Building | null {
   let best: Building | null = null;
   let bestD = Infinity;

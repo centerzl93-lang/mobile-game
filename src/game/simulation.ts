@@ -97,6 +97,7 @@ import {
   CROP_META,
   ANIMAL_META,
   RanchAnimal,
+  RANCH_ANIMALS,
   ranchCapacity,
   RANCH_BREED_PER_SEASON,
   RANCH_BREED_BONUS_CHANCE,
@@ -235,6 +236,7 @@ import {
   nearestBarnWith,
   nearestBarnWithRoom,
   nearestBarnOnlyWith,
+  nearestStockWith,
   barnFree,
   unitsThatFit,
   consumeFood,
@@ -1817,14 +1819,16 @@ function penFromStorage(s: GameState, c: Citizen, b: Building, dt: number): bool
   const cap = Math.min(b.maxAnimals ?? ranchCapacity(b), ranchCapacity(b));
   const room = cap - (b.animals ?? 0);
   if (room <= 0) return false;
-  const barn = nearestBarnOnlyWith(s, buildingCenter(b), animal);
-  if (!barn) return false;
-  goTo(c, buildingApproach(s, barn, c));
+  // Fetch from the nearest source holding the beast — a barn, or the trading post / port the herd
+  // was bought into and left standing (an unstaffed post has no keeper to cart it to a barn first).
+  const src = nearestStockWith(s, buildingCenter(b), animal);
+  if (!src) return false;
+  goTo(c, buildingApproach(s, src, c));
   if (stepTo(s, c, dt)) {
-    const take = Math.min(PEN_PER_TRIP, room, Math.floor(barn.store[animal] ?? 0));
+    const take = Math.min(PEN_PER_TRIP, room, Math.floor(src.store[animal] ?? 0));
     if (take > 0) {
-      barn.store[animal] = (barn.store[animal] ?? 0) - take;
-      if ((barn.store[animal] ?? 0) <= 0) delete barn.store[animal];
+      src.store[animal] = (src.store[animal] ?? 0) - take;
+      if ((src.store[animal] ?? 0) <= 0) delete src.store[animal];
       b.animals = (b.animals ?? 0) + take;
     }
   }
@@ -1890,7 +1894,11 @@ function runTrader(s: GameState, c: Citizen, b: Building, dt: number): void {
   }
 
   // Errand 2: clear a surplus (post holds more than ordered, e.g. goods just bought) to the barns.
+  // Livestock is the exception: a bought herd stays standing in the post's pen for a rancher to
+  // drive home (`penFromStorage` fetches it straight from here), so the keeper leaves animals be
+  // rather than hauling them off to a barn the rancher would only have to walk further to.
   for (const k of RESOURCE_KINDS) {
+    if ((RANCH_ANIMALS as ResourceKind[]).includes(k)) continue;
     const surplus = (b.store[k] ?? 0) - (orders[k] ?? 0);
     if (surplus <= 0.01) continue;
     goTo(c, buildingApproach(s, b, c));

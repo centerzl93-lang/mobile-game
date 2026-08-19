@@ -155,7 +155,7 @@ export interface InspectControls {
    * Trading post or Port: show a button that opens the inventory/trade panel, and flag a merchant
    * tied up *at this berth* — a river trader at the post, a fleet at the harbour.
    */
-  tradingPost?: { merchantDocked: boolean; port: boolean };
+  tradingPost?: { merchantDocked: boolean; port: boolean; landlocked?: boolean };
   /**
    * Pull it down, or call it off. `blocked` is the village's last barn, which has to stay
    * standing; `marked` swaps the button for a cancel, right up until the walls actually come down.
@@ -910,11 +910,16 @@ export class UI {
       ctrlHtml += `<div class="inv-ctrl"><div class="jr-toggle">${opts}</div></div>`;
     }
     if (controls?.tradingPost) {
-      const { merchantDocked: docked, port } = controls.tradingPost;
+      const { merchantDocked: docked, port, landlocked } = controls.tradingPost;
       const label = docked
         ? port ? '🤝 Trade with the fleet' : '🤝 Trade with merchant'
         : port ? '⚓ Manage harbour' : '📦 Manage trading post';
       ctrlHtml += `<div class="inv-ctrl"><button class="tp-open${docked ? ' docked' : ''}" id="insp-tp">${label}</button></div>`;
+      // Built on water that has no channel out to the sea — no boat can ever sail here, so no
+      // merchant will call. Flagged loudly so the player rebuilds on the river or an edge lake.
+      if (landlocked) {
+        ctrlHtml += `<div class="inv-error">⚠ No route to open water — this ${port ? 'harbour' : 'trading post'} is on a landlocked lake, so no ${port ? 'fleet' : 'merchant'} can reach it. Rebuild on the river or a lake that meets the map edge.</div>`;
+      }
     }
     if (controls?.ranch) {
       const r = controls.ranch;

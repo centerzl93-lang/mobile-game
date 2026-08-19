@@ -1697,6 +1697,13 @@ export interface Merchant {
    * across a lake to reach a wharf cannot keep the fixed downstream yaw it used to have.
    */
   boat: { x: number; y: number; h?: number } | null;
+  /**
+   * Remaining water-tile waypoints the boat is sailing through to its current goal (berth or the
+   * sea exit), so it follows the river/lakes rather than crossing land. Computed on demand and
+   * cleared at each phase change; absent/null means "recompute the route". Transient — a save
+   * mid-voyage simply re-plans the same channel on load.
+   */
+  boatPath?: { x: number; y: number }[] | null;
 }
 
 /** A band of nomads awaiting the player's decision to let them settle or turn them away. */

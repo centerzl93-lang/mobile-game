@@ -86,6 +86,11 @@ export type ResourceKind =
   | 'coal'
   | 'iron'
   | 'tools'
+  // Steel tools are a *separate* barn good from plain (iron) tools: they last twice as long and
+  // work a shade faster (see `STEEL_DURABILITY` / `STEEL_TOOL_PROD`). The HUD folds the two into a
+  // single 🛠️ figure — a player watches "do we have tools" — but the barn, the smith and a
+  // villager's own kit all keep them apart.
+  | 'steeltools'
   | 'leather'
   | 'wool'
   | 'clothing'
@@ -175,6 +180,7 @@ export const RESOURCE_KINDS: ResourceKind[] = [
   'coal',
   'iron',
   'tools',
+  'steeltools',
   'leather',
   'wool',
   'clothing',
@@ -265,6 +271,7 @@ export const RESOURCE_ICON: Record<ResourceKind, string> = {
   coal: '⚫',
   iron: '🔩',
   tools: '🛠️',
+  steeltools: '⚒️',
   leather: '🟫',
   wool: '🧶',
   clothing: '🧥',
@@ -1419,7 +1426,9 @@ export function limitedOutput(b: Building): LimitKey | null {
     case 'woodcutter': return 'firewood';
     case 'quarry': return 'stone';
     case 'mine': return b.output === 'iron' ? 'iron' : 'coal';
-    case 'blacksmith': return 'tools';
+    // A smith set to steel answers to the steel-tool cap, one set to iron to the plain-tool cap —
+    // so a limit on one seam of the tool supply stands down only the smiths making that kind.
+    case 'blacksmith': return b.recipe === 'steel' ? 'steeltools' : 'tools';
     case 'tailor': return 'clothing';
     case 'herbalist': return 'medicine';
     // The workshop is judged against whatever bench it is running — the recipe *is* the output
@@ -1437,7 +1446,7 @@ export function limitedOutput(b: Building): LimitKey | null {
  * nothing. The five luxury goods a town produces are here; the three it only buys are not.
  */
 export const LIMITABLE: LimitKey[] = [
-  'food', 'wood', 'firewood', 'stone', 'coal', 'iron', 'tools', 'clothing', 'medicine',
+  'food', 'wood', 'firewood', 'stone', 'coal', 'iron', 'tools', 'steeltools', 'clothing', 'medicine',
   'sand', 'glass', 'jewelry', 'finejewelry', 'fineclothes',
 ];
 
@@ -1519,6 +1528,8 @@ for (const k of RESOURCE_KINDS) {
 LIMIT_META.finejewelry.label = 'Fine jewellery';
 LIMIT_META.fineclothes.label = 'Fine clothes';
 LIMIT_META.jewelry.label = 'Jewellery';
+// Steel tools read as two words too; plain tools stay "Tools" (the HUD's combined figure).
+LIMIT_META.steeltools.label = 'Steel tools';
 
 /**
  * Fraction of a resource's own stockpile limit below which the village calls it low — the level
@@ -2085,7 +2096,7 @@ export const RESOURCE_VOLUME: Record<ResourceKind, number> = {
   // Bulky raw materials — the volume-1 baseline.
   wood: 1, firewood: 1, stone: 1, coal: 1, iron: 1,
   // Worked goods: denser than raw material, so more fit in a load.
-  tools: 0.5, leather: 0.5, wool: 0.5, clothing: 0.5,
+  tools: 0.5, steeltools: 0.5, leather: 0.5, wool: 0.5, clothing: 0.5,
   medicine: 0.25,
   // Livestock is driven, not carried, and a cow takes rather more room than a log.
   cattle: 4, pigs: 3, sheep: 2, chickens: 0.5,
@@ -2342,7 +2353,26 @@ export const PER_CITIZEN_SEASON_NEED: Partial<Record<LimitKey, number>> = {
   tools: TOOL_WEAR_PER_WORKER,
 };
 
-export const NO_TOOLS_PENALTY = 0.6; // output multiplier when the tool stockpile is empty
+export const NO_TOOLS_PENALTY = 0.6; // output multiplier with no tools of any kind in the barns
+
+/**
+ * The tool ladder, as an output multiplier on every worker's labour. Bare hands are slow; an iron
+ * tool is the baseline a trade is balanced around; steel is a real, if modest, step past it.
+ *
+ *   no tool  → 0.60  (`NO_TOOLS_PENALTY`)
+ *   iron     → 1.00  (`IRON_TOOL_PROD`)
+ *   steel    → 1.15  (`STEEL_TOOL_PROD`)
+ *
+ * Steel's pull is deliberately *not* a doubling: its main draw is that it lasts twice as long
+ * (`STEEL_DURABILITY`), so a village re-forges tools half as often. The +15% is the sweetener on
+ * top, not the whole reason to bother — the reason is the coal-fed second mine it takes to make it.
+ * The village equips its best available tool, so steel in the barns lifts everyone to 1.15 and iron
+ * to 1.00; only an empty tool shelf drops the village to the penalty.
+ */
+export const IRON_TOOL_PROD = 1.0;
+export const STEEL_TOOL_PROD = 1.15;
+/** A steel tool wears out over this many worker-seasons — twice an iron tool's one. */
+export const STEEL_DURABILITY = 2;
 
 /**
  * What going without a winter coat does, now that it no longer kills. A villager kept warm by the
@@ -2872,6 +2902,10 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
   coal: 3,
   iron: 4,
   tools: 8,
+  // Dearer than iron tools: more iron went in, plus the coal to carburise it, and it lasts twice
+  // as long. Priced above tools but below where the extra durability would put it, so a village
+  // still gains by keeping steel for its own workers rather than forging it only to sell.
+  steeltools: 14,
   leather: 3,
   wool: 2.5,
   clothing: 6,

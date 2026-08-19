@@ -507,7 +507,10 @@ export class UI {
     // warnings have to count them for the same reason — as do the fine clothes among the luxuries.
     for (const kind of [...HUD_CORE, ...HUD_EXTRA]) {
       const chip = this.resChips.get(kind)!;
-      const v = (totals[kind] ?? 0) + totalInLarders(s, kind);
+      let v = (totals[kind] ?? 0) + totalInLarders(s, kind);
+      // The top bar shows one tool figure, not two: iron and steel tools are separate goods in the
+      // barn (and on a villager's belt), but a glance at the HUD only wants "have we got tools".
+      if (kind === 'tools') v += (totals['steeltools'] ?? 0) + totalInLarders(s, 'steeltools');
       chip.querySelector('.val')!.textContent = `${Math.floor(v)}`;
       this.markLimit(chip, s, kind, LIMIT_META[kind].label);
       this.markLow(chip, s, kind);

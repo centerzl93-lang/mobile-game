@@ -85,6 +85,9 @@ import {
   CLOTHING_PER_CITIZEN_WINTER,
   TOOL_WEAR_PER_WORKER,
   NO_TOOLS_PENALTY,
+  IRON_TOOL_PROD,
+  STEEL_TOOL_PROD,
+  STEEL_DURABILITY,
   COLD_WORK_FACTOR,
   COLD_WORK_MIN,
   UNCLOTHED_HEALTH_PENALTY,
@@ -274,7 +277,14 @@ const LOAD_MAT = 6; // raw material produced per work cycle (before factor)
 // Converter recipes: inputs consumed and output produced per cycle.
 const WCUT_WOOD_IN = 6, WCUT_FW_OUT = 8;
 const SMITH_IRON_IN = 4, SMITH_IRON_OUT = 5;
-const SMITH_STEEL_IRON = 4, SMITH_STEEL_COAL = 3, SMITH_STEEL_OUT = 8;
+// Steel takes the same iron plus coal, and yields the *same count* of tools as iron does — steel's
+// advantage is that each one lasts twice as long (`STEEL_DURABILITY`) and works 15% harder, not
+// that more come off the anvil. So a smith on steel doubles a village's tool-seasons per iron ingot
+// but only by feeding it coal from a second, slower mine — the "keep two mines" pressure by design.
+const SMITH_STEEL_IRON = 4, SMITH_STEEL_COAL = 3, SMITH_STEEL_OUT = 5;
+// Mine yields per cycle. Coal is deliberately the slower seam: it keeps coal rarer than iron and
+// steel a real investment, so a village that wants both has to sink and staff a mine for each.
+const MINE_IRON_FACTOR = 0.8, MINE_COAL_FACTOR = 0.5;
 // Two ways to a coat. Wool goes further than hide per unit — a fleece is spun and woven, a hide
 // is cut around — but a pen of sheep is the real difference: see `ANIMAL_META`.
 const TAILOR_LEATHER_IN = 5, TAILOR_WOOL_IN = 4, TAILOR_OUT = 4;
@@ -333,7 +343,7 @@ export function update(s: GameState, dt: number, log: LogFn): void {
   ensureNavLabels(s); // walkable connectivity, recomputed only when it actually changed
   reconcileWorkers(s);
   assignHomesAndJobs(s);
-  const toolFactor = totalStored(s, 'tools') > 0 ? 1 : NO_TOOLS_PENALTY;
+  const toolFactor = toolProdFactor(s);
   // Long Hours rides along with the tool factor because they are the same kind of number: how
   // well a pair of hands is working, as opposed to what the building around them is for. Renamed
   // from `toolFactor` on the way through, since it is no longer only about tools.
@@ -619,12 +629,34 @@ export function workplaceStatus(s: GameState, b: Building): WorkStatus | null {
   if (capKey && atLimit(s, capKey)) {
     return { text: `✅ ${LIMIT_META[capKey].label} at your limit — paused`, tone: 'capped' };
   }
-  // The village-wide tool penalty (`NO_TOOLS_PENALTY`): with not one tool in the barns every trade
-  // works slowly. A field answers to no chisel, so it is left out — everything else here is slowed.
-  if (b.type !== 'farm' && totalStored(s, 'tools') <= 0) {
+  // The village-wide tool penalty (`NO_TOOLS_PENALTY`): with not one tool of *either* kind in the
+  // barns every trade works slowly. A field answers to no chisel, so it is left out — everything
+  // else here is slowed. Iron or steel, either lifts the penalty; only a bare shelf triggers it.
+  if (b.type !== 'farm' && villageToolTier(s) === 'none') {
     return { text: '🔧 Slowed — villagers lack tools', tone: 'warn' };
   }
   return { text: '✓ Working', tone: 'good' };
+}
+
+/**
+ * The best tool the village can put in a worker's hands right now, judged by what is in the barns.
+ * Steel beats iron beats nothing; a worker is only slowed (the penalty) when neither is stocked.
+ * It is a live read of the stores, not a stored fact, so it follows the supply the moment a smith
+ * catches up or the last tool wears out — which is why a villager's kit is computed, never saved.
+ */
+export function villageToolTier(s: GameState): 'steel' | 'iron' | 'none' {
+  if (totalStored(s, 'steeltools') > 0) return 'steel';
+  if (totalStored(s, 'tools') > 0) return 'iron';
+  return 'none';
+}
+
+/** That tier as the output multiplier it applies to every worker's labour. */
+export function toolProdFactor(s: GameState): number {
+  switch (villageToolTier(s)) {
+    case 'steel': return STEEL_TOOL_PROD;
+    case 'iron': return IRON_TOOL_PROD;
+    default: return NO_TOOLS_PENALTY;
+  }
 }
 
 // ---- lives (ageing, schooling, old age, births) ----
@@ -1958,15 +1990,15 @@ function workOutput(
     case 'mine': {
       const f = factorStone(s, b) * tf;
       return b.output === 'iron'
-        ? { kind: 'iron', amount: LOAD_MAT * 0.8 * f }
-        : { kind: 'coal', amount: LOAD_MAT * f };
+        ? { kind: 'iron', amount: LOAD_MAT * MINE_IRON_FACTOR * f }
+        : { kind: 'coal', amount: LOAD_MAT * MINE_COAL_FACTOR * f };
     }
     case 'woodcutter':
       return consumeStore(b, [['wood', WCUT_WOOD_IN]]) ? { kind: 'firewood', amount: WCUT_FW_OUT * tf } : null;
     case 'blacksmith':
       if (b.recipe === 'steel') {
         return consumeStore(b, [['iron', SMITH_STEEL_IRON], ['coal', SMITH_STEEL_COAL]])
-          ? { kind: 'tools', amount: SMITH_STEEL_OUT * tf }
+          ? { kind: 'steeltools', amount: SMITH_STEEL_OUT * tf }
           : null;
       }
       return consumeStore(b, [['iron', SMITH_IRON_IN]]) ? { kind: 'tools', amount: SMITH_IRON_OUT * tf } : null;
@@ -2839,10 +2871,20 @@ function endSeason(s: GameState, log: LogFn): void {
   let pop = s.citizens.length;
   if (pop === 0) return;
 
-  // Tools wear from labour.
+  // Tools wear from labour, measured in worker-seasons (one worker, one season = one iron tool's
+  // worth). Steel wears first because steel is the tier the village is working in when it has any,
+  // but a steel tool absorbs `STEEL_DURABILITY` (2) worker-seasons before it is spent — so the same
+  // labour eats steel half as fast. Whatever the steel can't cover falls back onto iron tools.
   let employed = 0;
   for (const b of s.buildings) if (b.built) employed += b.workers.length;
-  consume(s, 'tools', employed * TOOL_WEAR_PER_WORKER);
+  let workerSeasons = employed * TOOL_WEAR_PER_WORKER;
+  const steelCovers = totalStored(s, 'steeltools') * STEEL_DURABILITY;
+  const coveredBySteel = Math.min(steelCovers, workerSeasons);
+  if (coveredBySteel > 0) {
+    consume(s, 'steeltools', coveredBySteel / STEEL_DURABILITY);
+    workerSeasons -= coveredBySteel;
+  }
+  if (workerSeasons > 0) consume(s, 'tools', workerSeasons);
 
   // A villager's own home, for larder-first consumption below.
   const homeById = new Map<number, Building>();
@@ -2990,7 +3032,10 @@ function recordSeasonStats(s: GameState): void {
     }
     let foodNet = 0;
     for (const k of FOOD_KINDS) foodNet += row.net[k] ?? 0;
-    if (foodNet > 0 && (row.net.firewood ?? 0) > 0 && (row.net.tools ?? 0) > 0 && (row.net.clothing ?? 0) > 0) {
+    // Tools counts either seam of the supply — a village that forges only steel is still keeping
+    // itself in tools, so steel net satisfies the "food, fuel, tools and clothing" self-sufficiency.
+    const toolsNet = (row.net.tools ?? 0) + (row.net.steeltools ?? 0);
+    if (foodNet > 0 && (row.net.firewood ?? 0) > 0 && toolsNet > 0 && (row.net.clothing ?? 0) > 0) {
       st.allFourProduced = true;
     }
   }

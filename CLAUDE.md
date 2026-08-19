@@ -127,7 +127,7 @@ upkeep.*
 
 ## Resource system
 
-**Table-driven.** 47 resource kinds (`RESOURCE_KINDS`), of which 25 are foods (`FOOD_KINDS`).
+**Table-driven.** 48 resource kinds (`RESOURCE_KINDS`), of which 25 are foods (`FOOD_KINDS`).
 Everything that walks resources — HUD, trade, storage, consumption — iterates these tables, so
 adding a kind is a table edit. Core tables (all `src/types.ts`): `RESOURCE_ICON`, `RESOURCE_VOLUME`,
 `TRADE_VALUE`.
@@ -140,6 +140,14 @@ adding a kind is a table edit. Core tables (all `src/types.ts`): `RESOURCE_ICON`
   always shown; `HUD_EXTRA` (processed goods + `HUD_LUXURY`) sits behind an expand button.
 - **Low-stock signalling** is a fraction of each resource's own cap (`LOW_STOCK_FRACTION` 0.2 reddens
   the chip, `WARN_STOCK_FRACTION` 0.1 logs a warning), floored by per-citizen seasonal need.
+- **The tool ladder.** `tools` (iron) and `steeltools` are **two barn goods, one HUD chip** — the top
+  bar folds them into a single 🛠️ figure, the barn/smith/villager sheets keep them apart. A worker
+  labours at the village's best available tool: steel (`STEEL_TOOL_PROD` 1.15) beats iron
+  (`IRON_TOOL_PROD` 1.0) beats bare hands (`NO_TOOLS_PENALTY` 0.6), read live by `villageToolTier` /
+  `toolProdFactor`. Steel also lasts `STEEL_DURABILITY` (2)× longer, so end-of-season tool wear draws
+  steel first at half rate, then iron. A smith set to `steel` forges `steeltools` from iron **+ coal**
+  (the reason a village keeps two mines — coal digs slower than iron, `MINE_COAL_FACTOR` <
+  `MINE_IRON_FACTOR`); set to `iron` it forges plain `tools` from iron alone.
 
 ## Building system
 

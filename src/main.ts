@@ -133,6 +133,8 @@ import {
   isCriticalStock,
   cappedOut,
   workplaceStatus,
+  villageToolTier,
+  toolProdFactor,
   debugWorkSpotFor,
   debugApproach,
   debugReachable,
@@ -1783,6 +1785,18 @@ class Game {
       }
       if (adult) rows.push({ label: 'Schooling', value: c.educated ? 'Educated (+30% work)' : 'Uneducated' });
       if (adult) rows.push({ label: 'Work', value: job ? `${BUILDING_DEFS[job.type].name} worker` : 'Builder / laborer' });
+      // Which tool this worker has in hand, read live off the barns (the village equips its best —
+      // see `villageToolTier`). Children carry none, so the row is for working-age villagers only.
+      if (adult) {
+        const tier = villageToolTier(this.state);
+        const toolValue =
+          tier === 'steel'
+            ? `${RESOURCE_ICON.steeltools} Steel tools (+15% work)`
+            : tier === 'iron'
+              ? `${RESOURCE_ICON.tools} Iron tools`
+              : '✋ None — bare hands (−40% work)';
+        rows.push({ label: 'Tool', value: toolValue, tone: tier === 'none' ? 'warn' : undefined });
+      }
       rows.push({
         label: 'Carrying',
         // Against the per-kind limit, so it's clear a load is 12 logs but 48 of a crop.
@@ -2159,6 +2173,16 @@ class Game {
   /** Debug/testing helper: the village total of one resource, as the limits rule measures it. */
   debugTotalStored(kind: ResourceKind): number {
     return totalStored(this.state, kind);
+  }
+
+  /** Debug/testing helper: the best tool the village can equip right now (steel / iron / none). */
+  debugToolTier(): 'steel' | 'iron' | 'none' {
+    return villageToolTier(this.state);
+  }
+
+  /** Debug/testing helper: the output multiplier that tool tier applies to every worker's labour. */
+  debugToolProdFactor(): number {
+    return toolProdFactor(this.state);
   }
 
   /** Debug/testing helper: food across every edible kind — what a `food` limit is judged against. */

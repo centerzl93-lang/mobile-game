@@ -568,9 +568,11 @@ export class Renderer3D {
     this.bores.frustumCulled = false;
     this.scene.add(this.bores);
     const flat2 = new THREE.BoxGeometry(1, 0.04, 1);
-    const markMat = matte(0xffffff);
-    markMat.transparent = true;
-    markMat.opacity = 0.5;
+    // Unlit, not a shaded surface: a harvest mark is an overlay, and a lit one washed straight out
+    // against winter snow — the terrain goes near-white, the cold low sun dims the slab, and a pale
+    // 0.5-opacity mark vanished into the white. Basic + saturated per-tile colours (set below) keep
+    // it readable on grass, dirt and snow alike, independent of the season's light.
+    const markMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 });
     this.marks = new THREE.InstancedMesh(flat2, markMat, MAP_W * MAP_H);
     this.marks.count = 0;
     this.marks.frustumCulled = false;
@@ -1284,6 +1286,22 @@ export class Renderer3D {
   }
 
   /**
+   * The highest ground within a tile's footprint — its four corners and centre. A flat overlay slab
+   * (a path tile, a harvest mark) laid at this height clears terrain that rises *across* the tile,
+   * not just at its middle: on the dirt apron around a mountain one corner can lift toward foothill
+   * height while the centre stays near LAND_H, and a slab pinned to the centre would poke half into
+   * the slope. Sampling the max keeps the whole slab above ground, so it reads on flat land and on
+   * the rising shelf alike. On genuinely flat land every sample is LAND_H, so nothing floats.
+   */
+  private tileTopH(tx: number, tz: number): number {
+    return Math.max(
+      this.groundAt(tx, tz), this.groundAt(tx + 1, tz),
+      this.groundAt(tx, tz + 1), this.groundAt(tx + 1, tz + 1),
+      this.groundAt(tx + 0.5, tz + 0.5),
+    );
+  }
+
+  /**
    * Top of the bridge deck at a world position, or null where there is no bridge.
    *
    * Sampled across the tile rather than read flat off it: each slab is laid at a pitch, so a
@@ -1469,7 +1487,10 @@ export class Renderer3D {
         if (v === PATH_TUNNEL && this.tunnelDepth && this.tunnelDepth[i] >= TUNNEL_MOUTH_TILES) continue;
       } else {
         surf = v === PATH_STONE || v === PATH_STONE_PLAN ? 'stone' : 'dirt';
-        y = TOP + 0.03;
+        // Follow the ground instead of pinning to a flat LAND_H. A road (or its green plan) laid on
+        // the dirt shelf that ramps up to a mountain sits on ground above LAND_H, so a flat slab was
+        // buried by the hillside and the path — planned or built — read as missing there.
+        y = this.tileTopH(x, z) + 0.03;
       }
       const layer = this.pathLayers[surf];
       const k = n[surf]++;
@@ -1554,12 +1575,18 @@ export class Renderer3D {
     for (let i = 0; i < s.harvest.length; i++) {
       const hv = s.harvest[i];
       if (!hv) continue;
-      this.dummy.position.set((i % MAP_W) + 0.5, TOP + 0.06, ((i / MAP_W) | 0) + 0.5);
+      const mx = (i % MAP_W) + 0.5;
+      const mz = ((i / MAP_W) | 0) + 0.5;
+      // Ride the ground, not a flat LAND_H: a tile on the dirt shelf that climbs into a mountain
+      // sits above LAND_H, so a mark pinned to TOP would be swallowed by the rising hillside.
+      this.dummy.position.set(mx, this.tileTopH(i % MAP_W, (i / MAP_W) | 0) + 0.06, mz);
       this.dummy.scale.set(1, 1, 1);
       this.dummy.rotation.set(0, 0, 0);
       this.dummy.updateMatrix();
       this.marks.setMatrixAt(k, this.dummy.matrix);
-      this.marks.setColorAt(k, this.color.set(hv === HARVEST_WOOD ? 0x7ce07c : 0xd2d2dc));
+      // A slate stone-mark rather than near-white, so it still reads once winter turns the ground
+      // white; the wood-mark green already carries enough colour to stand out on snow.
+      this.marks.setColorAt(k, this.color.set(hv === HARVEST_WOOD ? 0x7ce07c : 0x6b7280));
       k++;
     }
     this.marks.count = k;

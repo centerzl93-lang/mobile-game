@@ -1209,6 +1209,14 @@ function runCitizen(s: GameState, c: Citizen, dt: number, workFactor: number): v
     // resume the moment the stock drops — they simply do not stand at a bench making more of it.
     // A load already in hand is still delivered first, which `runWorker` handles.
     if (!c.carry && cappedOut(s, job)) {
+      // A forester whose wood is at the player's limit keeps tending its forest before it downs
+      // tools: it walks the circle sowing saplings until every bare tile is growing again, and only
+      // then turns to labouring like any other capped worker. This keeps the wood renewing against
+      // the day the limit is raised, rather than leaving a felled-out circle to `regrowForest` alone.
+      if (circleNeedsReplanting(s, job)) {
+        runForesterReplant(s, c, job, dt);
+        return;
+      }
       runBuilder(s, c, dt, workFactor);
       return;
     }
@@ -4616,16 +4624,85 @@ function scatteredCircleTiles(s: GameState, b: Building, pred: (t: Tile, tx: num
   return out;
 }
 
+/**
+ * Bare ground a forester can sow a sapling on: plain open grass — not rock, ore, a building's
+ * footprint, or a road (foresters don't plant saplings in the road). The one plantability test,
+ * shared by `plantCircle` (what to sow), `circleNeedsReplanting` (is there anywhere left), and
+ * `foresterPlantSpot` (where to walk), so the three never drift apart.
+ */
+function plantable(s: GameState, t: Tile, tx: number, ty: number): boolean {
+  return t.type === 'grass' && (t.stone ?? 0) <= 0 && (t.iron ?? 0) <= 0 &&
+    !tileUnderBuilding(s, tx, ty) && !hasPath(s, tx, ty);
+}
+
 /** Sow a few saplings on plain grass in the work circle, growing new forest to harvest later. */
 function plantCircle(s: GameState, b: Building): void {
-  const open = scatteredCircleTiles(s, b, (t, tx, ty) =>
-    t.type === 'grass' && (t.stone ?? 0) <= 0 && (t.iron ?? 0) <= 0 &&
-    !tileUnderBuilding(s, tx, ty) &&
-    !hasPath(s, tx, ty)); // foresters don't plant saplings in the road
+  const open = scatteredCircleTiles(s, b, (t, tx, ty) => plantable(s, t, tx, ty));
   for (const t of open.slice(0, 2)) {
     t.type = 'forest';
     t.trees = 0.12; // a young sapling; tendCircle grows it toward maturity
     s.forestVersion = (s.forestVersion ?? 0) + 1; // a new forest tile — refresh the render layer
+  }
+}
+
+/**
+ * Does this lumberyard still have bare ground in its circle to sow? A forester whose wood is at the
+ * player's limit keeps replanting until the answer is no — the whole circle is growing again — and
+ * only then downs tools to labour. Early-outs on the first plantable tile rather than gathering them
+ * all, because it is asked every tick a capped forester is on the clock.
+ */
+function circleNeedsReplanting(s: GameState, b: Building): boolean {
+  if (b.type !== 'lumberyard' || !(b.replant ?? true)) return false;
+  const r = workRadiusOf(b) ?? 4;
+  const cx = b.x + footprintW(b) / 2;
+  const cy = b.y + footprintH(b) / 2;
+  const r2 = r * r;
+  for (let ty = Math.floor(cy - r); ty <= Math.ceil(cy + r); ty++) {
+    for (let tx = Math.floor(cx - r); tx <= Math.ceil(cx + r); tx++) {
+      const ddx = tx + 0.5 - cx;
+      const ddy = ty + 0.5 - cy;
+      if (ddx * ddx + ddy * ddy > r2) continue;
+      const t = getTile(s.tiles, tx, ty);
+      if (t && plantable(s, t, tx, ty)) return true;
+    }
+  }
+  return false;
+}
+
+/** A patch of bare grass in the circle for a capped forester to walk to and sow, held in `workAt`. */
+function foresterPlantSpot(s: GameState, c: Citizen, b: Building): { x: number; y: number } {
+  if (c.workAt && reachableTile(c, Math.floor(c.workAt.x), Math.floor(c.workAt.y))) {
+    const wt = getTile(s.tiles, Math.floor(c.workAt.x), Math.floor(c.workAt.y));
+    // Keep the current target only while it is still bare — once a sapling lands on it (this cycle's
+    // planting, or another forester's) it is forest, and standing there is standing in a tree.
+    if (wt && plantable(s, wt, Math.floor(c.workAt.x), Math.floor(c.workAt.y))) return c.workAt;
+  }
+  for (const [tx, ty] of scatteredCircleSpots(s, b, (t, ttx, tty) => plantable(s, t, ttx, tty))) {
+    if (!isWalkable(s, tx, ty) || !reachableTile(c, tx, ty)) continue;
+    c.workAt = { x: tx + 0.5, y: ty + 0.5 };
+    return c.workAt;
+  }
+  c.workAt = buildingApproach(s, b, c);
+  return c.workAt;
+}
+
+/**
+ * A forester whose wood has hit the player's limit doesn't simply stand down with the rest of a
+ * capped building's hands — it keeps tending the forest, walking out to bare ground and sowing
+ * saplings until the circle is growing again. It fells nothing and carries nothing home (the wood is
+ * capped, and felling a mature tree now would only undo the point), so this is planting and tending
+ * only; the moment `circleNeedsReplanting` goes false the caller turns it to labouring.
+ */
+function runForesterReplant(s: GameState, c: Citizen, b: Building, dt: number): void {
+  goTo(c, foresterPlantSpot(s, c, b));
+  if (stepTo(s, c, dt)) {
+    c.timer += dt;
+    if (c.timer >= WORK_SECONDS) {
+      c.timer = 0;
+      c.workAt = undefined; // next cycle picks fresh ground
+      plantCircle(s, b); // sow saplings on the bare grass
+      tendCircle(s, b, WORK_SECONDS); // and nudge the young trees toward maturity
+    }
   }
 }
 

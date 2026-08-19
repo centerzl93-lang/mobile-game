@@ -6847,6 +6847,102 @@ test.describe('work happens where the work is', () => {
     // Every one cleared is a tile the forester can plant, which is the point of doing it.
     expect(out.after, 'the forester cleared the ground').toBeLessThan(out.before);
   });
+
+  test('a capped forester keeps replanting, then labours once the circle is full', async ({ page }) => {
+    test.setTimeout(90_000);
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 4242);
+      const s = g.state; // after the new game: startNewGame replaces the state object wholesale
+      const lum = eval(mk)('lumberyard', 4);
+      const r = g.debugWorkRadius(lum.id);
+      const cx = lum.x + 1.5, cy = lum.y + 1.5;
+      // The tiles of the circle this test cares about — plain land it could sow, held still so
+      // natural forest elsewhere on the map can't muddy the count.
+      const circle: number[] = [];
+      for (let dy = -r - 1; dy <= r + 1; dy++)
+        for (let dx = -r - 1; dx <= r + 1; dx++) {
+          const x = lum.x + 1 + dx, y = lum.y + 1 + dy;
+          if ((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 > r * r) continue;
+          if (x < 1 || y < 1 || x >= s.w - 1 || y >= s.h - 1) continue;
+          const t = s.tiles[y * s.w + x];
+          if (t.type === 'water' || t.type === 'stone') continue;
+          if (s.buildings.some((b: any) => x >= b.x && x < b.x + 3 && y >= b.y && y < b.y + 3)) continue;
+          if (s.paths[y * s.w + x]) continue;
+          circle.push(y * s.w + x);
+        }
+      // Start every free tile bare, so the forester has ground to plant and none of it is grown yet.
+      for (const i of circle) { s.tiles[i].type = 'grass'; s.tiles[i].trees = 0; delete s.tiles[i].stone; delete s.tiles[i].iron; }
+      // Clear every harvest mark, including the ones placing the hut left under its own footprint —
+      // a laborer would fell those for wood and blur the "no new wood" check below.
+      for (let i = 0; i < s.harvest.length; i++) s.harvest[i] = 0;
+      const forestCount = () => circle.filter((i) => s.tiles[i].type === 'forest').length;
+
+      // Cap the wood hard: whatever the barns hold is already at the limit, so the forester is
+      // "paused" the moment it would make more. A capped worker used to labour straight away; this
+      // asserts a forester replants first.
+      const barns = s.buildings.filter((b: any) => b.type === 'barn' && b.built);
+      const wood = () => barns.reduce((n: number, b: any) => n + (b.store.wood ?? 0), 0);
+      for (const b of barns) b.store.wood = b.store.wood ?? 0;
+      s.limits = { wood: Math.max(1, wood()) };
+      const woodStart = wood();
+
+      const bareStart = forestCount();
+      let carriedWood = false;
+      for (let i = 0; i < 1500; i++) {
+        g.debugAdvance(0.2);
+        for (const c of s.citizens) if (c.jobId === lum.id && c.carry?.kind === 'wood') carriedWood = true;
+      }
+      const bareGrew = forestCount();
+      const woodAfterReplant = wood();
+
+      // Now fill the whole circle with mature timber: nothing left to plant, so a capped forester
+      // has no forestry left in its own circle and should turn to general labour like any spare hand.
+      for (const i of circle) { s.tiles[i].type = 'forest'; s.tiles[i].trees = 1; }
+      s.forestVersion = (s.forestVersion ?? 0) + 1;
+      // A stand of trees well outside the circle, marked for felling. A laborer walks out to a
+      // marked tile, chops it, and hauls the wood home — work a forester confined to its circle
+      // would never touch. `debugMarkHarvest` sets the same order the harvest tool does.
+      let marked = 0;
+      const bx = Math.min(s.w - 4, lum.x + 2 * r + 4);
+      for (let dy = 0; dy < 5 && marked < 12; dy++)
+        for (let dx = 0; dx < 5 && marked < 12; dx++) {
+          const x = bx + dx, y = lum.y + dy;
+          if (x < 1 || y < 1 || x >= s.w - 1 || y >= s.h - 1) continue;
+          if (Math.hypot(x + 0.5 - cx, y + 0.5 - cy) < r + 3) continue; // clear of the circle
+          if (s.buildings.some((b: any) => x >= b.x && x < b.x + 3 && y >= b.y && y < b.y + 3)) continue;
+          const t = s.tiles[y * s.w + x];
+          t.type = 'forest'; t.trees = 1; delete t.stone; delete t.iron;
+          marked++;
+        }
+      s.forestVersion = (s.forestVersion ?? 0) + 1;
+      const markedCount = g.debugMarkHarvest(bx, lum.y, bx + 4, lum.y + 4, 'trees');
+      let foresterLeftCircle = false;
+      let foresterHarvested = false; // the forester itself hauling felled wood — laborer's work
+      for (let i = 0; i < 2500; i++) {
+        g.debugAdvance(0.2);
+        for (const c of s.citizens) {
+          if (c.jobId !== lum.id) continue;
+          if (Math.hypot(c.x - cx, c.y - cy) > r + 2) foresterLeftCircle = true;
+          if (c.carry?.kind === 'wood' || c.pending?.kind === 'wood') foresterHarvested = true;
+        }
+      }
+      return { bareStart, bareGrew, carriedWood, woodStart, woodAfterReplant, foresterLeftCircle, foresterHarvested, markedCount };
+    }, raise);
+
+    // While the wood was capped and there was bare ground, the forester sowed it — the circle
+    // greened up — and never once carried a load of felled wood past the cap.
+    expect(out.bareStart, 'the circle started bare').toBe(0);
+    expect(out.bareGrew, 'the capped forester replanted the bare circle').toBeGreaterThan(0);
+    expect(out.carriedWood, 'a capped forester plants rather than fells for wood').toBe(false);
+    expect(out.woodAfterReplant, 'no new wood was made past the limit').toBeLessThanOrEqual(out.woodStart + 1);
+    // Once the circle was full of growing trees, the same forester turned to labouring — it left its
+    // circle and took up a laborer's job: felling and hauling the marked stand outside it.
+    expect(out.markedCount, 'a stand outside the circle was marked for felling').toBeGreaterThan(0);
+    expect(out.foresterLeftCircle, 'the forester left its full circle to labour').toBe(true);
+    expect(out.foresterHarvested, 'the forester laboured, hauling felled wood').toBe(true);
+  });
 });
 
 test.describe('choosing what to harvest', () => {

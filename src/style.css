@@ -1792,6 +1792,18 @@ body {
   margin-top: 8px;
   font-size: 13px;
 }
+/* A blocking problem with the building itself (e.g. a wharf a boat can never reach). */
+.inv-error {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-left-width: 3px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.35;
+}
 .inv-ctrl > span {
   color: var(--muted);
 }

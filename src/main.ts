@@ -112,6 +112,7 @@ import {
   recordEvent,
   basketTrade,
   merchantBerth,
+  berthReachesOpenWater,
   placementReachable,
   dismissMerchant,
   TradeBasket,
@@ -1656,6 +1657,8 @@ class Game {
             merchantDocked:
               this.state.merchant.present && merchantBerth(this.state)?.id === b.id,
             port: b.type === 'port',
+            // Built on water with no channel to the sea: no boat can ever reach it, so warn.
+            landlocked: !berthReachesOpenWater(this.state, b),
           };
         }
       }

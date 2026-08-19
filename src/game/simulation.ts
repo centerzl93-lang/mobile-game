@@ -3169,7 +3169,11 @@ function warnOfShortfalls(s: GameState, season: Season, log: LogFn): void {
 
 /** The built trading post, if any (goods are traded through its own inventory). */
 export function tradingPost(s: GameState): Building | null {
-  return s.buildings.find((b) => b.built && b.type === 'trading') ?? null;
+  // Prefer a post a boat can actually reach: one whose berth water opens to the sea. A landlocked
+  // post still resolves (so its sheet has something to show and flag), but never ahead of a usable
+  // one, so the merchant logic and its boat always agree on a reachable wharf when there is one.
+  const posts = s.buildings.filter((b) => b.built && b.type === 'trading');
+  return posts.find((b) => berthReachesOpenWater(s, b)) ?? posts[0] ?? null;
 }
 
 /**
@@ -3221,7 +3225,10 @@ function updateMerchant(s: GameState, dt: number, log: LogFn): void {
     return;
   }
 
-  if (!s.buildings.some((b) => b.built && b.type === 'trading')) return;
+  // A built trading post is the requirement — but only one a boat could sail to. A post on a
+  // landlocked interior lake has no channel out to sea, so no merchant ever calls there.
+  const post = tradingPost(s);
+  if (!post || !berthReachesOpenWater(s, post)) return;
   if (rand(s) < MERCHANT_ARRIVAL_CHANCE * (dt / SEASON_LENGTH)) spawnMerchant(s, log);
 }
 
@@ -3293,6 +3300,55 @@ function dockSpot(s: GameState, post: Building): { x: number; y: number } {
 }
 
 /**
+ * Flood the connected body of water containing tile (sx,sy), calling `visit(x,y)` for each water
+ * tile in it. Does nothing if the seed tile isn't water.
+ *
+ * 8-neighbour with the same diagonal corner-gating the boat's A* uses, so this connectivity is
+ * exactly where a boat can actually sail: a river that pinches to a single diagonal is crossable to
+ * the boat and counts as connected here too.
+ */
+function floodWater(s: GameState, sx: number, sy: number, visit: (x: number, y: number) => void): void {
+  if (!inBounds(sx, sy) || s.tiles[tileIndex(sx, sy)].type !== 'water') return;
+  const water = (x: number, y: number) => inBounds(x, y) && s.tiles[tileIndex(x, y)].type === 'water';
+  const seen = new Uint8Array(MAP_W * MAP_H);
+  const queue: number[] = [tileIndex(sx, sy)];
+  seen[tileIndex(sx, sy)] = 1;
+  for (let qi = 0; qi < queue.length; qi++) {
+    const cur = queue[qi];
+    const cx = cur % MAP_W;
+    const cy = (cur / MAP_W) | 0;
+    visit(cx, cy);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const) {
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (!water(nx, ny)) continue;
+      if (dx !== 0 && dy !== 0 && (!water(cx + dx, cy) || !water(cx, cy + dy))) continue;
+      const ni = tileIndex(nx, ny);
+      if (seen[ni]) continue;
+      seen[ni] = 1;
+      queue.push(ni);
+    }
+  }
+}
+
+/**
+ * Whether a boat could sail between the open sea (a map edge) and the water beside `post`.
+ *
+ * A trading post or Port built on a landlocked interior lake has water to berth against but no
+ * channel out to the map edge, so no merchant boat could ever reach it — such a post gets no
+ * visits at all, and the UI flags it. `dockSpot` gives the tile a hull ties up at; the flood from
+ * there decides whether that water body touches an edge.
+ */
+export function berthReachesOpenWater(s: GameState, post: Building): boolean {
+  const berth = dockSpot(s, post);
+  let reaches = false;
+  floodWater(s, Math.floor(berth.x), Math.floor(berth.y), (x, y) => {
+    if (x === 0 || y === 0 || x === MAP_W - 1 || y === MAP_H - 1) reaches = true;
+  });
+  return reaches;
+}
+
+/**
  * Where a boat enters and leaves the map: the map-edge water tile the boat can actually reach by
  * water from the berth.
  *
@@ -3304,45 +3360,16 @@ function dockSpot(s: GameState, post: Building): { x: number; y: number } {
  */
 function boatEntry(s: GameState, to: { x: number; y: number }): { x: number; y: number } {
   const isEdge = (x: number, y: number) => x === 0 || y === 0 || x === MAP_W - 1 || y === MAP_H - 1;
-  const sx = Math.floor(to.x);
-  const sy = Math.floor(to.y);
-  const start = getTile(s.tiles, sx, sy);
-  if (start && start.type === 'water') {
-    // BFS over the connected water tiles from the berth, keeping the closest edge tile seen.
-    const seen = new Uint8Array(MAP_W * MAP_H);
-    const queue: number[] = [tileIndex(sx, sy)];
-    seen[tileIndex(sx, sy)] = 1;
-    let best: { x: number; y: number } | null = null;
-    let bestD = Infinity;
-    for (let qi = 0; qi < queue.length; qi++) {
-      const cur = queue[qi];
-      const cx = cur % MAP_W;
-      const cy = (cur / MAP_W) | 0;
-      if (isEdge(cx, cy)) {
-        const d = (cx + 0.5 - to.x) ** 2 + (cy + 0.5 - to.y) ** 2;
-        if (d < bestD) { bestD = d; best = { x: cx + 0.5, y: cy + 0.5 }; }
-      }
-      // 8-neighbour flood with the same diagonal corner-gating the boat's A* uses, so this
-      // connectivity matches exactly where the boat can actually sail — a river that pinches to a
-      // diagonal is crossable to the boat and must count as connected here too.
-      const water = (x: number, y: number) => inBounds(x, y) && s.tiles[tileIndex(x, y)].type === 'water';
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const) {
-        const nx = cx + dx;
-        const ny = cy + dy;
-        if (!water(nx, ny)) continue;
-        if (dx !== 0 && dy !== 0 && (!water(cx + dx, cy) || !water(cx, cy + dy))) continue;
-        const ni = tileIndex(nx, ny);
-        if (seen[ni]) continue;
-        seen[ni] = 1;
-        queue.push(ni);
-      }
-    }
-    if (best) return best;
-  }
-
-  // Berth not on water (a fallback dockSpot): fall back to the geometric nearest edge water.
   let best: { x: number; y: number } | null = null;
   let bestD = Infinity;
+  floodWater(s, Math.floor(to.x), Math.floor(to.y), (cx, cy) => {
+    if (!isEdge(cx, cy)) return;
+    const d = (cx + 0.5 - to.x) ** 2 + (cy + 0.5 - to.y) ** 2;
+    if (d < bestD) { bestD = d; best = { x: cx + 0.5, y: cy + 0.5 }; }
+  });
+  if (best) return best;
+
+  // Berth not on water (a fallback dockSpot): fall back to the geometric nearest edge water.
   const consider = (tx: number, ty: number) => {
     const t = getTile(s.tiles, tx, ty);
     if (!t || t.type !== 'water') return;
@@ -4343,6 +4370,8 @@ function portOrPost(s: GameState): Building | undefined {
 function portSeason(s: GameState, log: LogFn): void {
   const port = s.buildings.find((b) => b.built && !b.razed && b.type === 'port');
   if (!port) return;
+  // A harbour dug on a landlocked lake can berth nothing — no deep-water fleet can reach it.
+  if (!berthReachesOpenWater(s, port)) return;
   const m = s.merchant;
   if (m.phase !== 'away' || s.pendingNomads) return;
   if (rand(s) >= PORT_ARRIVAL_CHANCE) return;

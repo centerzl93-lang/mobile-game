@@ -223,7 +223,7 @@ import {
 } from './buildings';
 import { getTile, tileIndex, inBounds, riverColumnX } from './world';
 import { pathSpeedMult, hasPath, dropPathRaze } from './paths';
-import { findPath, isWalkable, labelComponents } from './pathfind';
+import { findPath, findWaterPath, isWalkable, labelComponents } from './pathfind';
 import { rand } from './rng';
 import {
   totalStored,
@@ -3248,6 +3248,7 @@ function spawnMerchant(s: GameState, log: LogFn): void {
   m.priceMod = 1; // river traders deal at the book rate; only the Port's fleets haggle
   const post = tradingPost(s);
   m.boat = post ? boatEntry(s, dockSpot(s, post)) : { x: riverColumnX(s.tiles, 0), y: 0 };
+  m.boatPath = null; // planned lazily on the first arriving tick
   const meta = MERCHANT_CATEGORY_META[category];
   log(`${meta.emoji} A ${meta.label.toLowerCase()}'s boat is sailing in`, 'info');
 }
@@ -3292,13 +3293,54 @@ function dockSpot(s: GameState, post: Building): { x: number; y: number } {
 }
 
 /**
- * Where a boat enters and leaves the map: the edge water tile closest to the berth.
+ * Where a boat enters and leaves the map: the map-edge water tile the boat can actually reach by
+ * water from the berth.
  *
- * Sailing in from the top of the river regardless of where the post is meant a boat bound for a
- * lake on the far side started its run in the wrong body of water entirely. Coming in from the
- * nearest edge keeps the crossing over the water the post is actually on, most of the time.
+ * Picking the geometrically nearest edge water — as this used to — could land on a puddle in a
+ * different body of water than the one the post sits on, so the boat's water route to it failed and
+ * it fell back to cutting straight across land. Flood-filling the berth's own water body first, then
+ * choosing the nearest edge tile *within it*, guarantees a continuous channel out to sea. Falls back
+ * to the geometric nearest (then the top of the river) only when the berth isn't on water at all.
  */
 function boatEntry(s: GameState, to: { x: number; y: number }): { x: number; y: number } {
+  const isEdge = (x: number, y: number) => x === 0 || y === 0 || x === MAP_W - 1 || y === MAP_H - 1;
+  const sx = Math.floor(to.x);
+  const sy = Math.floor(to.y);
+  const start = getTile(s.tiles, sx, sy);
+  if (start && start.type === 'water') {
+    // BFS over the connected water tiles from the berth, keeping the closest edge tile seen.
+    const seen = new Uint8Array(MAP_W * MAP_H);
+    const queue: number[] = [tileIndex(sx, sy)];
+    seen[tileIndex(sx, sy)] = 1;
+    let best: { x: number; y: number } | null = null;
+    let bestD = Infinity;
+    for (let qi = 0; qi < queue.length; qi++) {
+      const cur = queue[qi];
+      const cx = cur % MAP_W;
+      const cy = (cur / MAP_W) | 0;
+      if (isEdge(cx, cy)) {
+        const d = (cx + 0.5 - to.x) ** 2 + (cy + 0.5 - to.y) ** 2;
+        if (d < bestD) { bestD = d; best = { x: cx + 0.5, y: cy + 0.5 }; }
+      }
+      // 8-neighbour flood with the same diagonal corner-gating the boat's A* uses, so this
+      // connectivity matches exactly where the boat can actually sail — a river that pinches to a
+      // diagonal is crossable to the boat and must count as connected here too.
+      const water = (x: number, y: number) => inBounds(x, y) && s.tiles[tileIndex(x, y)].type === 'water';
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (!water(nx, ny)) continue;
+        if (dx !== 0 && dy !== 0 && (!water(cx + dx, cy) || !water(cx, cy + dy))) continue;
+        const ni = tileIndex(nx, ny);
+        if (seen[ni]) continue;
+        seen[ni] = 1;
+        queue.push(ni);
+      }
+    }
+    if (best) return best;
+  }
+
+  // Berth not on water (a fallback dockSpot): fall back to the geometric nearest edge water.
   let best: { x: number; y: number } | null = null;
   let bestD = Infinity;
   const consider = (tx: number, ty: number) => {
@@ -3334,10 +3376,12 @@ function updateMerchantBoat(s: GameState, dt: number, log: LogFn): void {
       // Trading post demolished mid-approach — turn the boat around.
       m.phase = 'leaving';
       m.present = false;
+      m.boatPath = null; // re-plan a route back out to sea
       return;
     }
-    if (moveBoatTo(m.boat, dockSpot(s, post), dt)) {
+    if (sailBoat(s, m, dockSpot(s, post), dt)) {
       m.phase = 'docked';
+      m.boatPath = null;
       m.present = true;
       m.stayTimer = MERCHANT_STAY_SEASONS * SEASON_LENGTH;
       (s.stats ??= freshStats()).merchantVisits++;
@@ -3355,9 +3399,10 @@ function updateMerchantBoat(s: GameState, dt: number, log: LogFn): void {
   } else if (m.phase === 'leaving') {
     m.present = false;
     const out = boatEntry(s, m.boat);
-    if (moveBoatTo(m.boat, { x: out.x, y: out.y }, dt)) {
+    if (sailBoat(s, m, out, dt)) {
       m.phase = 'away';
       m.boat = null;
+      m.boatPath = null;
       m.stock = {};
       m.seedStock = [];
       m.category = null;
@@ -3368,25 +3413,51 @@ function updateMerchantBoat(s: GameState, dt: number, log: LogFn): void {
 }
 
 /**
- * Sail the boat toward a point, turning the bow onto the course. Returns true once it arrives.
+ * Sail the boat toward `goal`, following the water rather than crossing land. The route is planned
+ * once (A* over water tiles from the boat's current tile to the goal's) and cached on the merchant
+ * as `boatPath`; each tick the boat advances along the remaining waypoints, so it threads the river
+ * and lakes. Returns true once it has reached the goal exactly.
  *
- * Straight-line across the water rather than following the river column, because the berth is now
- * wherever the trading post is and the river may have nothing to do with it.
+ * If no continuous water route exists — a berth on an isolated pond, or a fallback dockSpot that
+ * isn't on water — the planner returns null and we fall back to a direct approach, the old behaviour,
+ * so a boat is never stranded for want of a channel.
  */
-function moveBoatTo(boat: { x: number; y: number; h?: number }, goal: { x: number; y: number }, dt: number): boolean {
-  const dx = goal.x - boat.x;
-  const dy = goal.y - boat.y;
-  const d = Math.hypot(dx, dy);
-  if (d > 0.01) boat.h = Math.atan2(dx, dy);
-  const step = BOAT_SPEED * dt;
-  if (d <= step) {
-    boat.x = goal.x;
-    boat.y = goal.y;
-    return true;
+function sailBoat(
+  s: GameState,
+  m: GameState['merchant'],
+  goal: { x: number; y: number },
+  dt: number,
+): boolean {
+  const boat = m.boat!;
+  if (!m.boatPath) {
+    const route = findWaterPath(s, Math.floor(boat.x), Math.floor(boat.y), Math.floor(goal.x), Math.floor(goal.y));
+    // Always end on the exact goal so the boat lies precisely at the berth/exit, not just on the
+    // final water tile's centre; an empty/null route degrades to a straight run at the goal.
+    m.boatPath = (route ?? []).concat([{ x: goal.x, y: goal.y }]);
   }
-  boat.x += (dx / d) * step;
-  boat.y += (dy / d) * step;
-  return false;
+  // Advance through the queued waypoints, retiring each as it's reached. A tick's travel
+  // (BOAT_SPEED·dt ≈ 0.5 tile) rarely spans more than one waypoint, but the loop lets it when the
+  // boat lands exactly on a centre.
+  let step = BOAT_SPEED * dt;
+  while (m.boatPath.length > 0) {
+    const wp = m.boatPath[0];
+    const dx = wp.x - boat.x;
+    const dy = wp.y - boat.y;
+    const d = Math.hypot(dx, dy);
+    if (d > 0.01) boat.h = Math.atan2(dx, dy);
+    if (d <= step) {
+      boat.x = wp.x;
+      boat.y = wp.y;
+      step -= d;
+      m.boatPath.shift();
+    } else {
+      boat.x += (dx / d) * step;
+      boat.y += (dy / d) * step;
+      return false;
+    }
+  }
+  m.boatPath = null;
+  return true;
 }
 
 /** End a merchant visit early at the player's request. */
@@ -3395,6 +3466,7 @@ export function dismissMerchant(s: GameState): void {
   if (m.phase === 'docked' || m.phase === 'arriving') {
     m.phase = 'leaving';
     m.present = false;
+    m.boatPath = null; // re-plan the outbound route from wherever the boat currently sits
   }
 }
 
@@ -4287,6 +4359,7 @@ function portSeason(s: GameState, log: LogFn): void {
   m.present = false;
   m.cooldownTimer = 0;
   m.boat = boatEntry(s, dockSpot(s, port));
+  m.boatPath = null; // planned lazily on the first arriving tick
   const meta = MERCHANT_CATEGORY_META[category];
   log(`${meta.emoji} The ${meta.label} is making for the harbour`, 'good');
 }

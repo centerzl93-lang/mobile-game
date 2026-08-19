@@ -7783,6 +7783,101 @@ test.describe('the merchant ties up at the trading post', () => {
     expect(out!.heading, 'with a heading for the renderer to point the bow along').toBe('number');
   });
 
+  /**
+   * Put a finished trading post on the *river* — water that reaches the map edge — so a boat has a
+   * channel to sail in and out of. (A post on a landlocked interior lake has no such channel; that
+   * is a separate case and not what "follow the river" is about.)
+   */
+  const raiseRiverPost = `() => {
+    const g = window.__village;
+    const edgeConnected = (s, wx, wy) => {
+      const W = s.w, H = s.h;
+      const water = (x, y) => x >= 0 && y >= 0 && x < W && y < H && s.tiles[y * W + x].type === 'water';
+      // Seed the flood from a water tile in the post's footprint ring.
+      let sx = -1, sy = -1;
+      outer: for (let dy = -1; dy <= 1 && sx < 0; dy++)
+        for (let dx = -1; dx <= 1; dx++)
+          if (water(wx + dx, wy + dy)) { sx = wx + dx; sy = wy + dy; break outer; }
+      if (sx < 0) return false;
+      const seen = new Set([sy * W + sx]); const q = [[sx, sy]];
+      for (let qi = 0; qi < q.length; qi++) {
+        const [cx, cy] = q[qi];
+        if (cx === 0 || cy === 0 || cx === W - 1 || cy === H - 1) return true;
+        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]) {
+          const nx = cx + dx, ny = cy + dy;
+          if (!water(nx, ny)) continue;
+          if (dx && dy && (!water(cx + dx, cy) || !water(cx, cy + dy))) continue;
+          const ni = ny * W + nx; if (seen.has(ni)) continue; seen.add(ni); q.push([nx, ny]);
+        }
+      }
+      return false;
+    };
+    for (let attempt = 0; attempt < 12; attempt++) {
+      g.startNewGame('small', 'easy', false, 0, 4242 + attempt * 7919);
+      const s = g.state;
+      const barn = s.buildings.find((b) => b.type === 'barn');
+      barn.store.wood = 2000; barn.store.stone = 2000; barn.store.iron = 2000;
+      for (let r = 3; r < 40; r++)
+        for (let dy = -r; dy <= r; dy++)
+          for (let dx = -r; dx <= r; dx++)
+            for (const rot of [0, 1, 2, 3]) {
+              if (!g.debugCanPlace('trading', barn.x + dx, barn.y + dy, rot).ok) continue;
+              if (!edgeConnected(s, barn.x + dx, barn.y + dy)) continue;
+              const id = g.debugPlace('trading', barn.x + dx, barn.y + dy, rot);
+              if (id == null) continue;
+              const b = s.buildings.find((x) => x.id === id);
+              b.built = true; b.progress = g.debugBuildWork('trading');
+              return b;
+            }
+    }
+    return null;
+  }`;
+
+  test('the boat follows the river and never crosses land, in and out', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      const post = eval(mk)();
+      if (!post) return null;
+      const s = g.state;
+      Object.assign(s.merchant, { phase: 'away', present: false, cooldownTimer: 0,
+        category: null, stock: {}, seedStock: [], boat: null });
+      // Roll until a boat launches, then follow it tile-by-tile through the arriving and leaving
+      // legs, recording the terrain under it. A boat that cut straight to the wharf would sail
+      // over grass/forest; one that follows the water only ever floats.
+      for (let i = 0; i < 60 && s.merchant.phase === 'away'; i++) g.debugAdvance(300);
+      const terrainUnder = () => {
+        const b = s.merchant.boat;
+        if (!b) return null;
+        // The exact berth/exit endpoint can sit a hair inside the wharf footprint; sample the tile.
+        return s.tiles[Math.floor(b.y) * s.w + Math.floor(b.x)].type;
+      };
+      const landTiles: string[] = [];
+      let sampled = 0;
+      // Arriving: small steps so we catch the boat on every tile it passes over.
+      for (let i = 0; i < 12000 && s.merchant.phase === 'arriving'; i++) {
+        g.debugAdvance(0.05);
+        const t = terrainUnder();
+        if (t) { sampled++; if (t !== 'water') landTiles.push(`arrive:${t}`); }
+      }
+      const docked = s.merchant.phase;
+      // Cast off and sail back out; sample the outbound leg too.
+      g.dismissMerchant ? g.dismissMerchant() : (s.merchant.phase = 'leaving', s.merchant.present = false, s.merchant.boatPath = null);
+      for (let i = 0; i < 12000 && s.merchant.boat; i++) {
+        g.debugAdvance(0.05);
+        const t = terrainUnder();
+        if (t) { sampled++; if (t !== 'water') landTiles.push(`leave:${t}`); }
+      }
+      return { docked, sampled, landTiles, left: s.merchant.phase };
+    }, raiseRiverPost);
+
+    expect(out, 'a river-connected trading post could be built on one of the maps tried').not.toBeNull();
+    expect(out!.docked, 'the boat reached the wharf').toBe('docked');
+    expect(out!.sampled, 'the boat actually sailed a channel rather than spawning on the wharf').toBeGreaterThan(10);
+    expect(out!.landTiles, 'the boat never floated over land, arriving or leaving').toEqual([]);
+    expect(out!.left, 'and sailed clean off the map').toBe('away');
+  });
+
   test('the boat is drawn at a size a wharf would berth', { tag: '@slow' }, async ({ page }) => {
     await open(page); // the 3D renderer is the thing under test here
     const out = await page.evaluate(async (mk) => {

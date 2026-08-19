@@ -91,13 +91,50 @@ const NEIGHBOURS: [number, number][] = [
 ];
 
 /**
+ * A tile the merchant boat can float on: any water tile on the map. Boats route over this surface
+ * the way villagers route over walkable land, so a trader follows the river and lakes to its berth
+ * instead of cutting a straight line across the countryside. A bridge over the water doesn't stop a
+ * boat — it sails under.
+ */
+export function isWater(s: GameState, tx: number, ty: number): boolean {
+  if (!inBounds(tx, ty)) return false;
+  return s.tiles[tileIndex(tx, ty)].type === 'water';
+}
+
+/**
  * A* from tile (fx,fy) to tile (tx,ty) over walkable tiles. Returns a list of tile-centre
  * waypoints (including the destination centre) or null if no route exists. The start tile is
  * not included. If the destination itself is unwalkable, there is no path.
  */
 export function findPath(s: GameState, fx: number, fy: number, tx: number, ty: number): Point[] | null {
+  return astar(s, fx, fy, tx, ty, isWalkable);
+}
+
+/**
+ * A* over water tiles, for the merchant boat. Same routing as {@link findPath} but the passable
+ * surface is the river/lakes, so the boat threads the channel to its wharf and back out to sea
+ * rather than teleporting across land. Null when no continuous water route exists (e.g. a berth on
+ * an isolated pond); the caller then falls back to a direct approach.
+ */
+export function findWaterPath(s: GameState, fx: number, fy: number, tx: number, ty: number): Point[] | null {
+  return astar(s, fx, fy, tx, ty, isWater);
+}
+
+/**
+ * The A* core shared by land ({@link findPath}) and water ({@link findWaterPath}) routing. `passable`
+ * decides which tiles the mover may occupy; everything else (8-neighbour steps, diagonal corner
+ * gating, octile heuristic, tile-centre waypoints) is identical for both surfaces.
+ */
+function astar(
+  s: GameState,
+  fx: number,
+  fy: number,
+  tx: number,
+  ty: number,
+  passable: (s: GameState, x: number, y: number) => boolean,
+): Point[] | null {
   fx |= 0; fy |= 0; tx |= 0; ty |= 0;
-  if (!inBounds(fx, fy) || !isWalkable(s, tx, ty)) return null;
+  if (!inBounds(fx, fy) || !passable(s, tx, ty)) return null;
   if (fx === tx && fy === ty) return [];
 
   const N = MAP_W * MAP_H;
@@ -150,10 +187,10 @@ export function findPath(s: GameState, fx: number, fy: number, tx: number, ty: n
     for (const [dx, dy] of NEIGHBOURS) {
       const nx = cx + dx;
       const ny = cy + dy;
-      if (!isWalkable(s, nx, ny)) continue;
+      if (!passable(s, nx, ny)) continue;
       if (dx !== 0 && dy !== 0) {
-        // Don't squeeze diagonally past a blocked orthogonal corner (e.g. round water).
-        if (!isWalkable(s, cx + dx, cy) || !isWalkable(s, cx, cy + dy)) continue;
+        // Don't squeeze diagonally past a blocked orthogonal corner (e.g. round a headland).
+        if (!passable(s, cx + dx, cy) || !passable(s, cx, cy + dy)) continue;
       }
       const ni = tileIndex(nx, ny);
       if (seen[ni]) continue;

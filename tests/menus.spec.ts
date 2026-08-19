@@ -64,17 +64,17 @@ test.describe('main menu', () => {
 });
 
 test.describe('save slots', () => {
-  test('a game saved to a slot round-trips through reload + Continue', async ({ page }) => {
+  test('a game in progress round-trips through reload + Continue (autosave slot)', async ({ page }) => {
     await open(page);
-    await page.evaluate(() => (window as any).__village.startNewGame('large', 'normal', true, 1)); // slot 2, persists
+    // A new game founds into the autosave slot; Continue resumes it after a reload.
+    await page.evaluate(() => (window as any).__village.startNewGame('large', 'normal', true));
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
     await expect(page.locator('#mm-continue')).toBeVisible();
     await page.click('#mm-continue');
     await page.waitForTimeout(150);
-    const loaded = await page.evaluate(() => ({ w: (window as any).__village.state.w, slot: (window as any).__village.currentSlot, running: (window as any).__village.running }));
+    const loaded = await page.evaluate(() => ({ w: (window as any).__village.state.w, running: (window as any).__village.running }));
     expect(loaded.w).toBe(144);
-    expect(loaded.slot).toBe(1);
     expect(loaded.running).toBe(true);
   });
 
@@ -150,32 +150,41 @@ test.describe('save slots', () => {
     expect(await page.evaluate(() => localStorage.getItem('little-village-save-v12-slot0-name'))).toBeNull();
   });
 
-  test('the village you are playing cannot be deleted out from under you', async ({ page }) => {
-    let asked = false;
-    page.on('dialog', (d) => { asked = true; d.accept(); });
+  test('a hard-save slot can be deleted mid-game; the live game autosaves elsewhere and survives', async ({ page }) => {
+    page.on('dialog', (d) => d.accept()); // the delete asks first
     await open(page);
-    await page.evaluate(() => (window as any).__village.startNewGame('small', 'normal', true, 0));
-    await page.evaluate(() => (window as any).__village.persist());
-
-    // Reach the slot list from the pause menu, i.e. mid-game, and try to delete the live slot.
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'normal', true)); // autosave slot
+    // Hard-save it to slot 0, then delete that snapshot from the Save list.
     await page.click('#btn-menu');
     await page.click('#pm-save');
-    await expect(page.locator('#slot-del-0')).toBeVisible();
+    await page.click('#slot-0'); // writes slot 0 (empty → no confirm)
+    await page.click('#pm-save'); // back to the save list
     await page.click('#slot-del-0');
     await page.waitForTimeout(100);
 
-    // Refused outright — the next autosave would put it straight back, so it is not even asked.
-    expect(asked, 'no confirmation was raised').toBe(false);
-    expect(await page.evaluate(() => localStorage.getItem('little-village-save-v12-slot0'))).not.toBeNull();
-    await expect(page.locator('#hint')).toContainText('village you are playing');
+    // The snapshot is gone, but the live game is untouched — it never lived in a manual slot.
+    await expect(page.locator('#slot-0')).toContainText('Empty');
+    expect(await page.evaluate(() => localStorage.getItem('little-village-save-v12-slot0'))).toBeNull();
+    expect(await page.evaluate(() => (window as any).__village.running)).toBe(true);
+    // The autosave slot still holds the running village.
+    expect(await page.evaluate(() => localStorage.getItem('little-village-save-v12-slot3'))).not.toBeNull();
   });
 });
 
-test.describe('new game — slot overwrite safety', () => {
+test.describe('autosave slot vs manual save slots', () => {
   const slotKey = (n: number) => `little-village-save-v12-slot${n}`;
+  const AUTO = 3; // the dedicated autosave slot (SLOTS is 3, so manual slots are 0..2)
 
-  // Fill every slot with a distinct, identifiable village (different seeds; slot 2 is Large).
-  async function fillAllSlots(page: Page): Promise<void> {
+  async function reloadToMenu(page: Page): Promise<void> {
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
+  }
+  const rawSlot = (page: Page, n: number) => page.evaluate((k) => localStorage.getItem(k), slotKey(n));
+  const seedIn = (page: Page, n: number) =>
+    page.evaluate((k) => JSON.parse(localStorage.getItem(k)!).state.seed, slotKey(n));
+
+  // Seed the three manual slots directly with distinct villages (no autosave written).
+  async function fillManualSlots(page: Page): Promise<void> {
     await page.evaluate(() => {
       const g = (window as any).__village;
       g.startNewGame('small', 'normal', true, 0, 1001);
@@ -184,199 +193,146 @@ test.describe('new game — slot overwrite safety', () => {
     });
   }
 
-  async function reloadToMenu(page: Page): Promise<void> {
-    await page.reload({ waitUntil: 'load' });
-    await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
-  }
-
-  const rawSlot = (page: Page, n: number) =>
-    page.evaluate((k) => localStorage.getItem(k), slotKey(n));
-
-  test('with one empty slot, a new game uses the first empty slot and never prompts', async ({ page }) => {
+  test('the autosave slot is the 4th slot, distinct from the 3 manual slots', async ({ page }) => {
     await open(page);
-    await page.evaluate(() => (window as any).__village.startNewGame('small', 'normal', true, 0, 1001));
+    expect(await page.evaluate(() => (window as any).__village.debugAutosaveSlot())).toBe(AUTO);
+  });
+
+  test('a new game founds into the autosave slot and never touches the manual slots — even when all 3 are full', async ({ page }) => {
+    await open(page);
+    await fillManualSlots(page);
     await reloadToMenu(page);
+    const before = [await rawSlot(page, 0), await rawSlot(page, 1), await rawSlot(page, 2)];
+
+    await page.click('#mm-new');
+    await page.fill('#ng-seed', '5005');
+    await page.click('#ng-start');
+    await page.waitForTimeout(150);
+
+    // The game started, with no overwrite prompt, and it lives in the autosave slot.
+    await expect(page.locator('#ow-confirm')).toHaveCount(0);
+    expect(await page.evaluate(() => (window as any).__village.running)).toBe(true);
+    expect(await seedIn(page, AUTO)).toBe(5005);
+    // Every manual hard save is byte-for-byte untouched.
+    expect([await rawSlot(page, 0), await rawSlot(page, 1), await rawSlot(page, 2)]).toEqual(before);
+  });
+
+  test('autosave writes only to the autosave slot, never the manual slots', async ({ page }) => {
+    await open(page);
+    await fillManualSlots(page);
+    await reloadToMenu(page);
+    const before = [await rawSlot(page, 0), await rawSlot(page, 1), await rawSlot(page, 2)];
+
+    await page.click('#mm-new');
+    await page.fill('#ng-seed', '6006');
+    await page.click('#ng-start');
+    await page.waitForTimeout(100);
+    // Drive an autosave the way the frame loop does.
+    await page.evaluate(() => { const g = (window as any).__village; g.debugAdvance(5); g.persist(); });
+
+    expect(await seedIn(page, AUTO)).toBe(6006);
+    expect([await rawSlot(page, 0), await rawSlot(page, 1), await rawSlot(page, 2)]).toEqual(before);
+  });
+
+  test('Continue resumes the autosave slot; Load lists only the manual hard saves', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true, 0, 1001);            // a hard save in slot 0
+      g.startNewGame('large', 'normal', true, g.debugAutosaveSlot(), 2002); // the game in progress
+    });
+    await reloadToMenu(page);
+
+    // Both routes are offered and independent: Continue for the autosave, Load for the hard save.
+    await expect(page.locator('#mm-continue')).toBeVisible();
+    await expect(page.locator('#mm-load')).toBeVisible();
+
+    await page.click('#mm-continue');
+    await page.waitForTimeout(150);
+    // Continue resumed the in-progress (autosave) village, not the hard save.
+    expect(await page.evaluate(() => ({ seed: (window as any).__village.state.seed, w: (window as any).__village.state.w })))
+      .toEqual({ seed: 2002, w: 144 });
+
+    // The Load list shows the manual slots only — there is no row for the autosave slot.
+    await page.click('#btn-menu');
+    await page.click('#pm-load');
+    await expect(page.locator('#slot-0')).toContainText('people');
+    await expect(page.locator('#slot-3')).toHaveCount(0);
+  });
+
+  test('loading a hard save makes it the live game and the new autosave', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true, 0, 1001);            // slot 0 = Alpha (small)
+      g.startNewGame('large', 'normal', true, g.debugAutosaveSlot(), 2002); // autosave = Bravo (large)
+    });
+    await reloadToMenu(page);
+
+    await page.click('#mm-load');
+    await page.click('#slot-0'); // load Alpha
+    await page.waitForTimeout(150);
+    expect(await page.evaluate(() => (window as any).__village.state.seed)).toBe(1001);
+
+    // Loading copied Alpha into the autosave slot, so Continue now resumes Alpha, not Bravo.
+    await reloadToMenu(page);
+    await page.click('#mm-continue');
+    await page.waitForTimeout(150);
+    expect(await page.evaluate(() => (window as any).__village.state.seed)).toBe(1001);
+  });
+
+  test('manual Save to an empty slot writes it with no confirmation', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'normal', true)); // autosave slot
+    await page.click('#btn-menu');
+    await page.click('#pm-save');
+    await expect(page.locator('#ow-confirm')).toHaveCount(0);
+    await page.click('#slot-1'); // empty → straight to disk
+    await expect(page.locator('#pm-resume')).toBeVisible(); // saving returns to the pause menu
+    expect(await rawSlot(page, 1)).not.toBeNull();
+  });
+
+  test('manual Save over an occupied slot asks first; Cancel leaves the hard save untouched', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true, 0, 1001);             // slot 0 = Alpha
+      localStorage.setItem('little-village-save-v12-slot0-name', 'Alpha');
+      g.startNewGame('small', 'normal', true, g.debugAutosaveSlot(), 2002); // live = Bravo
+    });
     const slot0Before = await rawSlot(page, 0);
 
-    await page.click('#mm-new');
-    await page.click('#ng-start');
-    await page.waitForTimeout(150);
-
-    // Started straight into the first empty slot (1); no overwrite prompt anywhere.
-    await expect(page.locator('#ow-confirm')).toHaveCount(0);
-    const out = await page.evaluate(() => ({
-      running: (window as any).__village.running,
-      slot: (window as any).__village.currentSlot,
-      hidden: document.getElementById('overlay')!.classList.contains('hidden'),
-    }));
-    expect(out.running).toBe(true);
-    expect(out.slot).toBe(1);
-    expect(out.hidden).toBe(true);
-    // The existing save in slot 0 is untouched.
-    expect(await rawSlot(page, 0)).toBe(slot0Before);
-  });
-
-  test('with several empty slots, a new game prefers the lowest-index empty slot', async ({ page }) => {
-    await open(page);
-    await page.evaluate(() => (window as any).__village.startNewGame('small', 'normal', true, 1, 1002)); // only slot 1 filled
-    await reloadToMenu(page);
-    const slot1Before = await rawSlot(page, 1);
-
-    await page.click('#mm-new');
-    await page.click('#ng-start');
-    await page.waitForTimeout(150);
-
-    expect(await page.evaluate(() => (window as any).__village.currentSlot)).toBe(0); // first empty
-    expect(await page.evaluate(() => (window as any).__village.running)).toBe(true);
-    expect(await rawSlot(page, 1)).toBe(slot1Before); // the occupied slot untouched
-  });
-
-  test('with every slot full, a new game does NOT overwrite slot 0 — it shows the replace picker', async ({ page }) => {
-    await open(page);
-    await fillAllSlots(page);
-    await reloadToMenu(page);
-    const before = [await rawSlot(page, 0), await rawSlot(page, 1), await rawSlot(page, 2)];
-
-    await page.click('#mm-new');
-    await page.click('#ng-start');
-    await page.waitForTimeout(150);
-
-    // No game has started, the picker is up, and it identifies each occupied village.
-    expect(await page.evaluate(() => (window as any).__village.running)).toBe(false);
-    expect(await page.evaluate(() => document.getElementById('overlay')!.classList.contains('hidden'))).toBe(false);
-    await expect(page.locator('.menu-card h2')).toContainText('Replace a Village');
-    await expect(page.locator('#slot-0')).toContainText('people');
-    await expect(page.locator('#slot-1')).toContainText('people');
-    await expect(page.locator('#slot-2')).toContainText('people');
-    // Nothing on disk changed — above all, slot 0 was not silently reused.
-    expect([await rawSlot(page, 0), await rawSlot(page, 1), await rawSlot(page, 2)]).toEqual(before);
-  });
-
-  test('picking an occupied slot shows a confirmation naming the village, and touches nothing yet', async ({ page }) => {
-    await open(page);
-    await fillAllSlots(page);
-    await page.evaluate((k) => localStorage.setItem(k, 'Old Village'), `${slotKey(1)}-name`);
-    await reloadToMenu(page);
-    const slot1Before = await rawSlot(page, 1);
-
-    await page.click('#mm-new');
-    await page.click('#ng-start');
-    await page.click('#slot-1'); // choose the village to replace
-    await page.waitForTimeout(100);
-
+    await page.click('#btn-menu');
+    await page.click('#pm-save');
+    await page.click('#slot-0'); // occupied by Alpha
     await expect(page.locator('#ow-confirm')).toBeVisible();
-    await expect(page.locator('#ow-cancel')).toBeVisible();
-    await expect(page.locator('.menu-card')).toContainText('Old Village');
+    await expect(page.locator('.menu-card')).toContainText('Alpha');
     await expect(page.locator('.menu-card')).toContainText('people');
     await expect(page.locator('.menu-card')).toContainText('permanently replaced');
-    // Still nothing committed: no game running, and the chosen save is byte-for-byte the same.
-    expect(await page.evaluate(() => (window as any).__village.running)).toBe(false);
-    expect(await rawSlot(page, 1)).toBe(slot1Before);
-  });
 
-  test('cancelling the overwrite returns to the picker and leaves the save completely untouched', async ({ page }) => {
-    await open(page);
-    await fillAllSlots(page);
-    await reloadToMenu(page);
-    const before = [await rawSlot(page, 0), await rawSlot(page, 1), await rawSlot(page, 2)];
-
-    await page.click('#mm-new');
-    await page.click('#ng-start');
-    await page.click('#slot-1');
-    await expect(page.locator('#ow-confirm')).toBeVisible();
     await page.click('#ow-cancel');
-    await page.waitForTimeout(100);
-
-    // Back at the picker, no game started, and every slot is exactly as it was.
-    await expect(page.locator('.menu-card h2')).toContainText('Replace a Village');
-    expect(await page.evaluate(() => (window as any).__village.running)).toBe(false);
-    expect([await rawSlot(page, 0), await rawSlot(page, 1), await rawSlot(page, 2)]).toEqual(before);
+    await expect(page.locator('.menu-card h2')).toContainText('Save Game'); // back at the save list
+    expect(await rawSlot(page, 0)).toBe(slot0Before); // Alpha untouched
   });
 
-  test('confirming the overwrite replaces only the chosen slot, leaving the others intact', async ({ page }) => {
+  test('manual Save over an occupied slot, confirmed, replaces that slot with the live village', async ({ page }) => {
     await open(page);
-    await fillAllSlots(page);
-    await reloadToMenu(page);
-    const before = [await rawSlot(page, 0), await rawSlot(page, 1), await rawSlot(page, 2)];
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true, 0, 1001);             // slot 0 = Alpha
+      localStorage.setItem('little-village-save-v12-slot0-name', 'Alpha');
+      g.startNewGame('small', 'normal', true, g.debugAutosaveSlot(), 2002); // live = Bravo (seed 2002)
+    });
 
-    await page.click('#mm-new');
-    await page.fill('#ng-seed', '7777'); // a distinctive seed so the new village is identifiable
-    await page.click('#ng-start');
-    await page.click('#slot-1');
-    await page.click('#ow-confirm');
-    await page.waitForTimeout(150);
-
-    const out = await page.evaluate(() => ({
-      running: (window as any).__village.running,
-      slot: (window as any).__village.currentSlot,
-      seed: (window as any).__village.state.seed,
-    }));
-    expect(out.running).toBe(true);
-    expect(out.slot).toBe(1); // the slot the player chose, not slot 0
-    expect(out.seed).toBe(7777); // the new village really is in there
-
-    // Slot 1 changed; slots 0 and 2 are byte-for-byte what they were.
-    expect(await rawSlot(page, 1)).not.toBe(before[1]);
-    expect(await rawSlot(page, 0)).toBe(before[0]);
-    expect(await rawSlot(page, 2)).toBe(before[2]);
-  });
-
-  test('after an overwrite, the other slots still load their original villages', async ({ page }) => {
-    await open(page);
-    await fillAllSlots(page);
-    await reloadToMenu(page);
-
-    // Overwrite slot 1 through the full flow.
-    await page.click('#mm-new');
-    await page.fill('#ng-seed', '7777');
-    await page.click('#ng-start');
-    await page.click('#slot-1');
-    await page.click('#ow-confirm');
-    await page.waitForTimeout(150);
-
-    // Slot 0 still loads the original small seed-1001 village.
-    await reloadToMenu(page);
-    await page.click('#mm-load');
+    await page.click('#btn-menu');
+    await page.click('#pm-save');
     await page.click('#slot-0');
-    await page.waitForTimeout(150);
-    expect(await page.evaluate(() => ({ seed: (window as any).__village.state.seed, w: (window as any).__village.state.w })))
-      .toEqual({ seed: 1001, w: 72 });
-
-    // Slot 2 still loads the original Large seed-1003 village.
-    await reloadToMenu(page);
-    await page.click('#mm-load');
-    await page.click('#slot-2');
-    await page.waitForTimeout(150);
-    expect(await page.evaluate(() => ({ seed: (window as any).__village.state.seed, w: (window as any).__village.state.w })))
-      .toEqual({ seed: 1003, w: 144 });
-
-    // And the overwritten slot 1 loads the new seed-7777 village.
-    await reloadToMenu(page);
-    await page.click('#mm-load');
-    await page.click('#slot-1');
-    await page.waitForTimeout(150);
-    expect(await page.evaluate(() => (window as any).__village.state.seed)).toBe(7777);
-  });
-
-  test('the overwritten slot is the one autosave then writes to, still leaving the others intact', async ({ page }) => {
-    await open(page);
-    await fillAllSlots(page);
-    await reloadToMenu(page);
-    const before = [await rawSlot(page, 0), await rawSlot(page, 2)];
-
-    await page.click('#mm-new');
-    await page.fill('#ng-seed', '8888');
-    await page.click('#ng-start');
-    await page.click('#slot-1');
     await page.click('#ow-confirm');
-    await page.waitForTimeout(150);
+    await expect(page.locator('#pm-resume')).toBeVisible(); // saving returns to the pause menu
 
-    // Drive an autosave-equivalent write and confirm it lands in the confirmed slot only.
-    await page.evaluate(() => { const g = (window as any).__village; g.debugAdvance(5); g.persist(); });
-    expect(await page.evaluate(() => (window as any).__village.currentSlot)).toBe(1);
-    expect(await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!).state.seed, slotKey(1))).toBe(8888);
-    expect(await rawSlot(page, 0)).toBe(before[0]);
-    expect(await rawSlot(page, 2)).toBe(before[1]);
+    // Slot 0 now holds Bravo, and the replaced village's name is gone with it.
+    expect(await seedIn(page, 0)).toBe(2002);
+    expect(await page.evaluate(() => localStorage.getItem('little-village-save-v12-slot0-name'))).toBeNull();
   });
 });
 
@@ -395,14 +351,13 @@ test.describe('pause menu', () => {
     expect(await page.evaluate(() => (window as any).__village.paused)).toBe(false);
     expect(await page.evaluate(() => document.getElementById('overlay')!.classList.contains('hidden'))).toBe(true);
 
-    // Save → slot picker → Slot 2 writes and returns to the pause menu.
+    // Save → slot picker → Slot 2 (empty) writes and returns to the pause menu.
     await page.click('#btn-menu');
     await page.click('#pm-save');
     await expect(page.locator('#slot-1')).toBeVisible();
     await page.click('#slot-1');
     await expect(page.locator('#pm-resume')).toBeVisible(); // saving returns to the pause menu
     expect(await page.evaluate(() => localStorage.getItem('little-village-save-v12-slot1') != null)).toBe(true);
-    expect(await page.evaluate(() => (window as any).__village.currentSlot)).toBe(1);
 
     // Settings screen is reachable from the (still-open) pause menu, and Back returns to it.
     await page.click('#pm-settings');

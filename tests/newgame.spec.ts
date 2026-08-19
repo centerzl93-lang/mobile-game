@@ -5458,41 +5458,40 @@ test.describe('the New Village screen', () => {
 });
 
 test.describe('naming a village at the start', () => {
-  test('the name typed on the setup card is what the save list calls it', async ({ page }) => {
+  test('the name typed on the setup card names the village and follows it into a hard save', async ({ page }) => {
     await open2d(page);
     await page.click('#mm-new');
     await page.fill('#ng-name', 'Ashford Vale');
     await page.click('#ng-start');
     await page.waitForTimeout(200);
 
-    // The name is on the slot the village was founded into, which is what the save list reads.
-    const named = await page.evaluate(() => {
+    // A new village founds into the autosave slot, which carries its name.
+    const autoName = await page.evaluate(() => {
       const g = (window as any).__village;
-      return { slot: g.currentSlot, name: g.debugSlotName(g.currentSlot) };
+      return g.debugSlotName(g.debugAutosaveSlot());
     });
-    expect(named.name).toBe('Ashford Vale');
+    expect(autoName).toBe('Ashford Vale');
 
-    // And it is what the player actually sees when they go looking for the village.
+    // Hard-saving it to a manual slot carries the name across, so the save list shows it.
     await page.click('#btn-menu');
-    await page.click('#pm-load');
-    await expect(page.locator(`#slot-${named.slot}`)).toContainText('Ashford Vale');
+    await page.click('#pm-save');
+    await page.click('#slot-0'); // empty slot → saves straight away
+    await page.click('#pm-load'); // saving returns to the pause menu
+    await expect(page.locator('#slot-0')).toContainText('Ashford Vale');
   });
 
-  test('leaving the name blank falls back to the slot, it does not save an empty name', async ({ page }) => {
+  test('leaving the name blank stores no name and shows a neutral placeholder', async ({ page }) => {
     await open2d(page);
     await page.click('#mm-new');
-    // The placeholder says what it will be called if nothing is typed.
-    expect(await page.getAttribute('#ng-name', 'placeholder')).toMatch(/Slot \d/);
+    // A new village no longer targets a numbered slot, so the placeholder is a neutral default.
+    expect(await page.getAttribute('#ng-name', 'placeholder')).toBe('Little Village');
     await page.click('#ng-start');
     await page.waitForTimeout(200);
-    const out = await page.evaluate(() => {
+    const autoName = await page.evaluate(() => {
       const g = (window as any).__village;
-      return { slot: g.currentSlot, name: g.debugSlotName(g.currentSlot) };
+      return g.debugSlotName(g.debugAutosaveSlot());
     });
-    expect(out.name, 'no name stored, so the list shows its own fallback').toBeNull();
-    await page.click('#btn-menu');
-    await page.click('#pm-load');
-    await expect(page.locator(`#slot-${out.slot}`)).toContainText(`Slot ${out.slot + 1}`);
+    expect(autoName, 'no name stored for an unnamed village').toBeNull();
   });
 });
 

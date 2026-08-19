@@ -170,7 +170,7 @@ import {
   isSpanTier, spanLine, routePath, unplanTiles, demolishPathRect, pathSpeedMult,
   markPathRaze, isRazing, dropPathRaze,
 } from './game/paths';
-import { saveGame, loadGame, hasSave, clearSave, slotInfo, slotName, setSlotName, lastSlot, SLOTS, rawSlot, writeRawSlot } from './game/save';
+import { saveGame, loadGame, hasSave, clearSave, slotInfo, slotName, setSlotName, SLOTS, AUTOSAVE_SLOT, rawSlot, writeRawSlot } from './game/save';
 import {
   ACHIEVEMENTS,
   ACHIEVEMENT_COUNT,
@@ -233,8 +233,6 @@ class Game {
   state: GameState;
   running = false;
   paused = false;
-  /** Save slot the current game reads from and autosaves to. */
-  currentSlot = 0;
   speedIndex = 0;
   selectedBuild: BuildingType | null = null;
   /** Player-chosen footprint (tiles) while a sizable building (ranch/field) is selected. */
@@ -975,15 +973,18 @@ class Game {
     this.ui.updateHud(this.state, SPEEDS[this.speedIndex], this.paused);
   }
 
-  /** Start a fresh game in a slot. Directly startable (difficulty-select + headless drivers). */
+  /**
+   * Start a fresh game and write it to `slot`. Directly startable (difficulty-select + headless
+   * drivers). Defaults to the autosave slot — the real new-game flow founds a village there and
+   * the running game autosaves there from then on. Tests pass a manual slot index to seed one.
+   */
   startNewGame(
     size: MapSize = 'small',
     difficulty: Difficulty = 'normal',
     disasters = true,
-    slot = 0,
+    slot: number = AUTOSAVE_SLOT,
     seed?: number,
   ): void {
-    this.currentSlot = slot;
     this.state = newGame(size, difficulty, disasters, seed);
     this.state.autoStaff = autoStaffPref();
     this.centreOnVillage();
@@ -996,7 +997,7 @@ class Game {
     this.ui.clearSelection();
     this.ui.hideOverlay();
     this.running = true;
-    this.persist();
+    saveGame(this.state, slot);
     this.ui.log('A fresh village begins', 'good');
   }
 
@@ -1006,7 +1007,8 @@ class Game {
     this.running = false;
     this.paused = false;
     this.ui.showMainMenu({
-      hasSave: hasSave(),
+      hasAutosave: hasSave(AUTOSAVE_SLOT), // a game in progress → Continue
+      hasManualSave: hasSave(),           // any of the manual slots → Load Game
       onNew: () => this.openNewGameSetup(true),
       onContinue: () => this.continueGame(),
       onLoad: () => this.openSlotSelect('load', () => this.openMainMenu()),
@@ -1055,14 +1057,11 @@ class Game {
       this.newGameOpts.name = '';
     }
     this.running = false;
-    const empty = this.firstEmptySlot();
     this.ui.showNewGameSetup({
       ...this.newGameOpts,
-      // What the save list would call this village if it went unnamed, shown as the placeholder so
-      // the field reads as optional rather than as something that must be filled in. When every slot
-      // is full the destination is not chosen yet — the player picks one to replace after Start — so
-      // fall back to a neutral placeholder rather than naming a slot we might not use.
-      slotLabel: empty !== null ? `Slot ${empty + 1}` : 'Little Village',
+      // The name is optional, so show a neutral placeholder. A new village founds itself in the
+      // autosave slot (never a manual slot), so there is no slot number to name here.
+      slotLabel: 'Little Village',
       onChange: (patch) => {
         Object.assign(this.newGameOpts, patch);
         this.openNewGameSetup(); // re-render with the new selection
@@ -1070,68 +1069,44 @@ class Game {
       onStart: ({ seed, name }) => {
         this.newGameOpts.seed = seed;
         this.newGameOpts.name = name;
-        if (empty !== null) {
-          // At least one slot is free: found the village in the first empty one, as before.
-          this.beginNewGame(empty, name);
-        } else {
-          // Every slot holds a village. Never silently reuse slot 0 — make the player choose which
-          // village to replace and confirm it, so a new game can't wipe an existing save by accident.
-          this.openReplaceSlotPicker(name);
-        }
+        this.beginNewGame(name);
       },
       onBack: () => (this.newGameFromGame ? this.openPauseMenu() : this.openMainMenu()),
     });
   }
 
-  /** Found a new village in `slot`, name it, and start play. The single place the new-game flow
-   * commits to a slot — reached either directly (a free slot) or after an overwrite confirmation. */
-  private beginNewGame(slot: number, name: string): void {
+  /** Found a new village in the autosave slot and start play. A new game never touches a manual
+   * slot — those are the player's hard saves, written only from the Save screen. */
+  private beginNewGame(name: string): void {
     const { size, difficulty, disasters, seed } = this.newGameOpts;
-    this.startNewGame(size, difficulty, disasters, slot, seed);
-    // Named after the village is founded, because the slot is what carries the name and
-    // `startNewGame` is what decides the village is in it.
-    setSlotName(slot, name);
+    this.startNewGame(size, difficulty, disasters, AUTOSAVE_SLOT, seed);
+    setSlotName(AUTOSAVE_SLOT, name); // the running village carries its name on the autosave slot
   }
 
   /**
-   * All slots full: let the player pick which village to replace. Reuses the slot list (so each
-   * occupied slot is shown by name/year/population) in an 'overwrite' mode, and routes the pick
-   * through a confirmation. Back returns to the New Game setup without touching any save.
+   * Write the running village into a manual slot as a hard save, carrying its name onto the slot so
+   * the save list shows it, then return to the pause menu. The autosave slot is unaffected — this is
+   * a separate snapshot, not where the game continues to autosave.
    */
-  private openReplaceSlotPicker(name: string): void {
-    const slots = Array.from({ length: SLOTS }, (_, i) => ({ index: i, info: slotInfo(i) }));
-    this.ui.showSlotSelect({
-      mode: 'overwrite',
-      slots,
-      onPick: (slot) => {
-        // A slot freed in the meantime (deleted from this very list) needs no confirmation.
-        if (!hasSave(slot)) this.beginNewGame(slot, name);
-        else this.confirmOverwrite(slot, name);
-      },
-      onRename: (slot, n) => {
-        if (n.trim() === (slotName(slot) ?? '')) return;
-        setSlotName(slot, n);
-        this.openReplaceSlotPicker(name); // redraw so the row title follows the field
-      },
-      onDelete: (slot) => {
-        if (!confirm(`Delete ${slotName(slot) ?? `Slot ${slot + 1}`}? This cannot be undone.`)) return;
-        clearSave(slot);
-        this.ui.flashHint(`${slotName(slot) ?? `Slot ${slot + 1}`} deleted`);
-        this.openReplaceSlotPicker(name);
-      },
-      onBack: () => this.openNewGameSetup(),
-    });
+  private saveToSlot(slot: number): void {
+    const ok = saveGame(this.state, slot);
+    // Stamp the slot with the village's current name (blank clears it to the default "Slot N"), so
+    // an overwritten slot never keeps the replaced village's name.
+    if (ok) setSlotName(slot, slotName(AUTOSAVE_SLOT) ?? '');
+    const label = slotName(slot) ?? `Slot ${slot + 1}`;
+    this.ui.flashHint(ok ? `Saved to ${label}` : 'Could not save — storage may be full');
+    this.openPauseMenu();
   }
 
   /**
-   * Confirm replacing the village in `slot` before a new game overwrites it. Cancel returns to the
-   * picker and leaves every save untouched; only Overwrite commits, and only from here.
+   * Confirm before a manual save overwrites an existing hard save in `slot`. Cancel returns to the
+   * Save list and leaves the slot untouched; only Overwrite writes. `back` is the Save list's own
+   * back target, so cancelling lands where the player was.
    */
-  private confirmOverwrite(slot: number, name: string): void {
+  private confirmManualOverwrite(slot: number, back: () => void): void {
     const info = slotInfo(slot);
     if (!info) {
-      // Nothing there after all (or unreadable) — there is nothing to overwrite, so just start.
-      this.beginNewGame(slot, name);
+      this.saveToSlot(slot); // nothing there (or unreadable) — just save
       return;
     }
     this.ui.showOverwriteConfirm({
@@ -1139,16 +1114,9 @@ class Game {
       year: info.year,
       pop: info.pop,
       size: info.size,
-      onConfirm: () => this.beginNewGame(slot, name),
-      onCancel: () => this.openReplaceSlotPicker(name),
+      onConfirm: () => this.saveToSlot(slot),
+      onCancel: () => this.openSlotSelect('save', back),
     });
-  }
-
-  /** First unoccupied slot for a new game, or null when every slot is full (the caller must then
-   * ask the player which village to replace rather than picking one — see `openReplaceSlotPicker`). */
-  private firstEmptySlot(): number | null {
-    for (let i = 0; i < SLOTS; i++) if (!hasSave(i)) return i;
-    return null;
   }
 
   /** Slot picker for loading or saving. `back` returns to whichever menu opened it. */
@@ -1161,11 +1129,11 @@ class Game {
       onPick: (slot) => {
         if (mode === 'load') {
           this.continueGame(slot);
+        } else if (hasSave(slot)) {
+          // Overwriting an existing hard save asks first, naming the village being replaced.
+          this.confirmManualOverwrite(slot, back);
         } else {
-          this.currentSlot = slot;
-          const ok = this.persist();
-          this.ui.flashHint(ok ? `Saved to ${label(slot)}` : 'Could not save — storage may be full');
-          this.openPauseMenu();
+          this.saveToSlot(slot); // empty slot — write straight away
         }
       },
       onRename: (slot, name) => {
@@ -1174,12 +1142,8 @@ class Game {
         this.openSlotSelect(mode, back); // redraw so the row title follows the field
       },
       onDelete: (slot) => {
-        // Deleting the village you are playing would be undone by the next autosave a few seconds
-        // later, which looks like the delete silently failing. Say so instead of pretending.
-        if (this.running && slot === this.currentSlot) {
-          this.ui.flashHint('That is the village you are playing — it would be saved again straight away');
-          return;
-        }
+        // Manual slots are static snapshots — the live game autosaves elsewhere — so deleting one is
+        // always safe (it will not be silently rewritten by an autosave).
         if (!confirm(`Delete ${label(slot)}? This cannot be undone.`)) return;
         clearSave(slot);
         this.ui.flashHint(`${label(slot)} deleted`);
@@ -1220,16 +1184,21 @@ class Game {
     });
   }
 
-  /** Load a slot's village and resume play. Falls back to the main menu if no valid save. */
+  /**
+   * Resume a saved village and play on. With no argument this is **Continue** — it loads the
+   * autosave slot (the game in progress). Given a manual slot, it is **Load** — that hard save
+   * becomes the live game, so it is copied into the autosave slot and the game autosaves there from
+   * now on (Continue will resume it, not the game that was live before). Falls back to the main menu
+   * if there is no valid save.
+   */
   private continueGame(slot?: number): void {
-    const target = typeof slot === 'number' ? slot : lastSlot();
-    const saved = target != null ? loadGame(target) : null;
-    if (saved == null || target == null) {
+    const target = typeof slot === 'number' ? slot : AUTOSAVE_SLOT;
+    const saved = loadGame(target);
+    if (saved == null) {
       this.ui.flashHint('No saved village to load');
       this.openMainMenu();
       return;
     }
-    this.currentSlot = target;
     this.state = saved;
     // The preference belongs to the player, not the village, so a loaded save adopts whatever is
     // set now rather than whatever was set when it was saved.
@@ -1240,6 +1209,11 @@ class Game {
     this.ui.clearSelection();
     this.ui.hideOverlay();
     this.running = saved.citizens.length > 0 && !saved.gameOver;
+    // Loading a hard save makes it the live game: carry its name onto the autosave slot and write it
+    // there, so autosave continues this village and Continue resumes it. (For Continue itself the
+    // target already is the autosave slot, so this just rewrites it in place.)
+    if (target !== AUTOSAVE_SLOT) setSlotName(AUTOSAVE_SLOT, slotName(target) ?? '');
+    this.persist();
     this.ui.log('Welcome back to your village', 'good');
   }
 
@@ -2023,13 +1997,17 @@ class Game {
     return AUTOSAVE_SECONDS;
   }
 
-  /** Debug/testing helper: load a slot through the same path Continue uses. */
+  /** Debug/testing helper: load a slot straight into the live state (bypasses the menu flow). */
   debugLoadSlot(slot = 0): boolean {
     const saved = loadGame(slot);
     if (!saved) return false;
-    this.currentSlot = slot;
     this.state = saved;
     return true;
+  }
+
+  /** Debug/testing helper: the dedicated autosave slot index. */
+  debugAutosaveSlot(): number {
+    return AUTOSAVE_SLOT;
   }
 
   /** Debug/testing helper: the raw stored bytes for a slot (no migration), for save-format tests. */
@@ -2203,12 +2181,12 @@ class Game {
     return [...LIMITABLE];
   }
 
-  /** Debug/testing helpers: round-trip the village through storage. */
+  /** Debug/testing helpers: round-trip the village through the autosave slot. */
   debugSave(): boolean {
-    return saveGame(this.state, this.currentSlot);
+    return saveGame(this.state, AUTOSAVE_SLOT);
   }
   debugLoad(): boolean {
-    const loaded = loadGame(this.currentSlot);
+    const loaded = loadGame(AUTOSAVE_SLOT);
     if (!loaded) return false;
     this.state = loaded;
     return true;
@@ -2537,8 +2515,9 @@ class Game {
   /** Latched so the "can't save" warning fires once when saving breaks, not on every attempt. */
   private saveFailed = false;
 
+  /** Autosave: always writes the live game to the dedicated autosave slot, never a manual slot. */
   private persist(): boolean {
-    const ok = saveGame(this.state, this.currentSlot);
+    const ok = saveGame(this.state, AUTOSAVE_SLOT);
     if (!ok && !this.saveFailed) {
       this.saveFailed = true;
       this.log('Could not save your village — storage may be full. Progress is not being saved.', 'bad');

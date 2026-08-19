@@ -1874,21 +1874,26 @@ export class UI {
 
   /** The title screen: New Game, Continue / Load Game (if a save exists), Settings, placeholder. */
   showMainMenu(opts: {
-    hasSave: boolean;
+    /** A game is in progress in the autosave slot — offer Continue. */
+    hasAutosave: boolean;
+    /** At least one manual slot holds a hard save — offer Load Game. */
+    hasManualSave: boolean;
     onNew: () => void;
     onContinue: () => void;
     onLoad: () => void;
     onSettings: () => void;
     onCodex: () => void;
   }): void {
-    const saved = opts.hasSave
-      ? `<button id="mm-continue">Continue</button><button id="mm-load">Load Game</button>`
-      : '';
+    // Continue resumes the autosave; Load opens the hard-save slots. They are independent now — a
+    // fresh game that has never been hard-saved offers Continue but not Load, and vice versa.
+    const cont = opts.hasAutosave ? `<button id="mm-continue">Continue</button>` : '';
+    const load = opts.hasManualSave ? `<button id="mm-load">Load Game</button>` : '';
     this.overlayCard(
       `<h1>Little Village</h1><p class="big">🏡🌲🌾</p>` +
         `<div class="menu-list">` +
         `<button id="mm-new">New Game</button>` +
-        saved +
+        cont +
+        load +
         `<button class="ghost" id="mm-codex">Codex</button>` +
         `<button class="ghost" id="mm-settings">Settings</button>` +
         `<button class="ghost" id="mm-account" disabled>Sign In / Create Account — coming soon</button>` +
@@ -1899,10 +1904,8 @@ export class UI {
       'menu-card',
     );
     byId('mm-new').addEventListener('click', () => opts.onNew());
-    if (opts.hasSave) {
-      byId('mm-continue').addEventListener('click', () => opts.onContinue());
-      byId('mm-load').addEventListener('click', () => opts.onLoad());
-    }
+    if (opts.hasAutosave) byId('mm-continue').addEventListener('click', () => opts.onContinue());
+    if (opts.hasManualSave) byId('mm-load').addEventListener('click', () => opts.onLoad());
     byId('mm-codex').addEventListener('click', () => opts.onCodex());
     byId('mm-settings').addEventListener('click', () => opts.onSettings());
   }
@@ -2116,7 +2119,7 @@ export class UI {
    * text field nested in a button cannot be focused without also triggering the button.
    */
   showSlotSelect(opts: {
-    mode: 'load' | 'save' | 'overwrite';
+    mode: 'load' | 'save';
     slots: { index: number; info: { year: number; pop: number; size: MapSize; name: string | null } | null }[];
     onPick: (slot: number) => void;
     onRename: (slot: number, name: string) => void;
@@ -2128,8 +2131,8 @@ export class UI {
       .map(({ index, info }) => {
         const fallback = `Slot ${index + 1}`;
         if (!info) {
-          // Empty slots are only pickable where picking one *writes* to it: loading needs an
-          // occupied slot, so those stay disabled; saving and overwriting can start a fresh village.
+          // Loading needs an occupied slot, so empty rows are disabled there; saving can pick an
+          // empty slot to write a fresh hard save into.
           const disabled = opts.mode === 'load' ? ' disabled' : '';
           return `<button id="slot-${index}"${disabled}>${fallback}<span class="sub">Empty</span></button>`;
         }
@@ -2146,14 +2149,13 @@ export class UI {
         );
       })
       .join('');
-    const heading = opts.mode === 'load' ? 'Load Game' : opts.mode === 'save' ? 'Save Game' : 'Replace a Village';
-    // Overwrite mode is only reached when every slot already holds a village, so say why the player
-    // is being asked to choose one — the rows themselves name each occupied village.
-    const note = opts.mode === 'overwrite'
-      ? `<p class="slot-note">Every slot is full. Choose a village to replace — you will be asked to confirm.</p>`
+    // Saving to an occupied slot asks for confirmation on pick (see the overwrite modal); the list
+    // itself just names each hard save.
+    const note = opts.mode === 'save'
+      ? `<p class="slot-note">These are your hard saves. The game autosaves separately, on its own.</p>`
       : '';
     this.overlayCard(
-      `<h2>${heading}</h2>` +
+      `<h2>${opts.mode === 'load' ? 'Load Game' : 'Save Game'}</h2>` +
         `<div class="menu-list">${note}${rows}<button class="ghost" id="slot-back">Back</button></div>`,
       'menu-card',
     );

@@ -334,6 +334,46 @@ test.describe('autosave slot vs manual save slots', () => {
     expect(await seedIn(page, 0)).toBe(2002);
     expect(await page.evaluate(() => localStorage.getItem('little-village-save-v12-slot0-name'))).toBeNull();
   });
+
+  test('overwriting a slot succeeds against a full store by reclaiming its own bytes', async ({ page }) => {
+    await open(page);
+    // Alpha lives in slot 0; Bravo is the live village we then hard-save over it.
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true, 0, 1001);             // slot 0 = Alpha (seed 1001)
+      g.startNewGame('small', 'normal', true, g.debugAutosaveSlot(), 2002); // live = Bravo (seed 2002)
+    });
+
+    // Simulate a near-full store: the *first* setItem for slot 0 throws QuotaExceededError, exactly
+    // as a browser does when a slightly larger blob tips a full origin over. The real
+    // `localStorage.removeItem` still works, so `saveGame`'s reclaim-then-retry can free slot 0's own
+    // bytes and land the write on the second attempt.
+    const wrote = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const key = 'little-village-save-v12-slot0';
+      const raw = Object.getPrototypeOf(localStorage);
+      const realSet = raw.setItem.bind(localStorage);
+      let thrown = false;
+      localStorage.setItem = (k: string, v: string) => {
+        if (k === key && !thrown) {
+          thrown = true;
+          const err: any = new Error('QuotaExceededError');
+          err.name = 'QuotaExceededError';
+          throw err;
+        }
+        return realSet(k, v);
+      };
+      try {
+        return g.debugSaveSlot(0); // overwrite Alpha with the live Bravo
+      } finally {
+        localStorage.setItem = realSet; // restore so the rest of the harness is unaffected
+      }
+    });
+
+    // The save reported success and slot 0 now holds Bravo — the overwrite survived the full store.
+    expect(wrote).toBe(true);
+    expect(await seedIn(page, 0)).toBe(2002);
+  });
 });
 
 test.describe('pause menu', () => {

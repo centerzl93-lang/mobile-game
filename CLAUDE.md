@@ -297,6 +297,11 @@ Saves are a version envelope `{ v, state }`:
 - **Save-time guard.** `saveGame` refuses a structurally unsound state (`validState`) and returns a
   boolean, so autosave can never overwrite a good save on disk with a half-built/corrupt one, and a
   failed write (full/blocked storage) surfaces to the player instead of silently dropping saves.
+- **Overwrites reclaim their own space.** Writing a slot goes through `writeSlot`, which on a
+  `QuotaExceededError` drops the target key (its bytes are being replaced anyway) and retries once —
+  so overwriting an existing save (a manual slot, or the rolling autosave slot) only has to fit in
+  the space its predecessor already held and does not fail against a near-full store. This is what
+  makes "a save always overwrites the one it replaces" hold in practice.
 - **The whole state is written** — transient-looking per-citizen fields (nav cache, partial `pending`
   loads, survival counters) included. A save must reproduce the *running* village exactly: dropping
   even the pure nav cache shifts path timing on reload and diverges the shared RNG stream from an

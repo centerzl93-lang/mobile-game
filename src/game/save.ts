@@ -178,23 +178,58 @@ interface SaveEnvelope {
 }
 
 /**
+ * Write `data` to `key`, reclaiming the key's own existing bytes if the store is full.
+ *
+ * A plain `setItem` over an occupied key can still throw `QuotaExceededError`: the browser measures
+ * the write against the whole origin's quota, and a new blob a shade larger than the one it replaces
+ * can tip a near-full store over even though the *net* growth is tiny. That is exactly the
+ * "overwrite silently fails" the player sees — a manual save over an existing slot, or the autosave
+ * over its own previous snapshot, refusing for want of a few bytes it is about to free anyway.
+ *
+ * So on a failed write we drop the key first (its old bytes are being replaced regardless) and retry
+ * once: an overwrite then only has to fit in the space its predecessor already held, which it does
+ * by construction for a save of similar size. This is what makes "a save always overwrites the one
+ * it replaces" hold even against a full store. The remove is skipped on the first attempt so a write
+ * that fits never throws its predecessor away needlessly, and if the retry still fails (a genuinely
+ * larger blob with no headroom anywhere) we report it rather than pretend it worked.
+ */
+function writeSlot(key: string, data: string): boolean {
+  try {
+    localStorage.setItem(key, data);
+    return true;
+  } catch {
+    // Reclaim this key's space — we are overwriting it — and try once more.
+    try {
+      localStorage.removeItem(key);
+      localStorage.setItem(key, data);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
  * Persist a game to a slot (default slot 0) and remember it as the most recently used.
  *
  * Returns whether the write actually happened, so a caller (autosave) can notice storage that has
  * gone full or unavailable and tell the player, rather than silently dropping every save from here
  * on. A structurally unsound state is refused **before** the write, so a transient bug that corrupts
- * the in-memory state can never overwrite a good save on disk with an unloadable one.
+ * the in-memory state can never overwrite a good save on disk with an unloadable one. The write goes
+ * through `writeSlot`, so overwriting an existing save (a manual slot, or the rolling autosave slot)
+ * reuses that save's own space and does not fail against a near-full store.
  */
 export function saveGame(s: GameState, slot = 0): boolean {
   if (!validState(s)) return false;
+  let data: string;
   try {
-    localStorage.setItem(slotKey(slot), serialize(s));
-    setLastSlot(slot);
-    return true;
+    data = serialize(s);
   } catch {
-    /* storage full or unavailable — report it; the game keeps running in memory */
-    return false;
+    return false; // a state that will not even stringify is not writable
   }
+  if (!writeSlot(slotKey(slot), data)) return false;
+  setLastSlot(slot);
+  return true;
 }
 
 /** Load and validate the game in a slot, restoring its map size first. Null if empty/corrupt. */

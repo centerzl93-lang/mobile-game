@@ -30,6 +30,7 @@ import {
   FIRE_BURN_SECONDS,
   FIRE_DOUSE_TRIPS_NEEDED,
   FIRE_RESPONSE_RADIUS,
+  fireIntensity,
   FESTIVAL_FOOD,
   POLICY_META,
   POLICIES,
@@ -1977,6 +1978,12 @@ class Game {
   /** Debug/testing helper: how far (tiles) a villager will drop what they're doing to fight a fire. */
   debugFireResponseRadius(): number {
     return FIRE_RESPONSE_RADIUS;
+  }
+
+  /** Debug/testing helper: how large a fire currently reads, 0..1 — see `fireIntensity`. */
+  debugFireIntensity(id: number): number {
+    const b = this.state.buildings.find((x) => x.id === id);
+    return b ? fireIntensity(b) : 0;
   }
 
   /**

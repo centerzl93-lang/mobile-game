@@ -4666,6 +4666,7 @@ function processFires(s: GameState, dt: number, log: LogFn): void {
       let destroyChance = doused ? 1 - FIRE_SURVIVAL_CHANCE : 1;
       if (doused && isStoneBuilt(b.type)) destroyChance *= STONE_FIRE_FACTOR;
       if (rand(s) < destroyChance) {
+        markScorched(s, b); // a burn scar, not the bare ground an ordinary demolition leaves
         razeBuilding(s, b);
         log(`The ${name} burned down`, 'bad');
       } else {
@@ -4702,6 +4703,23 @@ function adjacentBuildings(s: GameState, b: Building): { building: Building; gap
     if (gap <= 1) out.push({ building: o, gap });
   }
   return out;
+}
+
+/** Leave a burn scar under a building's footprint — see `GameState.scorched`. Cleared the moment
+ *  anything is built over the tile again (`clearScorchedUnder` in `buildings.ts`). */
+function markScorched(s: GameState, b: Building): void {
+  const fw = footprintW(b);
+  const fh = footprintH(b);
+  const list = (s.scorched ??= []);
+  for (let dy = 0; dy < fh; dy++) {
+    for (let dx = 0; dx < fw; dx++) {
+      const tx = b.x + dx;
+      const ty = b.y + dy;
+      if (!inBounds(tx, ty)) continue;
+      const i = tileIndex(tx, ty);
+      if (!list.includes(i)) list.push(i);
+    }
+  }
 }
 
 // ---- forest upkeep ----

@@ -1411,6 +1411,80 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
     expect(out.built).toBe(false);
   });
 
+  test('a fire reads larger the longer it burns, and shrinks as it is doused', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const hut = eval(placeSrc)(g, 'gatherer');
+      g.debugIgnite(hut.id);
+      const atIgnition = g.debugFireIntensity(hut.id);
+      const burn = g.debugFireBurnSeconds();
+      // Jump straight to "nearly burned down" without waiting the real time out — `fireIntensity`
+      // is a pure function of the current fields, so this is a fair way to sample it partway
+      // through a burn.
+      hut.fireTimer = burn * 0.05;
+      const nearCollapse = g.debugFireIntensity(hut.id);
+      hut.fireWater = Math.ceil(g.debugFireDouseTripsNeeded() / 2);
+      const halfDoused = g.debugFireIntensity(hut.id);
+      hut.fireWater = g.debugFireDouseTripsNeeded();
+      const fullyDoused = g.debugFireIntensity(hut.id);
+      return { atIgnition, nearCollapse, halfDoused, fullyDoused };
+    }, placeBuilt);
+    // Small at the start, largest just before it would collapse.
+    expect(out.atIgnition).toBeGreaterThan(0);
+    expect(out.nearCollapse).toBeGreaterThan(out.atIgnition);
+    // Every load of water lands it a step back down, extinguished reading as zero.
+    expect(out.halfDoused).toBeLessThan(out.nearCollapse);
+    expect(out.halfDoused).toBeGreaterThan(0);
+    expect(out.fullyDoused).toBe(0);
+  });
+
+  test('a burnt-down building leaves a scorch mark that clears once something is built over it', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const hut = eval(placeSrc)(g, 'gatherer');
+      const hx = hut.x;
+      const hy = hut.y;
+      const { w: fw, h: fh } = g.debugFootprint('gatherer');
+      g.debugIgnite(hut.id);
+      g.debugPinRandom(0.01); // untreated fire — guaranteed destroy
+      try {
+        g.debugAdvance(g.debugFireBurnSeconds() + 1);
+      } finally {
+        g.debugPinRandom(null);
+      }
+      const scorchedAfterBurn = (s.scorched ?? []).length;
+      // Clear the rubble so the plot is free to build on again.
+      g.debugSetBuilders(6);
+      for (let i = 0; i < 3000 && s.buildings.some((b: any) => b.id === hut.id); i++) g.debugAdvance(0.2);
+      const id2 = g.debugPlace('gatherer', hx, hy);
+      const stillScorched = (s.scorched ?? []).length;
+      return { footprintArea: fw * fh, scorchedAfterBurn, placedAgain: id2 != null, stillScorched };
+    }, placeBuilt);
+    expect(out.scorchedAfterBurn).toBe(out.footprintArea);
+    expect(out.placedAgain).toBe(true);
+    expect(out.stillScorched).toBe(0);
+  });
+
+  test('an ordinary demolition leaves bare ground, not a burn scar', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const hut = eval(placeSrc)(g, 'gatherer');
+      g.debugDemolish(hut.id);
+      g.debugSetBuilders(6);
+      for (let i = 0; i < 3000 && s.buildings.some((b: any) => b.id === hut.id); i++) g.debugAdvance(0.2);
+      return { scorched: (s.scorched ?? []).length };
+    }, placeBuilt);
+    expect(out.scorched).toBe(0);
+  });
+
   test('proximity to the well governs how much water lands before the fire resolves', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(
@@ -4128,7 +4202,7 @@ test.describe('build stamp', () => {
   test('the main menu shows an incrementing version, commit and date', async ({ page }) => {
     await open(page);
     const stamp = await page.evaluate(() => document.getElementById('mm-build')?.textContent ?? '');
-    // e.g. "v0.1.48 · 7b6dfc7 · 2026-07-27". The patch is the commit count, so it rises with every
+    // e.g. "v0.2.48 · 7b6dfc7 · 2026-07-27". The patch is the commit count, so it rises with every
     // push; a '?' there means the build ran against a shallow clone and the number can't be trusted.
     expect(stamp).toMatch(/^v\d+\.\d+\.\d+ · [0-9a-f]{7,} · \d{4}-\d{2}-\d{2}$/);
   });

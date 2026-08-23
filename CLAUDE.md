@@ -18,7 +18,7 @@ Little Village is an original **survival village-builder**, shipped as an instal
 (TypeScript + Three.js `0.185.1` + Vite + `vite-plugin-pwa`) and deployed free to GitHub Pages under
 the base path `/mobile-game/`. It is built to be added to an iPhone home screen and played
 full-screen and offline; the village auto-saves to `localStorage`. Package name `little-village`,
-version `0.1.0`. All art, code and audio are original; assets are CC0/permissive only.
+version `0.2.0`. All art, code and audio are original; assets are CC0/permissive only.
 
 The player founds a settlement of twelve, keeps them fed, warmed and housed through the seasons,
 grows the population, and works up through five tiers of civilisation — from a forest camp to a

@@ -257,7 +257,21 @@ export function placeBuilding(
   // A path under the footprint is torn up: the tile belongs to the building now. (Planning a path
   // over an existing building is refused outright — see `planPath`.)
   clearPathsUnder(s, b.x, b.y, footprintW(b), footprintH(b));
+  // Building over a burn scar is what clears it — see `GameState.scorched`.
+  clearScorchedUnder(s, b);
   return b;
+}
+
+/** Building over a burn scar is what makes it temporary — see `GameState.scorched`. */
+function clearScorchedUnder(s: GameState, b: Building): void {
+  if (!s.scorched || s.scorched.length === 0) return;
+  const fw = footprintW(b);
+  const fh = footprintH(b);
+  const covered = new Set<number>();
+  for (let dy = 0; dy < fh; dy++) {
+    for (let dx = 0; dx < fw; dx++) covered.add(tileIndex(b.x + dx, b.y + dy));
+  }
+  s.scorched = s.scorched.filter((i) => !covered.has(i));
 }
 
 /** Mark any trees / loose stone under a building's footprint for harvesting. */

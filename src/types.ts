@@ -1830,6 +1830,14 @@ export interface GameState {
    * means nothing is queued.
    */
   razePaths?: number[];
+  /**
+   * Tile indices left scorched by a building that burned down — a purely visual scar (see
+   * `renderer3d.ts`/`renderer.ts`), never a gameplay effect. Added when fire destroys a building
+   * (`markScorched`, fire only — an ordinary demolition leaves bare ground, not a burn scar) and
+   * cleared the moment anything is built over the tile again (`placeBuilding`), which is what
+   * makes it *temporary*: there is no timer, only "still empty" or "built over".
+   */
+  scorched?: number[];
   /** How many free adults the player wants assigned as Builders. Only Builders construct work
    * buildings; paths can be laid by any adult. Idle builders pitch in as laborers. */
   desiredBuilders: number;
@@ -2892,6 +2900,25 @@ export const FIRE_BURN_SECONDS = SEASON_LENGTH / 8;
  * this roll at all — it always burns down.
  */
 export const FIRE_SURVIVAL_CHANCE = 0.55;
+/** Floor on `fireIntensity` while a building is still burning — a fire is never drawn as fully
+ *  out until it actually is; this is what keeps the very first frame from reading as unlit. */
+export const FIRE_MIN_INTENSITY = 0.16;
+/**
+ * How large a fire reads right now, 0..1 — for the renderers only, no gameplay effect.
+ *
+ * Grows with how long it has burned (barely alight at ignition, largest just before it would
+ * collapse), the same way a real fire spreads and climbs the longer it goes unanswered. A bucket
+ * brigade runs the other way: every load of water landed (`fireWater`, against
+ * `FIRE_DOUSE_TRIPS_NEEDED`) damps it back down, so a fire being fought visibly shrinks *before*
+ * `processFires` actually resolves it — the flame dying down is the tell that it is being won,
+ * not only the burn-down/survive result at the very end.
+ */
+export function fireIntensity(b: Building): number {
+  if (!b.fireTimer) return 0;
+  const age = 1 - Math.max(0, Math.min(1, b.fireTimer / FIRE_BURN_SECONDS));
+  const doused = Math.min(1, (b.fireWater ?? 0) / FIRE_DOUSE_TRIPS_NEEDED);
+  return Math.max(FIRE_MIN_INTENSITY, age) * (1 - doused);
+}
 /**
  * Repair reuses the ordinary construction pipeline (see `pickSite`/`runBuilder` in
  * `simulation.ts`), just against a smaller bill: a burnt-out shell needs new timbers and a roof,

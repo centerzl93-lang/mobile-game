@@ -31,6 +31,7 @@ import {
   PATH_NONE,
   HARVEST_WOOD,
   HARVEST_STONE,
+  fireIntensity,
 } from '../types';
 import { tileIndex, inBounds } from '../game/world';
 import { Camera3D } from '../engine/camera3d';
@@ -321,6 +322,12 @@ export class Renderer3D {
   private ironNodes!: THREE.InstancedMesh;
   private ironTiles: number[] = [];
   private marks!: THREE.InstancedMesh;
+  /** Burn scars left by fire-destroyed buildings — see `GameState.scorched`. */
+  private scorch!: THREE.InstancedMesh;
+  /** One small flame per BURNING building, scaled every frame by `fireIntensity` — see
+   *  `updateFlames`. Created/removed in `syncBuildings`, alongside everything else keyed to
+   *  whether a building is currently on fire. */
+  private flames = new Map<number, THREE.Group>();
   /** One instanced surface per path kind, so each can carry its own texture. */
   private pathLayers: Record<PathSurface, THREE.InstancedMesh> = {} as Record<PathSurface, THREE.InstancedMesh>;
   /** The masonry (or trestle) that holds each bridge deck up, one box per tile under the deck. */
@@ -363,7 +370,7 @@ export class Renderer3D {
   private boatModelled = false;
 
   // Cached signatures so we only rebuild a layer when its data changes.
-  private sig = { land: -1, tree: -1, rock: -1, iron: -1, path: -1, mark: -1, bld: '' };
+  private sig = { land: -1, tree: -1, rock: -1, iron: -1, path: -1, mark: -1, scorch: -1, bld: '' };
   /**
    * The scatter props (trees, loose stone, ore) are drawn only near the camera.
    *
@@ -577,6 +584,13 @@ export class Renderer3D {
     this.marks.count = 0;
     this.marks.frustumCulled = false;
     this.scene.add(this.marks);
+    // Burn scars: a near-black patch, flatter/darker than any mark so it never gets mistaken for
+    // a live order — see `syncScorch`.
+    const scorchMat = new THREE.MeshBasicMaterial({ color: 0x120f0d, transparent: true, opacity: 0.55 });
+    this.scorch = new THREE.InstancedMesh(flat2, scorchMat, MAP_W * MAP_H);
+    this.scorch.count = 0;
+    this.scorch.frustumCulled = false;
+    this.scene.add(this.scorch);
 
     // Citizens: a figure assembled from separately-instanced body parts (see render/villager.ts).
     // Instancing is non-negotiable at these populations, and one instanced mesh carries only one
@@ -701,7 +715,7 @@ export class Renderer3D {
     this.boat.visible = false;
     this.scene.add(this.boat);
 
-    this.sig = { land: -1, tree: -1, rock: -1, iron: -1, path: -1, mark: -1, bld: '' };
+    this.sig = { land: -1, tree: -1, rock: -1, iron: -1, path: -1, mark: -1, scorch: -1, bld: '' };
     this.tunnelSig = tunnelSignature(s);
     this.ready = true;
   }
@@ -736,10 +750,12 @@ export class Renderer3D {
     this.syncIron(s);
     this.syncPaths(s);
     this.syncMarks(s);
+    this.syncScorch(s);
     this.syncBuildings(s);
     this.syncCitizens(s, now);
     this.syncBoat(s, dt);
     this.syncOverlays(s, placement);
+    this.updateFlames(s, now);
     this.animate(dt, now);
     this.renderer.render(this.scene, cam.cam);
   }
@@ -1594,6 +1610,40 @@ export class Renderer3D {
     if (this.marks.instanceColor) this.marks.instanceColor.needsUpdate = true;
   }
 
+  // ---- burn scars ----
+  /**
+   * Tile decals left by fire-destroyed buildings (`GameState.scorched`) — purely cosmetic, and
+   * temporary only in the sense that `clearScorchedUnder` drops a tile from the list the moment
+   * something is built on it again. Same instancing pattern as `syncMarks`, a separate mesh so a
+   * scar reads as ground, not as a live order.
+   */
+  private syncScorch(s: GameState): void {
+    const list = s.scorched;
+    // Order-independent so building over one tile and freeing another doesn't spuriously miss the
+    // cache (the list is filtered, not necessarily re-ordered) — cheap at the handful of tiles a
+    // village typically has scorched at once.
+    let sig = 0;
+    if (list) for (const i of list) sig = (sig + Math.imul(i + 1, 2654435761)) >>> 0;
+    sig = (sig * 31 + (list?.length ?? 0)) >>> 0;
+    if (sig === this.sig.scorch) return;
+    this.sig.scorch = sig;
+    let k = 0;
+    if (list) {
+      for (const i of list) {
+        const mx = (i % MAP_W) + 0.5;
+        const mz = ((i / MAP_W) | 0) + 0.5;
+        this.dummy.position.set(mx, this.tileTopH(i % MAP_W, (i / MAP_W) | 0) + 0.05, mz);
+        this.dummy.scale.set(1, 1, 1);
+        this.dummy.rotation.set(0, 0, 0);
+        this.dummy.updateMatrix();
+        this.scorch.setMatrixAt(k, this.dummy.matrix);
+        k++;
+      }
+    }
+    this.scorch.count = k;
+    this.scorch.instanceMatrix.needsUpdate = true;
+  }
+
   // ---- buildings ----
   private syncBuildings(s: GameState): void {
     let sig = '';
@@ -1616,6 +1666,12 @@ export class Renderer3D {
       if (!alive.has(id)) {
         this.disposeBuilding(obj);
         this.buildingMeshes.delete(id);
+      }
+    }
+    for (const [id, flame] of this.flames) {
+      if (!alive.has(id)) {
+        this.disposeFlame(flame);
+        this.flames.delete(id);
       }
     }
     for (const b of s.buildings) {
@@ -1658,6 +1714,23 @@ export class Renderer3D {
       // (survived a fire, waiting on repair) gets its own scorched, cooler-still tint — it isn't
       // coming down, but it isn't working either.
       this.styleBuilding(obj, b.type, !!b.fireTimer, !!b.demolish, !!b.damaged);
+      // A flame appears the instant the building catches — `updateFlames` scales it every frame
+      // from `fireIntensity` — and disappears the instant the fire resolves either way (survives
+      // as DAMAGED or is razed; a razed one is also caught by the `alive` sweep above).
+      if (b.fireTimer) {
+        if (!this.flames.has(b.id)) {
+          const flame = this.makeFlame();
+          flame.position.set(b.x + fw / 2, TOP + buildingHeight(b.type) * 0.55, b.y + fh / 2);
+          this.scene.add(flame);
+          this.flames.set(b.id, flame);
+        }
+      } else {
+        const flame = this.flames.get(b.id);
+        if (flame) {
+          this.disposeFlame(flame);
+          this.flames.delete(b.id);
+        }
+      }
     }
 
     // Chimney smoke emitters: hearth buildings that are built and actually working.
@@ -1917,6 +1990,59 @@ export class Renderer3D {
       if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
       else mat?.dispose();
     });
+  }
+
+  /**
+   * A small procedural flame: three stacked, unlit cones (deep orange base, orange middle, pale
+   * yellow tip) with additive blending, so overlapping layers read as a hot glow rather than
+   * flat, stacked colour. Its *group* scale is what `updateFlames` drives from `fireIntensity` —
+   * one number controls the whole thing growing or shrinking, which is the visible "catching" and
+   * "being put out" the fire system otherwise only shows through the HUD.
+   */
+  private makeFlame(): THREE.Group {
+    const g = new THREE.Group();
+    const layer = (color: number, r: number, h: number, y: number, opacity: number) => {
+      const mat = new THREE.MeshBasicMaterial({
+        color, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(r, h, 8), mat);
+      cone.position.y = y;
+      g.add(cone);
+    };
+    layer(0xb5320f, 0.24, 0.5, 0.25, 0.85);
+    layer(0xef7a1a, 0.16, 0.42, 0.34, 0.9);
+    layer(0xffd873, 0.09, 0.3, 0.42, 0.95);
+    g.renderOrder = 15; // over buildings, under UI overlays
+    g.traverse((o) => { o.renderOrder = 15; });
+    return g;
+  }
+
+  private disposeFlame(g: THREE.Group): void {
+    this.scene.remove(g);
+    g.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
+      m.geometry?.dispose();
+      (m.material as THREE.Material)?.dispose();
+    });
+  }
+
+  /**
+   * Scale (and gently flicker) every live flame from `fireIntensity`, every frame — independent
+   * of `syncBuildings`'s change-gated signature, since the intensity itself changes continuously
+   * as the fire burns or is doused, not only when something structural about the building changes.
+   */
+  private updateFlames(s: GameState, now: number): void {
+    if (this.flames.size === 0) return;
+    const byId = new Map(s.buildings.map((b) => [b.id, b]));
+    for (const [id, flame] of this.flames) {
+      const b = byId.get(id);
+      const intensity = b ? fireIntensity(b) : 0;
+      const flicker = 1 + Math.sin(now * 9 + id) * 0.08 + Math.sin(now * 17 + id * 3) * 0.05;
+      const scale = Math.max(0.001, intensity * flicker);
+      flame.scale.setScalar(scale);
+      flame.rotation.y = now * 1.1 + id;
+    }
   }
 
   // ---- citizens ----
@@ -2291,7 +2417,7 @@ export class Renderer3D {
     // so a new game drew its own deposits plus every previous game's, scattered over ground that
     // had since become forest, mountain or lake. It surfaced as ore floating on open water,
     // because water is the one surface where a stray chunk is unmistakable.
-    for (const m of [this.terrain, this.trees, this.rocks, this.ironNodes, ...pathMeshes, this.portals, this.bores, this.marks, ...villagerMeshes]) {
+    for (const m of [this.terrain, this.trees, this.rocks, this.ironNodes, ...pathMeshes, this.portals, this.bores, this.marks, this.scorch, ...villagerMeshes]) {
       this.scene.remove(m);
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
@@ -2318,6 +2444,8 @@ export class Renderer3D {
     this.water.geometry.dispose();
     for (const [, obj] of this.buildingMeshes) this.disposeBuilding(obj);
     this.buildingMeshes.clear();
+    for (const [, flame] of this.flames) this.disposeFlame(flame);
+    this.flames.clear();
     for (const o of [this.ghost, this.selRing, this.workRing, this.marquee, this.boat]) this.scene.remove(o);
     // The facing arrows are rebuilt by `init`, so the old ones have to go with the rest of the
     // map. They draw with `depthTest: false` — a leaked one is not merely still there, it is still
@@ -2331,7 +2459,7 @@ export class Renderer3D {
         (m.material as THREE.Material).dispose();
       });
     }
-    this.sig = { land: -1, tree: -1, rock: -1, iron: -1, path: -1, mark: -1, bld: '' };
+    this.sig = { land: -1, tree: -1, rock: -1, iron: -1, path: -1, mark: -1, scorch: -1, bld: '' };
     this.ready = false;
   }
 }

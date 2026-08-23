@@ -28,6 +28,7 @@ import {
   repairFraction,
   repairWorkOf,
   FIRE_BURN_SECONDS,
+  FIRE_DOUSE_TRIPS_NEEDED,
   FESTIVAL_FOOD,
   POLICY_META,
   POLICIES,
@@ -1004,6 +1005,26 @@ class Game {
   }
 
   /**
+   * A fire, a bridge burning, or a sickness breaking out (`GameState.disasterAlert`) snaps the
+   * game back to 1× the instant the frame loop notices it, so a player who stepped away to another
+   * part of the village at 10× comes back to something they can actually react to rather than a
+   * building that finished burning three sub-steps ago. Only the speed changes — pause, camera and
+   * everything else are left exactly as the player had them.
+   *
+   * Called once per real frame from `frame`, and once per emulated frame from
+   * `debugAdvanceAtSpeed` — the two places sim time actually advances at a chosen speed — so a
+   * test can pin the same behaviour a live game gets without going through `requestAnimationFrame`.
+   */
+  private applyDisasterSpeedReset(): void {
+    if (!this.state.disasterAlert) return;
+    this.state.disasterAlert = false;
+    if (this.speedIndex !== 0) {
+      this.speedIndex = 0;
+      this.ui.updateHud(this.state, SPEEDS[this.speedIndex], this.paused);
+    }
+  }
+
+  /**
    * Start a fresh game and write it to `slot`. Directly startable (difficulty-select + headless
    * drivers). Defaults to the autosave slot — the real new-game flow founds a village there and
    * the running game autosaves there from then on. Tests pass a manual slot index to seed one.
@@ -1472,6 +1493,14 @@ class Game {
         // (its occupants were turned out the moment it caught — see `tryIgnite`).
         if (b.fireTimer) {
           rows.push({ label: 'Status', value: '🔥 On fire — evacuated, not working', tone: 'bad' });
+          const water = b.fireWater ?? 0;
+          rows.push({
+            label: 'Bucket brigade',
+            value: `${Math.min(water, FIRE_DOUSE_TRIPS_NEEDED)}/${FIRE_DOUSE_TRIPS_NEEDED} loads — ${
+              water >= FIRE_DOUSE_TRIPS_NEEDED ? 'may survive' : 'needs more water, fast'
+            }`,
+            tone: water >= FIRE_DOUSE_TRIPS_NEEDED ? 'good' : 'warn',
+          });
         } else {
           rows.push({ label: 'Status', value: '⚠️ Damaged — awaiting repair', tone: 'bad' });
           const cost = repairCostOf(b);
@@ -1831,6 +1860,25 @@ class Game {
     fireSeason(this.state, this.log);
   }
 
+  /** Debug/testing helper: the game-speed multiplier index — 0 is 1×, see `SPEEDS`. */
+  debugSpeedIndex(): number {
+    return this.speedIndex;
+  }
+
+  /** Debug/testing helper: set the game-speed multiplier index directly, bypassing the toolbar. */
+  debugSetSpeedIndex(n: number): void {
+    this.speedIndex = Math.max(0, Math.min(SPEEDS.length - 1, n));
+  }
+
+  /**
+   * Debug/testing helper: apply the same "a disaster snaps the speed back to 1×" check
+   * `frame`/`debugAdvanceAtSpeed` run on their own — for a test that ignites/etc. through a path
+   * (`debugIgnite`, `debugFireSeason`, `debugAdvance`) that doesn't already emulate a frame.
+   */
+  debugApplyDisasterSpeedReset(): void {
+    this.applyDisasterSpeedReset();
+  }
+
   /** Debug/testing helper: run the simulation forward by `seconds` in fixed steps. */
   debugAdvance(seconds: number): void {
     const step = 0.1;
@@ -1867,6 +1915,7 @@ class Game {
         remaining -= step;
         elapsed += step;
       }
+      this.applyDisasterSpeedReset();
     }
   }
 
@@ -1917,6 +1966,11 @@ class Game {
   /** Debug/testing helper: how long a building burns before survive/destroy is decided. */
   debugFireBurnSeconds(): number {
     return FIRE_BURN_SECONDS;
+  }
+
+  /** Debug/testing helper: water deliveries a fire needs to be in the running to survive at all. */
+  debugFireDouseTripsNeeded(): number {
+    return FIRE_DOUSE_TRIPS_NEEDED;
   }
 
   /**
@@ -2710,6 +2764,7 @@ class Game {
         update(this.state, step, this.log);
         remaining -= step;
       }
+      this.applyDisasterSpeedReset();
       this.saveAccum += dt;
       if (this.saveAccum > AUTOSAVE_SECONDS) {
         this.saveAccum = 0;

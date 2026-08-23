@@ -195,8 +195,7 @@ import {
   HUNT_HIDE_FRACTION,
   MED_LOAD,
   FIRE_CHANCE,
-  WELL_RADIUS,
-  WELL_DOUSE_CHANCE,
+  FIRE_DOUSE_TRIPS_NEEDED,
   FIRE_SPREAD_ADJACENT,
   FIRE_SPREAD_NEAR,
   STONE_FIRE_FACTOR,
@@ -2268,6 +2267,10 @@ function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, workFactor
     }
     return;
   }
+
+  // A fire outranks new construction, harvesting and roads for the same flexible pool that
+  // already does all three — see `runFirefighter`.
+  if (runFirefighter(s, c, dt)) return;
 
   // Only Builders construct work buildings — find a construction site to work.
   const pick = c.builder ? pickSite(s, c) : null;
@@ -4375,7 +4378,10 @@ function diseaseSeason(s: GameState, log: LogFn): void {
     healthy.sort(() => rand(s) - 0.5);
     const n = Math.min(healthy.length, Math.max(1, Math.floor(healthy.length * DISEASE_INFECT_FRACTION)));
     for (let i = 0; i < n; i++) healthy[i].sick = true;
-    if (n > 0) log('A sickness spreads through the village', 'bad');
+    if (n > 0) {
+      log('A sickness spreads through the village', 'bad');
+      s.disasterAlert = true;
+    }
   }
 
   // Treat the sick: medicine and a staffed hospital speed recovery.
@@ -4508,24 +4514,18 @@ export function bridgeFireSeason(s: GameState, log: LogFn): void {
   s.paths[idx] = PATH_NONE;
   s.navVersion = (s.navVersion ?? 0) + 1; // the crossing is gone; routes have to be recomputed
   log('A timber bridge burned down', 'bad');
+  s.disasterAlert = true;
 }
 
-/** Testing/debug: attempt to set a building alight (respecting well protection). */
+/** Testing/debug: attempt to set a building alight. */
 export function igniteBuilding(s: GameState, b: Building, log: LogFn): void {
   tryIgnite(s, b, log, true);
 }
 
 function tryIgnite(s: GameState, b: Building, log: LogFn, announce: boolean): void {
   if (b.fireTimer || isFireproof(b.type)) return;
-  const centre = buildingCenter(b);
-  const wellNear = s.buildings.some(
-    (w) => w.built && w.type === 'well' && dist2c(buildingCenter(w), centre) <= WELL_RADIUS * WELL_RADIUS,
-  );
-  if (wellNear && rand(s) < WELL_DOUSE_CHANCE) {
-    if (announce) log('A well doused a fire before it spread', 'info');
-    return;
-  }
   b.fireTimer = FIRE_BURN_SECONDS;
+  b.fireWater = 0; // nothing delivered yet — see `runFirefighter`
   // BURNING starts at once, not when the fire finishes: nobody works or sleeps in a building
   // that's alight. It stays `built` and standing — see `disabledByFire` — only its occupants and
   // staff are turned out, exactly as a demolition turns them out (see `razeBuilding`). Their
@@ -4537,14 +4537,98 @@ function tryIgnite(s: GameState, b: Building, log: LogFn, announce: boolean): vo
     if (c.homeId === b.id) c.homeId = null;
   }
   log(`🔥 Fire! The ${BUILDING_DEFS[b.type].name} is burning`, 'bad');
+  // A disaster in progress is worth the player's actual attention — see `disasterAlert` and
+  // `Game.frame`/`debugAdvanceAtSpeed`, which drop the game back to 1× the moment they notice it.
+  s.disasterAlert = true;
 }
 
 /**
- * A building's fire burns out: it survives as DAMAGED (see `repairCostOf`/`repairWorkOf`, and the
- * repair branch of `pickSite`/`runBuilder`) or it doesn't, in which case it goes down exactly the
- * way any other demolished building does — `razeBuilding` turns it into a salvageable rubble pile
- * rather than deleting it outright, so the player gets the same `REFUND_FRACTION` recovery a
- * teardown gives and nothing is invented twice. Either way it can set its neighbours alight.
+ * The nearest built well to a point — where a firefighter's bucket comes from. Deliberately just
+ * distance, not a radius cutoff the way the old pre-ignition check used one: a village with no
+ * well nearby is not immune from firefighting, it is only slow at it (see `runFirefighter`), and a
+ * village with no well *anywhere* gets `null` here, which is exactly what makes its fires
+ * untreated.
+ */
+function nearestWell(s: GameState, at: { x: number; y: number }): Building | null {
+  let best: Building | null = null;
+  let bestD = Infinity;
+  for (const w of s.buildings) {
+    if (!w.built || w.type !== 'well') continue;
+    const d = dist2c(buildingCenter(w), at);
+    if (d < bestD) {
+      bestD = d;
+      best = w;
+    }
+  }
+  return best;
+}
+
+/** The nearest reachable fire still short of `FIRE_DOUSE_TRIPS_NEEDED`, or null. */
+function burningNeedingWater(s: GameState, c: Citizen): Building | null {
+  let best: Building | null = null;
+  let bestD = Infinity;
+  for (const b of s.buildings) {
+    if (!b.fireTimer || (b.fireWater ?? 0) >= FIRE_DOUSE_TRIPS_NEEDED) continue;
+    const p = buildingApproach(s, b, c);
+    if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) continue;
+    const d = (p.x - c.x) ** 2 + (p.y - c.y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = b;
+    }
+  }
+  return best;
+}
+
+/**
+ * A free adult's response to a fire: round-trip a bucket from the nearest well to the nearest
+ * fire that still needs one. Recomputed every tick on both legs rather than committed to a single
+ * target up front — the same "ask again, don't remember" the rest of the builder pool runs on
+ * (`pickSite`, `nearestSiteNeeding`) — so a villager mid-trip reroutes to a worse fire that just
+ * started, or simply drops the errand once every fire in reach is either out or already saved.
+ *
+ * This is deliberately the same pool `runBuilder` already pulls from (builders and any laborer
+ * with no job) rather than pulling an employed worker off their bench: it is the flexible labour
+ * the village already treats as available for whatever needs doing right now, the way it already
+ * fells marked trees and lays roads.
+ *
+ * Returns whether it found anything to do this tick, so `runBuilder` knows whether to fall through
+ * to its own work.
+ */
+function runFirefighter(s: GameState, c: Citizen, dt: number): boolean {
+  if (c.waterLoad) {
+    const fire = burningNeedingWater(s, c);
+    if (!fire) {
+      c.waterLoad = false; // nothing left worth saving; put the bucket down
+      return false;
+    }
+    goTo(c, buildingApproach(s, fire, c));
+    if (stepTo(s, c, dt)) {
+      fire.fireWater = (fire.fireWater ?? 0) + 1;
+      c.waterLoad = false;
+    }
+    return true;
+  }
+  const fire = burningNeedingWater(s, c);
+  if (!fire) return false;
+  // Proximity to a well is what buys a village faster dousing: the well nearest the *fire* sets
+  // how long every trip after the first takes, so that — not the well nearest this villager right
+  // now — is the one worth walking to.
+  const well = nearestWell(s, buildingCenter(fire));
+  if (!well) return false; // no well anywhere — nothing a bucket brigade can do about this one
+  goTo(c, buildingApproach(s, well, c));
+  if (stepTo(s, c, dt)) c.waterLoad = true;
+  return true;
+}
+
+/**
+ * A building's fire burns out. An *untreated* fire — one that never got `FIRE_DOUSE_TRIPS_NEEDED`
+ * water in time (see `runFirefighter`) — always burns down; only a fire that was fought for gets a
+ * chance to survive as DAMAGED (`FIRE_SURVIVAL_CHANCE`, better for masonry). Destroyed either way
+ * goes down exactly the way any other demolished building does — `razeBuilding` turns it into a
+ * salvageable rubble pile rather than deleting it outright, so the player gets the same
+ * `REFUND_FRACTION` recovery a teardown gives and nothing is invented twice. Either outcome can
+ * still set its neighbours alight.
  */
 function processFires(s: GameState, dt: number, log: LogFn): void {
   for (const b of [...s.buildings]) {
@@ -4552,10 +4636,15 @@ function processFires(s: GameState, dt: number, log: LogFn): void {
     b.fireTimer -= dt;
     if (b.fireTimer <= 0) {
       b.fireTimer = undefined;
+      const doused = (b.fireWater ?? 0) >= FIRE_DOUSE_TRIPS_NEEDED;
+      b.fireWater = undefined;
       const name = BUILDING_DEFS[b.type].name;
       const neighbours = adjacentBuildings(s, b);
-      let destroyChance = 1 - FIRE_SURVIVAL_CHANCE;
-      if (isStoneBuilt(b.type)) destroyChance *= STONE_FIRE_FACTOR;
+      // An untreated fire is certain to destroy the building — `rand()` always comes back under 1
+      // — but the draw still happens, so the sequence of rolls a fire consumes from the stream
+      // never depends on whether firefighters reached it in time.
+      let destroyChance = doused ? 1 - FIRE_SURVIVAL_CHANCE : 1;
+      if (doused && isStoneBuilt(b.type)) destroyChance *= STONE_FIRE_FACTOR;
       if (rand(s) < destroyChance) {
         razeBuilding(s, b);
         log(`The ${name} burned down`, 'bad');

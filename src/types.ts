@@ -718,6 +718,12 @@ export interface Building {
    */
   fireTimer?: number;
   /**
+   * Water deliveries landed on this fire so far, against `FIRE_DOUSE_TRIPS_NEEDED` — see
+   * `runFirefighter`/`processFires`. Reset to `undefined` the moment the fire resolves either way;
+   * meaningless while `fireTimer` is unset.
+   */
+  fireWater?: number;
+  /**
    * DAMAGED: the building survived a fire (`fireTimer` ran out and it was not destroyed) but
    * cannot function until repaired. Builders repair it exactly as they raise a new site — see
    * `repairCostOf`/`repairWorkOf` — except the materials land in `repairStore`, not `store`, so a
@@ -932,6 +938,11 @@ export interface Citizen {
    * half-rested crew from leaving a site with nothing delivered.
    */
   effort?: number;
+  /**
+   * Filled a bucket at a well and is walking it to a fire — see `runFirefighter`. `false`/absent
+   * means the next thing a free adult responding to a fire does is walk to the well, not the fire.
+   */
+  waterLoad?: boolean;
   // ---- transient navigation state (not persisted; recomputed after load) ----
   route?: { x: number; y: number }[]; // cached A* waypoints toward the current destination
   routeI?: number; // index of the next waypoint to reach
@@ -1828,6 +1839,14 @@ export interface GameState {
    * (or the state identity) changes — keeping per-tick nav ~O(1) on large maps.
    */
   navVersion?: number;
+  /**
+   * Set the tick a disaster breaks out (a building catches fire, a bridge burns, a sickness
+   * starts spreading) and cleared the moment the frame loop notices it — see `Game.frame` and
+   * `debugAdvanceAtSpeed`. The one thing every disaster shares is that the player should be
+   * looking at it, not watching it happen at 10× while doing something else on the far side of
+   * the map, so noticing this is what snaps the game speed back to 1×.
+   */
+  disasterAlert?: boolean;
   /**
    * The founding clearing — where the village was first pegged out.
    *
@@ -2815,8 +2834,16 @@ export const HOSPITAL_HEALTH_BONUS = 10;
 export const HOSPITAL_MEDICINE_PER_CITIZEN = 0.15;
 export const MED_LOAD = 5; // medicine produced per herbalist work cycle (× forest)
 export const FIRE_CHANCE = 0.05; // base chance per season a building ignites
-export const WELL_RADIUS = 6; // wells protect buildings within this radius
-export const WELL_DOUSE_CHANCE = 0.85; // chance a nearby well stops a fire
+/**
+ * How many water deliveries a fire needs, from any well, before the building is even in the
+ * running to survive. Below this it is an *untreated* fire — see `FIRE_SURVIVAL_CHANCE` below and
+ * `runFirefighter`/`processFires` in `simulation.ts`, which is where the deliveries actually
+ * happen: a free adult round-trips between the nearest well to the fire and the fire itself, and
+ * how many trips land before `FIRE_BURN_SECONDS` runs out is purely a function of how far that
+ * well is and how many hands are free to make the trip. Wells no longer prevent ignition on their
+ * own — this is the only thing distance to one now buys a village.
+ */
+export const FIRE_DOUSE_TRIPS_NEEDED = 3;
 /**
  * Chance a collapsing building sets a neighbour alight, by how far away the neighbour is.
  *
@@ -2843,17 +2870,18 @@ export function isStoneBuilt(type: BuildingType): boolean {
  * How long a building spends BURNING before the outcome (survive/destroy) is decided.
  *
  * Tied to `SEASON_LENGTH` rather than picked out of the air: an eighth of a season is ~75 real
- * seconds at 1× — long enough that a player who is actually looking at the village has time to
- * notice the 🔥, act (a well nearby already rolled its douse chance at ignition; failing that,
- * there is nothing left to do but watch and rebuild), and reassign whoever the building just let
- * go — but short enough that a fire is still a crisis, not a slow leak the player can ignore.
+ * seconds at 1× — long enough that a player who is actually looking at the village (the game
+ * itself drops back to 1× the moment anything catches — see `disasterAlert`) has time to notice
+ * the 🔥, free up hands to fight it, and reassign whoever the building just let go — but short
+ * enough that a fire is still a crisis, not a slow leak the player can ignore.
  */
 export const FIRE_BURN_SECONDS = SEASON_LENGTH / 8;
 /**
- * Chance a building that finishes burning survives as DAMAGED rather than being destroyed
- * outright. Masonry halves the destroy chance the same way it halves everything else about fire —
- * see `STONE_FIRE_FACTOR` — so a stone building that catches is still more likely to come through
- * it than a timber one.
+ * Chance a fire that got `FIRE_DOUSE_TRIPS_NEEDED` water in time survives as DAMAGED rather than
+ * being destroyed outright. Masonry halves the destroy chance the same way it halves everything
+ * else about fire — see `STONE_FIRE_FACTOR` — so a stone building is still more likely to come
+ * through it than a timber one. An *untreated* fire (see `FIRE_DOUSE_TRIPS_NEEDED`) never reaches
+ * this roll at all — it always burns down.
  */
 export const FIRE_SURVIVAL_CHANCE = 0.55;
 /**
@@ -3226,7 +3254,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   well: {
     type: 'well', name: 'Well', emoji: '⛲', category: 'civic', w: 1, h: 1,
     cost: { wood: 16 }, jobs: 0, work: 10, fireproof: true,
-    desc: 'Provides water to fight fires. Buildings nearby rarely burn down.',
+    desc: 'Where a bucket brigade fills up to fight a fire. Does not stop a building catching, but the well nearest the blaze is where every trip starts — keep one within reach of anything that can burn, or a fire there goes untreated.',
   },
   market: {
     type: 'market', name: 'Market', emoji: '🛒', category: 'resources', w: 4, h: 4,

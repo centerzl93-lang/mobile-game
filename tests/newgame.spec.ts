@@ -958,7 +958,7 @@ test.describe('fireproof buildings', () => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', true); // 3 houses + a barn, no wells nearby to douse
+      g.startNewGame('small', 'easy', true); // 3 houses + a barn
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       const house = s.buildings.find((b: any) => b.type === 'house');
@@ -1129,6 +1129,25 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
     throw new Error('no buildable site found for ' + type);
   }`;
 
+  // Same as `placeBuilt`, but searches out from a given point rather than the barn — for a well
+  // that has to land close enough to a specific fire for a bucket brigade to matter.
+  const placeBuiltNear = `(g, type, cx, cy) => {
+    const s = g.state;
+    for (let r = 1; r < 30; r++)
+      for (let dy = -r; dy <= r; dy++)
+        for (let dx = -r; dx <= r; dx++) {
+          const x = cx + dx, y = cy + dy;
+          if (!g.debugCanPlace(type, x, y).ok) continue;
+          const id = g.debugPlace(type, x, y);
+          if (id == null) continue;
+          const b = s.buildings.find((o) => o.id === id);
+          b.built = true;
+          b.progress = g.debugBuildWork(type);
+          return b;
+        }
+    throw new Error('no buildable site found for ' + type + ' near ' + cx + ',' + cy);
+  }`;
+
   test('a building catches fire at once: BURNING, still standing, workers and residents turned out', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate((placeSrc) => {
@@ -1161,6 +1180,33 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
     expect(out.workersLeft).toBe(0);
     expect(out.evictedFromHut).toBe(0);
     expect(out.evictedFromHouse).toBe(0); // the house's resident was turned out the moment it caught
+  });
+
+  test('a disaster snaps the game speed back to 1×', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const hut = eval(placeSrc)(g, 'gatherer');
+      g.debugSetSpeedIndex(3); // 10× on the toolbar
+      const before = g.debugSpeedIndex();
+      // `debugAdvanceAtSpeed` is the emulated-frame-loop path (see its own doc comment) — the same
+      // place `frame` applies the reset in a live game, so this exercises the real wiring rather
+      // than calling the check in isolation.
+      g.debugIgnite(hut.id);
+      g.debugAdvanceAtSpeed(0.1, 10);
+      const afterFire = g.debugSpeedIndex();
+
+      // And nothing resets it when nothing caught: nudging the speed back up and running more sim
+      // time with no disaster pending leaves the player's choice alone.
+      g.debugSetSpeedIndex(2); // 5×
+      g.debugAdvanceAtSpeed(1, 5);
+      const noDisaster = g.debugSpeedIndex();
+      return { before, afterFire, noDisaster };
+    }, placeBuilt);
+    expect(out.before).toBe(3);
+    expect(out.afterFire).toBe(0); // the fire reset it to 1×
+    expect(out.noDisaster).toBe(2); // untouched — nothing happened this time
   });
 
   test('a burning building cannot be restaffed or reoccupied, and stops producing', async ({ page }) => {
@@ -1211,30 +1257,44 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
     expect(out.resolvedAfterFull).toBe(true);
   });
 
-  test('a building can survive its fire and become DAMAGED rather than destroyed', async ({ page }) => {
+  test('a bucket brigade that gets enough water there in time can save a building', async ({ page }) => {
     await open2d(page);
-    const out = await page.evaluate((placeSrc) => {
-      const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false);
-      const hut = eval(placeSrc)(g, 'gatherer');
-      g.debugIgnite(hut.id);
-      const burn = g.debugFireBurnSeconds();
-      // Pinned high: the destroy roll is `rand() < destroyChance` (destroyChance well under 1), so
-      // a roll near 1 always survives.
-      g.debugPinRandom(0.99);
-      try {
-        g.debugAdvance(burn + 1);
-      } finally {
-        g.debugPinRandom(null);
-      }
-      return {
-        damaged: hut.damaged,
-        built: hut.built,
-        razed: !!hut.razed,
-        burning: !!hut.fireTimer,
-        workers: hut.workers.length,
-      };
-    }, placeBuilt);
+    const out = await page.evaluate(
+      ([placeSrc, placeNearSrc]) => {
+        const g = (window as any).__village;
+        g.startNewGame('small', 'easy', false);
+        const hut = eval(placeSrc)(g, 'gatherer');
+        const well = eval(placeNearSrc)(g, 'well', hut.x, hut.y);
+        g.debugSetBuilders(6); // hands free to run the brigade before the fire even starts
+        g.debugIgnite(hut.id);
+        const needed = g.debugFireDouseTripsNeeded();
+        const burn = g.debugFireBurnSeconds();
+        // Let the real stream run the firefighting itself — the point of this test is that a
+        // close well and free hands are enough to hit the target unaided.
+        let elapsed = 0;
+        for (; elapsed < burn && (hut.fireWater ?? 0) < needed; elapsed += 0.2) g.debugAdvance(0.2);
+        const dousedInTime = (hut.fireWater ?? 0) >= needed;
+        // Pinned high only for the resolving roll itself: dousedInTime already decided whether
+        // that roll even runs — an untreated fire never gets it (see `processFires`).
+        g.debugPinRandom(0.99);
+        try {
+          g.debugAdvance(burn - elapsed + 1);
+        } finally {
+          g.debugPinRandom(null);
+        }
+        return {
+          dousedInTime,
+          wellId: well.id,
+          damaged: hut.damaged,
+          built: hut.built,
+          razed: !!hut.razed,
+          burning: !!hut.fireTimer,
+          workers: hut.workers.length,
+        };
+      },
+      [placeBuilt, placeBuiltNear],
+    );
+    expect(out.dousedInTime).toBe(true); // a well this close, with hands free, should always make it
     expect(out.damaged).toBe(true);
     expect(out.built).toBe(true); // DAMAGED still stands — it just cannot work until repaired
     expect(out.razed).toBe(false);
@@ -1242,48 +1302,110 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
     expect(out.workers).toBe(0); // still cannot operate
   });
 
-  test('builders repair a damaged building for the tuned cost, and it resumes on its own', async ({ page }) => {
+  test('an untreated fire — no water delivered — never gets a chance to survive', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate((placeSrc) => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
       const hut = eval(placeSrc)(g, 'gatherer');
-      hut.desiredWorkers = 3;
-      g.debugAdvance(2);
-      const cost = g.debugRepairCost(hut.id);
+      // No well anywhere and no builders assigned — nobody can or will fetch water.
       g.debugIgnite(hut.id);
-      const burn = g.debugFireBurnSeconds();
-      g.debugPinRandom(0.99); // survive, not destroyed — see the previous test
+      // Pinned high — if the survival roll ran at all, this would save it. It must never run.
+      g.debugPinRandom(0.99);
       try {
-        g.debugAdvance(burn + 1);
+        g.debugAdvance(g.debugFireBurnSeconds() + 1);
       } finally {
         g.debugPinRandom(null);
       }
-      if (!hut.damaged) throw new Error('expected the hut to survive as damaged');
-      const woodBefore = g.debugTotalHeld('wood');
-      const stoneBefore = g.debugTotalHeld('stone');
-      g.debugSetBuilders(6);
-      let repaired = false;
-      for (let i = 0; i < 4000 && !repaired; i++) {
-        g.debugAdvance(0.2);
-        repaired = !hut.damaged;
-      }
-      const staffed = { at: 0, count: 0 };
-      for (let i = 0; i < 100 && staffed.count === 0; i++) {
-        g.debugAdvance(0.2);
-        staffed.count = hut.workers.length;
-      }
-      return {
-        cost,
-        repaired,
-        stillBuilt: hut.built,
-        repairProgressReset: hut.repairProgress,
-        repairStoreEmpty: !hut.repairStore || Object.keys(hut.repairStore).length === 0,
-        woodConsumed: woodBefore - g.debugTotalHeld('wood'),
-        stoneConsumed: stoneBefore - g.debugTotalHeld('stone'),
-        restaffed: staffed.count,
-      };
+      return { damaged: hut.damaged, razed: !!hut.razed, built: hut.built };
     }, placeBuilt);
+    expect(out.damaged).toBe(false);
+    expect(out.razed).toBe(true);
+    expect(out.built).toBe(false);
+  });
+
+  test('proximity to the well governs how much water lands before the fire resolves', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      ([placeSrc, placeNearSrc]) => {
+        const g = (window as any).__village;
+        const run = (nearWell: boolean) => {
+          g.startNewGame('small', 'easy', false);
+          const hut = eval(placeSrc)(g, 'gatherer');
+          if (nearWell) eval(placeNearSrc)(g, 'well', hut.x, hut.y);
+          // A well exists somewhere on a fresh map only if this test just placed one — Easy never
+          // starts with one — so the "far" run genuinely has no well in reach at all, which is the
+          // clearest possible instance of "far": every trip after the first is infinite.
+          g.debugSetBuilders(6);
+          g.debugIgnite(hut.id);
+          const burn = g.debugFireBurnSeconds();
+          // Track the high-water mark rather than reading `fireWater` after the loop: the moment
+          // the fire resolves, `processFires` resets it to `undefined` (see `types.ts`), so reading
+          // it post-resolution would see "0" even after a well saved the building.
+          let maxWater = 0;
+          for (let e = 0; e < burn; e += 0.2) {
+            g.debugAdvance(0.2);
+            maxWater = Math.max(maxWater, hut.fireWater ?? 0);
+          }
+          return maxWater;
+        };
+        return { near: run(true), far: run(false) };
+      },
+      [placeBuilt, placeBuiltNear],
+    );
+    expect(out.near).toBeGreaterThan(out.far);
+    expect(out.far).toBe(0); // nothing to fetch from — no trips ever land
+  });
+
+  test('builders repair a damaged building for the tuned cost, and it resumes on its own', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      ([placeSrc, placeNearSrc]) => {
+        const g = (window as any).__village;
+        g.startNewGame('small', 'easy', false);
+        const hut = eval(placeSrc)(g, 'gatherer');
+        eval(placeNearSrc)(g, 'well', hut.x, hut.y);
+        hut.desiredWorkers = 3;
+        g.debugSetBuilders(6); // free hands to run the brigade, then to repair once it's out
+        g.debugAdvance(2);
+        const cost = g.debugRepairCost(hut.id);
+        g.debugIgnite(hut.id);
+        const needed = g.debugFireDouseTripsNeeded();
+        const burn = g.debugFireBurnSeconds();
+        let elapsed = 0;
+        for (; elapsed < burn && (hut.fireWater ?? 0) < needed; elapsed += 0.2) g.debugAdvance(0.2);
+        g.debugPinRandom(0.99); // survive the resolving roll, now that it's earned the chance to
+        try {
+          g.debugAdvance(burn - elapsed + 1);
+        } finally {
+          g.debugPinRandom(null);
+        }
+        if (!hut.damaged) throw new Error('expected the well-served hut to survive as damaged');
+        const woodBefore = g.debugTotalHeld('wood');
+        const stoneBefore = g.debugTotalHeld('stone');
+        let repaired = false;
+        for (let i = 0; i < 4000 && !repaired; i++) {
+          g.debugAdvance(0.2);
+          repaired = !hut.damaged;
+        }
+        const staffed = { at: 0, count: 0 };
+        for (let i = 0; i < 100 && staffed.count === 0; i++) {
+          g.debugAdvance(0.2);
+          staffed.count = hut.workers.length;
+        }
+        return {
+          cost,
+          repaired,
+          stillBuilt: hut.built,
+          repairProgressReset: hut.repairProgress,
+          repairStoreEmpty: !hut.repairStore || Object.keys(hut.repairStore).length === 0,
+          woodConsumed: woodBefore - g.debugTotalHeld('wood'),
+          stoneConsumed: stoneBefore - g.debugTotalHeld('stone'),
+          restaffed: staffed.count,
+        };
+      },
+      [placeBuilt, placeBuiltNear],
+    );
     expect(out.repaired).toBe(true);
     expect(out.stillBuilt).toBe(true);
     expect(out.repairProgressReset).toBe(0);
@@ -1334,77 +1456,104 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
 
   test('fire does not duplicate resources, whichever way it resolves', async ({ page }) => {
     await open2d(page);
-    const out = await page.evaluate((placeSrc) => {
-      const g = (window as any).__village;
-      // The grand total, not just `debugTotalHeld` — that only counts barns/markets/larders/what's
-      // being carried, and deliberately leaves out a rubble pile's own store until a builder carts
-      // it to a barn (see `storageNodes`). A destroyed building's refund sits in its own rubble the
-      // instant it burns down, so counting every building's `store` is the only way to catch a
-      // fire *inventing* wood, as opposed to one that just hasn't been carted home yet.
-      const totalWood = () => {
-        let n = 0;
-        for (const b of g.state.buildings as any[]) n += b.store.wood ?? 0;
-        for (const c of g.state.citizens as any[]) if (c.carry?.kind === 'wood') n += c.carry.amount;
-        return n;
-      };
-      const run = (survive: boolean) => {
-        g.startNewGame('small', 'easy', false);
-        const hut = eval(placeSrc)(g, 'gatherer');
-        const before = totalWood();
-        g.debugIgnite(hut.id);
-        const burn = g.debugFireBurnSeconds();
-        g.debugPinRandom(survive ? 0.99 : 0.01);
-        try {
-          g.debugAdvance(burn + 1);
-        } finally {
-          g.debugPinRandom(null);
-        }
-        // Surviving spends nothing by itself — only a completed repair does, and no builders were
-        // assigned here, so the total must not have moved at all. Destroyed hands back
-        // REFUND_FRACTION of the cost, into the rubble this same total already counts.
-        const salvage = survive ? 0 : g.debugSalvage('gatherer').wood ?? 0;
-        return before + salvage - totalWood();
-      };
-      return { survivedDelta: run(true), destroyedDelta: run(false) };
-    }, placeBuilt);
+    const out = await page.evaluate(
+      ([placeSrc, placeNearSrc]) => {
+        const g = (window as any).__village;
+        // The grand total, not just `debugTotalHeld` — that only counts barns/markets/larders/
+        // what's being carried, and deliberately leaves out a rubble pile's own store until a
+        // builder carts it to a barn (see `storageNodes`). A destroyed building's refund sits in
+        // its own rubble the instant it burns down, so counting every building's `store` is the
+        // only way to catch a fire *inventing* wood, as opposed to one that just hasn't been
+        // carted home yet.
+        const totalWood = () => {
+          let n = 0;
+          for (const b of g.state.buildings as any[]) n += b.store.wood ?? 0;
+          for (const c of g.state.citizens as any[]) if (c.carry?.kind === 'wood') n += c.carry.amount;
+          return n;
+        };
+        const run = (survive: boolean) => {
+          g.startNewGame('small', 'easy', false);
+          const hut = eval(placeSrc)(g, 'gatherer');
+          // A doused fire is the only way to reach the survival roll at all — see the "untreated
+          // fire" test — so the survive run needs an actual bucket brigade.
+          if (survive) {
+            eval(placeNearSrc)(g, 'well', hut.x, hut.y);
+            g.debugSetBuilders(6);
+          }
+          const before = totalWood();
+          g.debugIgnite(hut.id);
+          const needed = g.debugFireDouseTripsNeeded();
+          const burn = g.debugFireBurnSeconds();
+          let elapsed = 0;
+          if (survive) {
+            for (; elapsed < burn && (hut.fireWater ?? 0) < needed; elapsed += 0.2) g.debugAdvance(0.2);
+          }
+          g.debugPinRandom(survive ? 0.99 : 0.01);
+          try {
+            g.debugAdvance(burn - elapsed + 1);
+          } finally {
+            g.debugPinRandom(null);
+          }
+          // Surviving spends nothing by itself — only a completed repair does, and repair is not
+          // run here — so the total must not have moved at all. Destroyed hands back
+          // REFUND_FRACTION of the cost, into the rubble this same total already counts.
+          const salvage = survive ? 0 : g.debugSalvage('gatherer').wood ?? 0;
+          return before + salvage - totalWood();
+        };
+        return { survivedDelta: run(true), destroyedDelta: run(false) };
+      },
+      [placeBuilt, placeBuiltNear],
+    );
     expect(out.survivedDelta).toBeCloseTo(0, 1);
     expect(out.destroyedDelta).toBeCloseTo(0, 1);
   });
 
-  test('an old save without the DAMAGED fields still loads and runs', async ({ page }) => {
+  test('an old save without the DAMAGED/water-brigade fields still loads and runs', async ({ page }) => {
     await open2d(page);
-    const out = await page.evaluate((placeSrc) => {
-      const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false);
-      const hut = eval(placeSrc)(g, 'gatherer');
-      g.debugIgnite(hut.id);
-      g.debugPinRandom(0.99); // leave it DAMAGED, the shape a pre-rework save never had
-      try {
-        g.debugAdvance(g.debugFireBurnSeconds() + 1);
-      } finally {
-        g.debugPinRandom(null);
-      }
-      if (!hut.damaged) throw new Error('expected the hut to be damaged going into the save');
-      if (!g.debugSaveSlot(0)) throw new Error('save failed');
-      const env = JSON.parse(g.debugRawSlot(0)!);
-      // Simulate a save written before `damaged`/`repairProgress`/`repairStore` existed.
-      for (const b of env.state.buildings) {
-        delete b.damaged;
-        delete b.repairProgress;
-        delete b.repairStore;
-      }
-      g.debugWriteRawSlot(0, JSON.stringify(env));
-      const loaded = g.debugLoadSlot(0);
-      const restored = g.state.buildings.find((b: any) => b.id === hut.id);
-      // Must not crash or wedge: a tick has to run clean, and the field's absence must read as
-      // "not damaged" rather than a hole that turns some later check to `NaN`.
-      g.debugAdvance(1);
-      return {
-        loaded,
-        damagedIsFalsy: !restored.damaged,
-        stillBuilt: restored.built,
-      };
-    }, placeBuilt);
+    const out = await page.evaluate(
+      ([placeSrc, placeNearSrc]) => {
+        const g = (window as any).__village;
+        g.startNewGame('small', 'easy', false);
+        const hut = eval(placeSrc)(g, 'gatherer');
+        eval(placeNearSrc)(g, 'well', hut.x, hut.y);
+        g.debugSetBuilders(6);
+        g.debugIgnite(hut.id);
+        const needed = g.debugFireDouseTripsNeeded();
+        const burn = g.debugFireBurnSeconds();
+        let elapsed = 0;
+        for (; elapsed < burn && (hut.fireWater ?? 0) < needed; elapsed += 0.2) g.debugAdvance(0.2);
+        g.debugPinRandom(0.99); // leave it DAMAGED, the shape a pre-rework save never had
+        try {
+          g.debugAdvance(burn - elapsed + 1);
+        } finally {
+          g.debugPinRandom(null);
+        }
+        if (!hut.damaged) throw new Error('expected the well-served hut to be damaged going into the save');
+        if (!g.debugSaveSlot(0)) throw new Error('save failed');
+        const env = JSON.parse(g.debugRawSlot(0)!);
+        // Simulate a save written before `damaged`/`repairProgress`/`repairStore`/`fireWater`/
+        // `waterLoad` existed.
+        for (const b of env.state.buildings) {
+          delete b.damaged;
+          delete b.repairProgress;
+          delete b.repairStore;
+          delete b.fireWater;
+        }
+        for (const c of env.state.citizens) delete c.waterLoad;
+        g.debugWriteRawSlot(0, JSON.stringify(env));
+        const loaded = g.debugLoadSlot(0);
+        const restored = g.state.buildings.find((b: any) => b.id === hut.id);
+        // Must not crash or wedge: a tick has to run clean, and the fields' absence must read as
+        // "not damaged"/"no water yet" rather than a hole that turns some later check to `NaN`.
+        g.debugAdvance(1);
+        return {
+          loaded,
+          damagedIsFalsy: !restored.damaged,
+          stillBuilt: restored.built,
+        };
+      },
+      [placeBuilt, placeBuiltNear],
+    );
     expect(out.loaded).toBe(true);
     expect(out.damagedIsFalsy).toBe(true);
     expect(out.stillBuilt).toBe(true);

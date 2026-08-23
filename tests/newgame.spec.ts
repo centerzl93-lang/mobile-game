@@ -119,6 +119,36 @@ test.describe('difficulties', () => {
       expect(pop[diff].childAgesOk).toBe(true);
     }
   });
+
+  test('a full tool supply does not erase Hard\'s smaller opening stock', async ({ page }) => {
+    // Every production and consumption formula reads `toolProdFactor`/`FOOD_PER_CITIZEN_PER_SEASON`
+    // etc. — none of them branch on difficulty (see PLAYTEST.md B4/B7). Difficulty is *only* the
+    // opening stockpile, so pinning both villages to the same best-case tool tier (steel, fully
+    // stocked) cannot equalise them: Hard's founding twelve still opened on half the food and coats
+    // Normal did, and that gap is exactly what "meaningfully harder" has to rest on once a smith and
+    // a tailor are running and the tool/clothing supply itself stops being the differentiator.
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const bufferSeasons = (diff: string) => {
+        g.startNewGame('small', diff, true);
+        const s = g.state;
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        barn.store.steeltools = 500; // best tool tier, so the comparison is apples-to-apples
+        const food = ['fruit', 'grain', 'fish', 'beef'].reduce((n, k) => n + (barn.store[k] ?? 0), 0);
+        const need = s.citizens.reduce(
+          (n: number, c: any) => n + (c.age >= 16 ? g.debugFoodPerCitizen() : g.debugFoodPerCitizen() * 0.5),
+          0,
+        );
+        return food / need; // seasons the opening food stock alone would cover
+      };
+      return { normal: bufferSeasons('normal'), hard: bufferSeasons('hard') };
+    });
+    // Hard's stock is exactly half of Normal's (both tools maxed out the same), so the runway is
+    // half too — a difference no amount of smithing evens out.
+    expect(out.hard).toBeCloseTo(out.normal / 2, 5);
+    expect(out.hard, 'Hard still opens with less than two seasons of banked food').toBeLessThan(2);
+  });
 });
 
 test.describe('forester', () => {
@@ -5604,7 +5634,7 @@ test.describe('iron and steel tools', () => {
       `) as () => any,
     );
 
-    expect(out.none).toEqual({ tier: 'none', factor: 0.6 });
+    expect(out.none).toEqual({ tier: 'none', factor: 0.75 });
     expect(out.iron).toEqual({ tier: 'iron', factor: 1 });
     expect(out.steel).toEqual({ tier: 'steel', factor: 1.15 });
     // With both stocked the village reaches for steel — the best tool it has.
@@ -5780,6 +5810,104 @@ test.describe('iron and steel tools', () => {
     expect(out.coalDug, 'the coal seam yielded').toBeGreaterThan(0);
     // Coal is the slower seam by design — that is what keeps a village needing a mine for each.
     expect(out.coalDug, 'coal comes up slower than iron').toBeLessThan(out.ironDug);
+  });
+});
+
+test.describe('early-game workforce without tools', () => {
+  // Whether a typical founding workforce — food, wood and firewood staffed roughly the way a new
+  // player would spread eight adults — can ride out a spell with the barns bare of tools without
+  // the village unravelling. This is the scenario PLAYTEST.md B7 was written against: tools running
+  // out should cost a real hit to production, not decide survival outright.
+  const settle = (difficulty: string) => `
+    const g = window.__village;
+    g.startNewGame('small', '${difficulty}', false);
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    // Normal and Hard both open with no wood or stone (see the difficulty table above) — a site
+    // can't even be *placed* without the materials for it sitting in storage already (nothing is
+    // spent until it's delivered, but placing still checks the village can afford it). Hand over
+    // just enough to raise this test's four buildings, leaving food/tools/firewood exactly as the
+    // difficulty set them — those are what this test is actually about.
+    barn.store.wood = 1000;
+    barn.store.stone = 300;
+    const findSpot = (type) => {
+      for (let r = 2; r < Math.max(s.w, s.h); r++)
+        for (let dy = -r; dy <= r; dy++)
+          for (let dx = -r; dx <= r; dx++) {
+            const x = barn.x + dx, y = barn.y + dy;
+            if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue;
+            if (g.debugCanPlace(type, x, y).ok) {
+              const id = g.debugPlace(type, x, y);
+              if (id != null) return id;
+            }
+          }
+      throw new Error('no placeable ' + type + ' site anywhere on this map');
+    };
+    const build = (type, workers) => {
+      const id = findSpot(type); // called once — its own array search must not run per find() probe
+      const b = s.buildings.find((x) => x.id === id);
+      b.built = true;
+      b.progress = g.debugBuildWork(type);
+      b.desiredWorkers = workers;
+      return b;
+    };
+    // Eight founding adults: four on food (two gatherers), two cutting wood, one turning it into
+    // firewood — the eighth is free to build or labour. Roughly the food-heavy split the design
+    // doc describes as the normal early-game allocation.
+    build('gatherer', 2);
+    build('gatherer', 2);
+    build('lumberyard', 2);
+    build('woodcutter', 1);
+  `;
+
+  test('a Normal village with no tools in the barns still stands after three seasons', { tag: '@slow' }, async ({ page }) => {
+    test.setTimeout(180_000);
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${settle('normal')}
+        // The barns start with a year of tools; strip them so the whole run happens under
+        // NO_TOOLS_PENALTY, as if the smith had already run dry before this window began.
+        for (const b of s.buildings) { delete b.store.tools; delete b.store.steeltools; }
+        const popStart = s.citizens.length;
+        const foodOf = () => ['fruit','grain','fish','beef'].reduce((n, k) => n + g.debugTotalStored(k), 0);
+        for (let i = 0; i < 3600; i++) g.debugAdvance(0.5); // three seasons
+        return {
+          popStart, popEnd: s.citizens.length, gameOver: s.gameOver,
+          food: foodOf(), firewood: g.debugTotalStored('firewood'),
+        };
+      `) as () => any,
+    );
+
+    expect(out.gameOver, 'the village is still standing').toBe(false);
+    expect(out.popEnd, 'nobody starved or froze for want of tools').toBeGreaterThanOrEqual(out.popStart);
+    // Wood keeps moving even while the whole village is short-handed on tools — a temporary tool
+    // shortage must not force food to eat the entire workforce and leave nothing for fuel.
+    expect(out.firewood, 'firewood production kept up alongside food').toBeGreaterThan(0);
+  });
+
+  test('Hard mode\'s minimal starting tools carry it through the opening seasons, not just to zero', { tag: '@slow' }, async ({ page }) => {
+    test.setTimeout(180_000);
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${settle('hard')}
+        const popStart = s.citizens.length;
+        const toolsStart = g.debugTotalStored('tools') + g.debugTotalStored('steeltools');
+        for (let i = 0; i < 2400; i++) g.debugAdvance(0.5); // two seasons, on Hard's own starting kit
+        return {
+          popStart, popEnd: s.citizens.length, gameOver: s.gameOver,
+          toolsStart, toolsEnd: g.debugTotalStored('tools') + g.debugTotalStored('steeltools'),
+        };
+      `) as () => any,
+    );
+
+    // Hard's 24 starting tools (half of Normal's 48, per the difficulty table above) are a real
+    // constraint — this is what makes Hard Hard — but they, and the smaller opening stock behind
+    // them, are meant to be survivable, not an unwinnable opening.
+    expect(out.toolsStart).toBe(24);
+    expect(out.gameOver, 'Hard is difficult, not mathematically doomed').toBe(false);
+    expect(out.popEnd, 'the founding village makes it through the opening seasons').toBeGreaterThanOrEqual(out.popStart);
   });
 });
 

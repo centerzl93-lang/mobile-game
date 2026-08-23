@@ -2240,7 +2240,7 @@ function labour(c: Citizen, dt: number, factor = 1): number {
   const left = BUILDER_SHIFT_WORK - (c.effort ?? 0);
   // `factor` carries the same productivity dial the rest of the economy runs on — chiefly the
   // tool penalty (see `NO_TOOLS_PENALTY`). A village out of tools raises buildings more slowly but
-  // never stops: at 0.6, construction takes about a third longer, not a year.
+  // never stops: at 0.75, construction takes about a third longer, not a year.
   const done = Math.min(dt * BUILD_WORK_RATE * factor, Math.max(0, left));
   c.effort = (c.effort ?? 0) + done;
   if (c.effort >= BUILDER_SHIFT_WORK) {

@@ -143,7 +143,7 @@ adding a kind is a table edit. Core tables (all `src/types.ts`): `RESOURCE_ICON`
 - **The tool ladder.** `tools` (iron) and `steeltools` are **two barn goods, one HUD chip** — the top
   bar folds them into a single 🛠️ figure, the barn/smith/villager sheets keep them apart. A worker
   labours at the village's best available tool: steel (`STEEL_TOOL_PROD` 1.15) beats iron
-  (`IRON_TOOL_PROD` 1.0) beats bare hands (`NO_TOOLS_PENALTY` 0.6), read live by `villageToolTier` /
+  (`IRON_TOOL_PROD` 1.0) beats bare hands (`NO_TOOLS_PENALTY` 0.75), read live by `villageToolTier` /
   `toolProdFactor`. A smith set to `steel` forges `steeltools` from iron **+ coal** (the reason a
   village keeps two mines — coal digs slower than iron, `MINE_COAL_FACTOR` < `MINE_IRON_FACTOR`); set
   to `iron` it forges plain `tools` from iron alone.

@@ -2437,15 +2437,26 @@ export const PER_CITIZEN_SEASON_NEED: Partial<Record<LimitKey, number>> = {
   tools: TOOL_WEAR_PER_WORKER,
 };
 
-export const NO_TOOLS_PENALTY = 0.6; // output multiplier with no tools of any kind in the barns
-
 /**
- * The tool ladder, as an output multiplier on every worker's labour. Bare hands are slow; an iron
+ * The tool ladder, as an output multiplier on every worker's labour. Bare hands are slower; an iron
  * tool is the baseline a trade is balanced around; steel is a real, if modest, step past it.
  *
- *   no tool  → 0.60  (`NO_TOOLS_PENALTY`)
+ *   no tool  → 0.75  (`NO_TOOLS_PENALTY`)
  *   iron     → 1.00  (`IRON_TOOL_PROD`)
  *   steel    → 1.15  (`STEEL_TOOL_PROD`)
+ *
+ * `NO_TOOLS_PENALTY` was 0.6 (a 40% cut) until a playtest showed it acting as the single biggest
+ * lever on survival rather than a modest one: since food, wood and firewood all draw on the same
+ * villager-hours, a 40% cut to every non-farm trade doesn't just slow the trades it hits — it forces
+ * a much bigger *share* of the workforce onto food to stand still, leaving too few hands for the
+ * winter wood/firewood that food shortage was never supposed to compete with. Losing every tool in
+ * the village should hurt and should make the case for a smith, not make the difference between a
+ * bad season and an unrecoverable one. 0.75 matches `COLD_WORK_FACTOR` — the "going without, but
+ * still working" tier this codebase already uses for an uncoated-but-warm villager — rather than
+ * `COLD_WORK_MIN`'s crisis-grade 0.6, which is reserved for an actively freezing one. A quarter cut
+ * raises the food-workforce share by 1/0.75 ≈ 1.33× instead of 1/0.6 ≈ 1.67×, which is the difference
+ * between "tighten your belt" and "cascading collapse" for a village already running close to the
+ * wire. See PLAYTEST.md B7.
  *
  * Steel's pull is deliberately *not* a doubling: its main draw is that it lasts twice as long
  * (`STEEL_DURABILITY`), so a village re-forges tools half as often. The +15% is the sweetener on
@@ -2453,6 +2464,7 @@ export const NO_TOOLS_PENALTY = 0.6; // output multiplier with no tools of any k
  * The village equips its best available tool, so steel in the barns lifts everyone to 1.15 and iron
  * to 1.00; only an empty tool shelf drops the village to the penalty.
  */
+export const NO_TOOLS_PENALTY = 0.75; // output multiplier with no tools of any kind in the barns
 export const IRON_TOOL_PROD = 1.0;
 export const STEEL_TOOL_PROD = 1.15;
 /** A steel tool wears out over this many worker-seasons — twice an iron tool's one. */

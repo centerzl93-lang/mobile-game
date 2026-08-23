@@ -99,6 +99,11 @@ test.describe('save/load reliability', () => {
       if (site) site.progress = 3.5; // caught mid-construction
       const unbuiltHousesBefore = s.buildings.filter((b: any) => b.type === 'house' && !b.built).length;
 
+      // A villager mid-way through a steel tool's durability — a personal belonging, not a barn
+      // stock, so it has to round-trip on the citizen itself.
+      s.citizens[0].tool = 'steel';
+      s.citizens[0].toolWear = 0.6;
+
       // Varied, deterministic state across every category the plan lists.
       s.year = 7; s.season = 2; s.seasonTimer = 123;
       barn.store.wood = 999; barn.store.iron = 40; barn.store.stone = 17;
@@ -110,7 +115,10 @@ test.describe('save/load reliability', () => {
 
       // A stable, persistent-only fingerprint of every citizen, sorted by id.
       const fingerprint = (cs: any[]) => cs
-        .map((c) => ({ id: c.id, age: c.age, sex: c.sex, name: c.name, homeId: c.homeId, jobId: c.jobId, x: c.x, y: c.y, health: c.health, happiness: c.happiness }))
+        .map((c) => ({
+          id: c.id, age: c.age, sex: c.sex, name: c.name, homeId: c.homeId, jobId: c.jobId, x: c.x, y: c.y,
+          health: c.health, happiness: c.happiness, tool: c.tool ?? null, toolWear: c.toolWear ?? 0,
+        }))
         .sort((a, b) => a.id - b.id);
 
       const snap = {

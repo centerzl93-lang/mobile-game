@@ -917,6 +917,21 @@ export interface Citizen {
    */
   clothed?: boolean;
   /**
+   * The tool this villager is actually holding — `undefined` means bare hands. Unlike clothing
+   * (a season's ration, billed and forgotten), a tool is a real, persistent item: this villager
+   * keeps working with it, at the tier it names (`citizenToolFactor`), until it wears out
+   * (`wearCitizenTool`) or they never had one to begin with. Saved like any other belonging, so a
+   * reload doesn't strip a village of tools it had already handed out.
+   */
+  tool?: 'iron' | 'steel';
+  /**
+   * Wear accumulated on the tool this villager currently holds, in worker-seasons — see
+   * `TOOL_WEAR_PER_CYCLE` / `TOOL_WEAR_PER_BUILD_WORK`. Reset to 0 whenever a new tool is picked
+   * up; the tool breaks (and this resets again) once it reaches the tier's durability
+   * (`STEEL_DURABILITY` for steel, 1 worker-season for iron). Meaningless while `tool` is unset.
+   */
+  toolWear?: number;
+  /**
    * Seconds this villager has gone unfed. Death comes at STARVE_SECONDS, so a short gap while a
    * hauler restocks the larder is survivable. Transient — not saved.
    */
@@ -2461,10 +2476,16 @@ export const PER_CITIZEN_SEASON_NEED: Partial<Record<LimitKey, number>> = {
  * Steel's pull is deliberately *not* a doubling: its main draw is that it lasts twice as long
  * (`STEEL_DURABILITY`), so a village re-forges tools half as often. The +15% is the sweetener on
  * top, not the whole reason to bother — the reason is the coal-fed second mine it takes to make it.
- * The village equips its best available tool, so steel in the barns lifts everyone to 1.15 and iron
- * to 1.00; only an empty tool shelf drops the village to the penalty.
+ *
+ * Applied **per villager**, not village-wide: each citizen holds (or doesn't hold) a real tool of
+ * their own — `Citizen.tool` — picked up opportunistically from a barn's stock the next time they
+ * pass through one (see `tryEquipTool`), and worn down by their own labour (`wearCitizenTool`)
+ * until it breaks and they go bare-handed again until their next barn visit. A shortage is
+ * therefore a *gradient* across the workforce (some villagers equipped, some not) rather than a
+ * single village-wide switch that drops every trade at once the moment the last tool anywhere
+ * breaks — the earlier village-wide model this ladder was designed against.
  */
-export const NO_TOOLS_PENALTY = 0.75; // output multiplier with no tools of any kind in the barns
+export const NO_TOOLS_PENALTY = 0.75; // output multiplier for a villager holding no tool at all
 export const IRON_TOOL_PROD = 1.0;
 export const STEEL_TOOL_PROD = 1.15;
 /** A steel tool wears out over this many worker-seasons — twice an iron tool's one. */

@@ -92,6 +92,7 @@ import {
   LuxuryRecipe,
   ResourceKind,
   RESOURCE_ICON,
+  NO_TOOLS_PENALTY,
   LARDER_KINDS,
   LIMIT_STEP,
   LimitKey,
@@ -141,9 +142,8 @@ import {
   isCriticalStock,
   cappedOut,
   workplaceStatus,
-  villageToolTier,
-  toolProdFactor,
-  wearTools,
+  citizenToolFactor,
+  wearCitizenTool,
   debugWorkSpotFor,
   debugApproach,
   debugReachable,
@@ -1817,17 +1817,17 @@ class Game {
       }
       if (adult) rows.push({ label: 'Schooling', value: c.educated ? 'Educated (+30% work)' : 'Uneducated' });
       if (adult) rows.push({ label: 'Work', value: job ? `${BUILDING_DEFS[job.type].name} worker` : 'Builder / laborer' });
-      // Which tool this worker has in hand, read live off the barns (the village equips its best —
-      // see `villageToolTier`). Children carry none, so the row is for working-age villagers only.
+      // Which tool this *specific* villager is holding — a personal belonging (`Citizen.tool`), not
+      // a village-wide fact, so two workers at the same bench can read differently here. Children
+      // carry none, so the row is for working-age villagers only.
       if (adult) {
-        const tier = villageToolTier(this.state);
         const toolValue =
-          tier === 'steel'
+          c.tool === 'steel'
             ? `${RESOURCE_ICON.steeltools} Steel tools (+15% work)`
-            : tier === 'iron'
+            : c.tool === 'iron'
               ? `${RESOURCE_ICON.tools} Iron tools`
-              : '✋ None — bare hands (−40% work)';
-        rows.push({ label: 'Tool', value: toolValue, tone: tier === 'none' ? 'warn' : undefined });
+              : '✋ Bare hands (−25% work) — picks one up at the next barn with a spare';
+        rows.push({ label: 'Tool', value: toolValue, tone: c.tool ? undefined : 'warn' });
       }
       rows.push({
         label: 'Carrying',
@@ -2263,19 +2263,40 @@ class Game {
     return totalStored(this.state, kind);
   }
 
-  /** Debug/testing helper: the best tool the village can equip right now (steel / iron / none). */
-  debugToolTier(): 'steel' | 'iron' | 'none' {
-    return villageToolTier(this.state);
+  /** Debug/testing helper: the tool a specific citizen is actually holding (steel / iron / none). */
+  debugCitizenTool(id: number): 'steel' | 'iron' | 'none' {
+    const c = this.state.citizens.find((x) => x.id === id);
+    return c?.tool ?? 'none';
   }
 
-  /** Debug/testing helper: the output multiplier that tool tier applies to every worker's labour. */
-  debugToolProdFactor(): number {
-    return toolProdFactor(this.state);
+  /** Debug/testing helper: the output multiplier that citizen's own kit applies to their labour. */
+  debugCitizenToolFactor(id: number): number {
+    const c = this.state.citizens.find((x) => x.id === id);
+    return c ? citizenToolFactor(c) : NO_TOOLS_PENALTY;
   }
 
-  /** Debug/testing helper: bill `workerSeasons` of tool wear, steel-first, as the sim does per work. */
-  debugWearTools(workerSeasons: number): void {
-    wearTools(this.state, workerSeasons);
+  /**
+   * Debug/testing helper: hand a citizen a tool directly, bypassing the barn-visit fetch — for
+   * tests that want a known starting kit rather than waiting on `tryEquipTool` to happen naturally.
+   * `null` strips whatever they're holding, same as a tool wearing out.
+   */
+  debugSetCitizenTool(id: number, tool: 'iron' | 'steel' | null): void {
+    const c = this.state.citizens.find((x) => x.id === id);
+    if (!c) return;
+    c.tool = tool ?? undefined;
+    c.toolWear = 0;
+  }
+
+  /** Debug/testing helper: bill one citizen `workerSeasons` of tool wear, as the sim does per work. */
+  debugWearCitizenTool(id: number, workerSeasons: number): void {
+    const c = this.state.citizens.find((x) => x.id === id);
+    if (c) wearCitizenTool(c, workerSeasons);
+  }
+
+  /** Debug/testing helper: wear accumulated on the tool a citizen is currently holding (0 if none). */
+  debugCitizenToolWear(id: number): number {
+    const c = this.state.citizens.find((x) => x.id === id);
+    return c?.tool ? (c.toolWear ?? 0) : 0;
   }
 
   /** Debug/testing helper: food across every edible kind — what a `food` limit is judged against. */

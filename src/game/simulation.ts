@@ -2575,6 +2575,14 @@ function nearestSiteNeeding(s: GameState, c: Citizen, kind: ResourceKind): Build
   let best: Building | null = null;
   let bestD = Infinity;
   for (const b of s.buildings) {
+    // A pile of rubble (`razed`) or a building on its way down (`demolish`) is not somewhere to
+    // deliver *new* materials, no matter how short its old `costOf` looks against what little
+    // salvage is left in it — that comparison is what `pickSite`'s 'salvage' action exists to
+    // avoid mistaking for a real shortfall. Without this a builder who just picked material off a
+    // rubble pile finds that very pile still "needs" it (its remaining salvage undercuts the old
+    // building's full cost) and hands the load straight back — the pile never empties, the plot
+    // never clears, and the site's delivered-materials count flickers forever.
+    if (b.razed || b.demolish) continue;
     if (!b.damaged) {
       if (b.built) continue;
       // Don't carry materials onto a plot that still has to be cleared — the same "clear first,

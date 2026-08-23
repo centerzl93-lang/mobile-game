@@ -805,7 +805,7 @@ test.describe('jobs & builders', () => {
     await open2d(page);
     const out = await page.evaluate((place) => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242); // full stockpile of wood in the barn
+      g.startNewGame('small', 'easy', false); // full stockpile of wood in the barn
       const id = eval(place)();
       // Placing a site now asks for builders on its own, so "zero builders" is something the
       // player has to choose. Dial it down and nothing happens.
@@ -958,7 +958,7 @@ test.describe('fireproof buildings', () => {
     await open(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', true); // 3 houses + a barn, no wells nearby to douse
+      g.startNewGame('small', 'easy', true); // 3 houses + a barn
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       const house = s.buildings.find((b: any) => b.type === 'house');
@@ -1028,11 +1028,14 @@ test.describe('fire spread', () => {
         const g = (window as any).__village;
         g.startNewGame('small', 'easy', true);
         const [source, wood, stone, near, far] = eval(clusterSrc)(g);
-        // 0.2 clears the touching-wood odds (0.25) but not one-tile-away (0.03) and not
-        // touching stone (0.25 × 0.5 = 0.125).
+        // 0.2 clears the destroy roll (1 − 0.55 survival = 0.45), the touching-wood odds (0.25),
+        // but not one-tile-away (0.03) and not touching stone (0.25 × 0.5 = 0.125).
         eval(collapseSrc)(g, source, 0.2);
         return {
-          gone: !g.state.buildings.includes(source),
+          // Destroyed goes through `razeBuilding` — the same rubble-pile teardown a demolition
+          // uses — not an instant deletion: it stops being `built` and is left as salvageable
+          // rubble (`razed`) rather than vanishing from `s.buildings` outright.
+          destroyed: !source.built && !!source.razed,
           wood: !!wood.fireTimer,
           stone: !!stone.fireTimer,
           near: !!near.fireTimer,
@@ -1041,7 +1044,7 @@ test.describe('fire spread', () => {
       },
       [buildCluster, collapse],
     );
-    expect(out.gone).toBe(true);
+    expect(out.destroyed).toBe(true);
     expect(out.wood).toBe(true);
     expect(out.stone).toBe(false);
     expect(out.near).toBe(false);
@@ -1102,6 +1105,668 @@ test.describe('fire spread', () => {
     expect(out.wood).toBe(true);
     expect(out.stoneUnlucky).toBe(true);
     expect(out.stoneSpared).toBe(false);
+  });
+});
+
+test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', () => {
+  // Places a workplace by walking out from the barn for the first buildable tile, the same search
+  // `debugPlace` callers elsewhere in this file use, then forces it straight to `built` so a test
+  // isn't also paying to wait out construction it isn't testing.
+  const placeBuilt = `(g, type) => {
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    for (let r = 4; r < 30; r++)
+      for (let dy = -r; dy <= r; dy++)
+        for (let dx = -r; dx <= r; dx++) {
+          if (!g.debugCanPlace(type, barn.x + dx, barn.y + dy).ok) continue;
+          const id = g.debugPlace(type, barn.x + dx, barn.y + dy);
+          if (id == null) continue;
+          const b = s.buildings.find((o) => o.id === id);
+          b.built = true;
+          b.progress = g.debugBuildWork(type);
+          return b;
+        }
+    throw new Error('no buildable site found for ' + type);
+  }`;
+
+  // Same as `placeBuilt`, but searches out from a given point rather than the barn — for a well
+  // that has to land close enough to a specific fire for a bucket brigade to matter.
+  const placeBuiltNear = `(g, type, cx, cy) => {
+    const s = g.state;
+    for (let r = 1; r < 30; r++)
+      for (let dy = -r; dy <= r; dy++)
+        for (let dx = -r; dx <= r; dx++) {
+          const x = cx + dx, y = cy + dy;
+          if (!g.debugCanPlace(type, x, y).ok) continue;
+          const id = g.debugPlace(type, x, y);
+          if (id == null) continue;
+          const b = s.buildings.find((o) => o.id === id);
+          b.built = true;
+          b.progress = g.debugBuildWork(type);
+          return b;
+        }
+    throw new Error('no buildable site found for ' + type + ' near ' + cx + ',' + cy);
+  }`;
+
+  test('a building catches fire at once: BURNING, still standing, workers and residents turned out', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const hut = eval(placeSrc)(g, 'gatherer');
+      hut.desiredWorkers = 3;
+      g.debugAdvance(2); // long enough for assignHomesAndJobs to hire from the free adults
+      const house = s.buildings.find((b: any) => b.type === 'house' && b.built);
+      const resident = s.citizens.find((c: any) => c.homeId === house.id);
+      const before = { staffed: hut.workers.length, hasResident: !!resident };
+      g.debugIgnite(hut.id);
+      g.debugIgnite(house.id);
+      return {
+        before,
+        burning: !!hut.fireTimer,
+        stillPresent: s.buildings.includes(hut),
+        stillBuilt: hut.built,
+        workersLeft: hut.workers.length,
+        evictedFromHut: s.citizens.filter((c: any) => c.jobId === hut.id).length,
+        evictedFromHouse: s.citizens.filter((c: any) => c.homeId === house.id).length,
+      };
+    }, placeBuilt);
+    expect(out.before.staffed).toBeGreaterThan(0);
+    expect(out.before.hasResident).toBe(true);
+    expect(out.burning).toBe(true);
+    expect(out.stillPresent).toBe(true); // no instant deletion — see the design note in `tryIgnite`
+    expect(out.stillBuilt).toBe(true); // a burning building is still a wall, not a hole
+    expect(out.workersLeft).toBe(0);
+    expect(out.evictedFromHut).toBe(0);
+    expect(out.evictedFromHouse).toBe(0); // the house's resident was turned out the moment it caught
+  });
+
+  test('a disaster snaps the game speed back to 1×', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const hut = eval(placeSrc)(g, 'gatherer');
+      g.debugSetSpeedIndex(3); // 10× on the toolbar
+      const before = g.debugSpeedIndex();
+      // `debugAdvanceAtSpeed` is the emulated-frame-loop path (see its own doc comment) — the same
+      // place `frame` applies the reset in a live game, so this exercises the real wiring rather
+      // than calling the check in isolation.
+      g.debugIgnite(hut.id);
+      g.debugAdvanceAtSpeed(0.1, 10);
+      const afterFire = g.debugSpeedIndex();
+
+      // And nothing resets it when nothing caught: nudging the speed back up and running more sim
+      // time with no disaster pending leaves the player's choice alone.
+      g.debugSetSpeedIndex(2); // 5×
+      g.debugAdvanceAtSpeed(1, 5);
+      const noDisaster = g.debugSpeedIndex();
+      return { before, afterFire, noDisaster };
+    }, placeBuilt);
+    expect(out.before).toBe(3);
+    expect(out.afterFire).toBe(0); // the fire reset it to 1×
+    expect(out.noDisaster).toBe(2); // untouched — nothing happened this time
+  });
+
+  test('employed workers drop their bench for a nearby fire too, not just free adults', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      ([placeSrc, placeNearSrc]) => {
+        const g = (window as any).__village;
+        g.startNewGame('small', 'easy', false);
+        const s = g.state; // captured *after* startNewGame — it replaces g.state outright
+        // Two huts, not one, so the proof doesn't ride on a single trip landing exactly on time:
+        // six employed hands give the brigade the same kind of margin the other fire-recovery
+        // tests get from a full, unfiltered village.
+        const hutA = eval(placeSrc)(g, 'gatherer');
+        hutA.desiredWorkers = 3;
+        const hutB = eval(placeSrc)(g, 'gatherer');
+        hutB.desiredWorkers = 3;
+        g.debugAdvance(2);
+        if (hutA.workers.length === 0 || hutB.workers.length === 0) {
+          throw new Error('expected both huts to be staffed');
+        }
+        const jobIds = new Set([hutA.id, hutB.id]);
+        const staff = new Set([...hutA.workers, ...hutB.workers] as number[]);
+        // Every *other* adult is removed outright — not just given something else to do, which
+        // (now that a fire pulls in anyone nearby) would not prove anything. With nobody left
+        // but this staff, any water that lands on the fire can only have come from a citizen who
+        // was, at that moment, still employed.
+        s.citizens = s.citizens.filter((c: any) => c.age < 16 || staff.has(c.id));
+        // A separate building, near the huts (within FIRE_RESPONSE_RADIUS), with its own well —
+        // the fire the employed staff are asked to respond to.
+        const house = eval(placeNearSrc)(g, 'house', hutA.x, hutA.y);
+        eval(placeNearSrc)(g, 'well', house.x, house.y);
+        // Let the opening larder rush clear first — see the note in "a bucket brigade...": mid-haul
+        // is the one thing that outranks even a fire, so the point here is a citizen who has
+        // finished that and is genuinely free to respond while still on the clock. Then stand
+        // them at the fire rather than leaving it to wherever their own (possibly distant) home
+        // happens to be — see the same note.
+        g.debugAdvance(10);
+        // A walkable approach tile, not a spot inside the building's own footprint — teleporting
+        // a citizen onto ground a built structure blocks leaves them standing in a wall, which
+        // `stepOutOfWalls` can fail to rescue when the surrounding tiles are themselves crowded
+        // with other buildings, wedging them out of the walkable map for good.
+        const spot = g.debugApproach(house.id, house.x, house.y);
+        for (const c of s.citizens) {
+          c.x = spot.x;
+          c.y = spot.y;
+        }
+        g.debugIgnite(house.id);
+        const needed = g.debugFireDouseTripsNeeded();
+        const burn = g.debugFireBurnSeconds();
+        for (let i = 0; i < burn / 0.2 && (house.fireWater ?? 0) < needed; i++) g.debugAdvance(0.2);
+        // Every citizen left in the village still has a `jobId` at one of the two huts — none of
+        // them were ever evicted, only diverted for the emergency (see
+        // `runFirefighter`/`nearbyFire`) — so this also confirms the water didn't cost anyone
+        // their post.
+        const allStillEmployed = s.citizens.every((c: any) => c.age < 16 || jobIds.has(c.jobId));
+        return { doused: (house.fireWater ?? 0) >= needed, allStillEmployed };
+      },
+      [placeBuilt, placeBuiltNear],
+    );
+    // Nobody but this hut's own staff was left in the village, so the water that reached the fire
+    // can only have come from a citizen who was, at that moment, still employed there.
+    expect(out.doused).toBe(true);
+    expect(out.allStillEmployed).toBe(true);
+  });
+
+  test('a burning building cannot be restaffed or reoccupied, and stops producing', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const hut = eval(placeSrc)(g, 'gatherer');
+      hut.desiredWorkers = 3;
+      g.debugAdvance(2);
+      const staffedBefore = hut.workers.length;
+      const fruitBefore = g.debugTotalHeld('fruit'); // a gatherer's own output kind
+      g.debugIgnite(hut.id);
+      // Long enough that, unburnt, a staffed gatherer would have gathered something — and that a
+      // newly homeless adult would have found the house if it were still on offer.
+      for (let i = 0; i < 100; i++) g.debugAdvance(0.2);
+      return {
+        staffedBefore,
+        stillZero: hut.workers.length,
+        desiredWorkersKept: hut.desiredWorkers, // so it re-staffs itself once repaired
+        foodGrew: g.debugTotalHeld('fruit') > fruitBefore + 1,
+      };
+    }, placeBuilt);
+    expect(out.staffedBefore).toBeGreaterThan(0);
+    expect(out.stillZero).toBe(0);
+    expect(out.desiredWorkersKept).toBeGreaterThan(0);
+    expect(out.foodGrew).toBe(false);
+  });
+
+  test('fire burns for a real chunk of a season, not an instant', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const hut = eval(placeSrc)(g, 'gatherer');
+      const burn = g.debugFireBurnSeconds();
+      g.debugIgnite(hut.id);
+      g.debugAdvance(burn * 0.5);
+      const stillBurningAtHalf = !!hut.fireTimer;
+      g.debugAdvance(burn * 0.6); // past the full duration
+      return { burn, stillBurningAtHalf, resolvedAfterFull: !hut.fireTimer };
+    }, placeBuilt);
+    // Tied to SEASON_LENGTH (600s) rather than an arbitrary number — see `FIRE_BURN_SECONDS`. A
+    // village nobody is watching for eight seconds (the old figure) never gets to react at all.
+    expect(out.burn).toBeGreaterThan(30);
+    expect(out.stillBurningAtHalf).toBe(true);
+    expect(out.resolvedAfterFull).toBe(true);
+  });
+
+  test('a bucket brigade that gets enough water there in time can save a building', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      ([placeSrc, placeNearSrc]) => {
+        const g = (window as any).__village;
+        g.startNewGame('small', 'easy', false);
+        const s = g.state;
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        const hut = eval(placeNearSrc)(g, 'gatherer', barn.x, barn.y);
+        const well = eval(placeNearSrc)(g, 'well', hut.x, hut.y);
+        g.debugSetBuilders(6); // hands free to run the brigade before the fire even starts
+        // A fresh village spends its first few seconds with every adult hauling a founding
+        // household's opening rations home (`stockLarder`) — mid-haul is the one thing that
+        // outranks even a fire (nothing is stranded). Letting that initial rush clear first is
+        // what makes "free hands" actually mean free, rather than testing whichever citizen
+        // happened to already be empty-handed the instant the fire started.
+        g.debugAdvance(10);
+        // Then stand everyone at the fire, rather than measuring how far the map's founding
+        // houses happened to scatter (the CLAUDE.md testing note on `debugWorkSpot` — a housed
+        // villager loiters near *their own* home, not the barn, and Easy's starting houses land
+        // wherever the plains around the founding tile allow, not necessarily anywhere near a hut
+        // placed by the barn). This test is about whether a close well and free hands save a
+        // *reachable* fire, not about rolling for a village layout where they happen to be.
+        //
+        // A walkable approach tile, not a spot inside the hut's own footprint — teleporting a
+        // citizen onto ground a built structure blocks leaves them standing in a wall, which
+        // `stepOutOfWalls` can fail to rescue when the surrounding tiles are themselves crowded
+        // with other buildings, wedging them out of the walkable map for good.
+        const spot = g.debugApproach(hut.id, hut.x, hut.y);
+        for (const c of s.citizens) {
+          c.x = spot.x;
+          c.y = spot.y;
+        }
+        g.debugIgnite(hut.id);
+        const needed = g.debugFireDouseTripsNeeded();
+        const burn = g.debugFireBurnSeconds();
+        // Let the real stream run the firefighting itself — the point of this test is that a
+        // close well and free hands are enough to hit the target unaided.
+        let elapsed = 0;
+        for (; elapsed < burn && (hut.fireWater ?? 0) < needed; elapsed += 0.2) g.debugAdvance(0.2);
+        const dousedInTime = (hut.fireWater ?? 0) >= needed;
+        // Pinned high only for the resolving roll itself: dousedInTime already decided whether
+        // that roll even runs — an untreated fire never gets it (see `processFires`).
+        g.debugPinRandom(0.99);
+        try {
+          g.debugAdvance(burn - elapsed + 1);
+        } finally {
+          g.debugPinRandom(null);
+        }
+        return {
+          dousedInTime,
+          wellId: well.id,
+          damaged: hut.damaged,
+          built: hut.built,
+          razed: !!hut.razed,
+          burning: !!hut.fireTimer,
+          workers: hut.workers.length,
+        };
+      },
+      [placeBuilt, placeBuiltNear],
+    );
+    expect(out.dousedInTime).toBe(true); // a well this close, with hands free, should always make it
+    expect(out.damaged).toBe(true);
+    expect(out.built).toBe(true); // DAMAGED still stands — it just cannot work until repaired
+    expect(out.razed).toBe(false);
+    expect(out.burning).toBe(false);
+    expect(out.workers).toBe(0); // still cannot operate
+  });
+
+  test('an untreated fire — no water delivered — never gets a chance to survive', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const hut = eval(placeSrc)(g, 'gatherer');
+      // No well anywhere and no builders assigned — nobody can or will fetch water.
+      g.debugIgnite(hut.id);
+      // Pinned high — if the survival roll ran at all, this would save it. It must never run.
+      g.debugPinRandom(0.99);
+      try {
+        g.debugAdvance(g.debugFireBurnSeconds() + 1);
+      } finally {
+        g.debugPinRandom(null);
+      }
+      return { damaged: hut.damaged, razed: !!hut.razed, built: hut.built };
+    }, placeBuilt);
+    expect(out.damaged).toBe(false);
+    expect(out.razed).toBe(true);
+    expect(out.built).toBe(false);
+  });
+
+  test('a fire reads larger the longer it burns, and shrinks as it is doused', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const hut = eval(placeSrc)(g, 'gatherer');
+      g.debugIgnite(hut.id);
+      const atIgnition = g.debugFireIntensity(hut.id);
+      const burn = g.debugFireBurnSeconds();
+      // Jump straight to "nearly burned down" without waiting the real time out — `fireIntensity`
+      // is a pure function of the current fields, so this is a fair way to sample it partway
+      // through a burn.
+      hut.fireTimer = burn * 0.05;
+      const nearCollapse = g.debugFireIntensity(hut.id);
+      hut.fireWater = Math.ceil(g.debugFireDouseTripsNeeded() / 2);
+      const halfDoused = g.debugFireIntensity(hut.id);
+      hut.fireWater = g.debugFireDouseTripsNeeded();
+      const fullyDoused = g.debugFireIntensity(hut.id);
+      return { atIgnition, nearCollapse, halfDoused, fullyDoused };
+    }, placeBuilt);
+    // Small at the start, largest just before it would collapse.
+    expect(out.atIgnition).toBeGreaterThan(0);
+    expect(out.nearCollapse).toBeGreaterThan(out.atIgnition);
+    // Every load of water lands it a step back down, extinguished reading as zero.
+    expect(out.halfDoused).toBeLessThan(out.nearCollapse);
+    expect(out.halfDoused).toBeGreaterThan(0);
+    expect(out.fullyDoused).toBe(0);
+  });
+
+  test('a burnt-down building leaves a scorch mark that clears once something is built over it', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const hut = eval(placeSrc)(g, 'gatherer');
+      const hx = hut.x;
+      const hy = hut.y;
+      const { w: fw, h: fh } = g.debugFootprint('gatherer');
+      g.debugIgnite(hut.id);
+      g.debugPinRandom(0.01); // untreated fire — guaranteed destroy
+      try {
+        g.debugAdvance(g.debugFireBurnSeconds() + 1);
+      } finally {
+        g.debugPinRandom(null);
+      }
+      const scorchedAfterBurn = (s.scorched ?? []).length;
+      // Clear the rubble so the plot is free to build on again.
+      g.debugSetBuilders(6);
+      for (let i = 0; i < 3000 && s.buildings.some((b: any) => b.id === hut.id); i++) g.debugAdvance(0.2);
+      const id2 = g.debugPlace('gatherer', hx, hy);
+      const stillScorched = (s.scorched ?? []).length;
+      return { footprintArea: fw * fh, scorchedAfterBurn, placedAgain: id2 != null, stillScorched };
+    }, placeBuilt);
+    expect(out.scorchedAfterBurn).toBe(out.footprintArea);
+    expect(out.placedAgain).toBe(true);
+    expect(out.stillScorched).toBe(0);
+  });
+
+  test('an ordinary demolition leaves bare ground, not a burn scar', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const hut = eval(placeSrc)(g, 'gatherer');
+      g.debugDemolish(hut.id);
+      g.debugSetBuilders(6);
+      for (let i = 0; i < 3000 && s.buildings.some((b: any) => b.id === hut.id); i++) g.debugAdvance(0.2);
+      return { scorched: (s.scorched ?? []).length };
+    }, placeBuilt);
+    expect(out.scorched).toBe(0);
+  });
+
+  test('proximity to the well governs how much water lands before the fire resolves', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      ([placeSrc, placeNearSrc]) => {
+        const g = (window as any).__village;
+        const run = (nearWell: boolean) => {
+          g.startNewGame('small', 'easy', false);
+          const s = g.state;
+          const barn = s.buildings.find((b: any) => b.type === 'barn');
+          const hut = eval(placeNearSrc)(g, 'gatherer', barn.x, barn.y);
+          if (nearWell) eval(placeNearSrc)(g, 'well', hut.x, hut.y);
+          // A well exists somewhere on a fresh map only if this test just placed one — Easy never
+          // starts with one — so the "far" run genuinely has no well in reach at all, which is the
+          // clearest possible instance of "far": every trip after the first is infinite.
+          g.debugSetBuilders(6);
+          // Let the opening larder rush clear first — see the note in "a bucket brigade...".
+          g.debugAdvance(10);
+          // Then stand everyone at the fire — see the same note — instead of leaving it to
+          // wherever the map's founding houses happened to scatter. A walkable approach tile, not
+          // a spot inside the hut's own footprint — see the note in "a bucket brigade...".
+          const spot = g.debugApproach(hut.id, hut.x, hut.y);
+          for (const c of s.citizens) {
+            c.x = spot.x;
+            c.y = spot.y;
+          }
+          g.debugIgnite(hut.id);
+          const burn = g.debugFireBurnSeconds();
+          // Track the high-water mark rather than reading `fireWater` after the loop: the moment
+          // the fire resolves, `processFires` resets it to `undefined` (see `types.ts`), so reading
+          // it post-resolution would see "0" even after a well saved the building.
+          let maxWater = 0;
+          for (let e = 0; e < burn; e += 0.2) {
+            g.debugAdvance(0.2);
+            maxWater = Math.max(maxWater, hut.fireWater ?? 0);
+          }
+          return maxWater;
+        };
+        return { near: run(true), far: run(false) };
+      },
+      [placeBuilt, placeBuiltNear],
+    );
+    expect(out.near).toBeGreaterThan(out.far);
+    expect(out.far).toBe(0); // nothing to fetch from — no trips ever land
+  });
+
+  test('builders repair a damaged building for the tuned cost, and it resumes on its own', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      ([placeSrc, placeNearSrc]) => {
+        const g = (window as any).__village;
+        g.startNewGame('small', 'easy', false);
+        const s = g.state;
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        const hut = eval(placeNearSrc)(g, 'gatherer', barn.x, barn.y);
+        eval(placeNearSrc)(g, 'well', hut.x, hut.y);
+        hut.desiredWorkers = 3;
+        g.debugSetBuilders(6); // free hands to run the brigade, then to repair once it's out
+        // Long enough to hire the hut's staff *and* let the opening larder rush clear — see the
+        // note in "a bucket brigade...".
+        g.debugAdvance(10);
+        // Then stand everyone at the fire — see the same note — instead of leaving it to wherever
+        // the map's founding houses happened to scatter. A walkable approach tile, not a spot
+        // inside the hut's own footprint — see the note in "a bucket brigade...".
+        const spot = g.debugApproach(hut.id, hut.x, hut.y);
+        for (const c of s.citizens) {
+          c.x = spot.x;
+          c.y = spot.y;
+        }
+        const cost = g.debugRepairCost(hut.id);
+        g.debugIgnite(hut.id);
+        const needed = g.debugFireDouseTripsNeeded();
+        const burn = g.debugFireBurnSeconds();
+        let elapsed = 0;
+        for (; elapsed < burn && (hut.fireWater ?? 0) < needed; elapsed += 0.2) g.debugAdvance(0.2);
+        g.debugPinRandom(0.99); // survive the resolving roll, now that it's earned the chance to
+        try {
+          g.debugAdvance(burn - elapsed + 1);
+        } finally {
+          g.debugPinRandom(null);
+        }
+        if (!hut.damaged) throw new Error('expected the well-served hut to survive as damaged');
+        const woodBefore = g.debugTotalHeld('wood');
+        const stoneBefore = g.debugTotalHeld('stone');
+        let repaired = false;
+        for (let i = 0; i < 4000 && !repaired; i++) {
+          g.debugAdvance(0.2);
+          repaired = !hut.damaged;
+        }
+        const staffed = { at: 0, count: 0 };
+        for (let i = 0; i < 100 && staffed.count === 0; i++) {
+          g.debugAdvance(0.2);
+          staffed.count = hut.workers.length;
+        }
+        return {
+          cost,
+          repaired,
+          stillBuilt: hut.built,
+          repairProgressReset: hut.repairProgress,
+          repairStoreEmpty: !hut.repairStore || Object.keys(hut.repairStore).length === 0,
+          woodConsumed: woodBefore - g.debugTotalHeld('wood'),
+          stoneConsumed: stoneBefore - g.debugTotalHeld('stone'),
+          restaffed: staffed.count,
+        };
+      },
+      [placeBuilt, placeBuiltNear],
+    );
+    expect(out.repaired).toBe(true);
+    expect(out.stillBuilt).toBe(true);
+    expect(out.repairProgressReset).toBe(0);
+    expect(out.repairStoreEmpty).toBe(true);
+    // Consumed exactly the tuned repair bill — no more, no less, and nothing invented from thin
+    // air (see "fire does not create duplicated resources" below for the fuller check).
+    expect(out.woodConsumed).toBeCloseTo(out.cost.wood ?? 0, 0);
+    expect(out.stoneConsumed).toBeCloseTo(out.cost.stone ?? 0, 0);
+    expect(out.restaffed).toBeGreaterThan(0); // resumes on its own once `damaged` clears
+  });
+
+  test('a building that does not survive follows the ordinary demolition/rubble behaviour', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const hut = eval(placeSrc)(g, 'gatherer');
+      const salvage = g.debugSalvage('gatherer'); // REFUND_FRACTION of the build cost
+      g.debugIgnite(hut.id);
+      const burn = g.debugFireBurnSeconds();
+      g.debugPinRandom(0.01); // destroy roll well under any destroy chance in play
+      try {
+        g.debugAdvance(burn + 1);
+      } finally {
+        g.debugPinRandom(null);
+      }
+      const justBurned = {
+        built: hut.built,
+        razed: hut.razed,
+        demolish: hut.demolish,
+        gotSalvage: (hut.store.wood ?? 0) >= (salvage.wood ?? 0) - 0.5,
+      };
+      // Same rubble-hauling job any demolition uses — see `pickSite`'s 'salvage'/'raze' actions.
+      g.debugSetBuilders(6);
+      let gone = false;
+      for (let i = 0; i < 3000 && !gone; i++) {
+        g.debugAdvance(0.2);
+        gone = !g.state.buildings.some((b: any) => b.id === hut.id);
+      }
+      return { salvage, justBurned, gone };
+    }, placeBuilt);
+    expect(out.justBurned.built).toBe(false);
+    expect(out.justBurned.razed).toBe(true);
+    expect(out.justBurned.demolish).toBe(true);
+    expect(out.justBurned.gotSalvage).toBe(true);
+    expect(out.gone).toBe(true); // eventually cleared, once the salvage is carted off
+  });
+
+  test('fire does not duplicate resources, whichever way it resolves', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      ([placeSrc, placeNearSrc]) => {
+        const g = (window as any).__village;
+        // The grand total, not just `debugTotalHeld` — that only counts barns/markets/larders/
+        // what's being carried, and deliberately leaves out a rubble pile's own store until a
+        // builder carts it to a barn (see `storageNodes`). A destroyed building's refund sits in
+        // its own rubble the instant it burns down, so counting every building's `store` is the
+        // only way to catch a fire *inventing* wood, as opposed to one that just hasn't been
+        // carted home yet.
+        const totalWood = () => {
+          let n = 0;
+          for (const b of g.state.buildings as any[]) n += b.store.wood ?? 0;
+          for (const c of g.state.citizens as any[]) if (c.carry?.kind === 'wood') n += c.carry.amount;
+          return n;
+        };
+        const run = (survive: boolean) => {
+          g.startNewGame('small', 'easy', false);
+          const s = g.state;
+          // A doused fire is the only way to reach the survival roll at all — see the "untreated
+          // fire" test — so the survive run needs an actual bucket brigade, close to the barn so
+          // the free hands `debugSetBuilders` raises are near enough to reach it (see the note in
+          // "a bucket brigade...").
+          const barn = s.buildings.find((b: any) => b.type === 'barn');
+          const hut = survive ? eval(placeNearSrc)(g, 'gatherer', barn.x, barn.y) : eval(placeSrc)(g, 'gatherer');
+          if (survive) {
+            eval(placeNearSrc)(g, 'well', hut.x, hut.y);
+            g.debugSetBuilders(6);
+            // Let the opening larder rush clear first, then stand everyone at the fire, on a
+            // walkable approach tile rather than inside the hut's own footprint — see the note in
+            // "a bucket brigade...".
+            g.debugAdvance(10);
+            const spot = g.debugApproach(hut.id, hut.x, hut.y);
+            for (const c of s.citizens) {
+              c.x = spot.x;
+              c.y = spot.y;
+            }
+          }
+          const before = totalWood();
+          g.debugIgnite(hut.id);
+          const needed = g.debugFireDouseTripsNeeded();
+          const burn = g.debugFireBurnSeconds();
+          let elapsed = 0;
+          if (survive) {
+            for (; elapsed < burn && (hut.fireWater ?? 0) < needed; elapsed += 0.2) g.debugAdvance(0.2);
+          }
+          g.debugPinRandom(survive ? 0.99 : 0.01);
+          try {
+            g.debugAdvance(burn - elapsed + 1);
+          } finally {
+            g.debugPinRandom(null);
+          }
+          // Surviving spends nothing by itself — only a completed repair does, and repair is not
+          // run here — so the total must not have moved at all. Destroyed hands back
+          // REFUND_FRACTION of the cost, into the rubble this same total already counts.
+          const salvage = survive ? 0 : g.debugSalvage('gatherer').wood ?? 0;
+          return before + salvage - totalWood();
+        };
+        return { survivedDelta: run(true), destroyedDelta: run(false) };
+      },
+      [placeBuilt, placeBuiltNear],
+    );
+    expect(out.survivedDelta).toBeCloseTo(0, 1);
+    expect(out.destroyedDelta).toBeCloseTo(0, 1);
+  });
+
+  test('an old save without the DAMAGED/water-brigade fields still loads and runs', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      ([placeSrc, placeNearSrc]) => {
+        const g = (window as any).__village;
+        g.startNewGame('small', 'easy', false);
+        const s = g.state;
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        const hut = eval(placeNearSrc)(g, 'gatherer', barn.x, barn.y);
+        eval(placeNearSrc)(g, 'well', hut.x, hut.y);
+        g.debugSetBuilders(6);
+        // Let the opening larder rush clear first — see the note in "a bucket brigade...".
+        g.debugAdvance(10);
+        // Then stand everyone at the fire — see the same note — instead of leaving it to wherever
+        // the map's founding houses happened to scatter. A walkable approach tile, not a spot
+        // inside the hut's own footprint — see the note in "a bucket brigade...".
+        const spot = g.debugApproach(hut.id, hut.x, hut.y);
+        for (const c of s.citizens) {
+          c.x = spot.x;
+          c.y = spot.y;
+        }
+        g.debugIgnite(hut.id);
+        const needed = g.debugFireDouseTripsNeeded();
+        const burn = g.debugFireBurnSeconds();
+        let elapsed = 0;
+        for (; elapsed < burn && (hut.fireWater ?? 0) < needed; elapsed += 0.2) g.debugAdvance(0.2);
+        g.debugPinRandom(0.99); // leave it DAMAGED, the shape a pre-rework save never had
+        try {
+          g.debugAdvance(burn - elapsed + 1);
+        } finally {
+          g.debugPinRandom(null);
+        }
+        if (!hut.damaged) throw new Error('expected the well-served hut to be damaged going into the save');
+        if (!g.debugSaveSlot(0)) throw new Error('save failed');
+        const env = JSON.parse(g.debugRawSlot(0)!);
+        // Simulate a save written before `damaged`/`repairProgress`/`repairStore`/`fireWater`/
+        // `waterLoad` existed.
+        for (const b of env.state.buildings) {
+          delete b.damaged;
+          delete b.repairProgress;
+          delete b.repairStore;
+          delete b.fireWater;
+        }
+        for (const c of env.state.citizens) delete c.waterLoad;
+        g.debugWriteRawSlot(0, JSON.stringify(env));
+        const loaded = g.debugLoadSlot(0);
+        const restored = g.state.buildings.find((b: any) => b.id === hut.id);
+        // Must not crash or wedge: a tick has to run clean, and the fields' absence must read as
+        // "not damaged"/"no water yet" rather than a hole that turns some later check to `NaN`.
+        g.debugAdvance(1);
+        return {
+          loaded,
+          damagedIsFalsy: !restored.damaged,
+          stillBuilt: restored.built,
+        };
+      },
+      [placeBuilt, placeBuiltNear],
+    );
+    expect(out.loaded).toBe(true);
+    expect(out.damagedIsFalsy).toBe(true);
+    expect(out.stillBuilt).toBe(true);
   });
 });
 
@@ -1749,7 +2414,7 @@ test.describe('household larders', () => {
       const g = (window as any).__village;
       // Seeded: how far each house sits from a barn is the map's call, and on a spread-out
       // village the shoppers had not finished their rounds inside the budget below.
-      g.startNewGame('small', 'easy', false, 0, 4242); // easy starts with houses and a full stockpile
+      g.startNewGame('small', 'easy', false); // easy starts with houses and a full stockpile
       const s = g.state;
       // Long enough for each household's shopper to run its trips to the barns and back.
       for (let i = 0; i < 2400; i++) g.debugAdvance(0.1);
@@ -2621,7 +3286,7 @@ test.describe('volume-based hauling', () => {
       // throughput this asserts on ("a full field brought in within a season") rode on it — on an
       // unlucky random map the round trip was long enough to leave more than half the harvest in the
       // ground, so the test failed roughly one run in three. A fixed seed pins the geometry.
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
       const barn = s.buildings.find((b: any) => b.type === 'barn');
@@ -2807,7 +3472,7 @@ test.describe('job board', () => {
       // with the world. One CI run in a while drew a map where the hut landed far enough out that
       // it had not finished inside the 400s this gives it, and the build check read false. The
       // seed fixes the map, so the hut lands in the same reachable spot every run.
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       // Auto-staffing off, or this test cannot see what it is testing: a new workplace opened
       // with it on is filled to its job count regardless, which would pass whether or not the
@@ -3537,7 +4202,7 @@ test.describe('build stamp', () => {
   test('the main menu shows an incrementing version, commit and date', async ({ page }) => {
     await open(page);
     const stamp = await page.evaluate(() => document.getElementById('mm-build')?.textContent ?? '');
-    // e.g. "v0.1.48 · 7b6dfc7 · 2026-07-27". The patch is the commit count, so it rises with every
+    // e.g. "v0.2.48 · 7b6dfc7 · 2026-07-27". The patch is the commit count, so it rises with every
     // push; a '?' there means the build ran against a shallow clone and the number can't be trusted.
     expect(stamp).toMatch(/^v\d+\.\d+\.\d+ · [0-9a-f]{7,} · \d{4}-\d{2}-\d{2}$/);
   });
@@ -3844,7 +4509,7 @@ test.describe('birth rate', () => {
       // map — it scans outward for thirty house plots and then runs years of simulation over
       // whatever population that produced. On a cramped village it ran past a three-minute budget
       // it clears in forty seconds on a roomy one.
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       for (let i = 0; i < 60; i++) g.debugAdvance(0.1);
       // Room to grow into, so housing is never the thing capping births.
@@ -3954,7 +4619,7 @@ test.describe('bridges come in timber and stone', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       for (const k of ['wood', 'stone']) barn.store[k] = 4000;
@@ -4008,7 +4673,7 @@ test.describe('bridges come in timber and stone', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       const limits = g.debugBridgeLimits();
       // A crossing of each width, laid straight onto the map: the arch is geometry, so it does not
@@ -4059,7 +4724,7 @@ test.describe('bridges come in timber and stone', () => {
     await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
     const out = await page.evaluate(async () => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       const stone = g.debugPathValue('stonebridge');
       // A six-tile crossing laid straight down, and a frame drawn so the renderer measures it.
@@ -4119,7 +4784,7 @@ test.describe('choosing a road, and taking an order back', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       // Clear ground to draw over, so the route is about the anchor and not about obstacles.
@@ -4163,7 +4828,7 @@ test.describe('choosing a road, and taking an order back', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       // A patch of wood to give the order over.
       let spot: any = null;
@@ -4200,7 +4865,7 @@ test.describe('choosing a road, and taking an order back', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       return {
         gatherer: { ghost: g.debugFullWorkRadius('gatherer'), one: g.debugWorkRadiusFor('gatherer', 1) },
         forester: { ghost: g.debugFullWorkRadius('lumberyard'), one: g.debugWorkRadiusFor('lumberyard', 1) },
@@ -4217,7 +4882,7 @@ test.describe('choosing a road, and taking an order back', () => {
 test.describe('what a town builds', () => {
   const stock = `
     const g = window.__village;
-    g.startNewGame('small', 'easy', false, 0, 4242);
+    g.startNewGame('small', 'easy', false);
     g.debugPinTier('town');
     const s = g.state;
     const barn = s.buildings.find((b) => b.type === 'barn');
@@ -4242,7 +4907,7 @@ test.describe('what a town builds', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const want: any = {
         university: { w: 5, h: 5, jobs: 5, wood: 60, stone: 80, iron: 30, work: 180, builders: 4 },
         port: { w: 7, h: 5, jobs: 5, wood: 100, stone: 100, iron: 40, work: 260, builders: 3 },
@@ -4374,7 +5039,7 @@ test.describe('what a town builds', () => {
 test.describe('sand, glass, jewellery and the harbour', () => {
   const town = `
     const g = window.__village;
-    g.startNewGame('small', 'easy', false, 0, 4242);
+    g.startNewGame('small', 'easy', false);
     g.debugPinTier('city');
     const s = g.state;
     s.limits = {}; // a cap of zero means "no cap"; these tests are about what gets produced
@@ -4595,7 +5260,7 @@ test.describe('sand, glass, jewellery and the harbour', () => {
       // Dress a whole village in one thing and turn the year to winter, then read the coats. A barn
       // full of fine clothes and nothing else must leave everyone uncoated: gowns are for selling.
       const clothe = (only: string) => {
-        g.startNewGame('small', 'easy', false, 0, 4242);
+        g.startNewGame('small', 'easy', false);
         const s = g.state;
         for (const b of s.buildings) { delete b.store?.clothing; delete b.store?.fineclothes; }
         const barn = s.buildings.find((b: any) => b.type === 'barn');
@@ -4703,7 +5368,7 @@ test.describe('sand, glass, jewellery and the harbour', () => {
    */
   const fakePort = `(merchant) => {
     const g = window.__village;
-    g.startNewGame('small', 'easy', false, 0, 4242);
+    g.startNewGame('small', 'easy', false);
     const s = g.state;
     const barn = s.buildings.find((b) => b.type === 'barn');
     const port = { id: s.nextId++, type: 'port', x: barn.x, y: barn.y, built: true, progress: 99,
@@ -4834,7 +5499,7 @@ test.describe('iron and steel tools', () => {
   // tests can lean on it without reaching across describe blocks.
   const forge = `
     const g = window.__village;
-    g.startNewGame('small', 'easy', false, 0, 4242);
+    g.startNewGame('small', 'easy', false);
     g.debugPinTier('city');
     const s = g.state;
     s.limits = {};
@@ -4950,7 +5615,7 @@ test.describe('iron and steel tools', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       const clear = () => { for (const b of s.buildings) { delete b.store.tools; delete b.store.steeltools; } };
@@ -5123,7 +5788,7 @@ test.describe('a site the village cannot reach', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       const W = 72;
       const at = (x: number, y: number) => s.tiles[y * W + x];
@@ -5180,7 +5845,7 @@ test.describe('a village climbs through tiers', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       return {
         tier: g.debugTier(),
         house: g.debugUnlocked('house'),
@@ -5211,7 +5876,7 @@ test.describe('a village climbs through tiers', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       for (const k of ['wood', 'stone', 'iron']) barn.store[k] = 9000;
@@ -5281,7 +5946,7 @@ test.describe('a village climbs through tiers', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       // Deep pockets: the ladder wants a lot of buildings and we are testing the gate, not logistics.
@@ -5417,7 +6082,7 @@ test.describe('the shelter is a boarding house, not a home', () => {
   // A village stripped of its houses, so the only roof going is the boarding house.
   const homeless = `
     const g = window.__village;
-    g.startNewGame('small', 'easy', false, 0, 4242);
+    g.startNewGame('small', 'easy', false);
     const s = g.state;
     const barn = s.buildings.find((b) => b.type === 'barn');
     for (const k of ['wood', 'stone']) barn.store[k] = 9000;
@@ -5538,7 +6203,7 @@ test.describe('a field is priced by its size', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const small = g.debugCost('farm');
       const big = g.debugCost('farm', 8, 8);
       const mid = g.debugCost('farm', 6, 4);
@@ -5619,7 +6284,7 @@ test.describe('policies', () => {
     await open2d(page);
     const out = await page.evaluate((mk) => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const th = eval(mk)(g, 1);
 
       // No hall, no rules — checked before the hall is staffed at all.
@@ -5710,7 +6375,7 @@ test.describe('policies', () => {
     await open2d(page);
     const out = await page.evaluate((mk) => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const th = eval(mk)(g, 0); // built, but nobody at a desk
       const unstaffed = g.debugFestival();
 
@@ -5925,7 +6590,7 @@ test.describe('save versioning', () => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       g.debugSaveSlot(1);
 
       const key = 'little-village-save-v12-slot1';
@@ -6054,7 +6719,7 @@ test.describe('builder shifts', () => {
     const out = await page.evaluate(async () => {
       const g = (window as any).__village;
       // Seeded: how far the workforce has to walk is the map's call, and the budget here is tight.
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       g.debugAfford('chapel');
@@ -6319,7 +6984,7 @@ test.describe('auto-staffing', () => {
         localStorage.setItem('village-auto-staff', auto ? 'on' : 'off');
         // Fixed seed: on an unlucky random map the builders' haul-and-raise could stall, leaving the
         // hut unbuilt when the assertion below expects it up. A known-good map removes that flake.
-        g.startNewGame('small', 'easy', false, 0, 4242);
+        g.startNewGame('small', 'easy', false);
         const b = eval(raise)();
         return {
           pref: g.state.autoStaff,
@@ -6354,7 +7019,7 @@ test.describe('auto-staffing', () => {
       const run = (auto: boolean) => {
         localStorage.setItem('village-auto-staff', auto ? 'on' : 'off');
         // Seeded: how far the workforce has to walk is the map's call, and the budget here is tight.
-        g.startNewGame('small', 'easy', false, 0, 4242);
+        g.startNewGame('small', 'easy', false);
         const s = g.state;
         const b = eval(raise)();
         // With the setting off the player would have staffed it; do that, so both branches are
@@ -6514,7 +7179,7 @@ test.describe('roads get laid', () => {
       const g = (window as any).__village;
       // Seeded: the village has to fill five gatherer huts and then walk a builder out to the
       // road, and on an awkward map that ran past the 30s test budget.
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       const PATH_DIRT_PLAN = 1, PATH_DIRT = 2;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
@@ -6621,7 +7286,7 @@ test.describe('lives run on ticks, not seasons', () => {
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
       // Seeded: this walks years of simulation, and how long that takes is the map's call.
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       barn.store.wood = 1000;
@@ -6733,7 +7398,7 @@ test.describe('work happens where the work is', () => {
       // Seeded: the woodcutter is placed by walking out from the barn, and on an unseeded map how
       // far it lands and how the walk falls swing enough that a rare run never catches the worker
       // inside. The seed fixes the map; the rule under test is unchanged.
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state; // after the new game: startNewGame replaces the state object wholesale
       s.limits = {}; // a village starts capped on firewood; this test is about where they stand
       const wc = eval(mk)('woodcutter', 6); // clear of the barn, so walking there is visible
@@ -6782,7 +7447,7 @@ test.describe('work happens where the work is', () => {
       const g = (window as any).__village;
       // Seeded: how far the nearest standing timber is depends on the map, and on a thin wood the
       // forester's furthest trip crept a fraction past the allowance below.
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state; // after the new game: startNewGame replaces the state object wholesale
       s.limits = {}; // easy starts above the wood cap; this test is about where a forester works
       const lum = eval(mk)('lumberyard', 4);
@@ -6853,7 +7518,7 @@ test.describe('work happens where the work is', () => {
     await open2d(page);
     const out = await page.evaluate((mk) => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state; // after the new game: startNewGame replaces the state object wholesale
       const lum = eval(mk)('lumberyard', 4);
       const r = g.debugWorkRadius(lum.id);
@@ -7168,7 +7833,7 @@ test.describe('drawing a road', () => {
       const g = (window as any).__village;
       // Seeded: the test needs a row where the river has open ground on both banks, and on an
       // unlucky map there is none — it was failing on the map, not on the router.
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const s = g.state;
       // Find open ground on each bank of the river, on the same row.
       for (let y = 4; y < s.h - 4; y++) {
@@ -7753,7 +8418,7 @@ test.describe('stockpile limits', () => {
     await open2d(page);
     await page.evaluate(() => {
       const g = (window as any).__village;
-      g.startNewGame('small', 'easy', false, 0, 4242);
+      g.startNewGame('small', 'easy', false);
       const barn = g.state.buildings.find((b: any) => b.type === 'barn');
       barn.store.glass = 120; // the village now holds a luxury good
       g.ui.updateHud(g.state, 1, false);

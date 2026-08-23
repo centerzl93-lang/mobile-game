@@ -645,6 +645,16 @@ export function isFireproof(type: BuildingType): boolean {
   return BUILDING_DEFS[type].fireproof === true;
 }
 
+/**
+ * True while a building cannot work or house anyone — BURNING or DAMAGED. It stays `built` (and
+ * so still stands, still blocks movement) either way; this is the one flag every occupancy/output
+ * gate needs to add on top of the usual `b.built` check. See `staffWanted`, and the houses/shelters
+ * filters in `assignHomesAndJobs`.
+ */
+export function disabledByFire(b: Building): boolean {
+  return !!b.fireTimer || !!b.damaged;
+}
+
 /** Whether this type employs villagers, and so gets a name of its own and a job-board entry. */
 export function isWorkplace(type: BuildingType): boolean {
   return BUILDING_DEFS[type].jobs > 0;
@@ -701,8 +711,29 @@ export interface Building {
    * buffer. Construction site (built=false): materials delivered so far.
    */
   store: Partial<Record<ResourceKind, number>>;
-  /** Seconds of fire remaining while burning down (undefined = not on fire). */
+  /**
+   * Seconds of fire remaining while the building is BURNING (undefined = not on fire). A burning
+   * building stays `built` and standing — it is a wall, not a hole — but is not `disabledByFire`'s
+   * business alone: everything that gates on occupancy/output also checks this. See `processFires`.
+   */
   fireTimer?: number;
+  /**
+   * Water deliveries landed on this fire so far, against `FIRE_DOUSE_TRIPS_NEEDED` — see
+   * `runFirefighter`/`processFires`. Reset to `undefined` the moment the fire resolves either way;
+   * meaningless while `fireTimer` is unset.
+   */
+  fireWater?: number;
+  /**
+   * DAMAGED: the building survived a fire (`fireTimer` ran out and it was not destroyed) but
+   * cannot function until repaired. Builders repair it exactly as they raise a new site — see
+   * `repairCostOf`/`repairWorkOf` — except the materials land in `repairStore`, not `store`, so a
+   * partly-repaired workshop's leftover production stock is never mistaken for delivered repairs.
+   */
+  damaged?: boolean;
+  /** Builder-work laid toward a repair so far, 0..`repairWorkOf(type)`. Meaningless unless `damaged`. */
+  repairProgress?: number;
+  /** Materials builders have delivered toward the current repair, against `repairCostOf`. */
+  repairStore?: Partial<Record<ResourceKind, number>>;
   /**
    * Marked for demolition: builders will come and pull it down. It keeps working — housing its
    * residents, employing its workers — right up until it is actually razed, so marking a mistake
@@ -907,6 +938,11 @@ export interface Citizen {
    * half-rested crew from leaving a site with nothing delivered.
    */
   effort?: number;
+  /**
+   * Filled a bucket at a well and is walking it to a fire — see `runFirefighter`. `false`/absent
+   * means the next thing a free adult responding to a fire does is walk to the well, not the fire.
+   */
+  waterLoad?: boolean;
   // ---- transient navigation state (not persisted; recomputed after load) ----
   route?: { x: number; y: number }[]; // cached A* waypoints toward the current destination
   routeI?: number; // index of the next waypoint to reach
@@ -1794,6 +1830,14 @@ export interface GameState {
    * means nothing is queued.
    */
   razePaths?: number[];
+  /**
+   * Tile indices left scorched by a building that burned down — a purely visual scar (see
+   * `renderer3d.ts`/`renderer.ts`), never a gameplay effect. Added when fire destroys a building
+   * (`markScorched`, fire only — an ordinary demolition leaves bare ground, not a burn scar) and
+   * cleared the moment anything is built over the tile again (`placeBuilding`), which is what
+   * makes it *temporary*: there is no timer, only "still empty" or "built over".
+   */
+  scorched?: number[];
   /** How many free adults the player wants assigned as Builders. Only Builders construct work
    * buildings; paths can be laid by any adult. Idle builders pitch in as laborers. */
   desiredBuilders: number;
@@ -1803,6 +1847,14 @@ export interface GameState {
    * (or the state identity) changes — keeping per-tick nav ~O(1) on large maps.
    */
   navVersion?: number;
+  /**
+   * Set the tick a disaster breaks out (a building catches fire, a bridge burns, a sickness
+   * starts spreading) and cleared the moment the frame loop notices it — see `Game.frame` and
+   * `debugAdvanceAtSpeed`. The one thing every disaster shares is that the player should be
+   * looking at it, not watching it happen at 10× while doing something else on the far side of
+   * the map, so noticing this is what snaps the game speed back to 1×.
+   */
+  disasterAlert?: boolean;
   /**
    * The founding clearing — where the village was first pegged out.
    *
@@ -2790,8 +2842,24 @@ export const HOSPITAL_HEALTH_BONUS = 10;
 export const HOSPITAL_MEDICINE_PER_CITIZEN = 0.15;
 export const MED_LOAD = 5; // medicine produced per herbalist work cycle (× forest)
 export const FIRE_CHANCE = 0.05; // base chance per season a building ignites
-export const WELL_RADIUS = 6; // wells protect buildings within this radius
-export const WELL_DOUSE_CHANCE = 0.85; // chance a nearby well stops a fire
+/**
+ * How many water deliveries a fire needs, from any well, before the building is even in the
+ * running to survive. Below this it is an *untreated* fire — see `FIRE_SURVIVAL_CHANCE` below and
+ * `runFirefighter`/`processFires` in `simulation.ts`, which is where the deliveries actually
+ * happen: a villager round-trips between the nearest well to the fire and the fire itself, and how
+ * many trips land before `FIRE_BURN_SECONDS` runs out is purely a function of how far that well is
+ * and how many hands are free to make the trip. Wells no longer prevent ignition on their own —
+ * this is the only thing distance to one now buys a village.
+ */
+export const FIRE_DOUSE_TRIPS_NEEDED = 3;
+/**
+ * How far (tiles) a villager will drop what they're doing — their job, their break, a laborer's
+ * harvesting or road-laying — to go help fight a fire. This is deliberately not the free-labour
+ * pool alone: a fire is the whole village's emergency, so any adult within reach responds,
+ * employed or not (see `nearbyFire`/`runCitizen`). It is bounded so a mine on the far side of the
+ * map does not empty itself over a cottage fire nobody there could reach in time anyway.
+ */
+export const FIRE_RESPONSE_RADIUS = 24;
 /**
  * Chance a collapsing building sets a neighbour alight, by how far away the neighbour is.
  *
@@ -2814,7 +2882,70 @@ export const STONE_BUILT: BuildingType[] = ['stonehouse', 'chapel', 'townhall'];
 export function isStoneBuilt(type: BuildingType): boolean {
   return STONE_BUILT.includes(type);
 }
-export const FIRE_BURN_SECONDS = 8; // how long a building burns before collapsing
+/**
+ * How long a building spends BURNING before the outcome (survive/destroy) is decided.
+ *
+ * Tied to `SEASON_LENGTH` rather than picked out of the air: an eighth of a season is ~75 real
+ * seconds at 1× — long enough that a player who is actually looking at the village (the game
+ * itself drops back to 1× the moment anything catches — see `disasterAlert`) has time to notice
+ * the 🔥, free up hands to fight it, and reassign whoever the building just let go — but short
+ * enough that a fire is still a crisis, not a slow leak the player can ignore.
+ */
+export const FIRE_BURN_SECONDS = SEASON_LENGTH / 8;
+/**
+ * Chance a fire that got `FIRE_DOUSE_TRIPS_NEEDED` water in time survives as DAMAGED rather than
+ * being destroyed outright. Masonry halves the destroy chance the same way it halves everything
+ * else about fire — see `STONE_FIRE_FACTOR` — so a stone building is still more likely to come
+ * through it than a timber one. An *untreated* fire (see `FIRE_DOUSE_TRIPS_NEEDED`) never reaches
+ * this roll at all — it always burns down.
+ */
+export const FIRE_SURVIVAL_CHANCE = 0.55;
+/** Floor on `fireIntensity` while a building is still burning — a fire is never drawn as fully
+ *  out until it actually is; this is what keeps the very first frame from reading as unlit. */
+export const FIRE_MIN_INTENSITY = 0.16;
+/**
+ * How large a fire reads right now, 0..1 — for the renderers only, no gameplay effect.
+ *
+ * Grows with how long it has burned (barely alight at ignition, largest just before it would
+ * collapse), the same way a real fire spreads and climbs the longer it goes unanswered. A bucket
+ * brigade runs the other way: every load of water landed (`fireWater`, against
+ * `FIRE_DOUSE_TRIPS_NEEDED`) damps it back down, so a fire being fought visibly shrinks *before*
+ * `processFires` actually resolves it — the flame dying down is the tell that it is being won,
+ * not only the burn-down/survive result at the very end.
+ */
+export function fireIntensity(b: Building): number {
+  if (!b.fireTimer) return 0;
+  const age = 1 - Math.max(0, Math.min(1, b.fireTimer / FIRE_BURN_SECONDS));
+  const doused = Math.min(1, (b.fireWater ?? 0) / FIRE_DOUSE_TRIPS_NEEDED);
+  return Math.max(FIRE_MIN_INTENSITY, age) * (1 - doused);
+}
+/**
+ * Repair reuses the ordinary construction pipeline (see `pickSite`/`runBuilder` in
+ * `simulation.ts`), just against a smaller bill: a burnt-out shell needs new timbers and a roof,
+ * not a whole new foundation. One dial for both the materials and the labour, the same way
+ * `DEMO_WORK_FRACTION` is one dial for a teardown.
+ */
+export const REPAIR_FRACTION = 0.4;
+export function repairWorkOf(type: BuildingType): number {
+  return buildWorkOf(type) * REPAIR_FRACTION;
+}
+/** What repairing this building costs, at the size it was actually raised. Rounded up so a small
+ *  repair never costs nothing. */
+export function repairCostOf(b: Placed): Partial<Record<ResourceKind, number>> {
+  const cost = costOf(b);
+  const out: Partial<Record<ResourceKind, number>> = {};
+  for (const k of Object.keys(cost) as ResourceKind[]) {
+    out[k] = Math.max(1, Math.ceil((cost[k] ?? 0) * REPAIR_FRACTION));
+  }
+  return out;
+}
+/** How far a repair has got, 0..1. */
+export function repairFraction(b: Building): number {
+  const total = repairWorkOf(b.type);
+  if (total <= 0) return 1;
+  const p = (b.repairProgress ?? 0) / total;
+  return p < 0 ? 0 : p > 1 ? 1 : p;
+}
 
 // ---- Production (per assigned worker, per season, before local factors) ----
 export const GATHER_FOOD_PER_SEASON = 15;
@@ -3158,7 +3289,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   well: {
     type: 'well', name: 'Well', emoji: '⛲', category: 'civic', w: 1, h: 1,
     cost: { wood: 16 }, jobs: 0, work: 10, fireproof: true,
-    desc: 'Provides water to fight fires. Buildings nearby rarely burn down.',
+    desc: 'Where a bucket brigade fills up to fight a fire. Does not stop a building catching, but the well nearest the blaze is where every trip starts — keep one within reach of anything that can burn, or a fire there goes untreated.',
   },
   market: {
     type: 'market', name: 'Market', emoji: '🛒', category: 'resources', w: 4, h: 4,

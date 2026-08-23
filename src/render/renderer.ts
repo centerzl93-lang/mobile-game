@@ -27,6 +27,7 @@ import {
   PATH_BRIDGE_PLAN,
   HARVEST_WOOD,
   HARVEST_STONE,
+  fireIntensity,
 } from '../types';
 import { tileIndex } from '../game/world';
 
@@ -201,6 +202,19 @@ export class Renderer {
       }
     }
 
+    // Burn scars left by fire-destroyed buildings — bare, dark ground; gone the moment something
+    // is built over the tile again (see `GameState.scorched`).
+    if (s.scorched) {
+      ctx.fillStyle = 'rgba(18,15,13,0.55)';
+      for (const idx of s.scorched) {
+        const tx = idx % MAP_W;
+        const ty = (idx / MAP_W) | 0;
+        if (tx < minX || tx > maxX || ty < minY || ty > maxY) continue;
+        const [sx, sy] = this.camera.worldToScreen(tx, ty, w, h);
+        ctx.fillRect(sx, sy, p + 1, p + 1);
+      }
+    }
+
     // Faint work-radius rings for forest-worked buildings.
     for (const b of s.buildings) {
       const def = BUILDING_DEFS[b.type];
@@ -269,10 +283,18 @@ export class Renderer {
         ctx.stroke();
         this.glyph(def.emoji, sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.55);
         if (b.fireTimer) {
-          ctx.fillStyle = 'rgba(224,84,32,0.45)';
+          // Small at ignition, growing the longer it burns — and shrinking back down as a bucket
+          // brigade lands water on it, the same "catching" vs. "being put out" the 3D flame shows.
+          const intensity = fireIntensity(b);
+          ctx.fillStyle = `rgba(224,84,32,${(0.15 + 0.35 * intensity).toFixed(2)})`;
           roundRect(ctx, sx + 2, sy + 2, bw - 4, bh - 4, 5);
           ctx.fill();
-          this.glyph('🔥', sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.6);
+          this.glyph('🔥', sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * (0.3 + 0.35 * intensity));
+        } else if (b.damaged) {
+          ctx.fillStyle = 'rgba(120,90,40,0.4)';
+          roundRect(ctx, sx + 2, sy + 2, bw - 4, bh - 4, 5);
+          ctx.fill();
+          this.glyph('⚠️', sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.55);
         }
         // Marked for demolition: say so on the map, or the order is invisible until a builder
         // happens to walk over and start swinging.

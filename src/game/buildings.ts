@@ -257,7 +257,21 @@ export function placeBuilding(
   // A path under the footprint is torn up: the tile belongs to the building now. (Planning a path
   // over an existing building is refused outright — see `planPath`.)
   clearPathsUnder(s, b.x, b.y, footprintW(b), footprintH(b));
+  // Building over a burn scar is what clears it — see `GameState.scorched`.
+  clearScorchedUnder(s, b);
   return b;
+}
+
+/** Building over a burn scar is what makes it temporary — see `GameState.scorched`. */
+function clearScorchedUnder(s: GameState, b: Building): void {
+  if (!s.scorched || s.scorched.length === 0) return;
+  const fw = footprintW(b);
+  const fh = footprintH(b);
+  const covered = new Set<number>();
+  for (let dy = 0; dy < fh; dy++) {
+    for (let dx = 0; dx < fw; dx++) covered.add(tileIndex(b.x + dx, b.y + dy));
+  }
+  s.scorched = s.scorched.filter((i) => !covered.has(i));
 }
 
 /** Mark any trees / loose stone under a building's footprint for harvesting. */
@@ -372,6 +386,18 @@ export function cancelDemolish(b: Building): void {
  * job right up to the moment it stops existing.
  */
 export function razeBuilding(s: GameState, b: Building): void {
+  // A building razed mid-repair (either the fire that damaged it destroyed a neighbour's rebuild
+  // attempt, or the player just demolished a damaged building instead of fixing it) has whatever
+  // its builders already delivered sitting in `repairStore` — fold that into the rubble pile too,
+  // rather than letting it quietly vanish.
+  if (b.repairStore) {
+    for (const [kind, amount] of Object.entries(b.repairStore) as [ResourceKind, number][]) {
+      if (amount > 0) b.store[kind] = (b.store[kind] ?? 0) + amount;
+    }
+    b.repairStore = {};
+  }
+  b.damaged = false;
+  b.repairProgress = 0;
   for (const [kind, amount] of Object.entries(costOf(b)) as [ResourceKind, number][]) {
     const refund = Math.floor(amount * REFUND_FRACTION);
     if (refund > 0) b.store[kind] = (b.store[kind] ?? 0) + refund;

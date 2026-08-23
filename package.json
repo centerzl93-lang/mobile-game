@@ -1,7 +1,7 @@
 {
   "name": "little-village",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Little Village \u2014 an original survival village-builder, installable on iPhone as a PWA.",
   "scripts": {

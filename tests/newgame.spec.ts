@@ -8200,6 +8200,363 @@ test.describe('the market delivers', () => {
   });
 });
 
+// Regression coverage for a bug where a household's own shopper (`stockLarder`) could only see
+// food sitting in a *barn* (`nearestBarnOnlyWith`), never a market — even though a producer's own
+// haul (`addNearest`) freely drops output into whichever storage node is nearest with room, market
+// included. A market built anywhere near production quietly became a one-way sink: food that
+// landed there was invisible to every household outside its delivery circle (or while it had no
+// vendor at all), so building a market could make food access *worse* than having none. The fix
+// widens the household's own fetch leg to every storage node (`nearestBarnWith`), the same set
+// `addNearest` already draws from — a household shops wherever the village actually has stock,
+// exactly as it always could at a barn, with the market's own vendor delivery layered on top.
+test.describe('market / household larder logistics', () => {
+  /**
+   * Starts a fresh village and lets `assignHomesAndJobs` settle everyone into a house — citizens
+   * are born homeless (`homeId: null`) and only get one on the first tick or two of `update()`, so
+   * anything that needs to find "a house with residents" has to run this first.
+   */
+  async function newSettledVillage(page: Page, seed?: number): Promise<void> {
+    await page.evaluate((seed) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, undefined, seed);
+      g.debugAdvance(3);
+      const s = g.state;
+      // The founding barn starts stocked (300 of each food, `SURVIVAL_START`), so by the time
+      // homes have settled a shopper may already be mid-errand carrying some of it home. Left in
+      // place, that in-flight load lands in a larder a few ticks into any test below and makes it
+      // look like the fetch under test worked when it was really yesterday's barn-only trip
+      // finishing up. Clear it — every test sets up its own stock deliberately after this.
+      for (const c of s.citizens) {
+        c.carry = null;
+        c.pending = null;
+        c.task = { kind: 'idle' };
+      }
+    }, seed);
+  }
+
+  /**
+   * Places a finished `type` near the barn and returns its id. Goes around `finishConstruction`
+   * (which the normal build path runs) by setting `built`/`progress` directly, so `autoStaff`
+   * never overwrites the `desiredWorkers` a test sets by hand — the same shortcut the "market
+   * delivers" tests above use. Call this only after `newSettledVillage` — it acts on whatever
+   * village currently exists in the page.
+   */
+  async function placeBuilt(page: Page, type: string, desiredWorkers = 0): Promise<number> {
+    const id = await page.evaluate(
+      ({ type, desiredWorkers }) => {
+        const g = (window as any).__village;
+        const s = g.state;
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        g.debugAfford(type); // `canPlace` also checks the cost is in storage, even for a site
+        for (let r = 3; r < 22; r++)
+          for (let dy = -r; dy <= r; dy++)
+            for (let dx = -r; dx <= r; dx++) {
+              if (!g.debugCanPlace(type, barn.x + dx, barn.y + dy).ok) continue;
+              const newId = g.debugPlace(type, barn.x + dx, barn.y + dy);
+              if (newId == null) continue;
+              const b = s.buildings.find((x: any) => x.id === newId);
+              b.built = true;
+              b.progress = g.debugBuildWork(type);
+              b.desiredWorkers = desiredWorkers;
+              return b.id as number;
+            }
+        return null;
+      },
+      { type, desiredWorkers },
+    );
+    if (id == null) throw new Error(`nowhere to place ${type}`);
+    return id;
+  }
+
+  test('a household stocks its larder from a barn with no market built', async ({ page }) => {
+    await open2d(page);
+    // Retry across generated maps — a founding house occasionally lands an awkward walk from its
+    // own barn, which is a placement accident and not what this test is checking.
+    let out: any = { fruit: 0 };
+    for (let attempt = 0; attempt < 6 && out.fruit <= 0; attempt++) {
+      await newSettledVillage(page);
+      out = await page.evaluate(() => {
+        const g = (window as any).__village;
+        const s = g.state;
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        const house = s.buildings.find(
+          (b: any) => b.type === 'house' && b.built && s.citizens.some((c: any) => c.homeId === b.id),
+        );
+        house.store = {};
+        barn.store = { fruit: 300 };
+        // Isolate the result to this one household's own errand-runners.
+        for (const c of s.citizens) if (c.homeId !== house.id) c.sick = true;
+        for (let i = 0; i < 400; i++) g.debugAdvance(0.5);
+        return { fruit: house.store.fruit ?? 0, barnFruit: barn.store.fruit ?? 0 };
+      });
+    }
+    expect(out.fruit, 'the larder filled from the barn').toBeGreaterThan(0);
+  });
+
+  test('a household stocks its larder straight from a market, with no vendor delivering', async ({
+    page,
+  }) => {
+    await open2d(page);
+    // Retry across generated maps, as the "market delivers" tests above do: a market dropped on a
+    // random map is sometimes a long walk from the one house being watched, which is a placement
+    // accident rather than anything about whether the fetch itself works.
+    let result: any = { attempts: 0 };
+    for (let attempt = 0; attempt < 6; attempt++) {
+      await newSettledVillage(page);
+      const marketId = await placeBuilt(page, 'market', 0);
+      result = await page.evaluate(
+        ({ marketId }) => {
+          const g = (window as any).__village;
+          const s = g.state;
+          const house = s.buildings.find(
+            (b: any) => b.type === 'house' && b.built && s.citizens.some((c: any) => c.homeId === b.id),
+          );
+          house.store = {};
+          const barn = s.buildings.find((b: any) => b.type === 'barn');
+          barn.store = {}; // nothing to fetch here — proves the market, not the barn, supplied it
+          const mk = s.buildings.find((b: any) => b.id === marketId);
+          mk.store = { fruit: 300 };
+          // Unstaffed (desiredWorkers: 0 from placeBuilt) — no vendor ever runs, so any food that
+          // reaches the larder got there by the household's own hand, straight off the market shelf.
+          for (const c of s.citizens) if (c.homeId !== house.id) c.sick = true;
+          for (let i = 0; i < 400; i++) g.debugAdvance(0.5);
+          return { fruit: house.store.fruit ?? 0, marketFruit: mk.store.fruit ?? 0 };
+        },
+        { marketId },
+      );
+      if (result.fruit > 0) break;
+    }
+    expect(result.fruit, 'the larder filled straight from the market shelf').toBeGreaterThan(0);
+  });
+
+  test('building a market does not leave households worse fed than having none at all', async ({
+    page,
+  }) => {
+    await open2d(page);
+    // Retry across generated maps (same reasoning as the market-delivery tests): a bad roll can
+    // put the market on a long detour from some houses, which is a placement accident, not
+    // anything this fix changes. Both scenarios below always share one seed per attempt, so within
+    // an attempt they are the same village — the only thing that differs is where the food sits.
+    let noMarket = 0;
+    let withMarket = 0;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const seed = 1000 + attempt;
+
+      await newSettledVillage(page, seed);
+      noMarket = await page.evaluate(() => {
+        const g = (window as any).__village;
+        const s = g.state;
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        const houses = s.buildings.filter((b: any) => b.type === 'house' && b.built);
+        for (const h of houses) h.store = {};
+        barn.store = { fruit: 300 };
+        for (let i = 0; i < 600; i++) g.debugAdvance(0.5);
+        return houses.reduce((n: number, h: any) => n + (h.store.fruit ?? 0), 0);
+      });
+
+      // Same village, same total food — but half of it lands in a market instead of the barn, the
+      // way a producer's own haul naturally splits once a market is nearer than the barn for some
+      // of them. The market is left unstaffed, so this isolates the household's own fetch leg from
+      // any help a vendor's delivery run would add — the fix must hold with the market doing nothing.
+      await newSettledVillage(page, seed);
+      const marketId = await placeBuilt(page, 'market', 0);
+      withMarket = await page.evaluate(
+        ({ marketId }) => {
+          const g = (window as any).__village;
+          const s = g.state;
+          const barn = s.buildings.find((b: any) => b.type === 'barn');
+          const houses = s.buildings.filter((b: any) => b.type === 'house' && b.built);
+          for (const h of houses) h.store = {};
+          barn.store = { fruit: 150 };
+          const mk = s.buildings.find((b: any) => b.id === marketId);
+          mk.store = { fruit: 150 };
+          for (let i = 0; i < 600; i++) g.debugAdvance(0.5);
+          return houses.reduce((n: number, h: any) => n + (h.store.fruit ?? 0), 0);
+        },
+        { marketId },
+      );
+      if (withMarket >= noMarket * 0.9) break;
+    }
+
+    expect(withMarket, 'a market must not make household food access worse').toBeGreaterThanOrEqual(
+      noMarket * 0.9,
+    );
+  });
+
+  test("a market vendor's interrupted delivery does not lose or strand the food", async ({
+    page,
+  }) => {
+    await open2d(page);
+    // Retry across generated maps — the vendor may be standing anywhere in the village when
+    // hand-assigned, and how long the walk back to the market takes is a question about the map,
+    // not about whether an interrupted delivery loses its load.
+    let out: any = { stillCarrying: true, task: 'toHouse', before: 0, after: 0 };
+    for (let attempt = 0; attempt < 5 && out.stillCarrying; attempt++) {
+      await newSettledVillage(page);
+      const marketId = await placeBuilt(page, 'market', 1);
+      out = await page.evaluate(
+        ({ marketId }) => {
+          const g = (window as any).__village;
+          const s = g.state;
+          const mk = s.buildings.find((b: any) => b.id === marketId);
+          const house = s.buildings.find((b: any) => b.type === 'house' && b.built);
+          // Clear every other source of fruit in the village so the only fruit left to account for
+          // is the load in the vendor's hands — `debugTotalHeld` would otherwise also see it
+          // slowly ticking down from ordinary eating, which is real consumption, not a lost
+          // reservation.
+          for (const b of s.buildings) if (b.store) b.store = {};
+          mk.store = { fruit: 10 };
+          // Hand-assign a vendor rather than waiting on `assignHomesAndJobs` — and put them in
+          // `b.workers` too, or the very next tick's reconciliation reads them as unemployed and
+          // clears `jobId` straight back out (it trusts `workers`, not `jobId`, as the source of
+          // truth).
+          const vendor = s.citizens.find((c: any) => c.age >= 16);
+          mk.workers = [vendor.id];
+          vendor.jobId = mk.id;
+          // Hand-place the vendor mid-delivery, carrying groceries to `house`, and stand them right
+          // at the market's own door — `debugApproach` is the same routing the game uses, so this
+          // is a guaranteed-walkable spot, not a guess at map geometry. The point is testing what
+          // happens on the return leg once the house vanishes, not how long a walk takes to get
+          // there.
+          const doorstep = g.debugApproach(mk.id, mk.x, mk.y);
+          vendor.x = doorstep.x;
+          vendor.y = doorstep.y;
+          vendor.carry = { kind: 'fruit', amount: 10 };
+          vendor.task = { kind: 'toHouse', targetId: house.id };
+          const before = g.debugTotalHeld('fruit');
+          // The house is demolished mid-errand — the target the vendor was walking toward vanishes.
+          s.buildings = s.buildings.filter((b: any) => b.id !== house.id);
+          for (const c of s.citizens) if (c.id !== vendor.id) c.sick = true;
+          for (let i = 0; i < 30; i++) g.debugAdvance(0.5);
+          const after = g.debugTotalHeld('fruit');
+          return { before, after, stillCarrying: !!vendor.carry, task: vendor.task.kind };
+        },
+        { marketId },
+      );
+    }
+    // A little was genuinely eaten in the window (nobody's starving them on purpose) — what must
+    // not happen is the load vanishing wholesale, which a stuck reservation would look like.
+    expect(out.after, 'the load was set back down, not erased').toBeGreaterThan(out.before - 3);
+    expect(out.stillCarrying, "the vendor isn't stuck holding a delivery for a house that's gone").toBe(false);
+    expect(out.task, "the vendor's task moved on").not.toBe('toHouse');
+  });
+
+  test("a household hauler's interrupted trip does not lose or strand the food", async ({ page }) => {
+    await open2d(page);
+    await newSettledVillage(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const s = g.state;
+      const house = s.buildings.find(
+        (b: any) => b.type === 'house' && b.built && s.citizens.some((c: any) => c.homeId === b.id && c.age >= 16),
+      );
+      const shopper = s.citizens.find((c: any) => c.homeId === house.id && c.age >= 16);
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // Same isolation as the vendor test above — nothing else in the village holds fruit, so the
+      // only way the total moves is genuine eating or an actual lost reservation.
+      for (const b of s.buildings) if (b.store) b.store = {};
+      shopper.carry = { kind: 'fruit', amount: 10 };
+      shopper.task = { kind: 'toLarder' };
+      // Stand them right at the barn's own door — `debugApproach` is the same routing the game
+      // uses, so the fallback trip after home vanishes is short and guaranteed walkable.
+      const doorstep = g.debugApproach(barn.id, barn.x, barn.y);
+      shopper.x = doorstep.x;
+      shopper.y = doorstep.y;
+      const before = g.debugTotalHeld('fruit');
+      // Home burns down mid-errand.
+      s.buildings = s.buildings.filter((b: any) => b.id !== house.id);
+      shopper.homeId = null;
+      for (const c of s.citizens) if (c.id !== shopper.id) c.sick = true;
+      for (let i = 0; i < 30; i++) g.debugAdvance(0.5);
+      const after = g.debugTotalHeld('fruit');
+      return { before, after, stillCarrying: !!shopper.carry };
+    });
+    // A little was genuinely eaten in the window — what must not happen is the load vanishing
+    // wholesale, which a stuck reservation would look like.
+    expect(out.after, 'the load was set back down, not erased').toBeGreaterThan(out.before - 3);
+    expect(out.stillCarrying, 'the load was set back down rather than lost').toBe(false);
+  });
+
+  test('two markets split stock without duplicating it or deadlocking delivery', async ({ page }) => {
+    await open2d(page);
+    // Retry across generated maps — same reachability caveat as the other market tests.
+    let out: any = { fruit: 0, before: 0, after: 0 };
+    for (let attempt = 0; attempt < 6 && out.fruit <= 0; attempt++) {
+      await newSettledVillage(page);
+      const m1 = await placeBuilt(page, 'market', 0);
+      const m2 = await placeBuilt(page, 'market', 0);
+      out = await page.evaluate(
+        ({ m1, m2 }) => {
+          const g = (window as any).__village;
+          const s = g.state;
+          const house = s.buildings.find(
+            (b: any) => b.type === 'house' && b.built && s.citizens.some((c: any) => c.homeId === b.id),
+          );
+          // Clear every other food source so the 200 fruit on the two stalls is all there is —
+          // ordinary eating still nibbles at it over the run, but nothing else can add to the total.
+          for (const b of s.buildings) if (b.store) b.store = {};
+          s.buildings.find((b: any) => b.id === m1).store = { fruit: 100 };
+          s.buildings.find((b: any) => b.id === m2).store = { fruit: 100 };
+          const before = g.debugTotalHeld('fruit');
+          for (const c of s.citizens) if (c.homeId !== house.id) c.sick = true;
+          for (let i = 0; i < 400; i++) g.debugAdvance(0.5);
+          const after = g.debugTotalHeld('fruit');
+          return { before, after, fruit: house.store.fruit ?? 0 };
+        },
+        { m1, m2 },
+      );
+    }
+    // Duplication would show up as *more* fruit existing than was ever put down; ordinary eating
+    // over the run only ever moves the total the other way, so the upper bound stays tight.
+    expect(out.after, 'nothing was duplicated across the two stalls').toBeLessThanOrEqual(out.before + 0.01);
+    expect(out.fruit, 'the household reached both without deadlocking').toBeGreaterThan(0);
+  });
+
+  test('a genuine shortage still behaves — no duplication, no stall, larders share what exists', async ({
+    page,
+  }) => {
+    await open2d(page);
+    await newSettledVillage(page);
+    const marketId = await placeBuilt(page, 'market', 0);
+    const out = await page.evaluate(
+      ({ marketId }) => {
+        const g = (window as any).__village;
+        const s = g.state;
+        const houses = s.buildings.filter((b: any) => b.type === 'house' && b.built);
+        // Clear every store in the village, market and every larder included, so the 10 fruit put
+        // down below is the only food anywhere — a real famine, not a staged one that just looks
+        // like it because other food is quietly propping households up.
+        for (const b of s.buildings) if (b.store) b.store = {};
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        barn.store = { fruit: 5 }; // far short of what every household wants on hand
+        s.buildings.find((b: any) => b.id === marketId).store = { fruit: 5 };
+        // Nobody may work a bench — a producer topping the 10 back up would not be a shortage —
+        // only run their household's own errands, which is what a shortage forces everyone onto.
+        // Also drop whatever anyone was already holding from the settling advance above, or their
+        // hands would quietly extend the 10 fruit this test is meant to be scarce.
+        for (const c of s.citizens) {
+          c.jobId = null;
+          c.carry = null;
+          c.pending = null;
+        }
+        const before = g.debugTotalHeld('fruit');
+        for (let i = 0; i < 400; i++) g.debugAdvance(0.5);
+        const after = g.debugTotalHeld('fruit');
+        const held = houses.reduce((n: number, h: any) => n + (h.store.fruit ?? 0), 0);
+        return { before, after, held };
+      },
+      { marketId },
+    );
+    // A real shortage still only ever has 10 fruit to account for — some gets eaten straight out
+    // of the barn/market (correct: consumption draws storage directly, not only via a larder), and
+    // none of it is ever invented. Nothing here hangs or throws either, which the run completing
+    // already proves.
+    expect(out.after, 'a shortage never manufactures extra food').toBeLessThanOrEqual(out.before + 0.01);
+    // The 10 fruit that existed cannot become more than 10 fruit spread across every larder.
+    expect(out.held, 'no duplication into the larders either').toBeLessThanOrEqual(10.01);
+  });
+});
+
 test.describe('stockpile limits', () => {
   test('a village is founded with caps already set, pitched at what it was handed', async ({
     page,

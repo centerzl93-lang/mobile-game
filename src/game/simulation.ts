@@ -1298,11 +1298,18 @@ function stockLarder(s: GameState, c: Citizen, dt: number): boolean {
   const mates = s.citizens.filter((r) => r.homeId === home.id && isAdult(r) && !r.sick);
   const slot = Math.max(0, mates.findIndex((r) => r.id === c.id));
   const want = wants[slot % wants.length];
-  const barn = nearestBarnOnlyWith(s, buildingCenter(home), want.kind);
+  // Any storage node, barn *or* market: a household shopping for itself is not the market's own
+  // restocking run (that one deliberately stays barn-only, see `nearestBarnOnlyWith`), so it must
+  // see everything the village has on a shelf. Barn-only here was the actual bug — a producer's
+  // haul naturally lands in whichever storage node is nearest with room, market included, and a
+  // shopper who could not see market stock treated food sitting in a market as gone, even though
+  // nothing had left the village. That starved households a market wasn't delivering to (outside
+  // its circle, unstaffed, or simply not there yet) while the barns sat comparatively empty.
+  const barn = nearestBarnWith(s, buildingCenter(home), want.kind);
   if (!barn) return false;
 
-  // First leg: fetch a load from the barn. Groceries come home by the basket
-  // (LARDER_CARRY_VOLUME), not the single work-load a labourer shifts.
+  // First leg: fetch a load from the nearest stocked barn or market. Groceries come home by the
+  // basket (LARDER_CARRY_VOLUME), not the single work-load a labourer shifts.
   goTo(c, buildingApproach(s, barn, c));
   if (stepTo(s, c, dt)) {
     const take = Math.min(carryLimit(want.kind, LARDER_CARRY_VOLUME), want.amount, barn.store[want.kind] ?? 0);

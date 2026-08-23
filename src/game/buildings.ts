@@ -372,6 +372,18 @@ export function cancelDemolish(b: Building): void {
  * job right up to the moment it stops existing.
  */
 export function razeBuilding(s: GameState, b: Building): void {
+  // A building razed mid-repair (either the fire that damaged it destroyed a neighbour's rebuild
+  // attempt, or the player just demolished a damaged building instead of fixing it) has whatever
+  // its builders already delivered sitting in `repairStore` — fold that into the rubble pile too,
+  // rather than letting it quietly vanish.
+  if (b.repairStore) {
+    for (const [kind, amount] of Object.entries(b.repairStore) as [ResourceKind, number][]) {
+      if (amount > 0) b.store[kind] = (b.store[kind] ?? 0) + amount;
+    }
+    b.repairStore = {};
+  }
+  b.damaged = false;
+  b.repairProgress = 0;
   for (const [kind, amount] of Object.entries(costOf(b)) as [ResourceKind, number][]) {
     const refund = Math.floor(amount * REFUND_FRACTION);
     if (refund > 0) b.store[kind] = (b.store[kind] ?? 0) + refund;

@@ -1606,7 +1606,7 @@ export class Renderer3D {
       // not started on looks exactly like one that has not, and the mark is what the player wants
       // to see. `type` too — an upgrade changes it in place, on the same building id.
       sig += b.id + ':' + b.type + ':' + stage + ':' + step + ':' + (b.fireTimer ? 1 : 0) +
-        ':' + (b.demolish ? 1 : 0) + ':' + (b.rot ?? 0) + ';';
+        ':' + (b.damaged ? 1 : 0) + ':' + (b.demolish ? 1 : 0) + ':' + (b.rot ?? 0) + ';';
     }
     if (sig === this.sig.bld) return;
     this.sig.bld = sig;
@@ -1654,14 +1654,16 @@ export class Renderer3D {
       }
       if (kind === 'frame') this.updateFrameClip(obj, framedFraction(b));
       // A condemned building glows the same way a burning one does, in a colder colour: whatever
-      // is standing there is coming down, and that has to read from across the map.
-      this.styleBuilding(obj, b.type, !!b.fireTimer, !!b.demolish);
+      // is standing there is coming down, and that has to read from across the map. A damaged one
+      // (survived a fire, waiting on repair) gets its own scorched, cooler-still tint — it isn't
+      // coming down, but it isn't working either.
+      this.styleBuilding(obj, b.type, !!b.fireTimer, !!b.demolish, !!b.damaged);
     }
 
-    // Chimney smoke emitters: hearth buildings that are built.
+    // Chimney smoke emitters: hearth buildings that are built and actually working.
     this.emitters = [];
     for (const b of s.buildings) {
-      if (!b.built || b.fireTimer || !SMOKE_BUILDINGS.has(b.type)) continue;
+      if (!b.built || b.fireTimer || b.damaged || !SMOKE_BUILDINGS.has(b.type)) continue;
       this.emitters.push([b.x + footprintW(b) / 2, TOP + buildingHeight(b.type) + 0.25, b.y + footprintH(b) / 2]);
     }
   }
@@ -1880,6 +1882,7 @@ export class Renderer3D {
     type: BuildingType,
     fire: boolean,
     condemned = false,
+    damaged = false,
   ): void {
     const isModel = !!obj.userData.model;
     const ownColours = !!obj.userData.ranch || !!obj.userData.site; // pen and site keep their own
@@ -1890,7 +1893,7 @@ export class Renderer3D {
       if (!mat || Array.isArray(mat)) return;
       // Box meshes get the flat building color; model meshes keep their own textures/colors.
       if (!isModel && !ownColours && mat.color) mat.color.set(BUILDING_COLORS[type]);
-      mat.emissive?.set(fire ? 0x812c10 : condemned ? 0x4a1410 : 0x000000);
+      mat.emissive?.set(fire ? 0x812c10 : condemned ? 0x4a1410 : damaged ? 0x2a2018 : 0x000000);
       mat.transparent = false;
       mat.opacity = 1;
       mat.depthWrite = true;

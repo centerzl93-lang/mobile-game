@@ -273,6 +273,11 @@ export class Renderer {
           roundRect(ctx, sx + 2, sy + 2, bw - 4, bh - 4, 5);
           ctx.fill();
           this.glyph('🔥', sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.6);
+        } else if (b.damaged) {
+          ctx.fillStyle = 'rgba(120,90,40,0.4)';
+          roundRect(ctx, sx + 2, sy + 2, bw - 4, bh - 4, 5);
+          ctx.fill();
+          this.glyph('⚠️', sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.55);
         }
         // Marked for demolition: say so on the map, or the order is invisible until a builder
         // happens to walk over and start swinging.

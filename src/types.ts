@@ -645,6 +645,16 @@ export function isFireproof(type: BuildingType): boolean {
   return BUILDING_DEFS[type].fireproof === true;
 }
 
+/**
+ * True while a building cannot work or house anyone — BURNING or DAMAGED. It stays `built` (and
+ * so still stands, still blocks movement) either way; this is the one flag every occupancy/output
+ * gate needs to add on top of the usual `b.built` check. See `staffWanted`, and the houses/shelters
+ * filters in `assignHomesAndJobs`.
+ */
+export function disabledByFire(b: Building): boolean {
+  return !!b.fireTimer || !!b.damaged;
+}
+
 /** Whether this type employs villagers, and so gets a name of its own and a job-board entry. */
 export function isWorkplace(type: BuildingType): boolean {
   return BUILDING_DEFS[type].jobs > 0;
@@ -701,8 +711,23 @@ export interface Building {
    * buffer. Construction site (built=false): materials delivered so far.
    */
   store: Partial<Record<ResourceKind, number>>;
-  /** Seconds of fire remaining while burning down (undefined = not on fire). */
+  /**
+   * Seconds of fire remaining while the building is BURNING (undefined = not on fire). A burning
+   * building stays `built` and standing — it is a wall, not a hole — but is not `disabledByFire`'s
+   * business alone: everything that gates on occupancy/output also checks this. See `processFires`.
+   */
   fireTimer?: number;
+  /**
+   * DAMAGED: the building survived a fire (`fireTimer` ran out and it was not destroyed) but
+   * cannot function until repaired. Builders repair it exactly as they raise a new site — see
+   * `repairCostOf`/`repairWorkOf` — except the materials land in `repairStore`, not `store`, so a
+   * partly-repaired workshop's leftover production stock is never mistaken for delivered repairs.
+   */
+  damaged?: boolean;
+  /** Builder-work laid toward a repair so far, 0..`repairWorkOf(type)`. Meaningless unless `damaged`. */
+  repairProgress?: number;
+  /** Materials builders have delivered toward the current repair, against `repairCostOf`. */
+  repairStore?: Partial<Record<ResourceKind, number>>;
   /**
    * Marked for demolition: builders will come and pull it down. It keeps working — housing its
    * residents, employing its workers — right up until it is actually razed, so marking a mistake
@@ -2814,7 +2839,50 @@ export const STONE_BUILT: BuildingType[] = ['stonehouse', 'chapel', 'townhall'];
 export function isStoneBuilt(type: BuildingType): boolean {
   return STONE_BUILT.includes(type);
 }
-export const FIRE_BURN_SECONDS = 8; // how long a building burns before collapsing
+/**
+ * How long a building spends BURNING before the outcome (survive/destroy) is decided.
+ *
+ * Tied to `SEASON_LENGTH` rather than picked out of the air: an eighth of a season is ~75 real
+ * seconds at 1× — long enough that a player who is actually looking at the village has time to
+ * notice the 🔥, act (a well nearby already rolled its douse chance at ignition; failing that,
+ * there is nothing left to do but watch and rebuild), and reassign whoever the building just let
+ * go — but short enough that a fire is still a crisis, not a slow leak the player can ignore.
+ */
+export const FIRE_BURN_SECONDS = SEASON_LENGTH / 8;
+/**
+ * Chance a building that finishes burning survives as DAMAGED rather than being destroyed
+ * outright. Masonry halves the destroy chance the same way it halves everything else about fire —
+ * see `STONE_FIRE_FACTOR` — so a stone building that catches is still more likely to come through
+ * it than a timber one.
+ */
+export const FIRE_SURVIVAL_CHANCE = 0.55;
+/**
+ * Repair reuses the ordinary construction pipeline (see `pickSite`/`runBuilder` in
+ * `simulation.ts`), just against a smaller bill: a burnt-out shell needs new timbers and a roof,
+ * not a whole new foundation. One dial for both the materials and the labour, the same way
+ * `DEMO_WORK_FRACTION` is one dial for a teardown.
+ */
+export const REPAIR_FRACTION = 0.4;
+export function repairWorkOf(type: BuildingType): number {
+  return buildWorkOf(type) * REPAIR_FRACTION;
+}
+/** What repairing this building costs, at the size it was actually raised. Rounded up so a small
+ *  repair never costs nothing. */
+export function repairCostOf(b: Placed): Partial<Record<ResourceKind, number>> {
+  const cost = costOf(b);
+  const out: Partial<Record<ResourceKind, number>> = {};
+  for (const k of Object.keys(cost) as ResourceKind[]) {
+    out[k] = Math.max(1, Math.ceil((cost[k] ?? 0) * REPAIR_FRACTION));
+  }
+  return out;
+}
+/** How far a repair has got, 0..1. */
+export function repairFraction(b: Building): number {
+  const total = repairWorkOf(b.type);
+  if (total <= 0) return 1;
+  const p = (b.repairProgress ?? 0) / total;
+  return p < 0 ? 0 : p > 1 ? 1 : p;
+}
 
 // ---- Production (per assigned worker, per season, before local factors) ----
 export const GATHER_FOOD_PER_SEASON = 15;

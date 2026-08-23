@@ -1028,11 +1028,14 @@ test.describe('fire spread', () => {
         const g = (window as any).__village;
         g.startNewGame('small', 'easy', true);
         const [source, wood, stone, near, far] = eval(clusterSrc)(g);
-        // 0.2 clears the touching-wood odds (0.25) but not one-tile-away (0.03) and not
-        // touching stone (0.25 × 0.5 = 0.125).
+        // 0.2 clears the destroy roll (1 − 0.55 survival = 0.45), the touching-wood odds (0.25),
+        // but not one-tile-away (0.03) and not touching stone (0.25 × 0.5 = 0.125).
         eval(collapseSrc)(g, source, 0.2);
         return {
-          gone: !g.state.buildings.includes(source),
+          // Destroyed goes through `razeBuilding` — the same rubble-pile teardown a demolition
+          // uses — not an instant deletion: it stops being `built` and is left as salvageable
+          // rubble (`razed`) rather than vanishing from `s.buildings` outright.
+          destroyed: !source.built && !!source.razed,
           wood: !!wood.fireTimer,
           stone: !!stone.fireTimer,
           near: !!near.fireTimer,
@@ -1041,7 +1044,7 @@ test.describe('fire spread', () => {
       },
       [buildCluster, collapse],
     );
-    expect(out.gone).toBe(true);
+    expect(out.destroyed).toBe(true);
     expect(out.wood).toBe(true);
     expect(out.stone).toBe(false);
     expect(out.near).toBe(false);
@@ -1102,6 +1105,309 @@ test.describe('fire spread', () => {
     expect(out.wood).toBe(true);
     expect(out.stoneUnlucky).toBe(true);
     expect(out.stoneSpared).toBe(false);
+  });
+});
+
+test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', () => {
+  // Places a workplace by walking out from the barn for the first buildable tile, the same search
+  // `debugPlace` callers elsewhere in this file use, then forces it straight to `built` so a test
+  // isn't also paying to wait out construction it isn't testing.
+  const placeBuilt = `(g, type) => {
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    for (let r = 4; r < 30; r++)
+      for (let dy = -r; dy <= r; dy++)
+        for (let dx = -r; dx <= r; dx++) {
+          if (!g.debugCanPlace(type, barn.x + dx, barn.y + dy).ok) continue;
+          const id = g.debugPlace(type, barn.x + dx, barn.y + dy);
+          if (id == null) continue;
+          const b = s.buildings.find((o) => o.id === id);
+          b.built = true;
+          b.progress = g.debugBuildWork(type);
+          return b;
+        }
+    throw new Error('no buildable site found for ' + type);
+  }`;
+
+  test('a building catches fire at once: BURNING, still standing, workers and residents turned out', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const hut = eval(placeSrc)(g, 'gatherer');
+      hut.desiredWorkers = 3;
+      g.debugAdvance(2); // long enough for assignHomesAndJobs to hire from the free adults
+      const house = s.buildings.find((b: any) => b.type === 'house' && b.built);
+      const resident = s.citizens.find((c: any) => c.homeId === house.id);
+      const before = { staffed: hut.workers.length, hasResident: !!resident };
+      g.debugIgnite(hut.id);
+      g.debugIgnite(house.id);
+      return {
+        before,
+        burning: !!hut.fireTimer,
+        stillPresent: s.buildings.includes(hut),
+        stillBuilt: hut.built,
+        workersLeft: hut.workers.length,
+        evictedFromHut: s.citizens.filter((c: any) => c.jobId === hut.id).length,
+        evictedFromHouse: s.citizens.filter((c: any) => c.homeId === house.id).length,
+      };
+    }, placeBuilt);
+    expect(out.before.staffed).toBeGreaterThan(0);
+    expect(out.before.hasResident).toBe(true);
+    expect(out.burning).toBe(true);
+    expect(out.stillPresent).toBe(true); // no instant deletion — see the design note in `tryIgnite`
+    expect(out.stillBuilt).toBe(true); // a burning building is still a wall, not a hole
+    expect(out.workersLeft).toBe(0);
+    expect(out.evictedFromHut).toBe(0);
+    expect(out.evictedFromHouse).toBe(0); // the house's resident was turned out the moment it caught
+  });
+
+  test('a burning building cannot be restaffed or reoccupied, and stops producing', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const hut = eval(placeSrc)(g, 'gatherer');
+      hut.desiredWorkers = 3;
+      g.debugAdvance(2);
+      const staffedBefore = hut.workers.length;
+      const fruitBefore = g.debugTotalHeld('fruit'); // a gatherer's own output kind
+      g.debugIgnite(hut.id);
+      // Long enough that, unburnt, a staffed gatherer would have gathered something — and that a
+      // newly homeless adult would have found the house if it were still on offer.
+      for (let i = 0; i < 100; i++) g.debugAdvance(0.2);
+      return {
+        staffedBefore,
+        stillZero: hut.workers.length,
+        desiredWorkersKept: hut.desiredWorkers, // so it re-staffs itself once repaired
+        foodGrew: g.debugTotalHeld('fruit') > fruitBefore + 1,
+      };
+    }, placeBuilt);
+    expect(out.staffedBefore).toBeGreaterThan(0);
+    expect(out.stillZero).toBe(0);
+    expect(out.desiredWorkersKept).toBeGreaterThan(0);
+    expect(out.foodGrew).toBe(false);
+  });
+
+  test('fire burns for a real chunk of a season, not an instant', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const hut = eval(placeSrc)(g, 'gatherer');
+      const burn = g.debugFireBurnSeconds();
+      g.debugIgnite(hut.id);
+      g.debugAdvance(burn * 0.5);
+      const stillBurningAtHalf = !!hut.fireTimer;
+      g.debugAdvance(burn * 0.6); // past the full duration
+      return { burn, stillBurningAtHalf, resolvedAfterFull: !hut.fireTimer };
+    }, placeBuilt);
+    // Tied to SEASON_LENGTH (600s) rather than an arbitrary number — see `FIRE_BURN_SECONDS`. A
+    // village nobody is watching for eight seconds (the old figure) never gets to react at all.
+    expect(out.burn).toBeGreaterThan(30);
+    expect(out.stillBurningAtHalf).toBe(true);
+    expect(out.resolvedAfterFull).toBe(true);
+  });
+
+  test('a building can survive its fire and become DAMAGED rather than destroyed', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const hut = eval(placeSrc)(g, 'gatherer');
+      g.debugIgnite(hut.id);
+      const burn = g.debugFireBurnSeconds();
+      // Pinned high: the destroy roll is `rand() < destroyChance` (destroyChance well under 1), so
+      // a roll near 1 always survives.
+      g.debugPinRandom(0.99);
+      try {
+        g.debugAdvance(burn + 1);
+      } finally {
+        g.debugPinRandom(null);
+      }
+      return {
+        damaged: hut.damaged,
+        built: hut.built,
+        razed: !!hut.razed,
+        burning: !!hut.fireTimer,
+        workers: hut.workers.length,
+      };
+    }, placeBuilt);
+    expect(out.damaged).toBe(true);
+    expect(out.built).toBe(true); // DAMAGED still stands — it just cannot work until repaired
+    expect(out.razed).toBe(false);
+    expect(out.burning).toBe(false);
+    expect(out.workers).toBe(0); // still cannot operate
+  });
+
+  test('builders repair a damaged building for the tuned cost, and it resumes on its own', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const hut = eval(placeSrc)(g, 'gatherer');
+      hut.desiredWorkers = 3;
+      g.debugAdvance(2);
+      const cost = g.debugRepairCost(hut.id);
+      g.debugIgnite(hut.id);
+      const burn = g.debugFireBurnSeconds();
+      g.debugPinRandom(0.99); // survive, not destroyed — see the previous test
+      try {
+        g.debugAdvance(burn + 1);
+      } finally {
+        g.debugPinRandom(null);
+      }
+      if (!hut.damaged) throw new Error('expected the hut to survive as damaged');
+      const woodBefore = g.debugTotalHeld('wood');
+      const stoneBefore = g.debugTotalHeld('stone');
+      g.debugSetBuilders(6);
+      let repaired = false;
+      for (let i = 0; i < 4000 && !repaired; i++) {
+        g.debugAdvance(0.2);
+        repaired = !hut.damaged;
+      }
+      const staffed = { at: 0, count: 0 };
+      for (let i = 0; i < 100 && staffed.count === 0; i++) {
+        g.debugAdvance(0.2);
+        staffed.count = hut.workers.length;
+      }
+      return {
+        cost,
+        repaired,
+        stillBuilt: hut.built,
+        repairProgressReset: hut.repairProgress,
+        repairStoreEmpty: !hut.repairStore || Object.keys(hut.repairStore).length === 0,
+        woodConsumed: woodBefore - g.debugTotalHeld('wood'),
+        stoneConsumed: stoneBefore - g.debugTotalHeld('stone'),
+        restaffed: staffed.count,
+      };
+    }, placeBuilt);
+    expect(out.repaired).toBe(true);
+    expect(out.stillBuilt).toBe(true);
+    expect(out.repairProgressReset).toBe(0);
+    expect(out.repairStoreEmpty).toBe(true);
+    // Consumed exactly the tuned repair bill — no more, no less, and nothing invented from thin
+    // air (see "fire does not create duplicated resources" below for the fuller check).
+    expect(out.woodConsumed).toBeCloseTo(out.cost.wood ?? 0, 0);
+    expect(out.stoneConsumed).toBeCloseTo(out.cost.stone ?? 0, 0);
+    expect(out.restaffed).toBeGreaterThan(0); // resumes on its own once `damaged` clears
+  });
+
+  test('a building that does not survive follows the ordinary demolition/rubble behaviour', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const hut = eval(placeSrc)(g, 'gatherer');
+      const salvage = g.debugSalvage('gatherer'); // REFUND_FRACTION of the build cost
+      g.debugIgnite(hut.id);
+      const burn = g.debugFireBurnSeconds();
+      g.debugPinRandom(0.01); // destroy roll well under any destroy chance in play
+      try {
+        g.debugAdvance(burn + 1);
+      } finally {
+        g.debugPinRandom(null);
+      }
+      const justBurned = {
+        built: hut.built,
+        razed: hut.razed,
+        demolish: hut.demolish,
+        gotSalvage: (hut.store.wood ?? 0) >= (salvage.wood ?? 0) - 0.5,
+      };
+      // Same rubble-hauling job any demolition uses — see `pickSite`'s 'salvage'/'raze' actions.
+      g.debugSetBuilders(6);
+      let gone = false;
+      for (let i = 0; i < 3000 && !gone; i++) {
+        g.debugAdvance(0.2);
+        gone = !g.state.buildings.some((b: any) => b.id === hut.id);
+      }
+      return { salvage, justBurned, gone };
+    }, placeBuilt);
+    expect(out.justBurned.built).toBe(false);
+    expect(out.justBurned.razed).toBe(true);
+    expect(out.justBurned.demolish).toBe(true);
+    expect(out.justBurned.gotSalvage).toBe(true);
+    expect(out.gone).toBe(true); // eventually cleared, once the salvage is carted off
+  });
+
+  test('fire does not duplicate resources, whichever way it resolves', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      // The grand total, not just `debugTotalHeld` — that only counts barns/markets/larders/what's
+      // being carried, and deliberately leaves out a rubble pile's own store until a builder carts
+      // it to a barn (see `storageNodes`). A destroyed building's refund sits in its own rubble the
+      // instant it burns down, so counting every building's `store` is the only way to catch a
+      // fire *inventing* wood, as opposed to one that just hasn't been carted home yet.
+      const totalWood = () => {
+        let n = 0;
+        for (const b of g.state.buildings as any[]) n += b.store.wood ?? 0;
+        for (const c of g.state.citizens as any[]) if (c.carry?.kind === 'wood') n += c.carry.amount;
+        return n;
+      };
+      const run = (survive: boolean) => {
+        g.startNewGame('small', 'easy', false);
+        const hut = eval(placeSrc)(g, 'gatherer');
+        const before = totalWood();
+        g.debugIgnite(hut.id);
+        const burn = g.debugFireBurnSeconds();
+        g.debugPinRandom(survive ? 0.99 : 0.01);
+        try {
+          g.debugAdvance(burn + 1);
+        } finally {
+          g.debugPinRandom(null);
+        }
+        // Surviving spends nothing by itself — only a completed repair does, and no builders were
+        // assigned here, so the total must not have moved at all. Destroyed hands back
+        // REFUND_FRACTION of the cost, into the rubble this same total already counts.
+        const salvage = survive ? 0 : g.debugSalvage('gatherer').wood ?? 0;
+        return before + salvage - totalWood();
+      };
+      return { survivedDelta: run(true), destroyedDelta: run(false) };
+    }, placeBuilt);
+    expect(out.survivedDelta).toBeCloseTo(0, 1);
+    expect(out.destroyedDelta).toBeCloseTo(0, 1);
+  });
+
+  test('an old save without the DAMAGED fields still loads and runs', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((placeSrc) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const hut = eval(placeSrc)(g, 'gatherer');
+      g.debugIgnite(hut.id);
+      g.debugPinRandom(0.99); // leave it DAMAGED, the shape a pre-rework save never had
+      try {
+        g.debugAdvance(g.debugFireBurnSeconds() + 1);
+      } finally {
+        g.debugPinRandom(null);
+      }
+      if (!hut.damaged) throw new Error('expected the hut to be damaged going into the save');
+      if (!g.debugSaveSlot(0)) throw new Error('save failed');
+      const env = JSON.parse(g.debugRawSlot(0)!);
+      // Simulate a save written before `damaged`/`repairProgress`/`repairStore` existed.
+      for (const b of env.state.buildings) {
+        delete b.damaged;
+        delete b.repairProgress;
+        delete b.repairStore;
+      }
+      g.debugWriteRawSlot(0, JSON.stringify(env));
+      const loaded = g.debugLoadSlot(0);
+      const restored = g.state.buildings.find((b: any) => b.id === hut.id);
+      // Must not crash or wedge: a tick has to run clean, and the field's absence must read as
+      // "not damaged" rather than a hole that turns some later check to `NaN`.
+      g.debugAdvance(1);
+      return {
+        loaded,
+        damagedIsFalsy: !restored.damaged,
+        stillBuilt: restored.built,
+      };
+    }, placeBuilt);
+    expect(out.loaded).toBe(true);
+    expect(out.damagedIsFalsy).toBe(true);
+    expect(out.stillBuilt).toBe(true);
   });
 });
 

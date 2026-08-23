@@ -24,6 +24,10 @@ import {
   buildWorkOf,
   buildCost,
   costOf,
+  repairCostOf,
+  repairFraction,
+  repairWorkOf,
+  FIRE_BURN_SECONDS,
   FESTIVAL_FOOD,
   POLICY_META,
   POLICIES,
@@ -1461,6 +1465,25 @@ class Game {
         for (const [k, amt] of Object.entries(costOf(b)) as [ResourceKind, number][]) {
           rows.push({ label: `${RESOURCE_ICON[k]} ${k}`, value: `${Math.floor(b.store[k] ?? 0)}/${amt} delivered` });
         }
+      } else if (b.fireTimer || b.damaged) {
+        // BURNING/DAMAGED: the one state every building type shows the same way, workplace or
+        // home — `workplaceStatus` below only speaks for producers, so a house on fire needs its
+        // own line here rather than falling through to residents/larder rows that no longer apply
+        // (its occupants were turned out the moment it caught — see `tryIgnite`).
+        if (b.fireTimer) {
+          rows.push({ label: 'Status', value: '🔥 On fire — evacuated, not working', tone: 'bad' });
+        } else {
+          rows.push({ label: 'Status', value: '⚠️ Damaged — awaiting repair', tone: 'bad' });
+          const cost = repairCostOf(b);
+          const pct = Math.floor(repairFraction(b) * 100);
+          rows.push({ label: 'Repair', value: `${pct}% — builders will finish it` });
+          for (const [k, amt] of Object.entries(cost) as [ResourceKind, number][]) {
+            rows.push({
+              label: `${RESOURCE_ICON[k]} ${k}`,
+              value: `${Math.floor(b.repairStore?.[k] ?? 0)}/${amt} delivered`,
+            });
+          }
+        }
       } else {
         // Why this workplace is (or isn't) producing, in one coloured line above the numbers: switched
         // off, short of hands, out of a material, capped, or slowed for want of tools. It is the answer
@@ -1878,6 +1901,22 @@ class Game {
   /** Debug/testing helper: what a building costs to place, so a test need not restate the table. */
   debugCost(type: BuildingType, w?: number, h?: number): Partial<Record<ResourceKind, number>> {
     return buildCost(type, w, h);
+  }
+
+  /** Debug/testing helper: what repairing a placed, DAMAGED building costs — see `repairCostOf`. */
+  debugRepairCost(id: number): Partial<Record<ResourceKind, number>> {
+    const b = this.state.buildings.find((x) => x.id === id);
+    return b ? repairCostOf(b) : {};
+  }
+
+  /** Debug/testing helper: builder-work a repair takes — see `repairWorkOf`. */
+  debugRepairWork(type: BuildingType): number {
+    return repairWorkOf(type);
+  }
+
+  /** Debug/testing helper: how long a building burns before survive/destroy is decided. */
+  debugFireBurnSeconds(): number {
+    return FIRE_BURN_SECONDS;
   }
 
   /**

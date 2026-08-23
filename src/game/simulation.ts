@@ -210,6 +210,10 @@ import {
   isAdult,
   isFireproof,
   freshStats,
+  disabledByFire,
+  FIRE_SURVIVAL_CHANCE,
+  repairWorkOf,
+  repairCostOf,
 } from '../types';
 import { TIERS, TIER_META, villageTier, meetsTier, VillageTier } from './tiers';
 import { housingCapacity, buildingCenter, makeCitizen } from './state';
@@ -351,7 +355,7 @@ export function update(s: GameState, dt: number, log: LogFn): void {
   // well a pair of hands is working, as opposed to what the building around them is for. Renamed
   // from `toolFactor` on the way through, since it is no longer only about tools.
   const workFactor = toolFactor * (policyActive(s, 'longHours') ? POLICY_HOURS_PROD : 1);
-  for (const c of s.citizens) runCitizen(s, c, dt, workFactor);
+  for (const c of s.citizens) runCitizen(s, c, dt, workFactor, log);
   processFires(s, dt, log);
   regrowForest(s, dt);
   updateMerchant(s, dt, log);
@@ -523,7 +527,7 @@ function staffWanted(s: GameState, b: Building): number {
   // elsewhere — but `desiredWorkers` is untouched, so switching it back on re-staffs it exactly as
   // it was. This is the one place the enabled flag is read; the rest of the job system needs no
   // knowledge of it.
-  if (!b.built || b.enabled === false) return 0;
+  if (!b.built || b.enabled === false || disabledByFire(b)) return 0;
   return Math.min(BUILDING_DEFS[b.type].jobs, b.desiredWorkers);
 }
 
@@ -614,6 +618,10 @@ function isProducer(b: Building): boolean {
  */
 export function workplaceStatus(s: GameState, b: Building): WorkStatus | null {
   if (!b.built || b.razed || !isProducer(b)) return null;
+  // On fire or waiting on repair beats every other reason — nothing else about the building
+  // matters until one of these clears.
+  if (b.fireTimer) return { text: '🔥 On fire — not producing', tone: 'bad' };
+  if (b.damaged) return { text: '⚠️ Damaged — needs repair before it can work', tone: 'bad' };
   // Off by the player's own hand — the reason most often mistaken for "nobody is working here".
   if (b.enabled === false) return { text: '⏸️ Disabled — not producing', tone: 'bad' };
   // Wanted by nobody, or wanted but still walking over: two different fixes, so two different lines.
@@ -807,7 +815,7 @@ function lives(s: GameState, dt: number, log: LogFn): void {
   // family home never has room for another child, and the population plateaus at whatever the
   // founding houses held.
   if (cameOfAge.length > 0) {
-    const houses = s.buildings.filter((b) => b.built && !b.demolish && isHouse(b.type));
+    const houses = s.buildings.filter((b) => b.built && !b.demolish && !disabledByFire(b) && isHouse(b.type));
     for (const c of cameOfAge) {
       placeAdult(s, c, houses);
       // A plain notice — not an alert — as each child enters the workforce, named so the player
@@ -901,9 +909,11 @@ function assignHomesAndJobs(s: GameState): void {
   // demolished. Household *shape* (couples, who lives with whom) is settled once a season by
   // `rehouseVillagers`; this only finds a roof for the roofless.
   // A condemned house is not somewhere to move anyone into: its residents are about to be turned
-  // out as it is. It keeps the ones it already has until the walls come down.
-  const houses = s.buildings.filter((b) => b.built && !b.demolish && isHouse(b.type));
-  const shelters = s.buildings.filter((b) => b.built && !b.demolish && isShelter(b.type));
+  // out as it is. It keeps the ones it already has until the walls come down. A burning or
+  // damaged one is the same story — see `disabledByFire` — except its residents were already
+  // turned out at the moment it caught (see `tryIgnite`), so nobody is left to "keep".
+  const houses = s.buildings.filter((b) => b.built && !b.demolish && !disabledByFire(b) && isHouse(b.type));
+  const shelters = s.buildings.filter((b) => b.built && !b.demolish && !disabledByFire(b) && isShelter(b.type));
   const occupancy = () => {
     const occ = new Map<number, number>();
     for (const c of s.citizens) if (c.homeId !== null) occ.set(c.homeId, (occ.get(c.homeId) ?? 0) + 1);
@@ -1173,7 +1183,7 @@ function stepOutOfWalls(s: GameState, c: Citizen): void {
 }
 
 // ---- per-citizen behaviour ----
-function runCitizen(s: GameState, c: Citizen, dt: number, workFactor: number): void {
+function runCitizen(s: GameState, c: Citizen, dt: number, workFactor: number, log: LogFn): void {
   stepOutOfWalls(s, c);
   // Out of the building unless this tick puts them back at their bench, so a worker who breaks off
   // to haul, shop or rest reappears rather than staying invisible on the doorstep.
@@ -1219,11 +1229,11 @@ function runCitizen(s: GameState, c: Citizen, dt: number, workFactor: number): v
         runForesterReplant(s, c, job, dt);
         return;
       }
-      runBuilder(s, c, dt, workFactor);
+      runBuilder(s, c, dt, log, workFactor);
       return;
     }
     runWorker(s, c, job, dt, workFactor);
-  } else runBuilder(s, c, dt, workFactor);
+  } else runBuilder(s, c, dt, log, workFactor);
 }
 
 /**
@@ -2119,6 +2129,21 @@ function carriedToward(s: GameState, kind: ResourceKind): number {
   return n;
 }
 
+/**
+ * Which store a builder delivers into, and what the job costs.
+ *
+ * A repair job (`b.damaged`) gets its own separate `repairStore` and a smaller bill
+ * (`repairCostOf`) instead of the building's ordinary `store` and full `costOf` — the building is
+ * still standing and its `store` may still hold real production stock (or a house's larder), which
+ * must never be mistaken for delivered repair materials or double-counted into them.
+ */
+function siteStore(b: Building): Partial<Record<ResourceKind, number>> {
+  return b.damaged ? (b.repairStore ?? {}) : b.store;
+}
+function siteCost(b: Building): Partial<Record<ResourceKind, number>> {
+  return b.damaged ? repairCostOf(b) : costOf(b);
+}
+
 function pickSite(s: GameState, c: Citizen): SiteAction | null {
   let best: SiteAction | null = null;
   let bestD = Infinity;
@@ -2136,18 +2161,24 @@ function pickSite(s: GameState, c: Citizen): SiteAction | null {
       action = kind ? { site: b, action: 'salvage', kind } : null;
     } else if (b.demolish) {
       action = { site: b, action: 'raze' };
-    } else if (!b.built && footprintClear(s, b)) {
+    } else if (b.damaged || (!b.built && footprintClear(s, b))) {
       // The plot has to be cleared *before* materials are hauled in, not after: place → clear the
       // trees / loose stone under the footprint → deliver materials → construct. Nothing is
       // fetched to an obstructed site, so a load is never left sitting on a plot that still can't
       // be built on. The free-adult workforce clears the footprint (see `markFootprintHarvest`);
       // while anything stands on it this branch is skipped and the site simply waits.
-      const cost = costOf(b);
+      //
+      // A DAMAGED building (`b.damaged`) skips all of that — it never stopped standing — and asks
+      // for `repairCostOf`/`repairWorkOf` against its own `repairStore` instead; see `siteCost`/
+      // `siteStore`. Same 'fetch'/'build' actions either way, so a repair rides the rest of this
+      // pipeline — and `runBuilder` below — without a parallel copy of it.
+      const cost = siteCost(b);
+      const store = siteStore(b);
       let fetchKind: ResourceKind | null = null;
       let fully = true;
       for (const k in cost) {
         const kind = k as ResourceKind;
-        const have = b.store[kind] ?? 0;
+        const have = store[kind] ?? 0;
         if (have < (cost[kind] ?? 0)) fully = false;
         // Only fetch what is still short *after* counting the loads already on their way here, so a
         // crowd of builders doesn't each set off for the same sack.
@@ -2202,19 +2233,20 @@ function labour(c: Citizen, dt: number, factor = 1): number {
   return done;
 }
 
-function runBuilder(s: GameState, c: Citizen, dt: number, workFactor = 1): void {
+function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, workFactor = 1): void {
   // Deliver carried material to a site that needs it, else return it to a barn.
   if (c.carry) {
     const kind = c.carry.kind;
     // Only builders supply construction sites; a laborer just stashes whatever it's carrying.
-    const site = c.builder ? nearestUnbuiltNeeding(s, c, kind) : null;
+    const site = c.builder ? nearestSiteNeeding(s, c, kind) : null;
     if (site) {
       goTo(c, buildingApproach(s, site, c));
       if (stepTo(s, c, dt)) {
-        const cost = costOf(site);
-        const need = (cost[kind] ?? 0) - (site.store[kind] ?? 0);
+        const cost = siteCost(site);
+        const store = site.damaged ? (site.repairStore ??= {}) : site.store;
+        const need = (cost[kind] ?? 0) - (store[kind] ?? 0);
         const put = Math.min(c.carry.amount, Math.max(0, need));
-        site.store[kind] = (site.store[kind] ?? 0) + put;
+        store[kind] = (store[kind] ?? 0) + put;
         c.carry.amount -= put;
         if (c.carry.amount <= 0.01) c.carry = null;
       }
@@ -2246,10 +2278,10 @@ function runBuilder(s: GameState, c: Citizen, dt: number, workFactor = 1): void 
       if (barn) {
         goTo(c, buildingApproach(s, barn, c));
         if (stepTo(s, c, dt)) {
-          const cost = costOf(pick.site);
+          const cost = siteCost(pick.site);
           // Take only the shortfall no other builder is already bringing (see `carriedToward`), so
           // the loads sent out sum to the site's need instead of one apiece.
-          const need = (cost[kind] ?? 0) - (pick.site.store[kind] ?? 0) - carriedToward(s, kind);
+          const need = (cost[kind] ?? 0) - (siteStore(pick.site)[kind] ?? 0) - carriedToward(s, kind);
           const want = Math.min(carryLimit(kind), need, barn.store[kind] ?? 0);
           if (want > 0) {
             barn.store[kind] = (barn.store[kind] ?? 0) - want;
@@ -2290,21 +2322,30 @@ function runBuilder(s: GameState, c: Citizen, dt: number, workFactor = 1): void 
     }
     // build: stand at the site and labour. Construction runs on the same productivity dial as every
     // other job — chiefly the tool penalty — so a village out of tools raises buildings more slowly.
+    // A repair (`damaged`) labours the same way but banks the work into `repairProgress` against
+    // `repairWorkOf`, and never touches `navVersion` — the building never stopped standing, so
+    // there is no frame stage and no wall to appear.
     goTo(c, buildingApproach(s, pick.site, c));
     if (stepTo(s, c, dt)) {
-      const before = pick.site.progress;
+      const site = pick.site;
       const done = labour(c, dt, workFactor);
-      pick.site.progress += done;
-      wearTools(s, done * TOOL_WEAR_PER_BUILD_WORK); // raising a building draws on the tool supply
-      if (pick.site.progress >= buildWorkOf(pick.site.type)) {
-        finishConstruction(s, pick.site);
+      wearTools(s, done * TOOL_WEAR_PER_BUILD_WORK); // raising or repairing draws on the tool supply
+      if (site.damaged) {
+        site.repairProgress = (site.repairProgress ?? 0) + done;
+        if (site.repairProgress >= repairWorkOf(site.type)) finishRepair(s, site, log);
       } else {
-        // The frame going up turns the footprint into a wall (`blocksMovement`), one stage before
-        // completion. Refresh routes/reachability the moment it crosses that line — the same nav
-        // bump a finished building triggers — so villagers start routing around the rising site.
-        const total = buildWorkOf(pick.site.type);
-        if (total > 0 && before / total < BUILD_FRAMING_AT && pick.site.progress / total >= BUILD_FRAMING_AT) {
-          s.navVersion = (s.navVersion ?? 0) + 1;
+        const before = site.progress;
+        site.progress += done;
+        if (site.progress >= buildWorkOf(site.type)) {
+          finishConstruction(s, site);
+        } else {
+          // The frame going up turns the footprint into a wall (`blocksMovement`), one stage before
+          // completion. Refresh routes/reachability the moment it crosses that line — the same nav
+          // bump a finished building triggers — so villagers start routing around the rising site.
+          const total = buildWorkOf(site.type);
+          if (total > 0 && before / total < BUILD_FRAMING_AT && site.progress / total >= BUILD_FRAMING_AT) {
+            s.navVersion = (s.navVersion ?? 0) + 1;
+          }
         }
       }
     }
@@ -2511,16 +2552,20 @@ function runHarvest(s: GameState, c: Citizen, idx: number, dt: number): void {
   }
 }
 
-function nearestUnbuiltNeeding(s: GameState, c: Citizen, kind: ResourceKind): Building | null {
+/** A construction site or a repair job (`b.damaged`) that still needs more of `kind` — see
+ *  `siteCost`/`siteStore` for how the two share this. */
+function nearestSiteNeeding(s: GameState, c: Citizen, kind: ResourceKind): Building | null {
   let best: Building | null = null;
   let bestD = Infinity;
   for (const b of s.buildings) {
-    if (b.built) continue;
-    // Don't carry materials onto a plot that still has to be cleared — the same "clear first, then
-    // deliver" rule `pickSite` follows when it decides to fetch.
-    if (!footprintClear(s, b)) continue;
-    const cost = costOf(b);
-    if ((b.store[kind] ?? 0) >= (cost[kind] ?? 0)) continue;
+    if (!b.damaged) {
+      if (b.built) continue;
+      // Don't carry materials onto a plot that still has to be cleared — the same "clear first,
+      // then deliver" rule `pickSite` follows when it decides to fetch.
+      if (!footprintClear(s, b)) continue;
+    }
+    const cost = siteCost(b);
+    if ((siteStore(b)[kind] ?? 0) >= (cost[kind] ?? 0)) continue;
     const p = buildingApproach(s, b, c);
     if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) continue;
     const d = (p.x - c.x) ** 2 + (p.y - c.y) ** 2;
@@ -2530,6 +2575,20 @@ function nearestUnbuiltNeeding(s: GameState, c: Citizen, kind: ResourceKind): Bu
     }
   }
   return best;
+}
+
+/**
+ * A DAMAGED building's repair finishes: it is exactly as good as new, at once. `damaged` is the
+ * only flag every occupancy/staffing gate checks (see `disabledByFire`), so clearing it is enough
+ * — `assignHomesAndJobs` re-staffs it and the houses/shelters filters offer it again on their own
+ * very next pass, the same way a newly built site opens itself up without any code here having to
+ * ask for it.
+ */
+function finishRepair(s: GameState, b: Building, log: LogFn): void {
+  b.damaged = false;
+  b.repairProgress = 0;
+  b.repairStore = {};
+  log(`✓ The ${BUILDING_DEFS[b.type].name} has been repaired`, 'good');
 }
 
 function finishConstruction(s: GameState, b: Building): void {
@@ -4458,27 +4517,52 @@ export function igniteBuilding(s: GameState, b: Building, log: LogFn): void {
 
 function tryIgnite(s: GameState, b: Building, log: LogFn, announce: boolean): void {
   if (b.fireTimer || isFireproof(b.type)) return;
-  const c = buildingCenter(b);
+  const centre = buildingCenter(b);
   const wellNear = s.buildings.some(
-    (w) => w.built && w.type === 'well' && dist2c(buildingCenter(w), c) <= WELL_RADIUS * WELL_RADIUS,
+    (w) => w.built && w.type === 'well' && dist2c(buildingCenter(w), centre) <= WELL_RADIUS * WELL_RADIUS,
   );
   if (wellNear && rand(s) < WELL_DOUSE_CHANCE) {
     if (announce) log('A well doused a fire before it spread', 'info');
     return;
   }
   b.fireTimer = FIRE_BURN_SECONDS;
+  // BURNING starts at once, not when the fire finishes: nobody works or sleeps in a building
+  // that's alight. It stays `built` and standing — see `disabledByFire` — only its occupants and
+  // staff are turned out, exactly as a demolition turns them out (see `razeBuilding`). Their
+  // `desiredWorkers`/household ties are left alone so the building simply resumes once it is
+  // repaired, rather than needing to be re-staffed and re-housed by hand.
+  b.workers = [];
+  for (const c of s.citizens) {
+    if (c.jobId === b.id) c.jobId = null;
+    if (c.homeId === b.id) c.homeId = null;
+  }
   log(`🔥 Fire! The ${BUILDING_DEFS[b.type].name} is burning`, 'bad');
 }
 
+/**
+ * A building's fire burns out: it survives as DAMAGED (see `repairCostOf`/`repairWorkOf`, and the
+ * repair branch of `pickSite`/`runBuilder`) or it doesn't, in which case it goes down exactly the
+ * way any other demolished building does — `razeBuilding` turns it into a salvageable rubble pile
+ * rather than deleting it outright, so the player gets the same `REFUND_FRACTION` recovery a
+ * teardown gives and nothing is invented twice. Either way it can set its neighbours alight.
+ */
 function processFires(s: GameState, dt: number, log: LogFn): void {
   for (const b of [...s.buildings]) {
     if (!b.fireTimer) continue;
     b.fireTimer -= dt;
     if (b.fireTimer <= 0) {
+      b.fireTimer = undefined;
       const name = BUILDING_DEFS[b.type].name;
       const neighbours = adjacentBuildings(s, b);
-      removeBuilding(s, b);
-      log(`The ${name} burned down`, 'bad');
+      let destroyChance = 1 - FIRE_SURVIVAL_CHANCE;
+      if (isStoneBuilt(b.type)) destroyChance *= STONE_FIRE_FACTOR;
+      if (rand(s) < destroyChance) {
+        razeBuilding(s, b);
+        log(`The ${name} burned down`, 'bad');
+      } else {
+        b.damaged = true;
+        log(`⚠️ The ${name} survived the fire but is damaged and needs repair`, 'bad');
+      }
       for (const { building: n, gap } of neighbours) {
         let chance = gap === 0 ? FIRE_SPREAD_ADJACENT : FIRE_SPREAD_NEAR;
         if (isStoneBuilt(n.type)) chance *= STONE_FIRE_FACTOR;
@@ -4509,27 +4593,6 @@ function adjacentBuildings(s: GameState, b: Building): { building: Building; gap
     if (gap <= 1) out.push({ building: o, gap });
   }
   return out;
-}
-
-function removeBuilding(s: GameState, b: Building): void {
-  const idx = s.buildings.indexOf(b);
-  if (idx >= 0) s.buildings.splice(idx, 1);
-  s.navVersion = (s.navVersion ?? 0) + 1; // its walls are gone; routes through it open up
-  // A demolished house's larder isn't destroyed — the household's supplies go back to the barns
-  // (which the residents will then re-fetch to whichever house they move into).
-  if (isDwelling(b.type)) {
-    const at = buildingCenter(b);
-    for (const k in b.store) {
-      const kind = k as ResourceKind;
-      const amount = b.store[kind] ?? 0;
-      if (amount > 0) addNearest(s, at, kind, amount);
-    }
-    b.store = {};
-  }
-  for (const c of s.citizens) {
-    if (c.jobId === b.id) c.jobId = null;
-    if (c.homeId === b.id) c.homeId = null;
-  }
 }
 
 // ---- forest upkeep ----

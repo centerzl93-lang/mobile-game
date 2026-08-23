@@ -196,6 +196,7 @@ import {
   MED_LOAD,
   FIRE_CHANCE,
   FIRE_DOUSE_TRIPS_NEEDED,
+  FIRE_RESPONSE_RADIUS,
   FIRE_SPREAD_ADJACENT,
   FIRE_SPREAD_NEAR,
   STONE_FIRE_FACTOR,
@@ -1195,6 +1196,16 @@ function runCitizen(s: GameState, c: Citizen, dt: number, workFactor: number, lo
   // already under way short. Nothing else interrupts leisure — this is the one thing that should.
   const urgent = homeNeedsStocking(s, c);
   if (urgent) c.rest = 0;
+  // A fire is the whole village's emergency, not just the free-labour pool's: every adult within
+  // reach (`FIRE_RESPONSE_RADIUS`) drops their break, their bench, or whatever they were about to
+  // do next to go help fight it — see `runFirefighter`/`nearbyFire`. A load already in hand is
+  // delivered first (nothing is stranded mid-carry, the same rule leisure follows below), and a
+  // household already in its STARVE/FREEZE grace period still comes first — but ordinary work and
+  // ordinary leisure both give way. Already mid-errand for a fire (`waterLoad`) finishes it
+  // regardless of how far the fire now is; nothing else here is that persistent.
+  if (!urgent && !c.carry && (c.waterLoad || nearbyFire(s, c))) {
+    if (runFirefighter(s, c, dt)) return;
+  }
   // Villagers don't toil non-stop — every so often an adult takes a break (never mid-haul, so no
   // load is stranded) to visit a tavern/chapel or head home before returning to work.
   if ((c.rest ?? 0) > 0) {
@@ -2267,10 +2278,6 @@ function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, workFactor
     }
     return;
   }
-
-  // A fire outranks new construction, harvesting and roads for the same flexible pool that
-  // already does all three — see `runFirefighter`.
-  if (runFirefighter(s, c, dt)) return;
 
   // Only Builders construct work buildings — find a construction site to work.
   const pick = c.builder ? pickSite(s, c) : null;
@@ -4563,15 +4570,17 @@ function nearestWell(s: GameState, at: { x: number; y: number }): Building | nul
   return best;
 }
 
-/** The nearest reachable fire still short of `FIRE_DOUSE_TRIPS_NEEDED`, or null. */
-function burningNeedingWater(s: GameState, c: Citizen): Building | null {
+/** The nearest reachable fire still short of `FIRE_DOUSE_TRIPS_NEEDED`, or null. `maxD2` (squared
+ *  tiles) caps how far this citizen will even be considered for — see `nearbyFire`. */
+function burningNeedingWater(s: GameState, c: Citizen, maxD2 = Infinity): Building | null {
   let best: Building | null = null;
   let bestD = Infinity;
   for (const b of s.buildings) {
     if (!b.fireTimer || (b.fireWater ?? 0) >= FIRE_DOUSE_TRIPS_NEEDED) continue;
     const p = buildingApproach(s, b, c);
-    if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) continue;
     const d = (p.x - c.x) ** 2 + (p.y - c.y) ** 2;
+    if (d > maxD2) continue;
+    if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) continue;
     if (d < bestD) {
       bestD = d;
       best = b;
@@ -4581,19 +4590,30 @@ function burningNeedingWater(s: GameState, c: Citizen): Building | null {
 }
 
 /**
- * A free adult's response to a fire: round-trip a bucket from the nearest well to the nearest
- * fire that still needs one. Recomputed every tick on both legs rather than committed to a single
- * target up front — the same "ask again, don't remember" the rest of the builder pool runs on
- * (`pickSite`, `nearestSiteNeeding`) — so a villager mid-trip reroutes to a worse fire that just
- * started, or simply drops the errand once every fire in reach is either out or already saved.
+ * Whether a fire is close enough that *this* villager — employed or not — should drop what
+ * they're doing to help fight it. `runFirefighter` itself has no range limit once a villager has
+ * taken the job on (an emergency doesn't strand someone halfway to the well because the fire
+ * happened to be a few tiles further than they thought), but only a villager already within
+ * `FIRE_RESPONSE_RADIUS` is asked to start.
+ */
+function nearbyFire(s: GameState, c: Citizen): boolean {
+  return burningNeedingWater(s, c, FIRE_RESPONSE_RADIUS * FIRE_RESPONSE_RADIUS) !== null;
+}
+
+/**
+ * A villager's response to a fire: round-trip a bucket from the nearest well to the nearest fire
+ * that still needs one. Recomputed every tick on both legs rather than committed to a single
+ * target up front — the same "ask again, don't remember" the builder pool runs on (`pickSite`,
+ * `nearestSiteNeeding`) — so a villager mid-trip reroutes to a worse fire that just started, or
+ * simply drops the errand once every fire in reach is either out or already saved.
  *
- * This is deliberately the same pool `runBuilder` already pulls from (builders and any laborer
- * with no job) rather than pulling an employed worker off their bench: it is the flexible labour
- * the village already treats as available for whatever needs doing right now, the way it already
- * fells marked trees and lays roads.
+ * Called from `runCitizen` for *any* adult within `FIRE_RESPONSE_RADIUS` — employed or not, see
+ * `nearbyFire` — not only the free-labour pool `runBuilder` draws on for construction and roads.
+ * A fire is the whole village's emergency; the smith and the farmer drop their bench for it same
+ * as an idle laborer would.
  *
- * Returns whether it found anything to do this tick, so `runBuilder` knows whether to fall through
- * to its own work.
+ * Returns whether it found anything to do this tick, so the caller knows whether to fall through
+ * to whatever it would otherwise be doing.
  */
 function runFirefighter(s: GameState, c: Citizen, dt: number): boolean {
   if (c.waterLoad) {

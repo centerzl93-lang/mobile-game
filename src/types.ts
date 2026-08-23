@@ -2838,12 +2838,20 @@ export const FIRE_CHANCE = 0.05; // base chance per season a building ignites
  * How many water deliveries a fire needs, from any well, before the building is even in the
  * running to survive. Below this it is an *untreated* fire — see `FIRE_SURVIVAL_CHANCE` below and
  * `runFirefighter`/`processFires` in `simulation.ts`, which is where the deliveries actually
- * happen: a free adult round-trips between the nearest well to the fire and the fire itself, and
- * how many trips land before `FIRE_BURN_SECONDS` runs out is purely a function of how far that
- * well is and how many hands are free to make the trip. Wells no longer prevent ignition on their
- * own — this is the only thing distance to one now buys a village.
+ * happen: a villager round-trips between the nearest well to the fire and the fire itself, and how
+ * many trips land before `FIRE_BURN_SECONDS` runs out is purely a function of how far that well is
+ * and how many hands are free to make the trip. Wells no longer prevent ignition on their own —
+ * this is the only thing distance to one now buys a village.
  */
 export const FIRE_DOUSE_TRIPS_NEEDED = 3;
+/**
+ * How far (tiles) a villager will drop what they're doing — their job, their break, a laborer's
+ * harvesting or road-laying — to go help fight a fire. This is deliberately not the free-labour
+ * pool alone: a fire is the whole village's emergency, so any adult within reach responds,
+ * employed or not (see `nearbyFire`/`runCitizen`). It is bounded so a mine on the far side of the
+ * map does not empty itself over a cottage fire nobody there could reach in time anyway.
+ */
+export const FIRE_RESPONSE_RADIUS = 24;
 /**
  * Chance a collapsing building sets a neighbour alight, by how far away the neighbour is.
  *

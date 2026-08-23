@@ -29,6 +29,7 @@ import {
   repairWorkOf,
   FIRE_BURN_SECONDS,
   FIRE_DOUSE_TRIPS_NEEDED,
+  FIRE_RESPONSE_RADIUS,
   FESTIVAL_FOOD,
   POLICY_META,
   POLICIES,
@@ -1971,6 +1972,11 @@ class Game {
   /** Debug/testing helper: water deliveries a fire needs to be in the running to survive at all. */
   debugFireDouseTripsNeeded(): number {
     return FIRE_DOUSE_TRIPS_NEEDED;
+  }
+
+  /** Debug/testing helper: how far (tiles) a villager will drop what they're doing to fight a fire. */
+  debugFireResponseRadius(): number {
+    return FIRE_RESPONSE_RADIUS;
   }
 
   /**

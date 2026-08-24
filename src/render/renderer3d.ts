@@ -174,6 +174,16 @@ const CROP_STYLE: Record<Crop, { kind: CropArchetype; scale: number }> = {
 };
 
 /**
+ * Crop plants per tile, along each axis — 1×1 was one clump a tile, reading thin next to the
+ * furrows. 2 along X alone rows them closer without touching Z; 2×2 packs a full dense stand. Each
+ * plant shrinks by `CROP_DENSITY_SCALE` so a denser tile reads as more, smaller plants rather than
+ * the same plants overlapping.
+ */
+const CROP_DENSITY_X = 2;
+const CROP_DENSITY_Z = 2;
+const CROP_DENSITY_SCALE = 0.8;
+
+/**
  * Yaw for a building turned `rot` quarter turns clockwise, so its modelled door ends up on the
  * face villagers actually walk to.
  *
@@ -2068,14 +2078,22 @@ export class Renderer3D {
       const cols = Math.max(1, Math.round(fw));
       const stems: THREE.BufferGeometry[] = [];
       const toppers: THREE.BufferGeometry[] = [];
-      for (let cx = 0; cx < cols; cx++) {
-        for (let cz = 0; cz < rows; cz++) {
-          const idx = tileIndex(Math.floor(b.x) + cx, Math.floor(b.y) + cz);
-          const px = -fw / 2 + (cx + 0.5) + this.tileJitter(idx, 0x9a1) * 0.3;
-          const pz = -fh / 2 + (cz + 0.5) + this.tileJitter(idx, 0x9a2) * 0.3;
-          const jr1 = this.tileRand(idx, 0x9a3);
-          const jr2 = this.tileRand(idx, 0x9a4);
-          this.addCropPlant(stems, toppers, style.kind, stage, px, pz, elevation(px, pz) + 0.13, style.scale, jr1, jr2);
+      // CROP_DENSITY_X/Z plants per tile along each axis, not one — see their own doc comment.
+      const subCols = cols * CROP_DENSITY_X, subRows = rows * CROP_DENSITY_Z;
+      const cellScale = style.scale * CROP_DENSITY_SCALE;
+      for (let cx = 0; cx < subCols; cx++) {
+        for (let cz = 0; cz < subRows; cz++) {
+          // Hashed by the whole tile, not the sub-cell, so every plant sharing a tile shares its
+          // jitter base — a `sub` salt then spreads them apart deterministically instead of stacking
+          // them on the same spot.
+          const tileX = Math.floor(cx / CROP_DENSITY_X), tileZ = Math.floor(cz / CROP_DENSITY_Z);
+          const idx = tileIndex(Math.floor(b.x) + tileX, Math.floor(b.y) + tileZ);
+          const sub = (cx % CROP_DENSITY_X) * CROP_DENSITY_Z + (cz % CROP_DENSITY_Z);
+          const px = -fw / 2 + (cx + 0.5) / CROP_DENSITY_X + this.tileJitter(idx, 0x9a10 + sub) * (0.3 / CROP_DENSITY_X);
+          const pz = -fh / 2 + (cz + 0.5) / CROP_DENSITY_Z + this.tileJitter(idx, 0x9a20 + sub) * (0.3 / CROP_DENSITY_Z);
+          const jr1 = this.tileRand(idx, 0x9a30 + sub);
+          const jr2 = this.tileRand(idx, 0x9a40 + sub);
+          this.addCropPlant(stems, toppers, style.kind, stage, px, pz, elevation(px, pz) + 0.13, cellScale, jr1, jr2);
         }
       }
       const stemGeo = mergeGeometries(stems, false);

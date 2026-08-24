@@ -140,22 +140,33 @@ adding a kind is a table edit. Core tables (all `src/types.ts`): `RESOURCE_ICON`
   always shown; `HUD_EXTRA` (processed goods + `HUD_LUXURY`) sits behind an expand button.
 - **Low-stock signalling** is a fraction of each resource's own cap (`LOW_STOCK_FRACTION` 0.2 reddens
   the chip, `WARN_STOCK_FRACTION` 0.1 logs a warning), floored by per-citizen seasonal need.
-- **The tool ladder.** `tools` (iron) and `steeltools` are **two barn goods, one HUD chip** — the top
-  bar folds them into a single 🛠️ figure, the barn/smith/villager sheets keep them apart. A worker
-  labours at the village's best available tool: steel (`STEEL_TOOL_PROD` 1.15) beats iron
-  (`IRON_TOOL_PROD` 1.0) beats bare hands (`NO_TOOLS_PENALTY` 0.6), read live by `villageToolTier` /
-  `toolProdFactor`. A smith set to `steel` forges `steeltools` from iron **+ coal** (the reason a
-  village keeps two mines — coal digs slower than iron, `MINE_COAL_FACTOR` < `MINE_IRON_FACTOR`); set
-  to `iron` it forges plain `tools` from iron alone.
-- **Tool wear is work-based, not seasonal** (`wearTools`). Wear is billed as labour happens — a slice
-  (`TOOL_WEAR_PER_CYCLE`) each time a producer completes a work cycle, and per unit of builder-work
-  laid on a site (`TOOL_WEAR_PER_BUILD_WORK`, construction *and* demolition) — never in a lump at the
-  season turn. A producer blocked for want of inputs completes no cycles and so wears nothing. The
-  rates derive from `TOOL_WEAR_PER_WORKER` so a worker labouring flat out still wears ~one tool a
-  season (parity with the old flat rule); only idle time is now free. Every draw goes through
-  `wearTools`, which spends steel first — a steel tool absorbs `STEEL_DURABILITY` (2) worker-seasons,
-  so it wears half as fast — then falls back to iron, and books to the ledger via `consume` (the same
-  continuous billing as `eat`/`heat`).
+- **The tool ladder is per villager, not per village.** `tools` (iron) and `steeltools` are **two barn
+  goods, one HUD chip, one stockpile-limit row** — the top bar folds them into a single 🛠️ figure and
+  the limits panel offers one "Tools" cap for both (`LIMITABLE`/`limitStock`), while the
+  barn/smith/villager sheets keep them apart. A smith on either recipe reads `limitedOutput` as
+  `'tools'` and stands down once the *combined* stock hits that one cap — steel carries no ceiling
+  of its own. What a villager actually works with is their own belonging,
+  `Citizen.tool` (`'iron' | 'steel' | undefined`), not a village-wide fact: two workers at the same
+  bench can be on different tiers at once. Steel (`STEEL_TOOL_PROD` 1.15) beats iron (`IRON_TOOL_PROD`
+  1.0) beats bare hands (`NO_TOOLS_PENALTY` 0.75), read off that citizen by `citizenToolFactor`. A
+  bare-handed villager equips the next time they are naturally standing at a barn for another reason —
+  delivering a load, fetching a converter input, fetching or returning builder materials
+  (`tryEquipTool`) — steel first, then iron; nobody is sent on a dedicated trip just to fetch one, and
+  a villager already holding a tool doesn't trade it in just because a better one turns up at the barn.
+  A smith set to `steel` forges `steeltools` from iron **+ coal** (the reason a village keeps two
+  mines — coal digs slower than iron, `MINE_COAL_FACTOR` < `MINE_IRON_FACTOR`); set to `iron` it
+  forges plain `tools` from iron alone.
+- **Tool wear is work-based and personal, not seasonal or shared** (`wearCitizenTool`). Wear accrues
+  onto the tool the *working citizen* is holding — a slice (`TOOL_WEAR_PER_CYCLE`) each time they
+  complete a work cycle, and per unit of builder-work they lay on a site (`TOOL_WEAR_PER_BUILD_WORK`,
+  construction *and* demolition) — never in a lump at the season turn, and never drawn from some
+  other villager's kit. A producer blocked for want of inputs completes no cycles and so wears
+  nothing; a bare-handed villager has nothing to wear either. The rates derive from
+  `TOOL_WEAR_PER_WORKER` so a worker labouring flat out still wears through about one tool a season.
+  A steel tool absorbs `STEEL_DURABILITY` (2) worker-seasons before it gives out — twice an iron one —
+  at which point `Citizen.tool` clears and they go bare-handed until their next barn visit re-equips
+  them. Picking one up still books to the ledger via `s.spent` (the same continuous billing as
+  `eat`/`heat`), just at checkout time instead of at wear time.
 
 ## Building system
 
@@ -176,7 +187,9 @@ optional `builders`, terrain gating, `workRadius`, `fireproof`, `doors`, and a `
 
 A `Citizen` carries position, `age`, `health`, `happiness`, `sex`, `homeId`, `jobId`, `carry`/
 `pending`, a `task` state machine, education flags (`educated`/`graduate`/`student`/`undergrad`),
-`partnerId`/`parents`, and transient survival counters (`starve`/`chill`/`clothed`).
+`partnerId`/`parents`, transient survival counters (`starve`/`chill`/`clothed`), and their own
+`tool`/`toolWear` — the tool ladder (see Resource system) is a personal belonging, not a village
+fact.
 
 - **Roles** (recomputed every tick in `assignHomesAndJobs`): **employed** (`jobId !== null`),
   **builder** (`jobId === null && builder`), or **laborer** (`jobId === null && !builder`). Only

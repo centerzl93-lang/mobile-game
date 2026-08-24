@@ -350,12 +350,12 @@ export function update(s: GameState, dt: number, log: LogFn): void {
   ensureNavLabels(s); // walkable connectivity, recomputed only when it actually changed
   reconcileWorkers(s);
   assignHomesAndJobs(s);
-  const toolFactor = toolProdFactor(s);
-  // Long Hours rides along with the tool factor because they are the same kind of number: how
-  // well a pair of hands is working, as opposed to what the building around them is for. Renamed
-  // from `toolFactor` on the way through, since it is no longer only about tools.
-  const workFactor = toolFactor * (policyActive(s, 'longHours') ? POLICY_HOURS_PROD : 1);
-  for (const c of s.citizens) runCitizen(s, c, dt, workFactor, log);
+  // The tool factor used to live here too, one number for the whole village — it is now read per
+  // citizen (`citizenToolFactor`, off `Citizen.tool`) at the point each one actually works, since
+  // different villagers can be on different tiers at once. Long Hours is still village-wide (a
+  // policy, not a belonging), so it stays a single number threaded through as before.
+  const policyFactor = policyActive(s, 'longHours') ? POLICY_HOURS_PROD : 1;
+  for (const c of s.citizens) runCitizen(s, c, dt, policyFactor, log);
   processFires(s, dt, log);
   regrowForest(s, dt);
   updateMerchant(s, dt, log);
@@ -531,9 +531,15 @@ function staffWanted(s: GameState, b: Building): number {
   return Math.min(BUILDING_DEFS[b.type].jobs, b.desiredWorkers);
 }
 
-/** What the village has stored of whatever a limit is set on — food being every edible kind. */
+/**
+ * What the village has stored of whatever a limit is set on — food being every edible kind, tools
+ * being iron and steel together (one cap for the whole tool ladder, the same figure the HUD chip
+ * already folds them into; steel carries no cap of its own).
+ */
 export function limitStock(s: GameState, key: LimitKey): number {
-  return key === 'food' ? totalFood(s) : totalStored(s, key);
+  if (key === 'food') return totalFood(s);
+  if (key === 'tools') return totalStored(s, 'tools') + totalStored(s, 'steeltools');
+  return totalStored(s, key);
 }
 
 /** Has this stock reached the limit the player set on it? No limit set is never "at" one. */
@@ -640,53 +646,80 @@ export function workplaceStatus(s: GameState, b: Building): WorkStatus | null {
   if (capKey && atLimit(s, capKey)) {
     return { text: `✅ ${LIMIT_META[capKey].label} at your limit — paused`, tone: 'capped' };
   }
-  // The village-wide tool penalty (`NO_TOOLS_PENALTY`): with not one tool of *either* kind in the
-  // barns every trade works slowly. A field answers to no chisel, so it is left out — everything
-  // else here is slowed. Iron or steel, either lifts the penalty; only a bare shelf triggers it.
-  if (b.type !== 'farm' && villageToolTier(s) === 'none') {
-    return { text: '🔧 Slowed — villagers lack tools', tone: 'warn' };
+  // The tool penalty (`NO_TOOLS_PENALTY`) is per villager now, not village-wide: a shop can be
+  // fully staffed and still short a tool or two. A field answers to no chisel, so it is left out —
+  // everything else here can run bare-handed, just slower, which is worth a note but never a stop.
+  if (b.type !== 'farm') {
+    const bare = citizensAt(s, b.workers).filter((c) => !c.tool).length;
+    if (bare > 0) {
+      const text = b.workers.length > 1 ? `🔧 ${bare}/${b.workers.length} bare-handed — slower` : '🔧 Bare-handed — slower';
+      return { text, tone: 'warn' };
+    }
   }
   return { text: '✓ Working', tone: 'good' };
 }
 
-/**
- * The best tool the village can put in a worker's hands right now, judged by what is in the barns.
- * Steel beats iron beats nothing; a worker is only slowed (the penalty) when neither is stocked.
- * It is a live read of the stores, not a stored fact, so it follows the supply the moment a smith
- * catches up or the last tool wears out — which is why a villager's kit is computed, never saved.
- */
-export function villageToolTier(s: GameState): 'steel' | 'iron' | 'none' {
-  if (totalStored(s, 'steeltools') > 0) return 'steel';
-  if (totalStored(s, 'tools') > 0) return 'iron';
-  return 'none';
-}
-
-/** That tier as the output multiplier it applies to every worker's labour. */
-export function toolProdFactor(s: GameState): number {
-  switch (villageToolTier(s)) {
-    case 'steel': return STEEL_TOOL_PROD;
-    case 'iron': return IRON_TOOL_PROD;
-    default: return NO_TOOLS_PENALTY;
-  }
+/** Resolve worker ids to the actual `Citizen`s still alive — a departed worker's id lingers a tick. */
+function citizensAt(s: GameState, ids: number[]): Citizen[] {
+  if (ids.length === 0) return [];
+  const found: Citizen[] = [];
+  for (const c of s.citizens) if (ids.includes(c.id)) found.push(c);
+  return found;
 }
 
 /**
- * Draw `workerSeasons` of tool wear from the barns as work is performed — a slice each time a
- * producer completes a cycle, and per unit of builder-work laid at a site. Steel wears first: a
- * steel tool absorbs `STEEL_DURABILITY` worker-seasons before it is spent, so the same labour eats
- * steel half as fast, and whatever steel can't cover falls back onto iron tools. Books through
- * `consume`, so the wear lands in the Town Hall ledger like any other continuous draw (the way
- * `eat`/`heat` bill food and fuel) rather than in a lump at the season boundary.
+ * The output multiplier this villager's own kit applies to their labour — bare hands, iron, or
+ * steel (`Citizen.tool`). Unlike the old village-wide tier, this is read straight off the citizen:
+ * two villagers at the same bench can be on different tiers if one has a tool in hand and the
+ * other is between barn visits.
  */
-export function wearTools(s: GameState, workerSeasons: number): void {
-  if (workerSeasons <= 0) return;
-  let owed = workerSeasons;
-  const coveredBySteel = Math.min(totalStored(s, 'steeltools') * STEEL_DURABILITY, owed);
-  if (coveredBySteel > 0) {
-    consume(s, 'steeltools', coveredBySteel / STEEL_DURABILITY);
-    owed -= coveredBySteel;
+export function citizenToolFactor(c: Citizen): number {
+  if (c.tool === 'steel') return STEEL_TOOL_PROD;
+  if (c.tool === 'iron') return IRON_TOOL_PROD;
+  return NO_TOOLS_PENALTY;
+}
+
+/**
+ * A bare-handed villager who has just arrived at a barn checks its shelf: steel first, then iron,
+ * one unit taken off the shelf and into their own kit (`Citizen.tool`). Nothing happens if they
+ * already have a tool (a working tool is not traded in just because a better one showed up — they
+ * upgrade next time theirs wears out) or the barn has neither in stock. Called wherever a citizen
+ * already has a reason to be standing at a barn — delivering a load, fetching a converter input or
+ * builder materials — rather than sending anyone on a dedicated trip just to fetch one.
+ */
+function tryEquipTool(s: GameState, c: Citizen, barn: Building): void {
+  if (c.tool) return;
+  const takeFrom = (kind: 'steeltools' | 'tools', tier: 'steel' | 'iron'): boolean => {
+    const have = barn.store[kind] ?? 0;
+    if (have <= 0) return false;
+    barn.store[kind] = have - 1;
+    if ((barn.store[kind] ?? 0) <= 0) delete barn.store[kind];
+    const spent = (s.spent ??= {});
+    spent[kind] = (spent[kind] ?? 0) + 1;
+    c.tool = tier;
+    c.toolWear = 0;
+    return true;
+  };
+  if (takeFrom('steeltools', 'steel')) return;
+  takeFrom('tools', 'iron');
+}
+
+/**
+ * Wear `workerSeasons` onto the tool this villager is holding — a slice each time they complete a
+ * producer cycle, and per unit of builder-work they lay at a site. A steel tool absorbs
+ * `STEEL_DURABILITY` worker-seasons before it gives out, so the same labour wears it half as fast
+ * as an iron one; once the wear reaches the tier's durability the tool is spent and they go
+ * bare-handed until their next barn visit re-equips them. A villager holding nothing has nothing
+ * to wear, so an idle or unequipped worker costs no one anything.
+ */
+export function wearCitizenTool(c: Citizen, workerSeasons: number): void {
+  if (!c.tool || workerSeasons <= 0) return;
+  c.toolWear = (c.toolWear ?? 0) + workerSeasons;
+  const durability = c.tool === 'steel' ? STEEL_DURABILITY : 1;
+  if (c.toolWear >= durability) {
+    c.tool = undefined;
+    c.toolWear = 0;
   }
-  if (owed > 0) consume(s, 'tools', owed);
 }
 
 // ---- lives (ageing, schooling, old age, births) ----
@@ -1183,7 +1216,7 @@ function stepOutOfWalls(s: GameState, c: Citizen): void {
 }
 
 // ---- per-citizen behaviour ----
-function runCitizen(s: GameState, c: Citizen, dt: number, workFactor: number, log: LogFn): void {
+function runCitizen(s: GameState, c: Citizen, dt: number, policyFactor: number, log: LogFn): void {
   stepOutOfWalls(s, c);
   // Out of the building unless this tick puts them back at their bench, so a worker who breaks off
   // to haul, shop or rest reappears rather than staying invisible on the doorstep.
@@ -1239,11 +1272,11 @@ function runCitizen(s: GameState, c: Citizen, dt: number, workFactor: number, lo
         runForesterReplant(s, c, job, dt);
         return;
       }
-      runBuilder(s, c, dt, log, workFactor);
+      runBuilder(s, c, dt, log, policyFactor);
       return;
     }
-    runWorker(s, c, job, dt, workFactor);
-  } else runBuilder(s, c, dt, log, workFactor);
+    runWorker(s, c, job, dt, policyFactor);
+  } else runBuilder(s, c, dt, log, policyFactor);
 }
 
 /**
@@ -1437,7 +1470,7 @@ function firstMissingInput(b: Building): ResourceKind | null {
   return null;
 }
 
-function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workFactor: number): void {
+function runWorker(s: GameState, c: Citizen, b: Building, dt: number, policyFactor: number): void {
   if (b.type === 'market') {
     runVendor(s, c, b, dt);
     return;
@@ -1472,6 +1505,7 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workFactor
       // against the pathological full-store case, not the normal path.
       addNearest(s, { x: c.x, y: c.y }, c.carry.kind, c.carry.amount);
       c.carry = null;
+      tryEquipTool(s, c, barn); // already here dropping off a load — check the shelf for a tool too
     }
     return;
   }
@@ -1497,6 +1531,7 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workFactor
           if ((barn.store[missing] ?? 0) <= 0) delete barn.store[missing];
           b.store[missing] = (b.store[missing] ?? 0) + want;
         }
+        tryEquipTool(s, c, barn); // and the same barn visit is a chance to pick up a tool
       }
     }
     return;
@@ -1515,13 +1550,17 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workFactor
     c.timer += dt;
     if (c.timer >= WORK_SECONDS) {
       c.timer = 0;
-      const out = workOutput(s, b, dt, workFactor, c);
+      // This villager's own kit decides their tool factor now — a bare-handed worker next to a
+      // steel-equipped one at the same bench produces at two different rates.
+      const tf = citizenToolFactor(c) * policyFactor;
+      const out = workOutput(s, b, dt, tf, c);
       c.workAt = undefined; // next cycle picks somewhere new
       if (out && out.amount > 0.01) {
-        // A cycle's worth of work wears a slice off the village's tools (steel first). Charged per
-        // completed cycle, so a producer blocked for want of inputs — who reaches this branch with
-        // nothing made and never enters it — pays nothing, which is the whole point of work-based wear.
-        wearTools(s, TOOL_WEAR_PER_CYCLE);
+        // A cycle's worth of work wears a slice off *this villager's* tool (see `wearCitizenTool`).
+        // Charged per completed cycle, so a producer blocked for want of inputs — who reaches this
+        // branch with nothing made and never enters it — pays nothing, which is the whole point of
+        // work-based wear. A bare-handed worker has nothing to wear, so this is a no-op for them.
+        wearCitizenTool(c, TOOL_WEAR_PER_CYCLE);
         // Healthier, happier, and educated workers produce more; a worker facing winter without a
         // coat produces less — numb hands are slow hands, though it no longer costs them their life.
         const wellbeing = (0.7 + 0.3 * (c.health / 100)) * (0.85 + 0.15 * (c.happiness / 100));
@@ -2238,9 +2277,10 @@ function pickSite(s: GameState, c: Citizen): SiteAction | null {
  */
 function labour(c: Citizen, dt: number, factor = 1): number {
   const left = BUILDER_SHIFT_WORK - (c.effort ?? 0);
-  // `factor` carries the same productivity dial the rest of the economy runs on — chiefly the
-  // tool penalty (see `NO_TOOLS_PENALTY`). A village out of tools raises buildings more slowly but
-  // never stops: at 0.6, construction takes about a third longer, not a year.
+  // `factor` carries the same productivity dial the rest of the economy runs on — chiefly this
+  // builder's own tool (`citizenToolFactor`, see `NO_TOOLS_PENALTY`). One bare-handed builder in
+  // the crew lays about a quarter less work than an equipped one; nobody's tools raise a building
+  // to a stop, only more slowly.
   const done = Math.min(dt * BUILD_WORK_RATE * factor, Math.max(0, left));
   c.effort = (c.effort ?? 0) + done;
   if (c.effort >= BUILDER_SHIFT_WORK) {
@@ -2250,7 +2290,7 @@ function labour(c: Citizen, dt: number, factor = 1): number {
   return done;
 }
 
-function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, workFactor = 1): void {
+function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, policyFactor = 1): void {
   // Deliver carried material to a site that needs it, else return it to a barn.
   if (c.carry) {
     const kind = c.carry.kind;
@@ -2279,6 +2319,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, workFactor
         // that hauls the same sack between a full site and a full barn for the rest of the game.
         addNearest(s, { x: c.x, y: c.y }, kind, c.carry.amount);
         c.carry = null;
+        tryEquipTool(s, c, barn);
       }
     } else {
       c.carry = null; // nowhere to put it; drop
@@ -2305,6 +2346,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, workFactor
             if ((barn.store[kind] ?? 0) <= 0) delete barn.store[kind];
             c.carry = { kind, amount: want };
           }
+          tryEquipTool(s, c, barn);
         }
       }
       return;
@@ -2316,7 +2358,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, workFactor
       if (stepTo(s, c, dt)) {
         const done = labour(c, dt);
         pick.site.demoProgress = (pick.site.demoProgress ?? 0) + done;
-        wearTools(s, done * TOOL_WEAR_PER_BUILD_WORK); // tearing down is tool-work too
+        wearCitizenTool(c, done * TOOL_WEAR_PER_BUILD_WORK); // tearing down is tool-work too
         if (pick.site.demoProgress >= demoWorkOf(pick.site.type)) razeBuilding(s, pick.site);
       }
       return;
@@ -2338,15 +2380,16 @@ function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, workFactor
       return;
     }
     // build: stand at the site and labour. Construction runs on the same productivity dial as every
-    // other job — chiefly the tool penalty — so a village out of tools raises buildings more slowly.
-    // A repair (`damaged`) labours the same way but banks the work into `repairProgress` against
-    // `repairWorkOf`, and never touches `navVersion` — the building never stopped standing, so
-    // there is no frame stage and no wall to appear.
+    // other job — chiefly this builder's own tool (see `citizenToolFactor`) — so a crew short of
+    // tools raises buildings more slowly, one bare-handed builder at a time, not the whole site at
+    // once. A repair (`damaged`) labours the same way but banks the work into `repairProgress`
+    // against `repairWorkOf`, and never touches `navVersion` — the building never stopped standing,
+    // so there is no frame stage and no wall to appear.
     goTo(c, buildingApproach(s, pick.site, c));
     if (stepTo(s, c, dt)) {
       const site = pick.site;
-      const done = labour(c, dt, workFactor);
-      wearTools(s, done * TOOL_WEAR_PER_BUILD_WORK); // raising or repairing draws on the tool supply
+      const done = labour(c, dt, citizenToolFactor(c) * policyFactor);
+      wearCitizenTool(c, done * TOOL_WEAR_PER_BUILD_WORK); // raising or repairing draws on this builder's own tool
       if (site.damaged) {
         site.repairProgress = (site.repairProgress ?? 0) + done;
         if (site.repairProgress >= repairWorkOf(site.type)) finishRepair(s, site, log);
@@ -3000,8 +3043,9 @@ function endSeason(s: GameState, log: LogFn): void {
   if (pop === 0) return;
 
   // Tools no longer wear here in a lump. Wear is billed as work is performed — a slice per producer
-  // cycle and per unit of builder-work (see `wearTools`) — so an idle worker costs nothing and the
-  // season boundary has no tool bill of its own.
+  // cycle and per unit of builder-work, onto whichever tool the villager doing it is holding (see
+  // `wearCitizenTool`) — so an idle worker costs no one anything and the season boundary has no
+  // tool bill of its own.
 
   // A villager's own home, for larder-first consumption below.
   const homeById = new Map<number, Building>();
@@ -3211,12 +3255,14 @@ function warnLowStocks(s: GameState, log: LogFn): void {
  * The "running low" line for a stock, worded so it reads as English and says why it matters.
  *
  * `tools` is the one plural label in the warn list — "Tools is low" was simply wrong — and it is
- * also the one shortage with a village-wide consequence (`NO_TOOLS_PENALTY` slows *every* trade),
- * so it earns a clause the others don't. Everything else is a mass noun that takes "is".
+ * also the one shortage with a workforce-wide consequence: an empty shelf means the next villager
+ * whose tool wears out has nothing to re-equip with (`tryEquipTool`), so a bare shelf spreads
+ * bare hands through the workforce one worn-out tool at a time rather than all at once. It earns a
+ * clause the others don't. Everything else is a mass noun that takes "is".
  */
 function lowStockLine(key: LimitKey): string {
   const { icon, label } = LIMIT_META[key];
-  if (key === 'tools') return `${icon} Tools are low — every trade works slower without them`;
+  if (key === 'tools') return `${icon} Tools are low — workers going bare-handed as theirs wear out`;
   return `${icon} ${label} is low`;
 }
 

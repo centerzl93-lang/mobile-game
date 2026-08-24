@@ -119,6 +119,36 @@ test.describe('difficulties', () => {
       expect(pop[diff].childAgesOk).toBe(true);
     }
   });
+
+  test('a full tool supply does not erase Hard\'s smaller opening stock', async ({ page }) => {
+    // Every production and consumption formula reads `toolProdFactor`/`FOOD_PER_CITIZEN_PER_SEASON`
+    // etc. — none of them branch on difficulty (see PLAYTEST.md B4/B7). Difficulty is *only* the
+    // opening stockpile, so pinning both villages to the same best-case tool tier (steel, fully
+    // stocked) cannot equalise them: Hard's founding twelve still opened on half the food and coats
+    // Normal did, and that gap is exactly what "meaningfully harder" has to rest on once a smith and
+    // a tailor are running and the tool/clothing supply itself stops being the differentiator.
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const bufferSeasons = (diff: string) => {
+        g.startNewGame('small', diff, true);
+        const s = g.state;
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        barn.store.steeltools = 500; // best tool tier, so the comparison is apples-to-apples
+        const food = ['fruit', 'grain', 'fish', 'beef'].reduce((n, k) => n + (barn.store[k] ?? 0), 0);
+        const need = s.citizens.reduce(
+          (n: number, c: any) => n + (c.age >= 16 ? g.debugFoodPerCitizen() : g.debugFoodPerCitizen() * 0.5),
+          0,
+        );
+        return food / need; // seasons the opening food stock alone would cover
+      };
+      return { normal: bufferSeasons('normal'), hard: bufferSeasons('hard') };
+    });
+    // Hard's stock is exactly half of Normal's (both tools maxed out the same), so the runway is
+    // half too — a difference no amount of smithing evens out.
+    expect(out.hard).toBeCloseTo(out.normal / 2, 5);
+    expect(out.hard, 'Hard still opens with less than two seasons of banked food').toBeLessThan(2);
+  });
 });
 
 test.describe('forester', () => {
@@ -2228,12 +2258,15 @@ test.describe('why a workplace is idle', () => {
     expect(out.text).toContain('Disabled');
   });
 
-  test('with the barns out of tools, a workplace reads as slowed for want of them', async ({ page }) => {
+  test('with its workers bare-handed, a workplace reads as slowed for want of tools', async ({ page }) => {
     await open2d(page);
-    // Empty every store of tools so the village-wide penalty (`NO_TOOLS_PENALTY`) is in force.
-    const out = await staffedGatherer(page, 'for (const bl of s.buildings) delete bl.store.tools;');
+    // Tools are a personal belonging now, so strip this workplace's own staff directly rather than
+    // the barns — a bare shelf only matters once a worker's own tool actually wears out.
+    const strip = 'for (const id of b.workers) { const c = s.citizens.find((x) => x.id === id); ' +
+      'if (c) { c.tool = undefined; c.toolWear = 0; } }';
+    const out = await staffedGatherer(page, strip);
     expect(out.workers, 'the gatherer really is staffed').toBeGreaterThan(0);
-    expect(out.text.toLowerCase()).toContain('lack tools');
+    expect(out.text.toLowerCase()).toContain('bare-handed');
   });
 });
 
@@ -5583,70 +5616,108 @@ test.describe('iron and steel tools', () => {
     expect(out.steelInputs).toEqual([['iron', 4], ['coal', 3]]);
   });
 
-  test('the village equips its best tool: steel over iron over bare hands', async ({ page }) => {
+  test('a villager\'s own kit decides their tool factor: steel over iron over bare hands', async ({ page }) => {
+    await open2d(page);
+    // Tools are a personal belonging now (Citizen.tool), not a village-wide fact, so this drives one
+    // citizen through the three tiers directly rather than stocking the barns and reading a village
+    // average.
+    const out = await page.evaluate(
+      new Function(`
+        ${forge}
+        const c = s.citizens[0];
+        const read = () => ({ tier: g.debugCitizenTool(c.id), factor: g.debugCitizenToolFactor(c.id) });
+        g.debugSetCitizenTool(c.id, null);
+        const none = read();
+        g.debugSetCitizenTool(c.id, 'iron');
+        const iron = read();
+        g.debugSetCitizenTool(c.id, 'steel');
+        const steel = read();
+        return { none, iron, steel };
+      `) as () => any,
+    );
+
+    expect(out.none).toEqual({ tier: 'none', factor: 0.75 });
+    expect(out.iron).toEqual({ tier: 'iron', factor: 1 });
+    expect(out.steel).toEqual({ tier: 'steel', factor: 1.15 });
+  });
+
+  test('a bare-handed villager equips a tool the next time they pass through a barn with one', { tag: '@slow' }, async ({ page }) => {
+    test.setTimeout(180_000);
+    await open2d(page);
+    // A woodcutter's worker must revisit the barn to fetch wood and drop off firewood, so a handful
+    // of ticks guarantees at least one barn visit — the moment `tryEquipTool` gets to act.
+    const out = await page.evaluate(
+      new Function(`
+        ${forge}
+        const wc = put('woodcutter');
+        wc.desiredWorkers = g.debugJobCount('woodcutter');
+        for (let i = 0; i < 3; i++) { const b = put('barn'); if (b) b.store.grain = 4000; }
+        for (let i = 0; i < 100; i++) g.debugAdvance(0.5); // let the worker actually get hired
+        const workerId = wc.workers[0];
+        if (workerId == null) throw new Error('the woodcutter never got staffed');
+        g.debugSetCitizenTool(workerId, null);
+        barn.store.tools = 20;
+        for (let i = 0; i < 2000; i++) g.debugAdvance(0.5);
+        return { staffed: wc.workers.length, tool: g.debugCitizenTool(workerId) };
+      `) as () => any,
+    );
+
+    expect(out.staffed, 'the woodcutter is staffed').toBeGreaterThan(0);
+    expect(out.tool, 'a bare-handed worker picked up the iron on the shelf').toBe('iron');
+  });
+
+  test('a villager holding a tool does not trade it in for a better one at the barn', { tag: '@slow' }, async ({ page }) => {
+    test.setTimeout(180_000);
     await open2d(page);
     const out = await page.evaluate(
       new Function(`
         ${forge}
-        const clearTools = () => { for (const b of s.buildings) { delete b.store.tools; delete b.store.steeltools; } };
-        const read = () => ({ tier: g.debugToolTier(), factor: g.debugToolProdFactor() });
-
-        clearTools();
-        const none = read();
-        clearTools(); barn.store.tools = 20;
-        const iron = read();
-        clearTools(); barn.store.steeltools = 20;
-        const steel = read();
-        // Both in the barns: steel wins.
-        clearTools(); barn.store.tools = 20; barn.store.steeltools = 20;
-        const both = read();
-        return { none, iron, steel, both };
+        const wc = put('woodcutter');
+        wc.desiredWorkers = g.debugJobCount('woodcutter');
+        for (let i = 0; i < 3; i++) { const b = put('barn'); if (b) b.store.grain = 4000; }
+        for (let i = 0; i < 100; i++) g.debugAdvance(0.5);
+        const workerId = wc.workers[0];
+        if (workerId == null) throw new Error('the woodcutter never got staffed');
+        g.debugSetCitizenTool(workerId, 'iron');
+        barn.store.steeltools = 20; // a better tool sits on the very shelf they keep visiting
+        for (let i = 0; i < 2000; i++) g.debugAdvance(0.5);
+        return { tool: g.debugCitizenTool(workerId), steeltoolsLeft: barn.store.steeltools };
       `) as () => any,
     );
 
-    expect(out.none).toEqual({ tier: 'none', factor: 0.6 });
-    expect(out.iron).toEqual({ tier: 'iron', factor: 1 });
-    expect(out.steel).toEqual({ tier: 'steel', factor: 1.15 });
-    // With both stocked the village reaches for steel — the best tool it has.
-    expect(out.both).toEqual({ tier: 'steel', factor: 1.15 });
+    expect(out.tool, 'still working the iron they already had').toBe('iron');
+    expect(out.steeltoolsLeft, 'the steel on the shelf was never touched').toBe(20);
   });
 
-  test('a steel tool absorbs twice the wear of an iron one, and steel is spent first', async ({ page }) => {
+  test('a steel tool absorbs twice the wear of an iron one before it breaks', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
-      const s = g.state;
-      const barn = s.buildings.find((b: any) => b.type === 'barn');
-      const clear = () => { for (const b of s.buildings) { delete b.store.tools; delete b.store.steeltools; } };
+      const id = g.state.citizens[0].id;
 
-      // The same ten worker-seasons of labour, billed against iron and then against steel. Iron
-      // wears one tool a worker-season; steel absorbs two, so ten seasons spend half as many steel.
-      clear(); barn.store.tools = 1000;
-      let before = g.debugTotalStored('tools');
-      g.debugWearTools(10);
-      const ironSpent = before - g.debugTotalStored('tools');
+      // The same ten worker-seasons of labour, billed against an iron kit and then a steel one.
+      g.debugSetCitizenTool(id, 'iron');
+      g.debugWearCitizenTool(id, 0.9);
+      const ironAt90pct = g.debugCitizenTool(id); // not spent yet — just short of a worker-season
+      g.debugWearCitizenTool(id, 0.2); // tips it over 1.0
+      const ironBroken = g.debugCitizenTool(id);
 
-      clear(); barn.store.steeltools = 1000;
-      before = g.debugTotalStored('steeltools');
-      g.debugWearTools(10);
-      const steelSpent = before - g.debugTotalStored('steeltools');
+      g.debugSetCitizenTool(id, 'steel');
+      g.debugWearCitizenTool(id, 1.5);
+      const steelAt1_5 = g.debugCitizenTool(id); // steel absorbs 2 worker-seasons — still holding
+      const wearSoFar = g.debugCitizenToolWear(id);
+      g.debugWearCitizenTool(id, 0.6); // tips it over STEEL_DURABILITY (2)
+      const steelBroken = g.debugCitizenTool(id);
 
-      // With both stocked, steel is drawn first (the tier the village works in), and only what steel
-      // can't cover falls to iron. 4 steel here covers 8 worker-seasons; the last 2 go on iron.
-      clear(); barn.store.steeltools = 4; barn.store.tools = 1000;
-      const iron0 = g.debugTotalStored('tools');
-      g.debugWearTools(10);
-      const mixed = { steelLeft: g.debugTotalStored('steeltools'), ironSpent: iron0 - g.debugTotalStored('tools') };
-
-      return { ironSpent, steelSpent, mixed };
+      return { ironAt90pct, ironBroken, steelAt1_5, wearSoFar, steelBroken };
     });
 
-    expect(out.ironSpent, 'iron wears one tool a worker-season').toBeCloseTo(10, 5);
-    expect(out.steelSpent, 'steel wears half as fast').toBeCloseTo(5, 5);
-    // Steel first, then iron for the remainder: 4 steel (8 seasons) spent to zero, 2 seasons on iron.
-    expect(out.mixed.steelLeft, 'all the steel is spent before iron is touched').toBeCloseTo(0, 5);
-    expect(out.mixed.ironSpent, 'the two seasons steel could not cover fall on iron').toBeCloseTo(2, 5);
+    expect(out.ironAt90pct, 'an iron tool is still good short of one worker-season').toBe('iron');
+    expect(out.ironBroken, 'and gone once wear passes one worker-season').toBe('none');
+    expect(out.steelAt1_5, 'steel is still good past the point iron would have broken').toBe('steel');
+    expect(out.wearSoFar, 'wear is tracked per worker-season, not reset until the tool breaks').toBeCloseTo(1.5, 5);
+    expect(out.steelBroken, 'and gone once wear passes its own, doubled, durability').toBe('none');
   });
 
   test('an idle producer wears no tools; a working one does', { tag: '@slow' }, async ({ page }) => {
@@ -5661,28 +5732,30 @@ test.describe('iron and steel tools', () => {
         wc.desiredWorkers = g.debugJobCount('woodcutter');
         for (let i = 0; i < 3; i++) { const b = put('barn'); if (b) b.store.grain = 4000; }
         for (const b of s.buildings) delete b.store.wood; // nothing to cut → no work
-        barn.store.tools = 100000;
         for (let i = 0; i < 160; i++) g.debugAdvance(0.5); // let the worker arrive and stand about
+        const workerId = wc.workers[0];
+        if (workerId == null) throw new Error('the woodcutter never got staffed');
+        g.debugSetCitizenTool(workerId, 'iron');
 
-        const idleBefore = g.debugTotalStored('tools');
+        const idleBefore = g.debugCitizenToolWear(workerId);
         for (let i = 0; i < 1400; i++) g.debugAdvance(0.5);
-        const idleWorn = idleBefore - g.debugTotalStored('tools');
+        const idleWorn = g.debugCitizenToolWear(workerId) - idleBefore;
 
-        // Now give it wood. It starts completing cycles, and tools start wearing.
+        // Now give it wood. It starts completing cycles, and its own tool starts wearing.
         barn.store.wood = 100000;
-        const busyBefore = g.debugTotalStored('tools');
+        const busyBefore = g.debugCitizenToolWear(workerId);
         for (let i = 0; i < 1400; i++) g.debugAdvance(0.5);
-        const busyWorn = busyBefore - g.debugTotalStored('tools');
+        const busyWorn = g.debugCitizenToolWear(workerId) - busyBefore;
         return { idleWorn, busyWorn, made: g.debugTotalStored('firewood') };
       `) as () => any,
     );
 
     expect(out.idleWorn, 'a producer with nothing to work wears no tools').toBeCloseTo(0, 5);
     expect(out.made, 'once fed it actually works').toBeGreaterThan(0);
-    expect(out.busyWorn, 'and working wears tools').toBeGreaterThan(0);
+    expect(out.busyWorn, 'and working wears their own tool').toBeGreaterThan(0);
   });
 
-  test('raising a building wears tools too', { tag: '@slow' }, async ({ page }) => {
+  test('raising a building wears the crew\'s own tools too', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(180_000);
     await open2d(page);
     const out = await page.evaluate(
@@ -5691,7 +5764,7 @@ test.describe('iron and steel tools', () => {
         for (let i = 0; i < 3; i++) { const b = put('barn'); if (b) b.store.grain = 4000; }
         // A real construction site — placed, not force-built — with the barns holding the materials
         // and tools for the crew. Free adults become builders when a site is open, lay work, and now
-        // wear tools doing it. A chapel is a big job, so it won't finish inside the window.
+        // wear their own tool doing it. A chapel is a big job, so it won't finish inside the window.
         const f = g.debugFootprint('chapel');
         const clear = (x, y) => taken.every((t) =>
           x > t.x + t.w || t.x > x + f.w || y > t.y + t.h || t.y > y + f.h);
@@ -5708,43 +5781,46 @@ test.describe('iron and steel tools', () => {
 
         barn.store.tools = 100000;
         const site = s.buildings.find((b) => b.id === siteId);
-        const before = g.debugTotalStored('tools');
+        const toolsBefore = g.debugTotalStored('tools');
         const progBefore = site.progress;
         for (let i = 0; i < 1600; i++) g.debugAdvance(0.5);
         return {
-          worn: before - g.debugTotalStored('tools'),
           progressed: site.progress - progBefore,
+          // The barn's own stock only drops when a bare-handed builder checks a tool out — steady
+          // wear after that lives on each builder's own kit, invisible to the barn.
+          equipped: toolsBefore - g.debugTotalStored('tools'),
+          anyBuilderWorn: s.citizens.some((c) => c.builder && (c.toolWear ?? 0) > 0),
         };
       `) as () => any,
     );
 
     expect(out.progressed, 'the crew actually laid work on the site').toBeGreaterThan(0);
-    expect(out.worn, 'and wore tools doing it').toBeGreaterThan(0);
+    expect(out.equipped, 'at least one builder checked a tool out of the barn').toBeGreaterThan(0);
+    expect(out.anyBuilderWorn, 'and put real wear on the tool they took').toBe(true);
   });
 
-  test('a villager sheet names the tool in their hands, and follows the supply', async ({ page }) => {
+  test('a villager sheet names the tool in their hands, and follows their own kit', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(
       new Function(`
         ${forge}
-        // Pick a working-age villager and read their sheet under each tool supply in turn.
+        // Pick a working-age villager and read their sheet under each tool of their own in turn.
         const adult = s.citizens.find((c) => c.age >= 16) || s.citizens[0];
-        const sheet = (setup) => {
-          for (const b of s.buildings) { delete b.store.tools; delete b.store.steeltools; }
-          setup();
+        const sheet = (tool) => {
+          g.debugSetCitizenTool(adult.id, tool);
           g.inspectSel = { kind: 'citizen', id: adult.id };
           g.refreshInspect();
           return document.getElementById('inspect').innerText;
         };
         return {
-          none: sheet(() => {}),
-          iron: sheet(() => { barn.store.tools = 20; }),
-          steel: sheet(() => { barn.store.steeltools = 20; }),
+          none: sheet(null),
+          iron: sheet('iron'),
+          steel: sheet('steel'),
         };
       `) as () => any,
     );
 
-    // The sheet carries a Tool line, and it reads the tier the barns can supply right now.
+    // The sheet carries a Tool line, and it reads this citizen's own kit, not the village's.
     expect(out.none.toLowerCase()).toContain('bare hands');
     expect(out.iron).toContain('Iron tools');
     expect(out.steel).toContain('Steel tools');
@@ -5780,6 +5856,104 @@ test.describe('iron and steel tools', () => {
     expect(out.coalDug, 'the coal seam yielded').toBeGreaterThan(0);
     // Coal is the slower seam by design — that is what keeps a village needing a mine for each.
     expect(out.coalDug, 'coal comes up slower than iron').toBeLessThan(out.ironDug);
+  });
+});
+
+test.describe('early-game workforce without tools', () => {
+  // Whether a typical founding workforce — food, wood and firewood staffed roughly the way a new
+  // player would spread eight adults — can ride out a spell with the barns bare of tools without
+  // the village unravelling. This is the scenario PLAYTEST.md B7 was written against: tools running
+  // out should cost a real hit to production, not decide survival outright.
+  const settle = (difficulty: string) => `
+    const g = window.__village;
+    g.startNewGame('small', '${difficulty}', false);
+    const s = g.state;
+    const barn = s.buildings.find((b) => b.type === 'barn');
+    // Normal and Hard both open with no wood or stone (see the difficulty table above) — a site
+    // can't even be *placed* without the materials for it sitting in storage already (nothing is
+    // spent until it's delivered, but placing still checks the village can afford it). Hand over
+    // just enough to raise this test's four buildings, leaving food/tools/firewood exactly as the
+    // difficulty set them — those are what this test is actually about.
+    barn.store.wood = 1000;
+    barn.store.stone = 300;
+    const findSpot = (type) => {
+      for (let r = 2; r < Math.max(s.w, s.h); r++)
+        for (let dy = -r; dy <= r; dy++)
+          for (let dx = -r; dx <= r; dx++) {
+            const x = barn.x + dx, y = barn.y + dy;
+            if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue;
+            if (g.debugCanPlace(type, x, y).ok) {
+              const id = g.debugPlace(type, x, y);
+              if (id != null) return id;
+            }
+          }
+      throw new Error('no placeable ' + type + ' site anywhere on this map');
+    };
+    const build = (type, workers) => {
+      const id = findSpot(type); // called once — its own array search must not run per find() probe
+      const b = s.buildings.find((x) => x.id === id);
+      b.built = true;
+      b.progress = g.debugBuildWork(type);
+      b.desiredWorkers = workers;
+      return b;
+    };
+    // Eight founding adults: four on food (two gatherers), two cutting wood, one turning it into
+    // firewood — the eighth is free to build or labour. Roughly the food-heavy split the design
+    // doc describes as the normal early-game allocation.
+    build('gatherer', 2);
+    build('gatherer', 2);
+    build('lumberyard', 2);
+    build('woodcutter', 1);
+  `;
+
+  test('a Normal village with no tools in the barns still stands after three seasons', { tag: '@slow' }, async ({ page }) => {
+    test.setTimeout(180_000);
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${settle('normal')}
+        // The barns start with a year of tools; strip them so the whole run happens under
+        // NO_TOOLS_PENALTY, as if the smith had already run dry before this window began.
+        for (const b of s.buildings) { delete b.store.tools; delete b.store.steeltools; }
+        const popStart = s.citizens.length;
+        const foodOf = () => ['fruit','grain','fish','beef'].reduce((n, k) => n + g.debugTotalStored(k), 0);
+        for (let i = 0; i < 3600; i++) g.debugAdvance(0.5); // three seasons
+        return {
+          popStart, popEnd: s.citizens.length, gameOver: s.gameOver,
+          food: foodOf(), firewood: g.debugTotalStored('firewood'),
+        };
+      `) as () => any,
+    );
+
+    expect(out.gameOver, 'the village is still standing').toBe(false);
+    expect(out.popEnd, 'nobody starved or froze for want of tools').toBeGreaterThanOrEqual(out.popStart);
+    // Wood keeps moving even while the whole village is short-handed on tools — a temporary tool
+    // shortage must not force food to eat the entire workforce and leave nothing for fuel.
+    expect(out.firewood, 'firewood production kept up alongside food').toBeGreaterThan(0);
+  });
+
+  test('Hard mode\'s minimal starting tools carry it through the opening seasons, not just to zero', { tag: '@slow' }, async ({ page }) => {
+    test.setTimeout(180_000);
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${settle('hard')}
+        const popStart = s.citizens.length;
+        const toolsStart = g.debugTotalStored('tools') + g.debugTotalStored('steeltools');
+        for (let i = 0; i < 2400; i++) g.debugAdvance(0.5); // two seasons, on Hard's own starting kit
+        return {
+          popStart, popEnd: s.citizens.length, gameOver: s.gameOver,
+          toolsStart, toolsEnd: g.debugTotalStored('tools') + g.debugTotalStored('steeltools'),
+        };
+      `) as () => any,
+    );
+
+    // Hard's 24 starting tools (half of Normal's 48, per the difficulty table above) are a real
+    // constraint — this is what makes Hard Hard — but they, and the smaller opening stock behind
+    // them, are meant to be survivable, not an unwinnable opening.
+    expect(out.toolsStart).toBe(24);
+    expect(out.gameOver, 'Hard is difficult, not mathematically doomed').toBe(false);
+    expect(out.popEnd, 'the founding village makes it through the opening seasons').toBeGreaterThanOrEqual(out.popStart);
   });
 });
 
@@ -8686,6 +8860,50 @@ test.describe('stockpile limits', () => {
     expect(out.desired).toBeGreaterThan(0);
   });
 
+  test('one tools cap covers iron and steel together, not one seam at a time', { tag: '@slow' }, async ({ page }) => {
+    test.setTimeout(180_000);
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        const g = window.__village;
+        g.startNewGame('small', 'easy', false);
+        g.debugPinTier('city');
+        const s = g.state;
+        s.limits = {};
+        const barn = s.buildings.find((b) => b.type === 'barn');
+        for (const k of ['wood', 'stone', 'iron', 'coal']) barn.store[k] = 2000;
+        let id = null;
+        for (let r = 3; r < 30 && id == null; r++)
+          for (let dy = -r; dy <= r && id == null; dy++)
+            for (let dx = -r; dx <= r && id == null; dx++) {
+              const x = barn.x + dx, y = barn.y + dy;
+              if (!g.debugCanPlace('blacksmith', x, y).ok) continue;
+              id = g.debugPlace('blacksmith', x, y);
+            }
+        if (id == null) throw new Error('no placeable blacksmith site');
+        const w = s.buildings.find((b) => b.id === id);
+        w.built = true;
+        w.progress = g.debugBuildWork('blacksmith');
+        w.recipe = 'steel'; // this smith makes steeltools, not tools
+        w.desiredWorkers = g.debugJobCount('blacksmith');
+
+        // A cap on "tools" that the barn's *plain iron* tools alone already meet, with no steel in
+        // the barns at all — the steel smith should still stand down, because one cap counts both
+        // kinds together rather than the steel seam having room of its own.
+        s.limits.tools = 50;
+        barn.store.tools = 50;
+        delete barn.store.steeltools;
+        for (let i = 0; i < 20; i++) g.debugAdvance(0.5);
+        g.inspectSel = { kind: 'building', id };
+        g.refreshInspect();
+        return { workers: w.workers.length, text: document.getElementById('inspect').innerText };
+      `) as () => any,
+    );
+
+    expect(out.workers, 'the smith is staffed').toBeGreaterThan(0);
+    expect(out.text.toLowerCase()).toContain('tools at your limit');
+  });
+
   test('one food limit covers every food trade, and fields and pens ignore it', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(() => {
@@ -8812,10 +9030,10 @@ test.describe('stockpile limits', () => {
       caps: [...document.querySelectorAll('#village .limit-row .count')].map((e) => e.textContent!.trim()),
     }));
 
-    // A row per limitable resource — the ten core (iron and steel tools counted apart) plus the
-    // five luxury goods a town can make.
+    // A row per limitable resource — the nine core (iron and steel tools share one "Tools" row)
+    // plus the five luxury goods a town can make.
     expect(out.rows, 'a row per limitable resource').toBe(out.limitable);
-    expect(out.rows).toBe(15);
+    expect(out.rows).toBe(14);
     expect(out.subs, 'and nothing under the name but the stepper').toBe(0);
     expect(out.caps.length).toBe(out.limitable);
     expect(out.caps.every((c) => /^(\d+|—)$/.test(c)), 'each row shows its limit, or none').toBe(true);

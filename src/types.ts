@@ -917,6 +917,21 @@ export interface Citizen {
    */
   clothed?: boolean;
   /**
+   * The tool this villager is actually holding — `undefined` means bare hands. Unlike clothing
+   * (a season's ration, billed and forgotten), a tool is a real, persistent item: this villager
+   * keeps working with it, at the tier it names (`citizenToolFactor`), until it wears out
+   * (`wearCitizenTool`) or they never had one to begin with. Saved like any other belonging, so a
+   * reload doesn't strip a village of tools it had already handed out.
+   */
+  tool?: 'iron' | 'steel';
+  /**
+   * Wear accumulated on the tool this villager currently holds, in worker-seasons — see
+   * `TOOL_WEAR_PER_CYCLE` / `TOOL_WEAR_PER_BUILD_WORK`. Reset to 0 whenever a new tool is picked
+   * up; the tool breaks (and this resets again) once it reaches the tier's durability
+   * (`STEEL_DURABILITY` for steel, 1 worker-season for iron). Meaningless while `tool` is unset.
+   */
+  toolWear?: number;
+  /**
    * Seconds this villager has gone unfed. Death comes at STARVE_SECONDS, so a short gap while a
    * hauler restocks the larder is survivable. Transient — not saved.
    */
@@ -1462,9 +1477,10 @@ export function limitedOutput(b: Building): LimitKey | null {
     case 'woodcutter': return 'firewood';
     case 'quarry': return 'stone';
     case 'mine': return b.output === 'iron' ? 'iron' : 'coal';
-    // A smith set to steel answers to the steel-tool cap, one set to iron to the plain-tool cap —
-    // so a limit on one seam of the tool supply stands down only the smiths making that kind.
-    case 'blacksmith': return b.recipe === 'steel' ? 'steeltools' : 'tools';
+    // Iron and steel tools share one cap — the same "tools" figure the HUD already folds them
+    // into (see `limitStock`) — so a smith on either recipe stands down together, not one seam of
+    // the tool supply at a time. Steel tools carry no cap of their own.
+    case 'blacksmith': return 'tools';
     case 'tailor': return 'clothing';
     case 'herbalist': return 'medicine';
     // The workshop is judged against whatever bench it is running — the recipe *is* the output
@@ -1480,9 +1496,11 @@ export function limitedOutput(b: Building): LimitKey | null {
  * A cap only means anything for a good the village *makes*: `atLimit` stands a producer down, so a
  * limit on gold, dye or silk — bought off a ship, made by nobody — would sit in the panel doing
  * nothing. The five luxury goods a town produces are here; the three it only buys are not.
+ * `steeltools` is absent too, on purpose: it shares the `tools` cap (see `limitStock`) rather than
+ * carrying a second one of its own, so the panel offers one "Tools" row, not two.
  */
 export const LIMITABLE: LimitKey[] = [
-  'food', 'wood', 'firewood', 'stone', 'coal', 'iron', 'tools', 'steeltools', 'clothing', 'medicine',
+  'food', 'wood', 'firewood', 'stone', 'coal', 'iron', 'tools', 'clothing', 'medicine',
   'sand', 'glass', 'jewelry', 'finejewelry', 'fineclothes',
 ];
 
@@ -2437,22 +2455,40 @@ export const PER_CITIZEN_SEASON_NEED: Partial<Record<LimitKey, number>> = {
   tools: TOOL_WEAR_PER_WORKER,
 };
 
-export const NO_TOOLS_PENALTY = 0.6; // output multiplier with no tools of any kind in the barns
-
 /**
- * The tool ladder, as an output multiplier on every worker's labour. Bare hands are slow; an iron
+ * The tool ladder, as an output multiplier on every worker's labour. Bare hands are slower; an iron
  * tool is the baseline a trade is balanced around; steel is a real, if modest, step past it.
  *
- *   no tool  → 0.60  (`NO_TOOLS_PENALTY`)
+ *   no tool  → 0.75  (`NO_TOOLS_PENALTY`)
  *   iron     → 1.00  (`IRON_TOOL_PROD`)
  *   steel    → 1.15  (`STEEL_TOOL_PROD`)
+ *
+ * `NO_TOOLS_PENALTY` was 0.6 (a 40% cut) until a playtest showed it acting as the single biggest
+ * lever on survival rather than a modest one: since food, wood and firewood all draw on the same
+ * villager-hours, a 40% cut to every non-farm trade doesn't just slow the trades it hits — it forces
+ * a much bigger *share* of the workforce onto food to stand still, leaving too few hands for the
+ * winter wood/firewood that food shortage was never supposed to compete with. Losing every tool in
+ * the village should hurt and should make the case for a smith, not make the difference between a
+ * bad season and an unrecoverable one. 0.75 matches `COLD_WORK_FACTOR` — the "going without, but
+ * still working" tier this codebase already uses for an uncoated-but-warm villager — rather than
+ * `COLD_WORK_MIN`'s crisis-grade 0.6, which is reserved for an actively freezing one. A quarter cut
+ * raises the food-workforce share by 1/0.75 ≈ 1.33× instead of 1/0.6 ≈ 1.67×, which is the difference
+ * between "tighten your belt" and "cascading collapse" for a village already running close to the
+ * wire. See PLAYTEST.md B7.
  *
  * Steel's pull is deliberately *not* a doubling: its main draw is that it lasts twice as long
  * (`STEEL_DURABILITY`), so a village re-forges tools half as often. The +15% is the sweetener on
  * top, not the whole reason to bother — the reason is the coal-fed second mine it takes to make it.
- * The village equips its best available tool, so steel in the barns lifts everyone to 1.15 and iron
- * to 1.00; only an empty tool shelf drops the village to the penalty.
+ *
+ * Applied **per villager**, not village-wide: each citizen holds (or doesn't hold) a real tool of
+ * their own — `Citizen.tool` — picked up opportunistically from a barn's stock the next time they
+ * pass through one (see `tryEquipTool`), and worn down by their own labour (`wearCitizenTool`)
+ * until it breaks and they go bare-handed again until their next barn visit. A shortage is
+ * therefore a *gradient* across the workforce (some villagers equipped, some not) rather than a
+ * single village-wide switch that drops every trade at once the moment the last tool anywhere
+ * breaks — the earlier village-wide model this ladder was designed against.
  */
+export const NO_TOOLS_PENALTY = 0.75; // output multiplier for a villager holding no tool at all
 export const IRON_TOOL_PROD = 1.0;
 export const STEEL_TOOL_PROD = 1.15;
 /** A steel tool wears out over this many worker-seasons — twice an iron tool's one. */

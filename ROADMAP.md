@@ -105,10 +105,17 @@ Concrete, code-grounded items (see `PLAYTEST.md` for detail):
 ### Phase 7 — UI/UX polish ⏳
 - 🎯 **Top-line HUD wraps to two rows** at 430px with the nine requested chips; fitting one row needs
   materially smaller chips or a horizontal scroll (which hides items on mobile). Decide the trade-off.
-- ✅ **Per-crop field art (3D, first pass)** — `makeFarmField` furrows the plot and grows a stand of
-  crop clumps at the `makeFencedPlot` hook, tinted by `cropDesign(crop).color` and ripening as
-  `growth` climbs 0→1. The 2D `drawFarm` still draws every crop the same generic tilled soil; real
-  per-crop *models* (the reserved `CropDesign.model` slot) remain future work.
+- ✅ **Per-crop field art (3D) — five growth stages** — `makeFarmField` furrows the plot and grows a
+  crop stand through five distinct stages (`CropStage`: empty → seeded → growing → mature →
+  harvest, via `cropStageOf`), shape changing with the stage and tinted by `cropDesign(crop).color`.
+  `farmDisplayGrowth` computes a smooth 0→1 value straight from the calendar (0→0.5 over spring,
+  0.5→1 over summer) rather than reading the stored `b.growth`, which only ever holds three values —
+  exactly right for the harvest yield formula, too coarse to watch a field grow. Purely a rendering
+  input; it never feeds back into `b.growth` or the harvest math. Table-driven off `cropDesign`, so
+  every crop in the game gets all five stages for free — swept by
+  `newgame.spec.ts`'s "every crop ... moves through all five growth stages" test via the
+  `debugCropStage`/`debugCrops` hooks. The 2D `drawFarm` still draws every crop the same generic
+  tilled soil; real per-crop *models* (the reserved `CropDesign.model` slot) remain future work.
 - ✅ **Ranch 3D animal glyphs** — `makeRanchPen` scatters low-poly critters (shape/size/colour by
   `RanchAnimal`, capped and refreshed with the herd) across the pen, closing the gap with the 2D
   renderer.

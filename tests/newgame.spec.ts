@@ -734,6 +734,44 @@ test.describe('farm', () => {
     expect(out.h).toBe(5);
   });
 
+  test('every crop in the game moves through all five growth stages across the year', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true);
+      const s = g.state;
+      const crops: string[] = g.debugCrops();
+      s.seeds = crops.slice();
+      // One synthetic built field per crop, same shortcut the sibling tests in this block use —
+      // `farmDisplayGrowth` only reads `built`/`type`/`crop` and the calendar, not where a field
+      // stands or who's reachable, so there's no need to actually place or staff one.
+      const ids: Record<string, number> = {};
+      for (const crop of crops) ids[crop] = eval(mk)(crop, 0, 4, 4, 0);
+      // The five calendar moments `farmDisplayGrowth` maps to each stage — see its own doc comment
+      // for the 0→0.5 (spring) / 0.5→1 (summer) / 0 (autumn+winter) shape this walks across.
+      const setups = [
+        { season: 2, seasonTimer: 100 }, // Autumn: empty
+        { season: 0, seasonTimer: 120 }, // early Spring: seeded
+        { season: 0, seasonTimer: 480 }, // late Spring: growing
+        { season: 1, seasonTimer: 180 }, // early Summer: mature
+        { season: 1, seasonTimer: 540 }, // late Summer: harvest
+      ];
+      const results: Record<string, string[]> = {};
+      for (const crop of crops) {
+        results[crop] = setups.map((setup) => {
+          s.season = setup.season;
+          s.seasonTimer = setup.seasonTimer;
+          return g.debugCropStage(ids[crop]).stage;
+        });
+      }
+      return results;
+    }, mkFarm);
+    const expected = ['empty', 'seeded', 'growing', 'mature', 'harvest'];
+    for (const [crop, stages] of Object.entries(out)) {
+      expect(stages, crop).toEqual(expected);
+    }
+  });
+
   test('a bigger field yields a bigger autumn harvest (yield scales with area)', async ({ page }) => {
     await open(page);
     const out = await page.evaluate((mk) => {

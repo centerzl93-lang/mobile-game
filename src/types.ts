@@ -565,6 +565,39 @@ export function cropDesign(crop: Crop | undefined): CropDesign {
   return crop ? CROP_DESIGN[crop] : { color: 0x8a6a3c };
 }
 
+/**
+ * A field's growth for *display*, smoothly interpolated within the current season — unlike the
+ * stored `b.growth` that prices the harvest, which only ever holds three values (0 fallow, 0.5 done
+ * with spring, 1 done with summer: see `endSeason`) because that is all the yield formula needs.
+ * Watching a field grow needs the value to move every tick it's actually growing, not jump twice a
+ * year, so this is computed straight from the calendar instead: 0→0.5 over spring, 0.5→1 over
+ * summer, 0 through autumn (just harvested) and winter (fallow). Purely a rendering input — it never
+ * feeds back into `b.growth` or the harvest math, so it cannot touch yield or balance.
+ */
+export function farmDisplayGrowth(b: Building, s: GameState): number {
+  if (!b.built || b.type !== 'farm' || !b.crop || !s.seeds.includes(b.crop)) return 0;
+  const t = Math.min(1, Math.max(0, s.seasonTimer / SEASON_LENGTH));
+  const season = SEASONS[s.season];
+  if (season === 'Spring') return t * 0.5;
+  if (season === 'Summer') return 0.5 + t * 0.5;
+  return 0; // Autumn (just harvested) and Winter: the field lies fallow
+}
+
+/**
+ * The five growth stages a field's crop is shown in, keyed off `farmDisplayGrowth`. One table for
+ * every crop in the game — the stage only changes *shape*; `cropDesign(crop).color` is what tells
+ * one crop's stand from another's, so a new crop needs no stage art of its own to get all five.
+ */
+export type CropStage = 'empty' | 'seeded' | 'growing' | 'mature' | 'harvest';
+export const CROP_STAGES: CropStage[] = ['empty', 'seeded', 'growing', 'mature', 'harvest'];
+export function cropStageOf(displayGrowth: number): CropStage {
+  if (displayGrowth <= 0.02) return 'empty';
+  if (displayGrowth <= 0.22) return 'seeded';
+  if (displayGrowth <= 0.5) return 'growing';
+  if (displayGrowth <= 0.82) return 'mature';
+  return 'harvest';
+}
+
 export type BuildCategory = 'housing' | 'food' | 'resources' | 'civic' | 'trade';
 
 export interface BuildingDef {

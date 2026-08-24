@@ -33,6 +33,9 @@ import {
   HARVEST_STONE,
   fireIntensity,
   cropDesign,
+  farmDisplayGrowth,
+  cropStageOf,
+  CropStage,
   RanchAnimal,
 } from '../types';
 import { tileIndex, inBounds } from '../game/world';
@@ -1659,11 +1662,12 @@ export class Renderer3D {
       // rebuild this whole pass on every frame of a build.
       const stage = buildStage(b);
       const step = stage === 'framing' ? Math.round(framedFraction(b) * 12) : 0;
-      // A ranch's live herd and a farm's crop/growth drive their plot's own detail (animal glyphs,
-      // ripening plants) rather than a model, so they need to be in the signature too — quantised
-      // the same way `step` quantises framing, so growth doesn't force a rebuild every frame.
+      // A ranch's live herd and a farm's crop stage drive their plot's own detail (animal glyphs,
+      // the crop stand) rather than a model, so they need to be in the signature too. The stage —
+      // not the smoothly-moving `farmDisplayGrowth` behind it — is what's quantised in, the same way
+      // `step` quantises framing: five discrete looks, not a rebuild every frame growth ticks up.
       const plot = b.type === 'ranch' ? (b.animal ?? '') + ':' + Math.floor(b.animals ?? 0)
-        : b.type === 'farm' ? (b.crop ?? '') + ':' + Math.round((b.growth ?? 0) * 10)
+        : b.type === 'farm' ? (b.crop ?? '') + ':' + cropStageOf(farmDisplayGrowth(b, s))
         : '';
       // `demolish` is in the signature as well as the stage: a building that has been marked but
       // not started on looks exactly like one that has not, and the mark is what the player wants
@@ -1702,8 +1706,14 @@ export class Renderer3D {
         : !hasModel ? 'plot'
         : stage === 'framing' ? 'frame'
         : 'model';
+      // A ranch/field's own detail (herd, crop stage) doesn't change `kind` — it's a 'plot' the
+      // whole time it's built — so `kind` alone can't tell this pass whether to rebuild one. Track
+      // the same string the outer signature folded in, and rebuild whenever *it* changes instead.
+      const plot = b.type === 'ranch' ? (b.animal ?? '') + ':' + Math.floor(b.animals ?? 0)
+        : b.type === 'farm' ? (b.crop ?? '') + ':' + cropStageOf(farmDisplayGrowth(b, s))
+        : '';
       let obj = this.buildingMeshes.get(b.id);
-      if (!obj || obj.userData.kind !== kind) {
+      if (!obj || obj.userData.kind !== kind || obj.userData.plot !== plot) {
         if (obj) {
           this.disposeBuilding(obj);
           this.buildingMeshes.delete(b.id);
@@ -1711,8 +1721,9 @@ export class Renderer3D {
         obj = kind === 'site' ? this.makeBuildingSite(fw, fh)
           : kind === 'frame' ? this.makeBuildingFrame(b.type, fw, fh)
           : kind === 'model' ? this.makeBuildingModel(b.type)
-          : this.makeBuildingBox(b);
+          : this.makeBuildingBox(b, s);
         obj.userData.kind = kind;
+        obj.userData.plot = plot;
         obj.position.set(b.x + fw / 2, TOP, b.y + fh / 2);
         // A model is authored facing south; turning it is what puts its door on the face the
         // simulation is routing villagers to. The site pad, the box fallback and the fenced plot
@@ -1766,11 +1777,11 @@ export class Renderer3D {
     });
   }
 
-  private makeBuildingBox(b: Building): THREE.Object3D {
+  private makeBuildingBox(b: Building, s: GameState): THREE.Object3D {
     const fw = footprintW(b);
     const fh = footprintH(b);
     if (b.type === 'ranch') return this.makeRanchPen(b, fw, fh);
-    if (b.type === 'farm') return this.makeFarmField(b, fw, fh);
+    if (b.type === 'farm') return this.makeFarmField(b, fw, fh, s);
     const h = buildingHeight(b.type);
     const geo = new THREE.BoxGeometry(fw * 0.9, h, fh * 0.9);
     geo.translate(0, h / 2, 0);
@@ -1889,11 +1900,12 @@ export class Renderer3D {
   }
 
   /**
-   * A farm field: the fenced plot, furrowed, with a stand of crop plants that fills in and ripens
-   * as `growth` climbs (0 bare soil → 1 ready to harvest), tinted by `cropDesign(b.crop).color` —
-   * the cheap first pass `PLAYTEST.md` U2 asked for, at the `makeFencedPlot` hook it names.
+   * A farm field: the fenced plot, furrowed, with a stand of crop plants at one of five growth
+   * stages (`cropStageOf`) — empty soil, a seeded sprout, a leafy growing plant, a near-ripe mature
+   * stand, and a full harvest stand — tinted by `cropDesign(b.crop).color`. The `PLAYTEST.md` U2 gap
+   * this closes: fields used to draw generic regardless of crop or how far along they were.
    */
-  private makeFarmField(b: Building, fw: number, fh: number): THREE.Object3D {
+  private makeFarmField(b: Building, fw: number, fh: number, s: GameState): THREE.Object3D {
     // The plot's own patch of the real terrain height field, in plot-local coordinates — so a field
     // dragged out onto a foothill's raised shelf sits on it rather than floating at the plains
     // height. See `makeFencedPlot`'s `elevation` doc.
@@ -1914,31 +1926,104 @@ export class Renderer3D {
     const furrowGeo = mergeGeometries(furrows, false);
     if (furrowGeo) group.add(new THREE.Mesh(furrowGeo, furrowMat));
 
-    // Crop plants: one clump per tile, growing from a bare sprout to a full, ripe-coloured stand —
-    // the field's honest state at a glance, not just a number in the inspect panel. Position is a
-    // stable hash of the tile under it, so replanting the same ground doesn't jitter the stand.
-    const growth = Math.max(0, Math.min(1, b.growth ?? 0));
-    if (growth > 0.03) {
+    // Crop plants: one clump per tile, at one of five growth stages — the field's honest state at a
+    // glance, not just a number in the inspect panel. Position is a stable hash of the tile under
+    // it, so replanting the same ground doesn't jitter the stand.
+    const stage = cropStageOf(farmDisplayGrowth(b, s));
+    if (stage !== 'empty') {
       const design = cropDesign(b.crop);
-      const color = new THREE.Color(0x6a9c4a).lerp(new THREE.Color(design.color), growth);
-      const h = 0.08 + 0.30 * growth;
+      const ripe = new THREE.Color(design.color);
+      const sprout = new THREE.Color(0x8fbf5a);
+      const stemColor =
+        stage === 'seeded' ? sprout
+        : stage === 'growing' ? sprout.clone().lerp(ripe, 0.35)
+        : stage === 'mature' ? sprout.clone().lerp(ripe, 0.75)
+        : ripe; // harvest: fully ripe
       const cols = Math.max(1, Math.round(fw));
-      const plants: THREE.BufferGeometry[] = [];
+      const stems: THREE.BufferGeometry[] = [];
+      const toppers: THREE.BufferGeometry[] = [];
       for (let cx = 0; cx < cols; cx++) {
         for (let cz = 0; cz < rows; cz++) {
           const idx = tileIndex(Math.floor(b.x) + cx, Math.floor(b.y) + cz);
           const px = -fw / 2 + (cx + 0.5) + this.tileJitter(idx, 0x9a1) * 0.3;
           const pz = -fh / 2 + (cz + 0.5) + this.tileJitter(idx, 0x9a2) * 0.3;
-          const r = 0.08 + 0.03 * this.tileRand(idx, 0x9a3);
-          const cone = new THREE.ConeGeometry(r, h, 6);
-          cone.translate(px, elevation(px, pz) + 0.13 + h / 2, pz);
-          plants.push(cone);
+          const jr = this.tileRand(idx, 0x9a3);
+          this.addCropPlant(stems, toppers, stage, px, pz, elevation(px, pz) + 0.13, jr);
         }
       }
-      const plantGeo = mergeGeometries(plants, false);
-      if (plantGeo) group.add(new THREE.Mesh(plantGeo, new THREE.MeshStandardMaterial({ color, roughness: 0.9 })));
+      const stemGeo = mergeGeometries(stems, false);
+      if (stemGeo) group.add(new THREE.Mesh(stemGeo, new THREE.MeshStandardMaterial({ color: stemColor, roughness: 0.9 })));
+      if (toppers.length) {
+        const topGeo = mergeGeometries(toppers, false);
+        if (topGeo) group.add(new THREE.Mesh(topGeo, new THREE.MeshStandardMaterial({ color: ripe, roughness: 0.85 })));
+      }
     }
     return group;
+  }
+
+  /**
+   * One crop plant's geometry at a growth `stage`, in field-local space at (x, z) resting on
+   * `groundY`. Pushed into `stems` (every stage but empty) and `toppers` (only mature and harvest —
+   * the ripe head that shows the crop is actually coming in). Shape changes with the stage, not just
+   * height, so a field reads as genuinely different moments — a bare blade, a leafy young plant, a
+   * budding near-ripe stand, a full head-topped harvest stand — rather than one cone stretching.
+   * Every crop in the game gets all five for free: this never reads `Crop` itself, only the stage;
+   * telling one crop's stand from another's is purely the caller's colour choice.
+   */
+  private addCropPlant(
+    stems: THREE.BufferGeometry[], toppers: THREE.BufferGeometry[], stage: CropStage,
+    x: number, z: number, groundY: number, jr: number,
+  ): void {
+    switch (stage) {
+      case 'empty':
+        break;
+      case 'seeded': {
+        // Barely up: a single short blade.
+        const h = 0.05 + 0.02 * jr;
+        const blade = new THREE.ConeGeometry(0.025, h, 5);
+        blade.translate(x, groundY + h / 2, z);
+        stems.push(blade);
+        break;
+      }
+      case 'growing': {
+        // A leafier young plant: a stem with two outstretched blade leaves.
+        const h = 0.16 + 0.03 * jr;
+        const stem = new THREE.ConeGeometry(0.05, h, 6);
+        stem.translate(x, groundY + h / 2, z);
+        stems.push(stem);
+        for (const sx of [-1, 1]) {
+          const leaf = new THREE.BoxGeometry(0.14, 0.015, 0.045);
+          leaf.rotateZ(sx * 0.5);
+          leaf.translate(x + sx * 0.06, groundY + h * 0.4, z);
+          stems.push(leaf);
+        }
+        break;
+      }
+      case 'mature': {
+        // Tall and full, with a bud just showing the crop's true colour — nearly there, not ready.
+        const h = 0.28 + 0.04 * jr;
+        const stem = new THREE.ConeGeometry(0.08, h, 6);
+        stem.translate(x, groundY + h / 2, z);
+        stems.push(stem);
+        const bud = new THREE.SphereGeometry(0.05, 6, 5);
+        bud.translate(x, groundY + h * 0.92, z);
+        toppers.push(bud);
+        break;
+      }
+      case 'harvest': {
+        // Full height, a ripe cluster on top — the field at its most abundant.
+        const h = 0.32 + 0.04 * jr;
+        const stem = new THREE.ConeGeometry(0.09, h, 6);
+        stem.translate(x, groundY + h / 2, z);
+        stems.push(stem);
+        for (const [ox, oz] of [[0, 0], [0.05, 0.03], [-0.04, -0.04]]) {
+          const head = new THREE.SphereGeometry(0.055, 6, 5);
+          head.translate(x + ox, groundY + h * 0.98, z + oz);
+          toppers.push(head);
+        }
+        break;
+      }
+    }
   }
 
   /**

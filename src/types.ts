@@ -2933,6 +2933,14 @@ export const FIRE_DOUSE_TRIPS_NEEDED = 3;
  */
 export const FIRE_RESPONSE_RADIUS = 24;
 /**
+ * Base chance per season that a staffed mine suffers a cave-in, taking one of its miners.
+ *
+ * The one death a village cannot stockpile food or stack medicine against — it comes with sending
+ * people underground, and only threatens villagers actually working a mine. Kept low: a mining town
+ * should feel the risk over the years without it emptying the shafts.
+ */
+export const CAVE_IN_CHANCE = 0.05;
+/**
  * Chance a collapsing building sets a neighbour alight, by how far away the neighbour is.
  *
  * Rolled once per neighbour when a fire finishes burning, so a blaze in a tight row of houses can

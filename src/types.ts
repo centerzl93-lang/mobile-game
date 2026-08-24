@@ -1436,8 +1436,9 @@ export const CIRCLE_WORK: BuildingType[] = ['gatherer', 'hunting', 'lumberyard',
  * Everything with a door except the circle trades and the fishing hut, whose jetty is the point of
  * it. A field and a pen have no door: they are open ground, and their workers are visible on them.
  */
-/** How much a stockpile limit moves per tap of the stepper. */
+/** How much a stockpile limit moves per tap of the stepper's small step; the big step is double this. */
 export const LIMIT_STEP = 50;
+export const LIMIT_STEP_BIG = LIMIT_STEP * 2;
 
 /**
  * What a stockpile limit can be set on: a resource, or **`'food'` for every food kind at once**.
@@ -1510,6 +1511,12 @@ export const LIMITABLE: LimitKey[] = [
  * Easy opens with 660 wood and 600 firewood, so both of its ceilings are set above that, while
  * Normal and Hard open with neither and can bank a winter's fuel (roughly 160 for the founding
  * twelve) three times over before a woodcutter downs tools.
+ *
+ * Every limitable good gets a default now — the luxury chain (sand through fine goods) used to
+ * open with no ceiling at all, which read as an omission rather than a choice, and left a new
+ * town's first glassblower running unchecked until the player found the panel. 100 is a plain,
+ * round starting cap: low enough that an early workshop can actually hit it and stand down, high
+ * enough not to bite before there is a bench to run it on.
  */
 const BASE_LIMITS: Partial<Record<LimitKey, number>> = {
   food: 2000,
@@ -1521,6 +1528,11 @@ const BASE_LIMITS: Partial<Record<LimitKey, number>> = {
   coal: 100,
   tools: 100,
   clothing: 100,
+  sand: 100,
+  glass: 100,
+  jewelry: 100,
+  finejewelry: 100,
+  fineclothes: 100,
 };
 export const START_LIMITS: Record<Difficulty, Partial<Record<LimitKey, number>>> = {
   easy: { ...BASE_LIMITS, wood: 1000, firewood: 1000 },

@@ -53,6 +53,8 @@ import {
   isAdult,
   LIMITABLE,
   LIMIT_META,
+  LIMIT_STEP,
+  LIMIT_STEP_BIG,
   demoFraction,
   LimitKey,
   limitedOutput,
@@ -211,7 +213,10 @@ export interface UICallbacks {
   /** Hold a festival, at the Town Hall's expense. */
   onFestival: () => void;
   onSetBuilders: (delta: number) => void;
-  /** Nudge a resource's stockpile cap by one step (see `LIMIT_STEP`); a cap of 0 means none. */
+  /**
+   * Nudge a resource's stockpile cap. `delta` is in units of `LIMIT_STEP` (50) — ±1 for the small
+   * chevron, ±2 for the double one (so ±`LIMIT_STEP_BIG`, 100). A cap of 0 means none.
+   */
   onSetLimit: (key: LimitKey, delta: number) => void;
   onSetMineOutput: (buildingId: number, output: MineOutput) => void;
   onSetSmithRecipe: (buildingId: number, recipe: SmithRecipe) => void;
@@ -1264,7 +1269,9 @@ export class UI {
 
   private buildLimitsBody(body: HTMLElement, s: GameState): void {
     const limGrid = document.createElement('div');
-    limGrid.className = 'job-grid';
+    // `limit-grid` widens the column past the job board's — a four-button stepper needs the room
+    // a two-button staffing one didn't.
+    limGrid.className = 'job-grid limit-grid';
     body.appendChild(limGrid);
     // Only the resources a limit can act on (`LIMITABLE`) — a cap on something no workplace
     // produces would be a control that does nothing.
@@ -1273,13 +1280,21 @@ export class UI {
       const meta = LIMIT_META[k];
       const row = document.createElement('div');
       row.className = 'job-row limit-row';
+      // Two step sizes: a single chevron nudges by `LIMIT_STEP` (50), a double one jumps by
+      // `LIMIT_STEP_BIG` (100) — so a big cap doesn't cost a dozen taps to raise or lower.
       row.innerHTML =
         `<span class="jr-emoji">${meta.icon}</span>` +
         `<div class="jr-main"><div class="jr-name">${meta.label}</div></div>` +
-        `<div class="stepper"><button data-step="-1">−</button>` +
-        `<span class="count">${cap > 0 ? cap : '—'}</span><button data-step="1">+</button></div>`;
-      row.querySelector('[data-step="-1"]')!.addEventListener('click', () => this.cb.onSetLimit(k, -1));
-      row.querySelector('[data-step="1"]')!.addEventListener('click', () => this.cb.onSetLimit(k, 1));
+        `<div class="stepper">` +
+        `<button data-step="-2" title="-${LIMIT_STEP_BIG}">«</button>` +
+        `<button data-step="-1" title="-${LIMIT_STEP}">‹</button>` +
+        `<span class="count">${cap > 0 ? cap : '—'}</span>` +
+        `<button data-step="1" title="+${LIMIT_STEP}">›</button>` +
+        `<button data-step="2" title="+${LIMIT_STEP_BIG}">»</button>` +
+        `</div>`;
+      for (const step of [-2, -1, 1, 2]) {
+        row.querySelector(`[data-step="${step}"]`)!.addEventListener('click', () => this.cb.onSetLimit(k, step));
+      }
       limGrid.appendChild(row);
     }
   }

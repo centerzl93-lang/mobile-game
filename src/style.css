@@ -2346,6 +2346,23 @@ body {
   font-size: 10px;
 }
 
+/*
+ * The limits panel's rows carry a four-button stepper (two step sizes each way) instead of the
+ * job board's two, so its columns get more room than a plain `.job-grid` one — the name still
+ * ellipsizes rather than fight the buttons for space on a narrow screen.
+ */
+.limit-grid {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+.limit-grid .stepper button {
+  width: 24px;
+  height: 24px;
+  font-size: 14px;
+}
+.limit-grid .stepper .count {
+  min-width: 26px;
+}
+
 /* One column on a screen too narrow to split — two columns of 120px is worse than a scroll. */
 @media (max-width: 520px) {
   .job-grid {

@@ -8759,6 +8759,13 @@ test.describe('stockpile limits', () => {
       coal: 100,
       tools: 100,
       clothing: 100,
+      // Every limitable luxury good also opens capped, at the same round 100 as the other
+      // "never had a bespoke number" goods above.
+      sand: 100,
+      glass: 100,
+      jewelry: 100,
+      finejewelry: 100,
+      fineclothes: 100,
     });
     // Nothing is over its cap on the first day: Easy's 660 wood and 600 firewood both sit under
     // the ceilings set for them, so no hut stands down before the player has done anything.
@@ -9049,6 +9056,13 @@ test.describe('stockpile limits', () => {
     // A village is founded with caps already set — Easy's firewood ceiling is 1000.
     await expect(row.locator('.count')).toHaveText('1000');
     await row.locator('[data-step="1"]').click();
+    await expect(row.locator('.count')).toHaveText('1050');
+
+    // The double chevron moves twice as far each tap, either direction — a big cap shouldn't cost
+    // a dozen taps to move.
+    await row.locator('[data-step="2"]').click();
+    await expect(row.locator('.count')).toHaveText('1150');
+    await row.locator('[data-step="-2"]').click();
     await expect(row.locator('.count')).toHaveText('1050');
 
     // A cap can be taken off entirely, and the first tap back up lands on the current stock

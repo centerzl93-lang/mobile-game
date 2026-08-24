@@ -174,14 +174,14 @@ const CROP_STYLE: Record<Crop, { kind: CropArchetype; scale: number }> = {
 };
 
 /**
- * Crop plants per tile, along each axis — 1×1 was one clump a tile, reading thin next to the
- * furrows. 2 along X alone rows them closer without touching Z; 2×2 packs a full dense stand. Each
- * plant shrinks by `CROP_DENSITY_SCALE` so a denser tile reads as more, smaller plants rather than
- * the same plants overlapping.
+ * Crop plants per tile, along each axis — 1×1 read thin, 2×2 fuller still leaving gaps at a big
+ * field's scale; 4×4 (16 a tile) is a properly packed stand at every size up to 8×8. Each plant
+ * shrinks by `CROP_DENSITY_SCALE` so a denser tile reads as more, smaller plants rather than the
+ * same plants overlapping.
  */
-const CROP_DENSITY_X = 2;
-const CROP_DENSITY_Z = 2;
-const CROP_DENSITY_SCALE = 0.8;
+const CROP_DENSITY_X = 4;
+const CROP_DENSITY_Z = 4;
+const CROP_DENSITY_SCALE = 0.45;
 
 /**
  * Yaw for a building turned `rot` quarter turns clockwise, so its modelled door ends up on the
@@ -2039,19 +2039,7 @@ export class Renderer3D {
     const elevation = (lx: number, lz: number): number =>
       this.groundAt(b.x + fw / 2 + lx, b.y + fh / 2 + lz) - TOP;
     const group = this.makeFencedPlot(fw, fh, { shed: false, ground: 0x7a5a34, texture: 'soil', elevation }) as THREE.Group;
-
-    // Furrow lines: dark strips run the width of the field, one per row, echoing the 2D tilled look.
-    const rows = Math.max(2, Math.round(fh));
-    const furrowMat = new THREE.MeshStandardMaterial({ color: 0x4a3720, roughness: 1 });
-    const furrows: THREE.BufferGeometry[] = [];
-    for (let i = 1; i < rows; i++) {
-      const z = -fh / 2 + (i / rows) * fh;
-      const furrow = new THREE.BoxGeometry(fw - 0.2, 0.02, 0.05);
-      furrow.translate(0, elevation(0, z) + 0.13, z);
-      furrows.push(furrow);
-    }
-    const furrowGeo = mergeGeometries(furrows, false);
-    if (furrowGeo) group.add(new THREE.Mesh(furrowGeo, furrowMat));
+    const rows = Math.max(1, Math.round(fh));
 
     // Crop plants: one clump per tile, at one of five growth stages, shaped by the crop's own
     // archetype (`CROP_STYLE`) — a grain's clustered stalks, a vegetable's leaf rosette, or a

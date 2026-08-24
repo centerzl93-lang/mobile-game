@@ -76,6 +76,10 @@ const MOUNTAIN_MAX_H = 8.0; // tallest peak — lower than before, so a gentle r
 const SNOWLINE_H = 5.0;
 const SNOWCAP_FULL_H = 7.5;
 const TOP = LAND_H; // y of the walkable surface props sit on
+// A ranch/field's own ground surface samples the same height field the terrain mesh is built from
+// (see makeHeightGrid), so without a lift the two are exactly coplanar and z-fight. Small enough to
+// stay invisible as a step, big enough that the terrain never wins a triangle.
+const GROUND_LIFT = 0.15;
 const TREE_MODEL_SIZE = 0.55; // world scale for a normalized (footprint=1) tree model — see tools/models/pine.py
 /**
  * How many tiles long the merchant's boat is.
@@ -1838,6 +1842,13 @@ export class Renderer3D {
    * position. Two triangles per cell, wound so the surface faces up. UVs are tile-grid coordinates
    * (0..cols, 0..rows), not 0..1, so a `RepeatWrapping` texture tiles once per tile regardless of
    * the plot's size — a 4×4 pen and an 8×8 field read as the same ground at the same scale.
+   *
+   * `elevation` is expected to already carry `GROUND_LIFT` (see `makeFarmField`/`makeRanchPen`) —
+   * it samples the very height field the terrain mesh is built from, so an unlifted plot and the
+   * terrain under it would be exactly coplanar. The two would z-fight, and the terrain's own grass
+   * wins the fight for some triangles, showing through the field or pen it's supposed to pave over.
+   * Threading the lift through the one `elevation` callback, rather than adding it only here, is
+   * what keeps the ground, the shed, the fence and the crop stand all reading off the same surface.
    */
   private makeHeightGrid(fw: number, fh: number, elevation: (lx: number, lz: number) => number): THREE.BufferGeometry {
     const cols = Math.max(1, Math.round(fw));
@@ -2035,9 +2046,10 @@ export class Renderer3D {
   private makeFarmField(b: Building, fw: number, fh: number, s: GameState): THREE.Object3D {
     // The plot's own patch of the real terrain height field, in plot-local coordinates — so a field
     // dragged out onto a foothill's raised shelf sits on it rather than floating at the plains
-    // height. See `makeFencedPlot`'s `elevation` doc.
+    // height, plus GROUND_LIFT so the plot doesn't z-fight the terrain it's standing on. See
+    // `makeFencedPlot`'s `elevation` doc.
     const elevation = (lx: number, lz: number): number =>
-      this.groundAt(b.x + fw / 2 + lx, b.y + fh / 2 + lz) - TOP;
+      this.groundAt(b.x + fw / 2 + lx, b.y + fh / 2 + lz) - TOP + GROUND_LIFT;
     const group = this.makeFencedPlot(fw, fh, { shed: false, ground: 0x7a5a34, texture: 'soil', elevation }) as THREE.Group;
     const rows = Math.max(1, Math.round(fh));
 
@@ -2226,7 +2238,7 @@ export class Renderer3D {
     // See `makeFarmField` / `makeFencedPlot`'s `elevation` doc — same reasoning, for a pen dragged
     // out onto a foothill instead of a field.
     const elevation = (lx: number, lz: number): number =>
-      this.groundAt(b.x + fw / 2 + lx, b.y + fh / 2 + lz) - TOP;
+      this.groundAt(b.x + fw / 2 + lx, b.y + fh / 2 + lz) - TOP + GROUND_LIFT;
     const group = this.makeFencedPlot(fw, fh, { shed: true, ground: 0x6f7a3f, texture: 'grass', elevation }) as THREE.Group;
     const animal: RanchAnimal = b.animal ?? 'cattle';
     const count = Math.floor(b.animals ?? 0);

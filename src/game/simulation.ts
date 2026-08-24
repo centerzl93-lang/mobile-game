@@ -203,6 +203,15 @@ import {
   STONE_FIRE_FACTOR,
   isStoneBuilt,
   FIRE_BURN_SECONDS,
+  FAMINE_CHANCE_PER_SUMMER,
+  FAMINE_SEVERE_CHANCE,
+  FAMINE_PENALTY,
+  FamineSeverity,
+  FLOOD_CHANCE_PER_SPRING,
+  FLOOD_RISK_RADIUS,
+  FLOOD_DAMAGE_CHANCE,
+  FloodRiskTier,
+  floodRiskTier,
   MARKET_STOCK_TARGET,
   RESOURCE_KINDS,
   BuildingType,
@@ -222,10 +231,12 @@ import {
   forestInCircle,
   nearbyStone,
   nearbyWater,
+  nearestWaterDist,
   footprintClear,
   razeBuilding,
   clearRubble,
   rubbleEmpty,
+  evictOccupants,
 } from './buildings';
 import { getTile, tileIndex, inBounds, riverColumnX } from './world';
 import { pathSpeedMult, hasPath, dropPathRaze } from './paths';
@@ -934,7 +945,7 @@ function births(s: GameState, elapsed: number, log: LogFn): void {
   const chance = chanceOver(perSeason, elapsed, SEASON_LENGTH);
   let born = 0;
   for (const h of s.buildings) {
-    if (!h.built || !isHouse(h.type)) continue;
+    if (!h.built || disabledByFire(h) || !isHouse(h.type)) continue;
     if (residentsOf(s, h).length >= houseCapacityOf(h.type)) continue;
     const couple = householdCouple(s, h);
     if (!couple || !isFertile(couple[0]) || !isFertile(couple[1])) continue;
@@ -2687,6 +2698,7 @@ function nearestSiteNeeding(s: GameState, c: Citizen, kind: ResourceKind): Build
  */
 function finishRepair(s: GameState, b: Building, log: LogFn): void {
   b.damaged = false;
+  b.damageReason = undefined;
   b.repairProgress = 0;
   b.repairStore = {};
   log(`✓ The ${BUILDING_DEFS[b.type].name} has been repaired`, 'good');
@@ -3036,6 +3048,12 @@ function endSeason(s: GameState, log: LogFn): void {
   const season = SEASONS[s.season];
 
   // Farms grow through spring/summer; deposit the chosen crop's harvest into their store at autumn.
+  // A famine brewing this year (`s.famine`, set by `famineSeason` back in Summer) docks every
+  // farm's yield here, at the one moment a farm's harvest is actually realised — see the module
+  // doc on `famineSeason` for why the hit lands at harvest rather than continuously. Nothing else
+  // that feeds the village (fishing, hunting, gathering, ranching) reads this factor at all.
+  const cropFamineFactor = s.famine ? FAMINE_PENALTY[s.famine.severity] : 1;
+  let famineHarvest = false;
   for (const b of s.buildings) {
     // A field only grows a crop the village has the seed for; otherwise it lies fallow.
     if (b.built && b.type === 'farm' && b.crop && s.seeds.includes(b.crop)) {
@@ -3044,15 +3062,21 @@ function endSeason(s: GameState, log: LogFn): void {
         const crop = CROP_META[b.crop];
         // A bigger field yields proportionally more (area relative to the 4×4 baseline).
         const areaFactor = (footprintW(b) * footprintH(b)) / FARM_BASE_AREA;
-        const yield_ = b.workers.length * FARM_FOOD_PER_WORKER * b.growth * crop.yieldMult * areaFactor;
+        const yield_ =
+          b.workers.length * FARM_FOOD_PER_WORKER * b.growth * crop.yieldMult * areaFactor * cropFamineFactor;
         if (yield_ > 1) {
           b.store[crop.food] = (b.store[crop.food] ?? 0) + yield_;
           log(`A field yielded ${Math.round(yield_)} ${crop.label.toLowerCase()} to harvest`, 'good');
+          if (cropFamineFactor < 1) famineHarvest = true;
         }
         b.growth = 0;
       }
     }
   }
+  if (famineHarvest) log('🌾 Poor crops have reduced farm production', 'bad');
+  // The famine's one harvest is in either way — recovery is automatic, not a repair job: next
+  // year's crop is unaffected unless famine rolls again.
+  if (season === 'Autumn' && s.famine) s.famine = undefined;
 
   // Each ranch breeds its own penned herd toward the player's cap; births beyond it are
   // slaughtered for resources. A breeding pair (2+) yields at least one calf every two seasons.
@@ -3133,6 +3157,8 @@ function endSeason(s: GameState, log: LogFn): void {
   announceTier(s, log);
   diseaseSeason(s, log);
   fireSeason(s, log);
+  famineSeason(s, log);
+  floodSeason(s, log);
   caveInSeason(s, log);
   bridgeFireSeason(s, log);
 
@@ -4087,8 +4113,12 @@ function placeChildrenWithAdults(s: GameState, houses: Building[]): void {
 function rehouseVillagers(s: GameState): void {
   releaseLostPartners(s);
   // Condemned houses are left out of the shuffle for the same reason as above: moving a couple
-  // into one would only make them homeless again when the builders arrive.
-  const houses = s.buildings.filter((b) => b.built && !b.demolish && isHouse(b.type));
+  // into one would only make them homeless again when the builders arrive. A BURNING or DAMAGED
+  // one (`disabledByFire`) is the same story — see `assignHomesAndJobs`'s identical filter — a
+  // flooded home has to stay off this list too, or the very next rehousing pass (this runs on a
+  // short cadence, not just at the season turn) walks a couple straight back into a house that
+  // cannot take them.
+  const houses = s.buildings.filter((b) => b.built && !b.demolish && !disabledByFire(b) && isHouse(b.type));
 
   // Pair first, so the moves below are made on behalf of couples that already exist, then get
   // those couples under one roof wherever a house allows it.
@@ -4534,6 +4564,99 @@ export function fireSeason(s: GameState, log: LogFn): void {
 }
 
 /**
+ * A poor summer for the fields. Rolled once, only the moment the village enters Summer — never
+ * Spring, Autumn or Winter — so a famine can only ever be brewing for one year at a time and is
+ * gone from the calendar entirely the rest of the year.
+ *
+ * Unlike fire and disease, famine has no immediate effect of its own: it sets `s.famine`, which
+ * the Autumn harvest (`endSeason`) reads to dock that year's crop, and clears once it has. Fields
+ * keep growing, farmers keep working, nothing catches and nobody is turned out — the whole hazard
+ * is a number the harvest comes in short by, which is what makes the warning meaningful without
+ * being an instant loss: a village with the rest of the season (and all of Autumn, before the
+ * harvest lands) to lean on its larder, its fishing dock, its ranch, sees this through; a village
+ * that planted nothing but wheat feels it.
+ */
+export function famineSeason(s: GameState, log: LogFn): void {
+  if (!s.disasters) return;
+  if (SEASONS[s.season] !== 'Summer') return;
+  if (s.famine) return; // one brewing already — this year has had its famine
+  if (rand(s) >= FAMINE_CHANCE_PER_SUMMER) return;
+  const severity: FamineSeverity = rand(s) < FAMINE_SEVERE_CHANCE ? 'severe' : 'moderate';
+  s.famine = { severity };
+  log('🌾 Reports of poor crops are spreading — farmers warn of a difficult harvest this year', 'bad');
+  s.disasterAlert = true;
+}
+
+/** Testing/debug: set a famine brewing directly, bypassing the season gate and the chance/severity
+ *  rolls `famineSeason` runs — for a test that wants a specific severity deterministically. */
+export function debugTriggerFamine(s: GameState, severity: FamineSeverity, log: LogFn): void {
+  s.famine = { severity };
+  log('🌾 Reports of poor crops are spreading — farmers warn of a difficult harvest this year', 'bad');
+  s.disasterAlert = true;
+}
+
+/**
+ * How far, in risk terms, a flood can reach — every built, standing, not-already-disabled building
+ * within `FLOOD_RISK_RADIUS` of open water, tagged with the tier its distance falls in. Buildings
+ * further out than that never appear here at all: distance alone rules them out, not a roll.
+ */
+function floodCandidates(s: GameState): { b: Building; tier: FloodRiskTier }[] {
+  const out: { b: Building; tier: FloodRiskTier }[] = [];
+  for (const b of s.buildings) {
+    if (!b.built || b.razed || b.demolish || disabledByFire(b)) continue;
+    const tier = floodRiskTier(nearestWaterDist(s, b, FLOOD_RISK_RADIUS));
+    if (tier) out.push({ b, tier });
+  }
+  return out;
+}
+
+/**
+ * Rising water along the river. Rolled once, only the moment the village enters Spring — never
+ * Summer, Autumn or Winter.
+ *
+ * Every building within `FLOOD_RISK_RADIUS` of open water is a *candidate*, not a certainty: each
+ * one rolls independently against its own tier's `FLOOD_DAMAGE_CHANCE`, so a flood typically damages
+ * a handful of the riverside buildings, not all of them, and two villages built the same way near
+ * the same water do not necessarily lose the same ones. Nothing further out than the radius is even
+ * considered — building away from the bank is a real way to sit a flood out entirely.
+ *
+ * Damage goes straight to DAMAGED (see `floodDamageBuilding`) — there is no BURNING-equivalent
+ * smoulder-and-maybe-catch phase the way fire has one, because a flood is not something a bucket
+ * brigade can fight off tile by tile the way a house fire is; the strategic response to a flood is
+ * building placement, decided long before this ever rolls, not a scramble once it has.
+ */
+export function floodSeason(s: GameState, log: LogFn): void {
+  if (!s.disasters) return;
+  if (SEASONS[s.season] !== 'Spring') return;
+  const candidates = floodCandidates(s);
+  if (candidates.length === 0) return;
+  if (rand(s) >= FLOOD_CHANCE_PER_SPRING) return;
+  log('🌊 Water levels are rising — flooding has been reported along the river', 'bad');
+  let damaged = 0;
+  for (const { b, tier } of candidates) {
+    if (rand(s) < FLOOD_DAMAGE_CHANCE[tier]) {
+      floodDamageBuilding(s, b, log);
+      damaged++;
+    }
+  }
+  if (damaged > 0) s.disasterAlert = true;
+}
+
+/** Debug/testing helper: the flood-risk distance and tier `floodSeason` would judge this building
+ *  at right now — see `nearestWaterDist`/`floodRiskTier`. `tier` is `null` outside the radius. */
+export function debugFloodRisk(s: GameState, b: Building): { dist: number; tier: FloodRiskTier | null } {
+  const dist = nearestWaterDist(s, b, FLOOD_RISK_RADIUS);
+  return { dist, tier: floodRiskTier(dist) };
+}
+
+/** Testing/debug: force a building straight to flood-DAMAGED, bypassing the distance/chance rolls
+ *  `floodSeason` itself runs — for a test that wants a specific building damaged deterministically. */
+export function debugFloodDamageBuilding(s: GameState, b: Building, log: LogFn): void {
+  if (!b.built || b.razed || b.demolish || b.damaged || b.fireTimer) return;
+  floodDamageBuilding(s, b, log);
+}
+
+/**
  * A mine cave-in: the hazard of sending people underground. Rolled once a season alongside the
  * other disasters, it only ever threatens villagers who are actually down a working mine, so the
  * risk is one a mining village carries and a purely surface settlement never does. At most one
@@ -4657,18 +4780,37 @@ function tryIgnite(s: GameState, b: Building, log: LogFn, announce: boolean): vo
   b.fireWater = 0; // nothing delivered yet — see `runFirefighter`
   // BURNING starts at once, not when the fire finishes: nobody works or sleeps in a building
   // that's alight. It stays `built` and standing — see `disabledByFire` — only its occupants and
-  // staff are turned out, exactly as a demolition turns them out (see `razeBuilding`). Their
-  // `desiredWorkers`/household ties are left alone so the building simply resumes once it is
-  // repaired, rather than needing to be re-staffed and re-housed by hand.
-  b.workers = [];
-  for (const c of s.citizens) {
-    if (c.jobId === b.id) c.jobId = null;
-    if (c.homeId === b.id) c.homeId = null;
-  }
+  // staff are turned out, exactly as a demolition turns them out (see `razeBuilding`).
+  evictOccupants(s, b);
   log(`🔥 Fire! The ${BUILDING_DEFS[b.type].name} is burning`, 'bad');
   // A disaster in progress is worth the player's actual attention — see `disasterAlert` and
   // `Game.frame`/`debugAdvanceAtSpeed`, which drop the game back to 1× the moment they notice it.
   s.disasterAlert = true;
+}
+
+/**
+ * A flood lands on a building: straight to DAMAGED, no BURNING phase in between (see the module
+ * doc for `floodSeason` on why flood skips it) — occupants are turned out the same moment
+ * `evictOccupants`, workers included, and repair is the same pipeline a fire-damaged building
+ * uses (`repairCostOf`/`repairWorkOf`/`pickSite`/`finishRepair`), just tagged with a different
+ * `damageReason` so the inspect sheet can say which disaster did it.
+ */
+function floodDamageBuilding(s: GameState, b: Building, log: LogFn): void {
+  const wasHome = isDwelling(b.type);
+  const wasStaffed = b.workers.length > 0;
+  evictOccupants(s, b);
+  b.damaged = true;
+  b.damageReason = 'flood';
+  b.repairProgress = 0;
+  b.repairStore = {};
+  const name = BUILDING_DEFS[b.type].name;
+  if (wasHome) {
+    log(`🌊 Home flooded — the ${name} is uninhabitable until it's repaired`, 'bad');
+  } else if (isWorkplace(b.type) && wasStaffed) {
+    log(`🌊 Workplace damaged — the ${name}'s production is paused until repairs are complete`, 'bad');
+  } else {
+    log(`🌊 The ${name} was damaged by the flood and needs repair`, 'bad');
+  }
 }
 
 /**
@@ -4793,6 +4935,7 @@ function processFires(s: GameState, dt: number, log: LogFn): void {
         log(`The ${name} burned down`, 'bad');
       } else {
         b.damaged = true;
+        b.damageReason = 'fire';
         log(`⚠️ The ${name} survived the fire but is damaged and needs repair`, 'bad');
       }
       for (const { building: n, gap } of neighbours) {

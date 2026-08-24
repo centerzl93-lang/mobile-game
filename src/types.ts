@@ -669,6 +669,9 @@ export function isFireproof(type: BuildingType): boolean {
   return BUILDING_DEFS[type].fireproof === true;
 }
 
+/** What put a building into DAMAGED — see `Building.damageReason`. */
+export type DamageReason = 'fire' | 'flood';
+
 /**
  * True while a building cannot work or house anyone — BURNING or DAMAGED. It stays `built` (and
  * so still stands, still blocks movement) either way; this is the one flag every occupancy/output
@@ -754,6 +757,13 @@ export interface Building {
    * partly-repaired workshop's leftover production stock is never mistaken for delivered repairs.
    */
   damaged?: boolean;
+  /**
+   * What put this building into DAMAGED, purely so the inspect sheet can say why (`'Fire damage'`
+   * vs `'Flood damage'`) instead of leaving the player to guess. Carries no gameplay weight of its
+   * own — repair works exactly the same regardless of cause — so nothing outside the UI reads it.
+   * Meaningless unless `damaged`; cleared alongside it in `finishRepair`/`razeBuilding`.
+   */
+  damageReason?: DamageReason;
   /** Builder-work laid toward a repair so far, 0..`repairWorkOf(type)`. Meaningless unless `damaged`. */
   repairProgress?: number;
   /** Materials builders have delivered toward the current repair, against `repairCostOf`. */
@@ -1824,7 +1834,7 @@ export interface GameState {
   h: number;
   /** Difficulty this game was started on (affects only the opening setup). */
   difficulty: Difficulty;
-  /** Whether fire and disease outbreaks can occur (toggled at New Game). */
+  /** Whether fire, disease, famine and flood can occur (toggled at New Game). */
   disasters: boolean;
   /**
    * Whether a workplace opens its jobs the moment it is finished, instead of standing empty until
@@ -1855,6 +1865,14 @@ export interface GameState {
   seeds: Crop[];
   /** A band of nomads awaiting an accept/reject decision, or null. */
   pendingNomads: NomadOffer | null;
+  /**
+   * A famine brewing this year, or undefined when none is. Set by `famineSeason` when it rolls
+   * true — always in Summer, never any other season — and consumed the moment the year's crop is
+   * actually harvested (`endSeason`'s Autumn branch), which is what makes recovery automatic:
+   * nothing has to notice the famine "end", the flag simply isn't there for next year's harvest
+   * unless it rolls again. See `FAMINE_PENALTY` for what the severity costs a farm's yield.
+   */
+  famine?: { severity: FamineSeverity };
   /** Harvest orders (per tile): HARVEST_* — trees/loose stone marked for gathering. */
   harvest: number[];
   /**
@@ -2999,11 +3017,65 @@ export function fireIntensity(b: Building): number {
   const doused = Math.min(1, (b.fireWater ?? 0) / FIRE_DOUSE_TRIPS_NEEDED);
   return Math.max(FIRE_MIN_INTENSITY, age) * (1 - doused);
 }
+// ---- Famine (summer-only, farms only) ----
+/**
+ * A poor harvest in the making. Rolled once a year, only when the season the village is entering
+ * is Summer — see `famineSeason` — so a village can never see two in the same year and never sees
+ * one at all outside that one season. Low enough that most summers pass without one; the player
+ * should be able to count on stretches of normal seasons between crises (see the module doc for
+ * `DISEASE_CHANCE`/`FIRE_CHANCE`, the same design goal these two new hazards share).
+ */
+export const FAMINE_CHANCE_PER_SUMMER = 0.18;
+/** Once a famine hits, the chance it is the severe tier rather than the moderate one. */
+export const FAMINE_SEVERE_CHANCE = 0.3;
+export type FamineSeverity = 'moderate' | 'severe';
+/**
+ * The fraction of a farm's normal crop yield a famine leaves it — applied once, to the current
+ * year's Autumn harvest (`endSeason`), and only to farms: fishing, hunting, gathering and ranching
+ * are untouched, which is the whole strategic point (see the module's Famine notes). A village
+ * that grew nothing but wheat feels a famine as a genuine shortage; one with a fishing dock and a
+ * ranch alongside its fields rides it out on the rest of its larder.
+ */
+export const FAMINE_PENALTY: Record<FamineSeverity, number> = { moderate: 0.5, severe: 0.25 };
+
+// ---- Flood (spring-only, water-proximity buildings) ----
+/** Rolled once a year, only entering Spring — see `floodSeason`. */
+export const FLOOD_CHANCE_PER_SPRING = 0.18;
+/**
+ * How far from open water (tiles, from the nearest edge of a building's footprint) a flood can
+ * reach at all. Nothing built beyond this is even considered — a village that keeps its workshops
+ * back from the bank is simply outside the hazard, not merely lucky.
+ */
+export const FLOOD_RISK_RADIUS = 6;
+/** Within this many tiles of the water, a building is at the highest risk tier. */
+export const FLOOD_HIGH_RISK_DIST = 2;
+/** Within this many tiles (and beyond `FLOOD_HIGH_RISK_DIST`), the middle risk tier. Anything
+ *  further out, up to `FLOOD_RISK_RADIUS`, is the low tier. */
+export const FLOOD_MEDIUM_RISK_DIST = 4;
+export type FloodRiskTier = 'high' | 'medium' | 'low';
+/**
+ * Per-building chance of actually taking damage, once a flood has been rolled, at each risk tier.
+ * A flood does not damage every building in its reach — see the module's Flood notes — this is
+ * what keeps two villages built the same way near the same river from losing exactly the same
+ * buildings every time.
+ */
+export const FLOOD_DAMAGE_CHANCE: Record<FloodRiskTier, number> = { high: 0.6, medium: 0.3, low: 0.12 };
+/** Which risk tier a distance-to-water falls in, or `null` when it is outside `FLOOD_RISK_RADIUS`
+ *  altogether — see `nearestWaterDist` in `buildings.ts` for where the distance comes from. */
+export function floodRiskTier(dist: number): FloodRiskTier | null {
+  if (dist > FLOOD_RISK_RADIUS) return null;
+  if (dist <= FLOOD_HIGH_RISK_DIST) return 'high';
+  if (dist <= FLOOD_MEDIUM_RISK_DIST) return 'medium';
+  return 'low';
+}
+
 /**
  * Repair reuses the ordinary construction pipeline (see `pickSite`/`runBuilder` in
  * `simulation.ts`), just against a smaller bill: a burnt-out shell needs new timbers and a roof,
  * not a whole new foundation. One dial for both the materials and the labour, the same way
- * `DEMO_WORK_FRACTION` is one dial for a teardown.
+ * `DEMO_WORK_FRACTION` is one dial for a teardown. Shared by every cause of DAMAGED — fire and
+ * flood alike; see `Building.damageReason` — because what it takes to put a building back together
+ * has nothing to do with why it fell apart.
  */
 export const REPAIR_FRACTION = 0.4;
 export function repairWorkOf(type: BuildingType): number {

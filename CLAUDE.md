@@ -114,7 +114,7 @@ opens the sim stream so the founding rolls aren't correlated with where the rive
 6. `eat`, `heat`, `lives` — continuous consumption and ageing/schooling/births/old-age.
 7. `warnLowStocks` on a cadence (`warnTimer`).
 8. `seasonTimer += dt`; crossing `SEASON_LENGTH` runs `endSeason` (harvest, breeding, clothing
-   issue, immigration, disease/fire rolls, ledger, tier check, achievement evaluation).
+   issue, immigration, disease/fire/famine/flood rolls, ledger, tier check, achievement evaluation).
 
 Consumption (food/fuel) is billed **continuously** (a fraction of a season's ration per tick), not
 in lumps at the season boundary — so shortages show as a falling counter well before anyone dies,
@@ -235,6 +235,49 @@ fact.
   hauled back to barns, refunding `REFUND_FRACTION` (0.25). The last barn can't be demolished.
 - **House upgrade**: `upgradeTo` razes the old house and raises the new type in place.
 
+## Disaster system
+
+Four hazards, one on/off switch (`state.disasters`, set at New Game) and one shared building state
+machine. Each is rolled at most once at a season turn (`endSeason`), and each tests a different
+part of the village economy rather than being an undifferentiated "bad thing happens."
+
+- **Fire** (`FIRE_CHANCE`, any season): a building goes BURNING (`fireTimer`) the instant it
+  ignites — workers and residents turned out at once (`evictOccupants`), the building still
+  standing. Any adult within `FIRE_RESPONSE_RADIUS` drops what they're doing to run water from the
+  nearest well (`runFirefighter`); enough deliveries (`FIRE_DOUSE_TRIPS_NEEDED`) buys a chance
+  (`FIRE_SURVIVAL_CHANCE`, better for masonry — `STONE_FIRE_FACTOR`) to end up DAMAGED instead of
+  burning down (`razeBuilding`, a scorch mark left by `markScorched`). Can spread to neighbours
+  (`FIRE_SPREAD_ADJACENT`/`FIRE_SPREAD_NEAR`).
+- **Sickness** (`DISEASE_CHANCE`, any season): a share of the healthy population falls sick
+  (`DISEASE_INFECT_FRACTION`); each sick citizen rolls for recovery every season, the odds lifted
+  by health, a staffed hospital, and medicine administered from the household larder or the barns.
+- **Famine** (`FAMINE_CHANCE_PER_SUMMER`, **Summer only**): docks that year's Autumn harvest —
+  `FAMINE_PENALTY` (moderate 50%, severe 25% of normal yield) — and nothing else; fishing, hunting,
+  gathering and ranching are untouched, so a food economy that isn't farm-only rides it out. Set on
+  `state.famine` the moment it's warned about (giving the player the rest of the growing season to
+  react), read once by that year's harvest in `endSeason`, then cleared — recovery is automatic,
+  never a repair job, and a farm is never destroyed by one.
+- **Flood** (`FLOOD_CHANCE_PER_SPRING`, **Spring only**): every built building within
+  `FLOOD_RISK_RADIUS` tiles of open water (`nearestWaterDist`, measured from the footprint's edge)
+  is a candidate, tiered by distance (`floodRiskTier`) into a `FLOOD_DAMAGE_CHANCE` of actually
+  taking damage — so building away from the bank is a real way to sit a flood out, and a flood
+  typically damages a handful of riverside buildings, not all of them. Damage goes straight to
+  DAMAGED (`floodDamageBuilding`) with no BURNING-equivalent warning phase — flood isn't something a
+  bucket brigade fights tile by tile, so the strategic response is where a building was put, not a
+  scramble once the water's here.
+
+**DAMAGED is one state, shared by both causes.** `Building.damaged` gates occupancy/output exactly
+once (`disabledByFire`, despite the name — it now means BURNING *or* DAMAGED) everywhere a building
+can be worked, lived in, or stored in: `staffWanted`, the houses/shelters filters in
+`assignHomesAndJobs` and `rehouseVillagers`, and `births`. `Building.damageReason` (`'fire' |
+'flood'`) is carried purely so the inspect sheet can say which — it changes no gameplay. Repair
+reuses the ordinary construction pipeline (`pickSite`/`runBuilder`) against a smaller bill —
+`REPAIR_FRACTION` (0.4) of the build cost and work, landing in `repairStore`/`repairProgress`
+rather than the building's own `store`/`progress` — and finishes instantly and fully
+(`finishRepair`) the moment it's paid, whatever put the building there. A DAMAGED barn or market
+keeps its stock (`storageNodes`/`totalStored` still count it — nothing is deleted) but drops out of
+`accessibleStorageNodes`, so nobody can fetch from or deliver to it until it's repaired.
+
 ## Progression system
 
 Five tiers (`src/game/tiers.ts`): **settlement → hamlet → village → town → city**. The tier is
@@ -340,8 +383,9 @@ panel, the **Town Hall** (policies / ledger / festival), the **achievements** pa
 
 **Playwright**, config `playwright.config.ts`. The `webServer` runs `npm run build && npm run
 preview` on port 4173 under `/mobile-game/`; `worker: 1`, `fullyParallel: false`, `retries: 0`.
-**235 tests across 5 specs** (`newgame` 198, `world` 14, `menus` 10, `updates` 8, `achievements` 5),
-**89 tagged `@slow`**. Scripts: `test` (all), `test:fast` (`--grep-invert @slow`), `test:slow`.
+**325 tests across 8 specs** (`newgame` 250, `menus` 19, `disasters` 16, `world` 14, `achievements` 8,
+`updates` 8, `save` 7, `speed` 3), **105 tagged `@slow`**. Scripts: `test` (all), `test:fast`
+(`--grep-invert @slow`), `test:slow`.
 
 - **Two lanes.** Headless Chromium renders the 3D view in software at ~2 fps, and Playwright's click
   actionability waits on animation frames — so UI/click-driven specs open on **`?2d&gfx=low`** to run
@@ -376,6 +420,8 @@ All in `src/types.ts` unless noted. These are the primary dials.
 | `HOUSING_PER_HOUSE` / `STONE_HOUSE_CAPACITY` / `SHELTER_CAPACITY` | 8 / 10 / 18 | Housing. |
 | `IMMIGRATION_CHANCE` / `NOMAD_SURPLUS_SEASONS` | 0.25 / 4.5 | Nomad arrivals. |
 | `DISEASE_CHANCE` / `FIRE_CHANCE` | 0.06 / 0.05 | Per-season disaster rolls. |
+| `FAMINE_CHANCE_PER_SUMMER` / `FAMINE_PENALTY` | 0.18 / 0.5, 0.25 | Famine odds; moderate/severe crop-yield factor. |
+| `FLOOD_CHANCE_PER_SPRING` / `FLOOD_RISK_RADIUS` | 0.18 / 6 tiles | Flood odds; how far from water it can reach. |
 | `MERCHANT_ARRIVAL_CHANCE` / `PORT_ARRIVAL_CHANCE` | 0.5 / 0.7 | Trade cadence. |
 | `MERCHANT_MARGIN` | 1 | Trades settle at parity. |
 | `REFUND_FRACTION` / `DEMO_WORK_FRACTION` | 0.25 / 0.5 | Demolition. |

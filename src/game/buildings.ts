@@ -394,6 +394,22 @@ export function cancelDemolish(b: Building): void {
 }
 
 /**
+ * Turn out a building's current workers and residents without touching `desiredWorkers` or
+ * anyone's household ties elsewhere — the building simply resumes once whatever put it out of
+ * action clears, rather than needing to be re-staffed and re-housed by hand. Shared by a
+ * demolition going through (`razeBuilding`, right below), a fire catching (`tryIgnite`) and a
+ * flood landing (`floodDamageBuilding`), both in `simulation.ts` — three different reasons a
+ * building stops being livable, one line of bookkeeping each time.
+ */
+export function evictOccupants(s: GameState, b: Building): void {
+  b.workers = [];
+  for (const c of s.citizens) {
+    if (c.jobId === b.id) c.jobId = null;
+    if (c.homeId === b.id) c.homeId = null;
+  }
+}
+
+/**
  * The structure comes down. What is salvaged off it — `REFUND_FRACTION` of the build cost — is
  * added to whatever it was already holding, and the lot is left in place as a rubble pile for
  * builders to cart to a barn. Nothing teleports: a demolished barn's grain has to be carried out
@@ -414,6 +430,7 @@ export function razeBuilding(s: GameState, b: Building): void {
     b.repairStore = {};
   }
   b.damaged = false;
+  b.damageReason = undefined;
   b.repairProgress = 0;
   for (const [kind, amount] of Object.entries(costOf(b)) as [ResourceKind, number][]) {
     const refund = Math.floor(amount * REFUND_FRACTION);
@@ -431,11 +448,7 @@ export function razeBuilding(s: GameState, b: Building): void {
     extras[b.type] = (extras[b.type] ?? 0) + b.desiredWorkers;
     b.desiredWorkers = 0;
   }
-  b.workers = [];
-  for (const c of s.citizens) {
-    if (c.jobId === b.id) c.jobId = null;
-    if (c.homeId === b.id) c.homeId = null;
-  }
+  evictOccupants(s, b);
   s.navVersion = (s.navVersion ?? 0) + 1; // its walls are gone; routes through it open up
   if (rubbleEmpty(b)) clearRubble(s, b); // nothing worth carrying — the plot is free already
 }
@@ -609,6 +622,31 @@ export function nearbyWater(s: GameState, b: Building, radius = 3): number {
     }
   }
   return total;
+}
+
+/**
+ * Distance (tiles, from the nearest edge of the footprint) to the nearest water tile within `maxR`
+ * of a building — what flood risk is judged by (see `floodSeason`/`floodRiskTier` in
+ * `simulation.ts`/`types.ts`). Measured from the footprint's edge rather than its centre, the same
+ * reasoning as `nearbyStone` below: a ranch or a farm can be many tiles across, and its far corner
+ * is not the same distance from the river as its near one. `Infinity` means nothing wet was found
+ * within reach at all — too far to be at risk.
+ */
+export function nearestWaterDist(s: GameState, b: Building, maxR: number): number {
+  const fw = footprintW(b);
+  const fh = footprintH(b);
+  let best = Infinity;
+  for (let ty = b.y - maxR; ty <= b.y + fh - 1 + maxR; ty++) {
+    for (let tx = b.x - maxR; tx <= b.x + fw - 1 + maxR; tx++) {
+      const t = getTile(s.tiles, tx, ty);
+      if (!t || t.type !== 'water') continue;
+      const nx = Math.max(b.x, Math.min(tx, b.x + fw - 1));
+      const ny = Math.max(b.y, Math.min(ty, b.y + fh - 1));
+      const d = Math.hypot(tx - nx, ty - ny);
+      if (d < best) best = d;
+    }
+  }
+  return best;
 }
 
 /**

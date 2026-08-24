@@ -399,7 +399,7 @@ export class Renderer3D {
   // Per-building objects (box mesh or cloned model) + reused overlays.
   private buildingMeshes = new Map<number, THREE.Object3D>();
   /** Procedural ranch/field ground textures, drawn once to a canvas and shared by every plot. */
-  private plotTextures: Partial<Record<'soil' | 'grass', THREE.Texture>> = {};
+  private plotTextures: Partial<Record<'soil' | 'grass' | 'wood' | 'stone', THREE.Texture>> = {};
   private ghost!: THREE.Group;
   /** Ground arrow on the door tile of the pending building, pointing out from its front. */
   private faceArrow!: THREE.Group;
@@ -1884,14 +1884,14 @@ export class Renderer3D {
   }
 
   /**
-   * A tileable ground texture, drawn once to a small canvas and cached — every ranch/field shares
-   * the same two (soil, pen grass), tinted differently per plot by the mesh's own material colour,
-   * so this never has to run again after the first pen and the first field. Mottled with soft
-   * speckle so the ground reads as a textured surface up close instead of a flat fill; soil also
-   * gets a few darker furrow streaks baked in, standing in for the tilled rows a separate mesh used
-   * to draw.
+   * A tileable surface texture, drawn once to a small canvas and cached — every ranch/field/shed
+   * shares the same four (soil, pen grass, shed timber, shed stone), tinted differently per mesh by
+   * its own material colour, so this never has to run again after the first of each kind. Mottled
+   * with soft speckle so a surface reads as textured up close instead of a flat fill; soil gets a
+   * few darker furrow streaks baked in (standing in for the tilled rows a separate mesh used to
+   * draw), wood gets lapped board seams, stone gets coursed mortar joints.
    */
-  private plotTexture(kind: 'soil' | 'grass'): THREE.Texture {
+  private plotTexture(kind: 'soil' | 'grass' | 'wood' | 'stone'): THREE.Texture {
     const cached = this.plotTextures[kind];
     if (cached) return cached;
     const size = 128;
@@ -1901,7 +1901,7 @@ export class Renderer3D {
     const ctx = canvas.getContext('2d')!;
     const hex = (h: number) => '#' + h.toString(16).padStart(6, '0');
     // Greyscale speckle only — the mesh's own material `color` does the actual tinting (final
-    // pixel = material.color × this texture), so the same near-white/grey pair works for both kinds.
+    // pixel = material.color × this texture), so the same near-white/grey pair works for every kind.
     const [base, dark, light] = [0xffffff, 0xacacac, 0xffffff];
     ctx.fillStyle = hex(base);
     ctx.fillRect(0, 0, size, size);
@@ -1925,6 +1925,38 @@ export class Renderer3D {
         ctx.moveTo(0, y);
         ctx.lineTo(size, y);
         ctx.stroke();
+      }
+    } else if (kind === 'wood') {
+      // Lapped board seams: a dark line at each board edge with a thin light bevel just below it,
+      // so a wall reads as boards rather than a flat plank-coloured fill.
+      const boards = 6;
+      for (let i = 1; i < boards; i++) {
+        const y = (i / boards) * size;
+        ctx.globalAlpha = 0.24;
+        ctx.strokeStyle = hex(0x3f2c18);
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(size, y); ctx.stroke();
+        ctx.globalAlpha = 0.13;
+        ctx.strokeStyle = hex(0xffffff);
+        ctx.beginPath(); ctx.moveTo(0, y + 2); ctx.lineTo(size, y + 2); ctx.stroke();
+      }
+    } else if (kind === 'stone') {
+      // Coursed rubble: rows of offset blocks (alternating like brick courses) with dark mortar
+      // joints between them.
+      const rows = 5;
+      const rowH = size / rows;
+      ctx.globalAlpha = 0.4;
+      ctx.strokeStyle = hex(0x3a3a38);
+      ctx.lineWidth = 2;
+      for (let r = 0; r < rows; r++) {
+        const y = r * rowH;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(size, y); ctx.stroke();
+        const cols = 3 + (r % 2);
+        const offset = (r % 2) * (size / cols / 2);
+        for (let c = 0; c <= cols; c++) {
+          const x = ((c / cols) * size + offset) % size;
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + rowH); ctx.stroke();
+        }
       }
     }
     ctx.globalAlpha = 1;
@@ -1972,14 +2004,46 @@ export class Renderer3D {
     const rows = Math.max(1, Math.round(fh));
     const cellW = fw / cols, cellD = fh / rows;
 
-    // Corner shed (top-left 1×1 tile), centred within the group whose origin is the plot centre.
+    // Corner shed (top-left 1×1 tile), centred within the group whose origin is the plot centre —
+    // a stone footing, timber walls and a plank gable roof, the same wood-mostly/stone-footing
+    // makeup every real building in the village uses, rather than one flat-tinted box.
     if (opts.shed) {
-      const shedH = 1.2;
       const sx = -fw / 2 + 0.5, sz = -fh / 2 + 0.5;
-      const shedMat = new THREE.MeshStandardMaterial({ color: BUILDING_COLORS.ranch, roughness: 1 });
-      const shed = new THREE.Mesh(new THREE.BoxGeometry(0.85, shedH, 0.85), shedMat);
-      shed.position.set(sx, elevation(sx, sz) + shedH / 2, sz);
-      group.add(shed);
+      const baseY = elevation(sx, sz);
+      const footH = 0.24, wallH = 0.58, roofRise = 0.32, hw = 0.44;
+
+      const foot = new THREE.Mesh(
+        new THREE.BoxGeometry(0.86, footH, 0.86),
+        new THREE.MeshStandardMaterial({ color: 0x8e8d86, map: this.plotTexture('stone'), roughness: 0.95 }),
+      );
+      foot.position.set(sx, baseY + footH / 2, sz);
+      group.add(foot);
+
+      const wallY = baseY + footH;
+      const wall = new THREE.Mesh(
+        new THREE.BoxGeometry(0.78, wallH, 0.78),
+        new THREE.MeshStandardMaterial({ color: 0x8a6234, map: this.plotTexture('wood'), roughness: 0.85 }),
+      );
+      wall.position.set(sx, wallY + wallH / 2, sz);
+      group.add(wall);
+
+      // A simple gable: two sloped plank slabs meeting at a ridge, so the shed reads as roofed
+      // rather than a box with a flat lid — every other building in the village has one.
+      const roofY = wallY + wallH;
+      const roofMat = new THREE.MeshStandardMaterial({
+        color: 0x6a4a2a, map: this.plotTexture('wood'), roughness: 0.9,
+      });
+      const slopeLen = Math.hypot(hw, roofRise);
+      const pitch = Math.atan2(roofRise, hw);
+      for (const side of [-1, 1]) {
+        const slab = new THREE.Mesh(new THREE.BoxGeometry(slopeLen, 0.05, 0.92), roofMat);
+        slab.position.set(sx + side * (hw / 2), roofY + roofRise / 2, sz);
+        slab.rotation.z = -side * pitch; // eave low at the wall edge, ridge high at the centre
+        group.add(slab);
+      }
+      const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.92), roofMat);
+      ridge.position.set(sx, roofY + roofRise, sz);
+      group.add(ridge);
     }
 
     // A real post-and-rail fence: upright posts every tile round the perimeter (corners shared, not

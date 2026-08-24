@@ -6236,6 +6236,7 @@ test.describe('a village climbs through tiers', () => {
     // City is the top rung, and the monument stands among what it opens.
     const city = blocks.nth(4);
     await expect(city).toContainText('City');
+    await expect(city, 'a body of schooled adults, deeper than a town\'s').toContainText('Schooled adults');
     await expect(city, 'stone raised for pride only comes once the pride is earned').toContainText('Monument');
   });
 

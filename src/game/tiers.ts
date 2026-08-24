@@ -90,15 +90,16 @@ export const BUILDING_TIER: Record<BuildingType, VillageTier> = {
   tavern: 'village',
   trading: 'village',
   // Town: what a place stops being a village to build. Learning past school, deep water, houses
-  // for people with money, a church for thousands, fine goods, and stone raised for pride alone.
+  // for people with money, a church for thousands, and fine goods.
   university: 'town',
   grandhouse: 'town',
   cathedral: 'town',
   luxury: 'town',
-  monument: 'town',
   // City: the deep-water quay, and with it merchants that keep a calendar. Everything the port
-  // trades in can already be made or bought by a town — what a city buys is *reach*.
+  // trades in can already be made or bought by a town — what a city buys is *reach*. Stone raised
+  // for pride alone belongs here too: a monument is a boast a place only makes once it has made it.
   port: 'city',
+  monument: 'city',
 };
 
 /** The tier each kind of roadway becomes available at. */

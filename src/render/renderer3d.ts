@@ -2050,14 +2050,22 @@ export class Renderer3D {
     // doubled), with two horizontal rails per gap between them — not the single flat bar this used
     // to be. Each post takes its own height off `elevation`, so the fence steps up a slope with the
     // ground instead of burying its low side or leaving its high side hanging.
+    //
+    // One segment on the south (+Z) edge — the same face `entranceAt` gives a normal building's
+    // door, rot 0 — is left open as a gate: villagers path straight through a field or pen
+    // (`blocksMovement` exempts them, `hasDoor` is false, there is no tile pathfinding actually
+    // requires), so without this they visibly walked through a solid rail. Flanked by taller,
+    // thicker gateposts so the opening reads as a gate, not a gap in a broken fence.
     const postT = 0.09, postH = 0.62;
     const railT = 0.05, railW = 0.07;
     const railYs = [0.22, 0.46];
+    const gateSeg = Math.floor(cols / 2); // the south-edge segment (0..cols-1) left open
+    const gatePostH = postH * 1.3, gatePostT = postT * 1.5;
     const fenceMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3f, roughness: 0.95 });
     const fenceParts: THREE.BufferGeometry[] = [];
-    const post = (lx: number, lz: number) => {
-      const geo = new THREE.BoxGeometry(postT, postH, postT);
-      geo.translate(lx, elevation(lx, lz) + postH / 2, lz);
+    const post = (lx: number, lz: number, h = postH, t = postT) => {
+      const geo = new THREE.BoxGeometry(t, h, t);
+      geo.translate(lx, elevation(lx, lz) + h / 2, lz);
       fenceParts.push(geo);
     };
     const rail = (x0: number, z0: number, x1: number, z1: number) => {
@@ -2076,7 +2084,8 @@ export class Renderer3D {
     for (let i = 0; i <= cols; i++) {
       const lx = -fw / 2 + i * cellW;
       post(lx, -fh / 2);
-      post(lx, fh / 2);
+      const isGatepost = i === gateSeg || i === gateSeg + 1;
+      post(lx, fh / 2, isGatepost ? gatePostH : postH, isGatepost ? gatePostT : postT);
     }
     for (let i = 1; i < rows; i++) {
       const lz = -fh / 2 + i * cellD;
@@ -2086,7 +2095,7 @@ export class Renderer3D {
     for (let i = 0; i < cols; i++) {
       const x0 = -fw / 2 + i * cellW, x1 = -fw / 2 + (i + 1) * cellW;
       rail(x0, -fh / 2, x1, -fh / 2);
-      rail(x0, fh / 2, x1, fh / 2);
+      if (i !== gateSeg) rail(x0, fh / 2, x1, fh / 2); // the gate segment stays open
     }
     for (let i = 0; i < rows; i++) {
       const z0 = -fh / 2 + i * cellD, z1 = -fh / 2 + (i + 1) * cellD;

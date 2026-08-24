@@ -36,6 +36,7 @@ import {
   farmDisplayGrowth,
   cropStageOf,
   CropStage,
+  Crop,
   RanchAnimal,
 } from '../types';
 import { tileIndex, inBounds } from '../game/world';
@@ -144,6 +145,32 @@ const BUILDING_COLORS: Record<BuildingType, number> = {
 /** Body colour for a ranch's herd glyphs — one flat tint per species, distinct from its neighbours. */
 const ANIMAL_COLOR: Record<RanchAnimal, number> = {
   cattle: 0x8a6a4a, pigs: 0xdba39a, sheep: 0xefe9d8, chickens: 0xe8d27a,
+};
+
+/**
+ * The three crop-plant silhouettes: tall clustered stalks for a grain, a low leafy rosette for a
+ * root or head vegetable, a rounded bush that fruits for everything else. One crop's stand is told
+ * from another's by `cropDesign(crop).color` alone, so this only has to sort each crop into the
+ * family it actually looks like and give it a size — a new crop is one table row, not new geometry.
+ */
+type CropArchetype = 'stalk' | 'leafy' | 'fruit';
+const CROP_STYLE: Record<Crop, { kind: CropArchetype; scale: number }> = {
+  wheat: { kind: 'stalk', scale: 1 },
+  barley: { kind: 'stalk', scale: 0.95 },
+  rice: { kind: 'stalk', scale: 0.8 },
+  corn: { kind: 'stalk', scale: 1.3 },
+  potato: { kind: 'leafy', scale: 1 },
+  carrot: { kind: 'leafy', scale: 0.85 },
+  onion: { kind: 'leafy', scale: 0.9 },
+  cabbage: { kind: 'leafy', scale: 1.15 },
+  tomato: { kind: 'fruit', scale: 1 },
+  pepper: { kind: 'fruit', scale: 0.85 },
+  beans: { kind: 'fruit', scale: 0.9 },
+  pumpkin: { kind: 'fruit', scale: 1.35 },
+  apple: { kind: 'fruit', scale: 0.9 },
+  grapes: { kind: 'fruit', scale: 1 },
+  strawberry: { kind: 'fruit', scale: 0.6 },
+  melon: { kind: 'fruit', scale: 1.2 },
 };
 
 /**
@@ -357,6 +384,8 @@ export class Renderer3D {
 
   // Per-building objects (box mesh or cloned model) + reused overlays.
   private buildingMeshes = new Map<number, THREE.Object3D>();
+  /** Procedural ranch/field ground textures, drawn once to a canvas and shared by every plot. */
+  private plotTextures: Partial<Record<'soil' | 'grass', THREE.Texture>> = {};
   private ghost!: THREE.Group;
   /** Ground arrow on the door tile of the pending building, pointing out from its front. */
   private faceArrow!: THREE.Group;
@@ -1794,6 +1823,98 @@ export class Renderer3D {
   private static readonly FLAT_GROUND = () => 0;
 
   /**
+   * A continuous height-following surface for a fenced plot: `(cols+1) × (rows+1)` vertices, one
+   * per tile corner so neighbouring cells share theirs, each raised by `elevation` at its own
+   * position. Two triangles per cell, wound so the surface faces up. UVs are tile-grid coordinates
+   * (0..cols, 0..rows), not 0..1, so a `RepeatWrapping` texture tiles once per tile regardless of
+   * the plot's size — a 4×4 pen and an 8×8 field read as the same ground at the same scale.
+   */
+  private makeHeightGrid(fw: number, fh: number, elevation: (lx: number, lz: number) => number): THREE.BufferGeometry {
+    const cols = Math.max(1, Math.round(fw));
+    const rows = Math.max(1, Math.round(fh));
+    const nx = cols + 1, nz = rows + 1;
+    const pos = new Float32Array(nx * nz * 3);
+    const uv = new Float32Array(nx * nz * 2);
+    for (let iz = 0; iz < nz; iz++) {
+      for (let ix = 0; ix < nx; ix++) {
+        const lx = -fw / 2 + (ix / cols) * fw;
+        const lz = -fh / 2 + (iz / rows) * fh;
+        const i = iz * nx + ix;
+        pos[i * 3] = lx;
+        pos[i * 3 + 1] = elevation(lx, lz);
+        pos[i * 3 + 2] = lz;
+        uv[i * 2] = ix;
+        uv[i * 2 + 1] = iz;
+      }
+    }
+    const index: number[] = [];
+    for (let iz = 0; iz < rows; iz++) {
+      for (let ix = 0; ix < cols; ix++) {
+        const a = iz * nx + ix, b = a + 1, c = a + nx, d = c + 1;
+        index.push(a, c, b, b, c, d);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.setIndex(index);
+    geo.computeVertexNormals();
+    return geo;
+  }
+
+  /**
+   * A tileable ground texture, drawn once to a small canvas and cached — every ranch/field shares
+   * the same two (soil, pen grass), tinted differently per plot by the mesh's own material colour,
+   * so this never has to run again after the first pen and the first field. Mottled with soft
+   * speckle so the ground reads as a textured surface up close instead of a flat fill; soil also
+   * gets a few darker furrow streaks baked in, standing in for the tilled rows a separate mesh used
+   * to draw.
+   */
+  private plotTexture(kind: 'soil' | 'grass'): THREE.Texture {
+    const cached = this.plotTextures[kind];
+    if (cached) return cached;
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    const hex = (h: number) => '#' + h.toString(16).padStart(6, '0');
+    // Greyscale speckle only — the mesh's own material `color` does the actual tinting (final
+    // pixel = material.color × this texture), so the same near-white/grey pair works for both kinds.
+    const [base, dark, light] = [0xffffff, 0xacacac, 0xffffff];
+    ctx.fillStyle = hex(base);
+    ctx.fillRect(0, 0, size, size);
+    for (let i = 0; i < 300; i++) {
+      ctx.fillStyle = hex(Math.random() < 0.55 ? dark : light);
+      ctx.globalAlpha = 0.06 + Math.random() * 0.10;
+      const r = 1.5 + Math.random() * 3.5;
+      ctx.beginPath();
+      ctx.arc(Math.random() * size, Math.random() * size, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (kind === 'soil') {
+      // Furrow streaks: a handful of soft dark rows, the tilled-field look a box mesh used to give.
+      ctx.globalAlpha = 0.16;
+      ctx.strokeStyle = hex(0x6a5030);
+      ctx.lineWidth = 2;
+      const rows = 6;
+      for (let i = 1; i < rows; i++) {
+        const y = (i / rows) * size + (Math.random() - 0.5) * 4;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(size, y);
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    this.plotTextures[kind] = tex;
+    return tex;
+  }
+
+  /**
    * A fenced plot: a ground plane (pen grass or tilled soil) with a post-and-rail wooden fence
    * around the border, optionally a corner shed. Used for both the ranch (with shed) and the field
    * (without) — and, with the default flat `elevation`, for the translucent placement ghost too.
@@ -1806,33 +1927,29 @@ export class Renderer3D {
   private makeFencedPlot(
     fw: number,
     fh: number,
-    opts: { shed: boolean; ground: number; elevation?: (lx: number, lz: number) => number },
+    opts: {
+      shed: boolean;
+      ground: number;
+      texture: 'soil' | 'grass';
+      elevation?: (lx: number, lz: number) => number;
+    },
   ): THREE.Object3D {
     const elevation = opts.elevation ?? Renderer3D.FLAT_GROUND;
     const group = new THREE.Group();
 
-    // Ground: one flagstone-sized slab per tile cell rather than one slab for the whole plot, so a
-    // pen or field that spans a step in the terrain (grass up onto a foothill shelf) rises with it
-    // instead of tilting or floating. On flat land every cell samples the same height and it reads
-    // exactly as one slab did before.
-    const slabH = 0.12;
+    // Ground: one continuous surface stitched from the same corner heights neighbouring cells
+    // share, not a slab per tile — a pen or field that spans a step in the terrain (grass up onto a
+    // foothill shelf) rises smoothly with it instead of tiling into visible flagstone steps. Tinted
+    // by `opts.ground` over a tileable soil/turf texture rather than one flat fill, so up close it
+    // reads as ground, not paint.
+    const groundGeo = this.makeHeightGrid(fw, fh, elevation);
+    const groundMat = new THREE.MeshStandardMaterial({
+      color: opts.ground, map: this.plotTexture(opts.texture), roughness: 1,
+    });
+    group.add(new THREE.Mesh(groundGeo, groundMat));
     const cols = Math.max(1, Math.round(fw));
     const rows = Math.max(1, Math.round(fh));
     const cellW = fw / cols, cellD = fh / rows;
-    const cells: THREE.BufferGeometry[] = [];
-    for (let cx = 0; cx < cols; cx++) {
-      for (let cz = 0; cz < rows; cz++) {
-        const lx = -fw / 2 + (cx + 0.5) * cellW;
-        const lz = -fh / 2 + (cz + 0.5) * cellD;
-        const cell = new THREE.BoxGeometry(cellW + 0.02, slabH, cellD + 0.02); // slight overlap, no seams
-        cell.translate(lx, elevation(lx, lz) + slabH / 2, lz);
-        cells.push(cell);
-      }
-    }
-    const groundGeo = mergeGeometries(cells, false);
-    if (groundGeo) {
-      group.add(new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ color: opts.ground, roughness: 1 })));
-    }
 
     // Corner shed (top-left 1×1 tile), centred within the group whose origin is the plot centre.
     if (opts.shed) {
@@ -1911,7 +2028,7 @@ export class Renderer3D {
     // height. See `makeFencedPlot`'s `elevation` doc.
     const elevation = (lx: number, lz: number): number =>
       this.groundAt(b.x + fw / 2 + lx, b.y + fh / 2 + lz) - TOP;
-    const group = this.makeFencedPlot(fw, fh, { shed: false, ground: 0x7a5a34, elevation }) as THREE.Group;
+    const group = this.makeFencedPlot(fw, fh, { shed: false, ground: 0x7a5a34, texture: 'soil', elevation }) as THREE.Group;
 
     // Furrow lines: dark strips run the width of the field, one per row, echoing the 2D tilled look.
     const rows = Math.max(2, Math.round(fh));
@@ -1926,19 +2043,28 @@ export class Renderer3D {
     const furrowGeo = mergeGeometries(furrows, false);
     if (furrowGeo) group.add(new THREE.Mesh(furrowGeo, furrowMat));
 
-    // Crop plants: one clump per tile, at one of five growth stages — the field's honest state at a
-    // glance, not just a number in the inspect panel. Position is a stable hash of the tile under
-    // it, so replanting the same ground doesn't jitter the stand.
+    // Crop plants: one clump per tile, at one of five growth stages, shaped by the crop's own
+    // archetype (`CROP_STYLE`) — a grain's clustered stalks, a vegetable's leaf rosette, or a
+    // fruiting bush — not just a taller cone. The field's honest state at a glance, not just a
+    // number in the inspect panel. Position is a stable hash of the tile under it, so replanting the
+    // same ground doesn't jitter the stand.
     const stage = cropStageOf(farmDisplayGrowth(b, s));
     if (stage !== 'empty') {
       const design = cropDesign(b.crop);
+      const style = CROP_STYLE[b.crop ?? 'wheat'];
       const ripe = new THREE.Color(design.color);
       const sprout = new THREE.Color(0x8fbf5a);
-      const stemColor =
-        stage === 'seeded' ? sprout
-        : stage === 'growing' ? sprout.clone().lerp(ripe, 0.35)
-        : stage === 'mature' ? sprout.clone().lerp(ripe, 0.75)
+      const foliage = new THREE.Color(0x5f9a48);
+      // A fruiting bush's leaves stay leaf-green throughout — it's the fruit that ripens, not the
+      // plant — while a grain or a leafy vegetable's own tissue visibly ripens toward the crop
+      // colour. Either way nothing but `toppers` ever shows the crop's true colour before harvest.
+      const stemColor = style.kind === 'fruit'
+        ? (stage === 'seeded' ? sprout : foliage)
+        : stage === 'seeded' ? sprout
+        : stage === 'growing' ? sprout.clone().lerp(ripe, 0.3)
+        : stage === 'mature' ? sprout.clone().lerp(ripe, 0.7)
         : ripe; // harvest: fully ripe
+      const topperColor = stage === 'harvest' ? ripe : foliage.clone().lerp(ripe, 0.55);
       const cols = Math.max(1, Math.round(fw));
       const stems: THREE.BufferGeometry[] = [];
       const toppers: THREE.BufferGeometry[] = [];
@@ -1947,82 +2073,139 @@ export class Renderer3D {
           const idx = tileIndex(Math.floor(b.x) + cx, Math.floor(b.y) + cz);
           const px = -fw / 2 + (cx + 0.5) + this.tileJitter(idx, 0x9a1) * 0.3;
           const pz = -fh / 2 + (cz + 0.5) + this.tileJitter(idx, 0x9a2) * 0.3;
-          const jr = this.tileRand(idx, 0x9a3);
-          this.addCropPlant(stems, toppers, stage, px, pz, elevation(px, pz) + 0.13, jr);
+          const jr1 = this.tileRand(idx, 0x9a3);
+          const jr2 = this.tileRand(idx, 0x9a4);
+          this.addCropPlant(stems, toppers, style.kind, stage, px, pz, elevation(px, pz) + 0.13, style.scale, jr1, jr2);
         }
       }
       const stemGeo = mergeGeometries(stems, false);
       if (stemGeo) group.add(new THREE.Mesh(stemGeo, new THREE.MeshStandardMaterial({ color: stemColor, roughness: 0.9 })));
       if (toppers.length) {
         const topGeo = mergeGeometries(toppers, false);
-        if (topGeo) group.add(new THREE.Mesh(topGeo, new THREE.MeshStandardMaterial({ color: ripe, roughness: 0.85 })));
+        if (topGeo) group.add(new THREE.Mesh(topGeo, new THREE.MeshStandardMaterial({ color: topperColor, roughness: 0.75 })));
       }
     }
     return group;
   }
 
   /**
-   * One crop plant's geometry at a growth `stage`, in field-local space at (x, z) resting on
-   * `groundY`. Pushed into `stems` (every stage but empty) and `toppers` (only mature and harvest —
-   * the ripe head that shows the crop is actually coming in). Shape changes with the stage, not just
-   * height, so a field reads as genuinely different moments — a bare blade, a leafy young plant, a
-   * budding near-ripe stand, a full head-topped harvest stand — rather than one cone stretching.
-   * Every crop in the game gets all five for free: this never reads `Crop` itself, only the stage;
-   * telling one crop's stand from another's is purely the caller's colour choice.
+   * One crop plant's geometry at a growth `stage`, built in the plant's own local space (origin at
+   * its base) by the archetype builder for `kind`, then rotated by a per-plant yaw and dropped at
+   * (x, z) on `groundY` — the shared placement step every archetype goes through, so a stalk cluster
+   * or a leaf rosette turns and lands as one rigid clump rather than each part being placed by hand.
    */
   private addCropPlant(
-    stems: THREE.BufferGeometry[], toppers: THREE.BufferGeometry[], stage: CropStage,
-    x: number, z: number, groundY: number, jr: number,
+    stems: THREE.BufferGeometry[], toppers: THREE.BufferGeometry[],
+    kind: CropArchetype, stage: CropStage, x: number, z: number, groundY: number,
+    scale: number, jr1: number, jr2: number,
   ): void {
-    switch (stage) {
-      case 'empty':
-        break;
-      case 'seeded': {
-        // Barely up: a single short blade.
-        const h = 0.05 + 0.02 * jr;
-        const blade = new THREE.ConeGeometry(0.025, h, 5);
-        blade.translate(x, groundY + h / 2, z);
-        stems.push(blade);
-        break;
+    if (stage === 'empty') return;
+    const local: { stems: THREE.BufferGeometry[]; toppers: THREE.BufferGeometry[] } = { stems: [], toppers: [] };
+    if (kind === 'stalk') this.buildStalkPlant(local, stage, scale, jr1);
+    else if (kind === 'leafy') this.buildLeafyPlant(local, stage, scale, jr1);
+    else this.buildFruitPlant(local, stage, scale, jr1);
+    const yaw = jr2 * Math.PI * 2;
+    const place = (geo: THREE.BufferGeometry, into: THREE.BufferGeometry[]) => {
+      geo.rotateY(yaw);
+      geo.translate(x, groundY, z);
+      into.push(geo);
+    };
+    for (const g of local.stems) place(g, stems);
+    for (const g of local.toppers) place(g, toppers);
+  }
+
+  /**
+   * A grain's stand: a cluster of thin stalks (more and taller as the stage advances) fanned out
+   * from the plant's centre, each capped with a small drooping ear once there's a head to show
+   * (mature onward) — wheat, barley, rice and corn all build off this, `scale` telling corn's tall
+   * cane from rice's short one.
+   */
+  private buildStalkPlant(
+    local: { stems: THREE.BufferGeometry[]; toppers: THREE.BufferGeometry[] },
+    stage: Exclude<CropStage, 'empty'>, scale: number, jr: number,
+  ): void {
+    const h = { seeded: 0.06, growing: 0.17, mature: 0.30, harvest: 0.36 }[stage] * scale;
+    const count = { seeded: 1, growing: 3, mature: 4, harvest: 5 }[stage];
+    const headed = stage === 'mature' || stage === 'harvest';
+    for (let i = 0; i < count; i++) {
+      const t = (i / Math.max(1, count) + jr) % 1;
+      const ang = t * Math.PI * 2;
+      const rad = count > 1 ? 0.05 * scale : 0;
+      const sx = Math.cos(ang) * rad, sz = Math.sin(ang) * rad;
+      const sh = h * (0.85 + 0.3 * ((i * 0.37 + jr) % 1));
+      const stem = new THREE.ConeGeometry(0.018 * scale, sh, 5);
+      stem.translate(sx, sh / 2, sz);
+      local.stems.push(stem);
+      if (headed) {
+        const head = new THREE.ConeGeometry(0.03 * scale, sh * 0.22, 5);
+        head.translate(sx, sh + sh * 0.09, sz);
+        head.rotateX((((i * 0.53 + jr) % 1) - 0.5) * 0.7); // a droop, not every ear standing to attention
+        local.toppers.push(head);
       }
-      case 'growing': {
-        // A leafier young plant: a stem with two outstretched blade leaves.
-        const h = 0.16 + 0.03 * jr;
-        const stem = new THREE.ConeGeometry(0.05, h, 6);
-        stem.translate(x, groundY + h / 2, z);
-        stems.push(stem);
-        for (const sx of [-1, 1]) {
-          const leaf = new THREE.BoxGeometry(0.14, 0.015, 0.045);
-          leaf.rotateZ(sx * 0.5);
-          leaf.translate(x + sx * 0.06, groundY + h * 0.4, z);
-          stems.push(leaf);
-        }
-        break;
-      }
-      case 'mature': {
-        // Tall and full, with a bud just showing the crop's true colour — nearly there, not ready.
-        const h = 0.28 + 0.04 * jr;
-        const stem = new THREE.ConeGeometry(0.08, h, 6);
-        stem.translate(x, groundY + h / 2, z);
-        stems.push(stem);
-        const bud = new THREE.SphereGeometry(0.05, 6, 5);
-        bud.translate(x, groundY + h * 0.92, z);
-        toppers.push(bud);
-        break;
-      }
-      case 'harvest': {
-        // Full height, a ripe cluster on top — the field at its most abundant.
-        const h = 0.32 + 0.04 * jr;
-        const stem = new THREE.ConeGeometry(0.09, h, 6);
-        stem.translate(x, groundY + h / 2, z);
-        stems.push(stem);
-        for (const [ox, oz] of [[0, 0], [0.05, 0.03], [-0.04, -0.04]]) {
-          const head = new THREE.SphereGeometry(0.055, 6, 5);
-          head.translate(x + ox, groundY + h * 0.98, z + oz);
-          toppers.push(head);
-        }
-        break;
-      }
+    }
+  }
+
+  /**
+   * A vegetable's rosette: broad flattened leaf-blobs radiating from the base, fuller at every
+   * stage, with a hint of the vegetable itself — a cabbage's head, a root's shoulder — peeking
+   * through the leaves once it's worth pulling (mature onward). Potato, carrot, onion and cabbage
+   * all build off this; `scale` is what makes cabbage's head bigger than a carrot's.
+   */
+  private buildLeafyPlant(
+    local: { stems: THREE.BufferGeometry[]; toppers: THREE.BufferGeometry[] },
+    stage: Exclude<CropStage, 'empty'>, scale: number, jr: number,
+  ): void {
+    const count = { seeded: 2, growing: 4, mature: 5, harvest: 6 }[stage];
+    const len = { seeded: 0.05, growing: 0.11, mature: 0.15, harvest: 0.17 }[stage] * scale;
+    for (let i = 0; i < count; i++) {
+      // Each leaf gets its own reach, tilt and lean rather than a perfectly even fan, so the
+      // rosette reads as a clump of leaves and not a flat pinwheel seen from above.
+      const t = (i / count + jr) % 1;
+      const ang = t * Math.PI * 2 + (((i * 0.71 + jr) % 1) - 0.5) * 0.9;
+      const reach = len * (0.35 + 0.18 * ((i * 0.53 + jr * 2) % 1));
+      const tilt = (((i * 0.29 + jr) % 1) - 0.5) * 0.8;
+      const leaf = new THREE.SphereGeometry(len * 0.55, 5, 4);
+      leaf.scale(1, 0.8, 1.7);
+      leaf.rotateX(-0.35 + tilt); // leaves lift from the base rather than lying flat
+      leaf.rotateY(ang);
+      leaf.translate(Math.cos(ang) * reach, len * (0.22 + 0.12 * (i % 2)), Math.sin(ang) * reach);
+      local.stems.push(leaf);
+    }
+    if (stage === 'mature' || stage === 'harvest') {
+      const r = (stage === 'harvest' ? 0.06 : 0.04) * scale;
+      const head = new THREE.SphereGeometry(r, 6, 5);
+      head.translate(0, r * 0.7, 0);
+      local.toppers.push(head);
+    }
+  }
+
+  /**
+   * A fruiting bush: a low leafy clump that fills in through seeded/growing, then bears fruit —
+   * more of it, and bigger, from mature into harvest. Every vine and berry crop in the game
+   * (tomato, pepper, beans, pumpkin, apple, grapes, strawberry, melon) builds off this one shape;
+   * `scale` alone is what tells a strawberry patch from a pumpkin vine.
+   */
+  private buildFruitPlant(
+    local: { stems: THREE.BufferGeometry[]; toppers: THREE.BufferGeometry[] },
+    stage: Exclude<CropStage, 'empty'>, scale: number, jr: number,
+  ): void {
+    const leaves = { seeded: 1, growing: 3, mature: 4, harvest: 4 }[stage];
+    const bushR = { seeded: 0.04, growing: 0.09, mature: 0.12, harvest: 0.13 }[stage] * scale;
+    for (let i = 0; i < leaves; i++) {
+      const t = (i / leaves + jr) % 1;
+      const ang = t * Math.PI * 2;
+      const leaf = new THREE.SphereGeometry(bushR * 0.55, 5, 4);
+      leaf.translate(Math.cos(ang) * bushR * 0.5, bushR * 0.5, Math.sin(ang) * bushR * 0.5);
+      local.stems.push(leaf);
+    }
+    const fruit = { seeded: 0, growing: 0, mature: 2, harvest: 4 }[stage];
+    for (let i = 0; i < fruit; i++) {
+      const t = (i / fruit + jr * 1.3) % 1;
+      const ang = t * Math.PI * 2;
+      const r = (stage === 'harvest' ? 0.045 : 0.03) * scale;
+      const berry = new THREE.SphereGeometry(r, 6, 5);
+      berry.translate(Math.cos(ang) * bushR * 0.6, bushR * 0.6, Math.sin(ang) * bushR * 0.6);
+      local.toppers.push(berry);
     }
   }
 
@@ -2038,7 +2221,7 @@ export class Renderer3D {
     // out onto a foothill instead of a field.
     const elevation = (lx: number, lz: number): number =>
       this.groundAt(b.x + fw / 2 + lx, b.y + fh / 2 + lz) - TOP;
-    const group = this.makeFencedPlot(fw, fh, { shed: true, ground: 0x6f7a3f, elevation }) as THREE.Group;
+    const group = this.makeFencedPlot(fw, fh, { shed: true, ground: 0x6f7a3f, texture: 'grass', elevation }) as THREE.Group;
     const animal: RanchAnimal = b.animal ?? 'cattle';
     const count = Math.floor(b.animals ?? 0);
     const shown = Math.min(count, 12);
@@ -2639,7 +2822,7 @@ export class Renderer3D {
       model.scale.multiplyScalar(Math.max(pw, ph) * 0.95);
       shape = model;
     } else {
-      shape = this.makeFencedPlot(pw, ph, { shed: type === 'ranch', ground: type === 'ranch' ? 0x6f7a3f : 0x7a5a34 });
+      shape = this.makeFencedPlot(pw, ph, { shed: type === 'ranch', ground: type === 'ranch' ? 0x6f7a3f : 0x7a5a34, texture: type === 'ranch' ? 'grass' : 'soil' });
     }
     // Ghost materials are cloned so tinting the preview never bleeds into the real buildings,
     // which share the model's materials through `clone(true)`.

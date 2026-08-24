@@ -149,49 +149,6 @@ body {
 }
 
 /*
- * The resources expand toggle: a free-standing wide, short chevron on its own line, centred beneath
- * the resources — no chip, no box. It points down to open the extra chips and flips up to close
- * them. The HUD column is click-through so the map drags behind it, so this one control opts back
- * into events; the drop-shadow keeps the thin stroke legible over a busy map.
- */
-.res-expand-row {
-  justify-content: center;
-  margin-top: 1px;
-}
-.res-expand {
-  pointer-events: auto;
-  cursor: pointer;
-  background: none;
-  border: none;
-  padding: 3px 26px;
-  line-height: 0;
-}
-.res-expand svg {
-  display: block;
-  width: 34px;
-  height: 9px;
-  transition: transform 0.15s ease;
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.65));
-}
-.res-expand svg polyline {
-  fill: none;
-  stroke: var(--muted);
-  stroke-width: 2.4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.res-expand.open svg {
-  transform: scaleY(-1);
-}
-/* Extra resource chips are hidden until the row is expanded. */
-#stat-resources .res-extra {
-  display: none;
-}
-#stat-resources.expanded .res-extra {
-  display: inline-flex;
-}
-
-/*
  * Health and happiness are five pips each, one lit per 20 points. A spent pip is dimmed rather
  * than removed so the meter keeps its width — the row does not reflow as the village's mood
  * moves, and an empty slot still reads as "this used to be full".
@@ -2387,6 +2344,23 @@ body {
 }
 .job-grid .jr-sub {
   font-size: 10px;
+}
+
+/*
+ * The limits panel's rows carry a four-button stepper (two step sizes each way) instead of the
+ * job board's two, so its columns get more room than a plain `.job-grid` one — the name still
+ * ellipsizes rather than fight the buttons for space on a narrow screen.
+ */
+.limit-grid {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+.limit-grid .stepper button {
+  width: 24px;
+  height: 24px;
+  font-size: 14px;
+}
+.limit-grid .stepper .count {
+  min-width: 26px;
 }
 
 /* One column on a screen too narrow to split — two columns of 120px is worse than a scroll. */

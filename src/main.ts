@@ -612,9 +612,11 @@ class Game {
   }
 
   /**
-   * Nudge a resource's stockpile cap. Zero means no limit, and the first tap down from no limit
-   * lands on the current stock rounded up to a step rather than on some arbitrary number — a cap
-   * you set while looking at the panel should be about where the stock is now.
+   * Nudge a resource's stockpile cap. `delta` is in units of `LIMIT_STEP` — the panel's single
+   * chevron passes ±1, the double one ±2, so this one multiply covers both step sizes. Zero means
+   * no limit, and the first tap up from no limit lands on the current stock rounded up to a step
+   * rather than on some arbitrary number — a cap you set while looking at the panel should be
+   * about where the stock is now.
    */
   private setLimit(key: LimitKey, delta: number): void {
     const limits = (this.state.limits ??= {});

@@ -219,22 +219,13 @@ export const HUD_RESOURCES: ResourceKind[] = [
 ];
 
 /**
- * The luxury goods, in HUD display order. They live in the expandable half of the resources row
- * (see `HUD_EXTRA`), so a founding camp never sees them and a town finds them one tap away.
+ * The resources row, in HUD display order — the 🍽️ food total leads, then these. This is a fixed,
+ * deliberately short list (not "every resource"): the building materials and personal necessities a
+ * village watches constantly. Everything else (processed intermediates, livestock, luxuries) is left
+ * off the top line entirely — still readable in any barn's inspect sheet, the trading post, and the
+ * stockpile limits panel — so the HUD stays a glance, not a ledger.
  */
-export const HUD_LUXURY: ResourceKind[] = [
-  'sand', 'glass', 'jewelry', 'finejewelry', 'gold', 'dye', 'silk', 'fineclothes',
-];
-
-/**
- * The resources row is split in two. The **core** four are always on the HUD — the building
- * materials a village burns through and watches constantly — with the 🍽️ food total ahead of them.
- * Everything **else** sits behind an expand button: the processed goods a settlement rarely thinks
- * about and every luxury a town trades in. This is what keeps the top line to a glanceable handful
- * without hiding anything: the chips are all there, a tap away, rather than culled to fit.
- */
-export const HUD_CORE: ResourceKind[] = ['wood', 'stone', 'iron', 'firewood'];
-export const HUD_EXTRA: ResourceKind[] = ['coal', 'tools', 'clothing', 'medicine', ...HUD_LUXURY];
+export const HUD_CORE: ResourceKind[] = ['wood', 'stone', 'iron', 'firewood', 'tools', 'clothing', 'medicine'];
 
 /** Icon for the combined food total shown in the HUD. */
 export const FOOD_ICON = '🍽️';
@@ -1445,8 +1436,9 @@ export const CIRCLE_WORK: BuildingType[] = ['gatherer', 'hunting', 'lumberyard',
  * Everything with a door except the circle trades and the fishing hut, whose jetty is the point of
  * it. A field and a pen have no door: they are open ground, and their workers are visible on them.
  */
-/** How much a stockpile limit moves per tap of the stepper. */
+/** How much a stockpile limit moves per tap of the stepper's small step; the big step is double this. */
 export const LIMIT_STEP = 50;
+export const LIMIT_STEP_BIG = LIMIT_STEP * 2;
 
 /**
  * What a stockpile limit can be set on: a resource, or **`'food'` for every food kind at once**.
@@ -1519,6 +1511,12 @@ export const LIMITABLE: LimitKey[] = [
  * Easy opens with 660 wood and 600 firewood, so both of its ceilings are set above that, while
  * Normal and Hard open with neither and can bank a winter's fuel (roughly 160 for the founding
  * twelve) three times over before a woodcutter downs tools.
+ *
+ * Every limitable good gets a default now — the luxury chain (sand through fine goods) used to
+ * open with no ceiling at all, which read as an omission rather than a choice, and left a new
+ * town's first glassblower running unchecked until the player found the panel. 100 is a plain,
+ * round starting cap: low enough that an early workshop can actually hit it and stand down, high
+ * enough not to bite before there is a bench to run it on.
  */
 const BASE_LIMITS: Partial<Record<LimitKey, number>> = {
   food: 2000,
@@ -1530,6 +1528,11 @@ const BASE_LIMITS: Partial<Record<LimitKey, number>> = {
   coal: 100,
   tools: 100,
   clothing: 100,
+  sand: 100,
+  glass: 100,
+  jewelry: 100,
+  finejewelry: 100,
+  fineclothes: 100,
 };
 export const START_LIMITS: Record<Difficulty, Partial<Record<LimitKey, number>>> = {
   easy: { ...BASE_LIMITS, wood: 1000, firewood: 1000 },

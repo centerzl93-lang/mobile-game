@@ -136,8 +136,10 @@ adding a kind is a table edit. Core tables (all `src/types.ts`): `RESOURCE_ICON`
   (`RESOURCE_VOLUME`): a log is 1, a crop 0.25, a cow 4. `CARRY_VOLUME` (12) is one trip; a barn
   holds `BARN_CAPACITY` (5000) of volume; a market holds `MARKET_CAPACITY` (2000). A worker holds
   output back until they have a full load (`pending` → `carry`).
-- **HUD grouping.** Foods aggregate behind one 🍽️ chip. `HUD_CORE` (wood/stone/iron/firewood) is
-  always shown; `HUD_EXTRA` (processed goods + `HUD_LUXURY`) sits behind an expand button.
+- **HUD grouping.** Foods aggregate behind one 🍽️ chip. `HUD_CORE` (wood/stone/iron/firewood/
+  tools/clothing/medicine) is the fixed, always-shown resources row — nothing else (processed
+  intermediates, livestock, luxuries) reaches the top line; they're still readable in a barn's
+  inspect sheet, the trading post, and the stockpile limits panel.
 - **Low-stock signalling** is a fraction of each resource's own cap (`LOW_STOCK_FRACTION` 0.2 reddens
   the chip, `WARN_STOCK_FRACTION` 0.1 logs a warning), floored by per-citizen seasonal need.
 - **The tool ladder is per villager, not per village.** `tools` (iron) and `steeltools` are **two barn

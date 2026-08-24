@@ -13,7 +13,6 @@ import {
   RESOURCE_ICON,
   RESOURCE_KINDS,
   HUD_CORE,
-  HUD_EXTRA,
   FOOD_ICON,
   ResourceKind,
   seasonLabel,
@@ -54,6 +53,8 @@ import {
   isAdult,
   LIMITABLE,
   LIMIT_META,
+  LIMIT_STEP,
+  LIMIT_STEP_BIG,
   demoFraction,
   LimitKey,
   limitedOutput,
@@ -212,7 +213,10 @@ export interface UICallbacks {
   /** Hold a festival, at the Town Hall's expense. */
   onFestival: () => void;
   onSetBuilders: (delta: number) => void;
-  /** Nudge a resource's stockpile cap by one step (see `LIMIT_STEP`); a cap of 0 means none. */
+  /**
+   * Nudge a resource's stockpile cap. `delta` is in units of `LIMIT_STEP` (50) — ±1 for the small
+   * chevron, ±2 for the double one (so ±`LIMIT_STEP_BIG`, 100). A cap of 0 means none.
+   */
   onSetLimit: (key: LimitKey, delta: number) => void;
   onSetMineOutput: (buildingId: number, output: MineOutput) => void;
   onSetSmithRecipe: (buildingId: number, recipe: SmithRecipe) => void;
@@ -351,12 +355,9 @@ export class UI {
 
   // ---- HUD ----
   private foodChip!: HTMLElement;
-  private expandBtn!: HTMLElement;
-  /** Whether the resources row is showing its extra (non-core) chips. Remembered across a session. */
-  private resExpanded = false;
-  private chip(kind: ResourceKind, extra: boolean): HTMLElement {
+  private chip(kind: ResourceKind): HTMLElement {
     const chip = document.createElement('div');
-    chip.className = 'stat mini' + (extra ? ' res-extra' : '');
+    chip.className = 'stat mini';
     // The ▲ only shows while the chip is `full` (see `.stat .cap`); the ▼ while it is low.
     chip.innerHTML = `<span class="ico">${RESOURCE_ICON[kind]}</span><span class="val">0</span><span class="cap">▲</span><span class="dn">▼</span>`;
     this.resChips.set(kind, chip);
@@ -364,43 +365,14 @@ export class UI {
   }
   private buildResourceChips(): void {
     const row = this.el.resources;
-    // Food total, then the four core materials — always on the HUD.
+    // Food total, then the fixed set of headline resources — always on the HUD, nothing hidden
+    // behind a toggle (see `HUD_CORE`).
     const food = document.createElement('div');
     food.className = 'stat mini';
     food.innerHTML = `<span class="ico">${FOOD_ICON}</span><span class="val">0</span><span class="cap">▲</span><span class="dn">▼</span>`;
     row.appendChild(food);
     this.foodChip = food;
-    for (const kind of HUD_CORE) row.appendChild(this.chip(kind, false));
-
-    // The rest — processed goods and every luxury — revealed only when the chevron is open, so the
-    // HUD stays a glance, not a ledger.
-    for (const kind of HUD_EXTRA) row.appendChild(this.chip(kind, true));
-
-    // The toggle: a bare, wide, short chevron on its own line, centred under the resources — no
-    // chip around it. Down invites a tap to open; it flips up when the extra chips are showing.
-    const expandRow = document.createElement('div');
-    expandRow.className = 'hud-row res-expand-row';
-    const btn = document.createElement('button');
-    btn.className = 'res-expand';
-    btn.id = 'res-expand';
-    btn.innerHTML =
-      `<svg viewBox="0 0 36 9" aria-hidden="true"><polyline points="2,2 18,7 34,2"/></svg>`;
-    btn.addEventListener('click', () => this.toggleResources());
-    expandRow.appendChild(btn);
-    row.insertAdjacentElement('afterend', expandRow);
-    this.expandBtn = btn;
-    this.applyResExpanded();
-  }
-
-  private toggleResources(): void {
-    this.resExpanded = !this.resExpanded;
-    this.applyResExpanded();
-  }
-  private applyResExpanded(): void {
-    this.el.resources.classList.toggle('expanded', this.resExpanded);
-    // The same chevron, flipped to point up while the extra chips are on show.
-    this.expandBtn.classList.toggle('open', this.resExpanded);
-    this.expandBtn.title = this.resExpanded ? 'Hide the extra resources' : 'Show every resource';
+    for (const kind of HUD_CORE) row.appendChild(this.chip(kind));
   }
 
   /**
@@ -501,11 +473,9 @@ export class UI {
     this.foodChip.querySelector('.val')!.textContent = `${Math.floor(food)}`;
     this.markLimit(this.foodChip, s, 'food', 'Total food (all types), including household larders');
     this.markLow(this.foodChip, s, 'food');
-    // Every resource chip, core and extra alike, reads the same way. The extra chips are only on
-    // screen when the row is expanded, but updating a hidden chip is cheap, so no branch here.
-    // Firewood and clothing live in larders too, and are consumed from there first, so their
-    // warnings have to count them for the same reason — as do the fine clothes among the luxuries.
-    for (const kind of [...HUD_CORE, ...HUD_EXTRA]) {
+    // Every resource chip reads the same way. Firewood and clothing live in larders too, and are
+    // consumed from there first, so their warnings have to count them for the same reason.
+    for (const kind of HUD_CORE) {
       const chip = this.resChips.get(kind)!;
       let v = (totals[kind] ?? 0) + totalInLarders(s, kind);
       // The top bar shows one tool figure, not two: iron and steel tools are separate goods in the
@@ -1299,7 +1269,9 @@ export class UI {
 
   private buildLimitsBody(body: HTMLElement, s: GameState): void {
     const limGrid = document.createElement('div');
-    limGrid.className = 'job-grid';
+    // `limit-grid` widens the column past the job board's — a four-button stepper needs the room
+    // a two-button staffing one didn't.
+    limGrid.className = 'job-grid limit-grid';
     body.appendChild(limGrid);
     // Only the resources a limit can act on (`LIMITABLE`) — a cap on something no workplace
     // produces would be a control that does nothing.
@@ -1308,13 +1280,21 @@ export class UI {
       const meta = LIMIT_META[k];
       const row = document.createElement('div');
       row.className = 'job-row limit-row';
+      // Two step sizes: a single chevron nudges by `LIMIT_STEP` (50), a double one jumps by
+      // `LIMIT_STEP_BIG` (100) — so a big cap doesn't cost a dozen taps to raise or lower.
       row.innerHTML =
         `<span class="jr-emoji">${meta.icon}</span>` +
         `<div class="jr-main"><div class="jr-name">${meta.label}</div></div>` +
-        `<div class="stepper"><button data-step="-1">−</button>` +
-        `<span class="count">${cap > 0 ? cap : '—'}</span><button data-step="1">+</button></div>`;
-      row.querySelector('[data-step="-1"]')!.addEventListener('click', () => this.cb.onSetLimit(k, -1));
-      row.querySelector('[data-step="1"]')!.addEventListener('click', () => this.cb.onSetLimit(k, 1));
+        `<div class="stepper">` +
+        `<button data-step="-2" title="-${LIMIT_STEP_BIG}">«</button>` +
+        `<button data-step="-1" title="-${LIMIT_STEP}">‹</button>` +
+        `<span class="count">${cap > 0 ? cap : '—'}</span>` +
+        `<button data-step="1" title="+${LIMIT_STEP}">›</button>` +
+        `<button data-step="2" title="+${LIMIT_STEP_BIG}">»</button>` +
+        `</div>`;
+      for (const step of [-2, -1, 1, 2]) {
+        row.querySelector(`[data-step="${step}"]`)!.addEventListener('click', () => this.cb.onSetLimit(k, step));
+      }
       limGrid.appendChild(row);
     }
   }

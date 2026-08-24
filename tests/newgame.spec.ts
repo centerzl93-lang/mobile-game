@@ -2410,15 +2410,14 @@ test.describe('top-line HUD', () => {
   test('carries one chip per headline resource and nothing else', { tag: '@slow' }, async ({ page }) => {
     await open(page);
     await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
-    // The always-on chips: the food total and the four core materials. The processed goods and the
-    // luxuries live in the `.res-extra` half, hidden behind the More toggle, so a default HUD shows
-    // exactly these five. The `.expand` button is the toggle itself, not a resource, so it is out.
+    // The resources row is a fixed, short list (see `HUD_CORE`): the food total, then the core
+    // materials and personal necessities. There is no expand toggle — everything else (processed
+    // goods, livestock, luxuries) is simply off the top line, readable elsewhere instead.
     const icons = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('#stat-resources .stat:not(.res-extra):not(.expand) .ico')).map((e) => e.textContent),
+      Array.from(document.querySelectorAll('#stat-resources .stat .ico')).map((e) => e.textContent),
     );
-    expect(icons).toEqual(['🍽️', '🪵', '🪨', '🔩', '🔥']);
-    // And the toggle is there, leading the hidden half.
-    expect(await page.locator('#res-expand').count()).toBe(1);
+    expect(icons).toEqual(['🍽️', '🪵', '🪨', '🔩', '🔥', '🛠️', '🧥', '💊']);
+    expect(await page.locator('#res-expand').count()).toBe(0);
   });
 
   test('the season chip names which third of the season it is', async ({ page }) => {
@@ -8760,6 +8759,13 @@ test.describe('stockpile limits', () => {
       coal: 100,
       tools: 100,
       clothing: 100,
+      // Every limitable luxury good also opens capped, at the same round 100 as the other
+      // "never had a bespoke number" goods above.
+      sand: 100,
+      glass: 100,
+      jewelry: 100,
+      finejewelry: 100,
+      fineclothes: 100,
     });
     // Nothing is over its cap on the first day: Easy's 660 wood and 600 firewood both sit under
     // the ceilings set for them, so no hut stands down before the player has done anything.
@@ -8989,7 +8995,7 @@ test.describe('stockpile limits', () => {
     await expect(page.locator('#village')).not.toContainText('all kinds');
   });
 
-  test('the luxury goods reach the HUD and the limits', async ({ page }) => {
+  test('the luxury goods reach the limits panel but not the HUD', async ({ page }) => {
     await open2d(page);
     await page.evaluate(() => {
       const g = (window as any).__village;
@@ -8998,12 +9004,9 @@ test.describe('stockpile limits', () => {
       barn.store.glass = 120; // the village now holds a luxury good
       g.ui.updateHud(g.state, 1, false);
     });
-    // Glass lives in the expandable half of the resources row — hidden until the row is expanded,
-    // then showing its stock like any other chip.
-    const glass = page.locator('#stat-resources .res-extra').filter({ hasText: '120' });
-    await expect(glass, 'hidden until expanded').toBeHidden();
-    await page.click('#res-expand');
-    await expect(glass, 'shown once expanded').toBeVisible();
+    // The resources row is a fixed, short list (see `HUD_CORE`) — glass isn't on it at all, not
+    // even hidden, since there is no longer an expand toggle to reveal it.
+    await expect(page.locator('#stat-resources .stat .ico', { hasText: '🔷' })).toHaveCount(0);
 
     // The makeable luxury goods each get a limit row; the bought-only ones (gold, dye, silk) do not.
     await page.click('#btn-village');
@@ -9053,6 +9056,13 @@ test.describe('stockpile limits', () => {
     // A village is founded with caps already set — Easy's firewood ceiling is 1000.
     await expect(row.locator('.count')).toHaveText('1000');
     await row.locator('[data-step="1"]').click();
+    await expect(row.locator('.count')).toHaveText('1050');
+
+    // The double chevron moves twice as far each tap, either direction — a big cap shouldn't cost
+    // a dozen taps to move.
+    await row.locator('[data-step="2"]').click();
+    await expect(row.locator('.count')).toHaveText('1150');
+    await row.locator('[data-step="-2"]').click();
     await expect(row.locator('.count')).toHaveText('1050');
 
     // A cap can be taken off entirely, and the first tap back up lands on the current stock

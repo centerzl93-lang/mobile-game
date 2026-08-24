@@ -248,6 +248,8 @@ class Game {
   paused = false;
   speedIndex = 0;
   selectedBuild: BuildingType | null = null;
+  /** Set by a long-press pin on the build button — placing keeps the tool armed (see `onTap`). */
+  buildLocked = false;
   /** Player-chosen footprint (tiles) while a sizable building (ranch/field) is selected. */
   sizeW = 4;
   sizeH = 4;
@@ -288,7 +290,7 @@ class Game {
     }
     this.state = newGame();
     this.ui = new UI({
-      onSelectBuild: (t) => this.onSelectBuild(t),
+      onSelectBuild: (t, locked) => this.onSelectBuild(t, locked),
       onSelectPath: (tier) => this.onSelectPath(tier),
       onTogglePolicy: (id) => {
         const on = !(this.state.policies ?? []).includes(id);
@@ -427,8 +429,9 @@ class Game {
     this.rotateDir = dir;
   }
 
-  private onSelectBuild(t: BuildingType | null): void {
+  private onSelectBuild(t: BuildingType | null, locked = false): void {
     this.selectedBuild = t;
+    this.buildLocked = locked;
     this.selectedPath = null;
     this.demolish = false;
     this.clearInspect();
@@ -1045,6 +1048,7 @@ class Game {
     this.centreOnVillage();
     this.paused = false;
     this.selectedBuild = null;
+    this.buildLocked = false;
     this.selectedPath = null;
     this.demolish = false;
     this.clearInspect();
@@ -1342,14 +1346,18 @@ class Game {
       this.ui.log(`${name} site marked — clear the trees and stone under it first`, 'info');
     }
     this.persist();
-    // A placed building closes the build menu and drops back to the plain screen. Siting one is a
-    // deliberate act with its own Build button, not a brush you sweep across the map, and leaving
-    // the category open with the ghost still armed only invited an accidental second placement.
-    // If the village can no longer afford another, say so on the way out.
+    // A placed building closes the build menu and drops back to the plain screen, unless the
+    // player pinned it (long-press on the build button) for repeat placement — then the tool
+    // stays armed at the same rotation/size so the next tap sites another one immediately.
+    // Siting one is otherwise a deliberate act with its own Build button, not a brush you sweep
+    // across the map, and leaving the category open with the ghost still armed only invited an
+    // accidental second placement. If the village can no longer afford another, say so either way.
     const affordMore = canAfford(this.state, this.selectedBuild);
-    this.selectedBuild = null;
-    this.ui.clearSelection();
-    this.ui.hideSizeWidget();
+    if (!this.buildLocked) {
+      this.selectedBuild = null;
+      this.ui.clearSelection();
+      this.ui.hideSizeWidget();
+    }
     if (!affordMore) this.ui.flashHint('Not enough materials in storage for another');
   }
 

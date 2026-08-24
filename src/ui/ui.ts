@@ -192,7 +192,12 @@ export interface InspectControls {
 }
 
 export interface UICallbacks {
-  onSelectBuild: (type: BuildingType | null) => void;
+  /**
+   * `locked` is true when the selection came from a long-press pin (see `lockBuild`): the caller
+   * should keep the tool armed after a placement instead of closing the menu the way a plain tap
+   * does.
+   */
+  onSelectBuild: (type: BuildingType | null, locked?: boolean) => void;
   onSelectPath: (tier: PathTier | null) => void;
   onSetDemolish: (active: boolean) => void;
   onPauseToggle: () => void;
@@ -263,6 +268,9 @@ export interface UICallbacks {
 /** Pips in a health/happiness meter. Five of them across 0-100 is one per 20 points. */
 const PIPS = 5;
 
+/** How long a build button must be held to pin it for repeat placement (see `lockBuild`). */
+const BUILD_LONG_PRESS_MS = 550;
+
 export class UI {
   private el = {
     ages: byId('stat-ages'),
@@ -295,6 +303,8 @@ export class UI {
   private resChips = new Map<ResourceKind, HTMLElement>();
   private mode: 'inspect' | 'build' | 'path' | 'demolish' | 'harvest' = 'inspect';
   private selectedBuild: BuildingType | null = null;
+  /** Set by a long-press pin (`lockBuild`) — placing the pinned building keeps the tool armed. */
+  private buildLocked = false;
   private selectedPath: PathTier | null = null;
   /** Which harvest the drag marks. Sticky, so the tool reopens on whatever was last used. */
   private harvestKind: HarvestKind = 'all';
@@ -436,6 +446,7 @@ export class UI {
       // the menu — otherwise the reticle keeps placing a building the village can no longer raise.
       if (this.selectedBuild && !tierReaches(tier, BUILDING_TIER[this.selectedBuild])) {
         this.selectedBuild = null;
+        this.buildLocked = false;
         this.cb.onSelectBuild(null);
       }
       if (this.selectedPath && !tierReaches(tier, PATH_TIER_AT[this.selectedPath])) {
@@ -627,6 +638,8 @@ export class UI {
           this.buildBtn(
             def.emoji, def.name, cost, type === this.selectedBuild,
             () => this.selectBuild(type), locked,
+            type === this.selectedBuild && this.buildLocked,
+            () => this.lockBuild(type),
           ),
         );
       }
@@ -645,6 +658,9 @@ export class UI {
    * name in place of the cost — what a market costs is beside the point when the village cannot
    * build one. Tapping the locked button spells out *what the village still lacks* to reach that
    * tier (see `lockedHint`), the room to explain it that the chip itself does not have.
+   *
+   * `pinned` marks a button whose building is pinned for repeat placement (see `lockBuild`);
+   * `onLongPress`, when given, wires up the hold-to-pin gesture — a plain tap still runs `fn`.
    */
   private buildBtn(
     emoji: string,
@@ -653,21 +669,56 @@ export class UI {
     selected: boolean,
     fn: () => void,
     lockedAt?: VillageTier,
+    pinned?: boolean,
+    onLongPress?: () => void,
   ): HTMLElement {
     const btn = document.createElement('button');
-    btn.className = 'build-btn' + (selected ? ' selected' : '') + (lockedAt ? ' locked' : '');
+    btn.className =
+      'build-btn' + (selected ? ' selected' : '') + (lockedAt ? ' locked' : '') + (pinned ? ' pinned' : '');
     btn.innerHTML =
       `<span class="emoji">${emoji}</span><span class="name">${name}</span>` +
       (lockedAt
         ? `<span class="cost lock">🔒 ${TIER_META[lockedAt].name}</span>`
         : cost
           ? `<span class="cost">${cost}</span>`
-          : '');
+          : '') +
+      (pinned ? `<span class="pin" title="Pinned for repeat placement">📌</span>` : '');
     if (lockedAt) {
       btn.disabled = true;
       // Still worth a tap: a disabled button that does nothing at all reads as broken, and this is
       // where the player learns *why* it is locked and what would open it.
       btn.addEventListener('click', () => this.flashHint(this.lockedHint(name, lockedAt)));
+    } else if (onLongPress) {
+      // Hold the button down to pin the building instead of picking it for one placement — see
+      // `lockBuild`. `pointerdown`/`up`/`leave`/`cancel` cover mouse and touch alike; a hold that
+      // completes fires `onLongPress` and swallows the `click` that follows the release, so a pin
+      // doesn't also toggle the selection off again.
+      let timer: number | undefined;
+      let fired = false;
+      const cancelTimer = () => {
+        if (timer !== undefined) {
+          window.clearTimeout(timer);
+          timer = undefined;
+        }
+      };
+      btn.addEventListener('pointerdown', () => {
+        fired = false;
+        cancelTimer();
+        timer = window.setTimeout(() => {
+          fired = true;
+          onLongPress();
+        }, BUILD_LONG_PRESS_MS);
+      });
+      btn.addEventListener('pointerup', cancelTimer);
+      btn.addEventListener('pointerleave', cancelTimer);
+      btn.addEventListener('pointercancel', cancelTimer);
+      btn.addEventListener('click', () => {
+        if (fired) {
+          fired = false;
+          return;
+        }
+        fn();
+      });
     } else {
       btn.addEventListener('click', fn);
     }
@@ -783,8 +834,17 @@ export class UI {
   }
 
   private selectBuild(type: BuildingType): void {
+    if (this.buildLocked && this.selectedBuild === type) {
+      // Tapping the pinned button again is the "stop" half of the hold-to-pin gesture (see
+      // `lockBuild`) — it closes the whole menu, not just this one button. A plain tap on an
+      // *unpinned* selected button only falls back to the row of alternatives below, which is
+      // why this short-circuits before that toggle rather than folding into it.
+      this.clearSelection();
+      return;
+    }
     this.mode = 'build';
     this.selectedBuild = this.selectedBuild === type ? null : type;
+    this.buildLocked = false;
     this.selectedPath = null;
     this.cb.onSetDemolish(false);
     this.cb.onSelectHarvest(null);
@@ -800,6 +860,27 @@ export class UI {
     // each building is for now lives in the Codex on the title screen, read before you build
     // rather than over the top of the thing you are building.
     this.hideHint();
+  }
+
+  /**
+   * Hold a build button for `BUILD_LONG_PRESS_MS` to pin it: placing the building then re-arms
+   * the same site tool instead of closing the pop-out, so a run of the same building goes
+   * pan-tap-pan-tap without a trip back through the menu. A plain tap on the pinned button (via
+   * `selectBuild`'s toggle) unpins it and closes the menu, same as tapping any selected button.
+   */
+  private lockBuild(type: BuildingType): void {
+    this.mode = 'build';
+    this.selectedBuild = type;
+    this.buildLocked = true;
+    this.selectedPath = null;
+    this.cb.onSetDemolish(false);
+    this.cb.onSelectHarvest(null);
+    this.cb.onSelectPath(null);
+    this.cb.onSelectBuild(type, true);
+    this.cb.onCloseInspect();
+    this.renderPopout();
+    this.refreshToolbar();
+    this.showHint('Pinned — tap to place another. Tap the building again to stop.');
   }
 
   private selectPath(tier: PathTier): void {

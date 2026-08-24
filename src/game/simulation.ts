@@ -197,6 +197,7 @@ import {
   FIRE_CHANCE,
   FIRE_DOUSE_TRIPS_NEEDED,
   FIRE_RESPONSE_RADIUS,
+  CAVE_IN_CHANCE,
   FIRE_SPREAD_ADJACENT,
   FIRE_SPREAD_NEAR,
   STONE_FIRE_FACTOR,
@@ -268,6 +269,38 @@ export function recordEvent(s: GameState, text: string, kind: LogKind = 'info'):
   const events = (s.events ??= []);
   events.unshift({ text, kind, year: s.year, season: s.season });
   if (events.length > EVENT_LOG_MAX) events.length = EVENT_LOG_MAX;
+}
+
+/** The ways a villager can die. Each names a cause the player can act on (or mourn). */
+type DeathCause = 'starvation' | 'cold' | 'illness' | 'old age' | 'cave-in';
+
+/**
+ * How each cause reads in the chronicle. Written to follow a subject and read the same whether one
+ * villager or several went ("Anna died of old age" / "Anna and Bo died of old age"), so one phrase
+ * serves both. `cold` deliberately keeps the "froze in the cold" wording the tests key off.
+ */
+const DEATH_PHRASE: Record<DeathCause, string> = {
+  starvation: 'starved to death',
+  cold: 'froze in the cold',
+  illness: 'died of illness',
+  'old age': 'died of old age',
+  'cave-in': 'died in a mine cave-in',
+};
+
+/**
+ * Announce a death by name, so a loss is a person the player knew rather than a bare tally. A
+ * cause can take more than one villager at once (a famine, an outbreak); up to three are named
+ * outright and any beyond that are counted, keeping even a die-off to a single readable line.
+ */
+function announceDeaths(log: LogFn, victims: Citizen[], cause: DeathCause, kind: LogKind): void {
+  if (victims.length === 0) return;
+  const names = victims.map((c) => c.name);
+  let who: string;
+  if (names.length === 1) who = names[0];
+  else if (names.length === 2) who = `${names[0]} and ${names[1]}`;
+  else if (names.length === 3) who = `${names[0]}, ${names[1]} and ${names[2]}`;
+  else who = `${names[0]}, ${names[1]}, ${names[2]} and ${names.length - 3} others`;
+  log(`${who} ${DEATH_PHRASE[cause]}`, kind);
 }
 
 // Local balance for the per-trip economy.
@@ -429,7 +462,7 @@ function eat(s: GameState, dt: number, log: LogFn): void {
   }
   if (starved.length > 0) {
     killFrom(s, starved, starved.length);
-    log(`${starved.length} villager${starved.length > 1 ? 's' : ''} starved`, 'bad');
+    announceDeaths(log, starved, 'starvation', 'bad');
     // A death by hunger is an unambiguous food shortage — the signal the "no shortage" achievements
     // read. A hauler's brief gap (which `c.starve` rides out) is not counted.
     const st = (s.stats ??= freshStats());
@@ -513,7 +546,7 @@ function heat(s: GameState, dt: number, log: LogFn): void {
   }
   if (froze.length > 0) {
     killFrom(s, froze, froze.length);
-    log(`${froze.length} villager${froze.length > 1 ? 's' : ''} froze in the cold`, 'bad');
+    announceDeaths(log, froze, 'cold', 'bad');
     // A death by cold is the firewood shortage the "no shortage" achievements watch for.
     const st = (s.stats ??= freshStats());
     st.everFirewoodShortage = true;
@@ -860,7 +893,7 @@ function lives(s: GameState, dt: number, log: LogFn): void {
   if (dying.length > 0) {
     for (const c of dying) removeCitizen(s, c);
     s.seasonDeaths = (s.seasonDeaths ?? 0) + dying.length;
-    log(`${dying.length} elder${dying.length > 1 ? 's' : ''} died of old age`, 'info');
+    announceDeaths(log, dying, 'old age', 'info');
   }
 
   s.birthTimer = (s.birthTimer ?? 0) + dt;
@@ -3100,6 +3133,7 @@ function endSeason(s: GameState, log: LogFn): void {
   announceTier(s, log);
   diseaseSeason(s, log);
   fireSeason(s, log);
+  caveInSeason(s, log);
   bridgeFireSeason(s, log);
 
   // Tally deaths so far this season (old age, starvation, cold, illness) — they weigh
@@ -4454,7 +4488,7 @@ function diseaseSeason(s: GameState, log: LogFn): void {
 
   // Treat the sick: medicine and a staffed hospital speed recovery.
   const hospital = s.buildings.some((b) => b.built && b.type === 'hospital' && b.workers.length > 0);
-  let died = 0;
+  const died: Citizen[] = [];
   for (const c of [...s.citizens]) {
     if (!c.sick) continue;
     let chance = SICK_RECOVER_BASE + (c.health / 100) * 0.2;
@@ -4478,11 +4512,11 @@ function diseaseSeason(s: GameState, log: LogFn): void {
       c.health -= 15;
       if (c.health <= 0 || rand(s) < SICK_DEATH_CHANCE) {
         removeCitizen(s, c);
-        died++;
+        died.push(c);
       }
     }
   }
-  if (died > 0) log(`${died} villager${died > 1 ? 's' : ''} died of illness`, 'bad');
+  announceDeaths(log, died, 'illness', 'bad');
 }
 
 export function fireSeason(s: GameState, log: LogFn): void {
@@ -4497,6 +4531,33 @@ export function fireSeason(s: GameState, log: LogFn): void {
   // distributed ones.
   if (isStoneBuilt(b.type) && rand(s) >= STONE_FIRE_FACTOR) return;
   tryIgnite(s, b, log, true);
+}
+
+/**
+ * A mine cave-in: the hazard of sending people underground. Rolled once a season alongside the
+ * other disasters, it only ever threatens villagers who are actually down a working mine, so the
+ * risk is one a mining village carries and a purely surface settlement never does. At most one
+ * collapse a season, taking a single miner — a sharp, named loss rather than a die-off, and one no
+ * amount of stored food or medicine can prevent.
+ */
+export function caveInSeason(s: GameState, log: LogFn): void {
+  if (!s.disasters) return; // disasters toggled off — the shafts hold
+  // Everyone presently working a built mine. A mine standing idle can bury nobody.
+  const miners: Citizen[] = [];
+  for (const b of s.buildings) {
+    if (!b.built || b.type !== 'mine') continue;
+    for (const id of b.workers) {
+      const c = s.citizens.find((o) => o.id === id);
+      if (c) miners.push(c);
+    }
+  }
+  if (miners.length === 0) return;
+  if (rand(s) >= CAVE_IN_CHANCE) return;
+  const victim = miners[(rand(s) * miners.length) | 0];
+  removeCitizen(s, victim);
+  // No seasonDeaths bump: this fires inside endSeason, so the population drop it causes is already
+  // caught by that pass's own before/after headcount (unlike old age, which is settled mid-season).
+  announceDeaths(log, [victim], 'cave-in', 'bad');
 }
 
 /** The Port if there is one, else the trading post — where a hull ties up and its goods land. */

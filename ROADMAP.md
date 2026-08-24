@@ -105,12 +105,28 @@ Concrete, code-grounded items (see `PLAYTEST.md` for detail):
 ### Phase 7 — UI/UX polish ⏳
 - 🎯 **Top-line HUD wraps to two rows** at 430px with the nine requested chips; fitting one row needs
   materially smaller chips or a horizontal scroll (which hides items on mobile). Decide the trade-off.
-- ⏳ **Per-crop field art** — `CROP_DESIGN` already carries a distinct `color` and a **reserved
-  `model` slot** per crop; renderers draw a generic field today. Next step is real per-crop art at
-  the `drawFarm`/`makeFencedPlot` hook, or a cheap first pass tinting the field by
-  `cropDesign(crop).color`.
-- ⏳ **Ranch 3D animal glyphs** — the 2D renderer shows live animals/count in a pen; the 3D one does
-  not yet.
+- ✅ **Per-crop field art (3D) — five growth stages, three archetypes, a real ground surface** —
+  `makeFarmField` furrows the plot and grows a crop stand through five distinct stages (`CropStage`:
+  empty → seeded → growing → mature → harvest, via `cropStageOf`), built from one of three crop
+  *archetypes* (`CROP_STYLE`): a grain's clustered stalks (`buildStalkPlant`), a vegetable's leaf
+  rosette (`buildLeafyPlant`), or a fruiting bush (`buildFruitPlant`) — shape changing with both the
+  archetype and the stage, tinted by `cropDesign(crop).color`. Every one of the 16 crops sorts into a
+  family by table row alone, so a new crop needs no new geometry to get all five stages.
+  `farmDisplayGrowth` computes a smooth 0→1 value straight from the calendar (0→0.5 over spring,
+  0.5→1 over summer) rather than reading the stored `b.growth`, which only ever holds three values —
+  exactly right for the harvest yield formula, too coarse to watch a field grow. Purely a rendering
+  input; it never feeds back into `b.growth` or the harvest math. Swept by `newgame.spec.ts`'s "every
+  crop ... moves through all five growth stages" test via the `debugCropStage`/`debugCrops` hooks.
+  The ground itself (`makeHeightGrid` + `plotTexture`, shared with the ranch pen) is a continuous
+  height-following mesh with a tileable procedural soil/turf texture and baked-in furrows, replacing
+  the old slab-per-tile flat fill. The 2D `drawFarm` still draws every crop the same generic tilled
+  soil; real per-crop *authored models* (the reserved `CropDesign.model` slot, or small
+  Blender-authored stalks instanced like the trees) remain future work — `bpy` isn't guaranteed
+  available, and a field's variable, scattered planting doesn't fit a fixed-size model the way one
+  building does.
+- ✅ **Ranch 3D animal glyphs** — `makeRanchPen` scatters low-poly critters (shape/size/colour by
+  `RanchAnimal`, capped and refreshed with the herd) across the pen, closing the gap with the 2D
+  renderer.
 
 ### Phase 8 — Full balance / playtesting ⏳
 - 🎯 Whole-economy **balance review** of the dials that moved recently and want play, not more code:

@@ -65,6 +65,10 @@ import {
   footprintH,
   ranchCapacity,
   cullWorkPerHead,
+  farmDisplayGrowth,
+  cropStageOf,
+  CropStage,
+  CROPS,
   SIZABLE,
   RANCH_SPLIT_MIN,
   isHouse,
@@ -2239,6 +2243,16 @@ class Game {
   debugCullWorkPerHead(id: number): number {
     const b = this.state.buildings.find((x) => x.id === id)!;
     return cullWorkPerHead(b);
+  }
+  /** Debug/testing helper: a field's live display-growth and the growth stage it renders at. */
+  debugCropStage(id: number): { displayGrowth: number; stage: CropStage } {
+    const b = this.state.buildings.find((x) => x.id === id)!;
+    const displayGrowth = farmDisplayGrowth(b, this.state);
+    return { displayGrowth, stage: cropStageOf(displayGrowth) };
+  }
+  /** Debug/testing helper: every crop in the game, for a test to sweep without hard-coding the list. */
+  debugCrops(): readonly string[] {
+    return CROPS;
   }
   debugHeatPerCitizen(): number {
     return HEAT_PER_CITIZEN_WINTER;

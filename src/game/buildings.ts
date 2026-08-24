@@ -16,6 +16,7 @@ import {
   footprintH,
   ranchCapacity,
   SIZABLE,
+  HARVEST_NONE,
   HARVEST_WOOD,
   HARVEST_STONE,
   HARVEST_IRON,
@@ -292,6 +293,22 @@ function markFootprintHarvest(s: GameState, b: Building): void {
 }
 
 /**
+ * Undo `markFootprintHarvest`: clear any harvest order still standing on the footprint. Called
+ * when a site is cancelled — the order existed only to clear ground for a building that is no
+ * longer being built, so it should not outlive the site (a laborer would otherwise keep clearing a
+ * now-pointless tile, or a spot the player never asked to have cleared).
+ */
+function clearFootprintHarvest(s: GameState, b: Building): void {
+  const fw = footprintW(b);
+  const fh = footprintH(b);
+  for (let dy = 0; dy < fh; dy++) {
+    for (let dx = 0; dx < fw; dx++) {
+      s.harvest[tileIndex(b.x + dx, b.y + dy)] = HARVEST_NONE;
+    }
+  }
+}
+
+/**
  * True once a building's footprint is free of trees and surface deposits. Construction is gated on
  * this — resources under the site are hand-harvested first (see `markFootprintHarvest`).
  */
@@ -463,12 +480,14 @@ export function clearRubble(s: GameState, b: Building): void {
  * only the delivered materials existed to lose. Any builder still hauling toward the site or
  * standing on it simply finds no site next tick: `pickSite`/`nearestUnbuiltNeeding` stop offering
  * it, so a carried load returns to a barn and the crew re-picks — the tasks cancel themselves once
- * the site is gone. Pre-assigned staff and the plot's reachability are settled here.
+ * the site is gone. Pre-assigned staff and the plot's reachability are settled here. Any harvest
+ * order `markFootprintHarvest` placed to clear the plot is lifted too — see `clearFootprintHarvest`.
  *
  * Only valid for a site that is still an open plot (`!built && !razed`).
  */
 export function cancelConstruction(s: GameState, b: Building): void {
   const at = { x: b.x + footprintW(b) / 2, y: b.y + footprintH(b) / 2 };
+  clearFootprintHarvest(s, b); // the clearing order was only ever for this site
   const idx = s.buildings.indexOf(b);
   if (idx >= 0) s.buildings.splice(idx, 1); // remove first so its own space isn't a target
   // Return most of what was delivered; the 10% not refunded is the wastage of undoing the work.

@@ -2051,6 +2051,54 @@ test.describe('construction cancellation', () => {
     expect(out.refunded).toBe(36);
   });
 
+  test('cancelling a site lifts the harvest order it placed to clear its own footprint', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const HARVEST_WOOD = 1;
+      const HARVEST_NONE = 0;
+      g.startNewGame('small', 'easy', true);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      const { w: fw, h: fh } = g.debugFootprint('gatherer');
+      let px = -1, py = -1;
+      for (let r = 2; r < Math.max(s.w, s.h) && px < 0; r++)
+        for (let dy = -r; dy <= r && px < 0; dy++)
+          for (let dx = -r; dx <= r && px < 0; dx++) {
+            const x = barn.x + dx, y = barn.y + dy;
+            if (x < 0 || y < 0 || x + fw >= s.w || y + fh >= s.h) continue;
+            if (g.debugCanPlace('gatherer', x, y).ok) { px = x; py = y; }
+          }
+      if (px < 0) throw new Error('no placeable gatherer site anywhere on this map');
+      // Plant trees across the whole footprint before placing, so placement marks all of it for
+      // harvest (mirrors the "trees under a footprint are marked" test above).
+      for (let dy = 0; dy < fh; dy++)
+        for (let dx = 0; dx < fw; dx++) {
+          const t = s.tiles[(py + dy) * s.w + (px + dx)];
+          t.type = 'forest';
+          t.trees = 0.3;
+          t.stone = 0;
+        }
+      const id = g.debugPlace('gatherer', px, py);
+      let markedAfterPlace = 0;
+      for (let dy = 0; dy < fh; dy++)
+        for (let dx = 0; dx < fw; dx++)
+          if (s.harvest[(py + dy) * s.w + (px + dx)] === HARVEST_WOOD) markedAfterPlace++;
+      const ok = g.debugDemolish(id);
+      let markedAfterCancel = 0;
+      for (let dy = 0; dy < fh; dy++)
+        for (let dx = 0; dx < fw; dx++)
+          if (s.harvest[(py + dy) * s.w + (px + dx)] !== HARVEST_NONE) markedAfterCancel++;
+      return { placed: id != null, ok, footprint: fw * fh, markedAfterPlace, markedAfterCancel };
+    });
+    expect(out.placed).toBe(true);
+    expect(out.ok).toBe(true);
+    // Every treed footprint tile was marked for harvest on placement...
+    expect(out.markedAfterPlace).toBe(out.footprint);
+    // ...and cancelling the site lifts every one of those orders, not just the site itself.
+    expect(out.markedAfterCancel).toBe(0);
+  });
+
   test('cancelling releases the plot and keeps the trade\'s standing staffing order', async ({ page }) => {
     await open(page);
     const out = await page.evaluate((place) => {

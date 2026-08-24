@@ -7002,6 +7002,86 @@ test.describe('placement controls', () => {
     });
     expect(after.n, JSON.stringify(after)).toBe(before + 1);
   });
+
+  test('holding a build button pins it for repeat placement; a plain tap unpins and closes', { tag: '@slow' }, async ({ page }) => {
+    await open2d(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false));
+    await page.click('#toolbar [data-tool="housing"]');
+    const houseBtn = page.locator('#popout .build-btn').first();
+    await expect(houseBtn).toBeVisible();
+
+    const { tx, ty } = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const s = g.state;
+      const { tx, ty } = g.debugReticleTile('house');
+      // A generous clear patch around the reticle, room enough for two houses side by side, and
+      // the barn moved well clear of it so it never blocks a site.
+      for (let dy = -1; dy <= 6; dy++)
+        for (let dx = -1; dx <= 6; dx++) {
+          const x = tx + dx, y = ty + dy;
+          if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue;
+          const t = s.tiles[y * s.w + x];
+          t.type = 'grass';
+          t.trees = 0;
+          delete t.stone;
+          delete t.iron;
+        }
+      s.buildings = s.buildings.filter((b: any) => b.type === 'barn');
+      s.buildings[0].x = 2;
+      s.buildings[0].y = 2;
+      s.navVersion = (s.navVersion ?? 0) + 1;
+      return { tx, ty };
+    });
+
+    // A plain tap only selects — no pin.
+    await houseBtn.click();
+    expect(await page.evaluate(() => (window as any).__village.buildLocked)).toBe(false);
+    await expect(houseBtn).not.toHaveClass(/pinned/);
+    // Tapping the same, unpinned button again just deselects — the pop-out falls back to the
+    // row of alternatives for the category, unchanged from before this feature existed.
+    await houseBtn.click();
+    await expect(page.locator('#popout')).toBeVisible();
+    expect(await page.evaluate(() => (window as any).__village.selectedBuild)).toBeNull();
+
+    // Select House again, then hold the button down past the long-press threshold to pin it.
+    await houseBtn.click();
+    const box = (await houseBtn.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(700); // comfortably past BUILD_LONG_PRESS_MS (550ms)
+    await page.mouse.up();
+
+    expect(await page.evaluate(() => (window as any).__village.buildLocked)).toBe(true);
+    await expect(houseBtn).toHaveClass(/pinned/);
+
+    // Placing while pinned keeps the tool armed: the pop-out stays open, still on House, ready
+    // for the next site — unlike a plain placement, which would close it.
+    const before = await page.evaluate(() => (window as any).__village.state.buildings.length);
+    await page.click('.ranch-size .rs-build');
+    await expect(page.locator('#popout')).toBeVisible();
+    expect(await page.evaluate(() => (window as any).__village.selectedBuild)).toBe('house');
+    expect(await page.evaluate(() => (window as any).__village.buildLocked)).toBe(true);
+    const afterOne = await page.evaluate(() => (window as any).__village.state.buildings.length);
+    expect(afterOne).toBe(before + 1);
+
+    // Pan to a fresh, still-cleared spot and place a second one — still pinned, still open.
+    await page.evaluate(
+      ({ tx, ty }) => (window as any).__village.camera.focus(tx + 4, ty + 4),
+      { tx, ty },
+    );
+    await page.click('.ranch-size .rs-build');
+    const afterTwo = await page.evaluate(() => (window as any).__village.state.buildings.length);
+    expect(afterTwo, 'a second house lands without reopening the menu').toBe(afterOne + 1);
+    expect(await page.evaluate(() => (window as any).__village.selectedBuild)).toBe('house');
+    await expect(page.locator('#popout')).toBeVisible();
+
+    // A plain tap on the pinned button now unpins and closes the menu — the second half of the
+    // gesture: hold to lock, tap to stop.
+    await houseBtn.click();
+    await expect(page.locator('#popout')).toBeHidden();
+    expect(await page.evaluate(() => (window as any).__village.selectedBuild)).toBeNull();
+    expect(await page.evaluate(() => (window as any).__village.buildLocked)).toBe(false);
+  });
 });
 
 test.describe('fishing dock', () => {

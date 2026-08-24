@@ -377,6 +377,7 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 .build-btn {
+  position: relative;
   flex: 0 0 auto;
   min-width: 76px;
   border-radius: 12px;
@@ -389,6 +390,11 @@ body {
   align-items: center;
   gap: 2px;
   cursor: pointer;
+  /* A long-press pins the building (see `lockBuild`); this keeps the hold from also selecting
+     page text or popping the mobile browser's context menu while the timer runs. */
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .build-btn .emoji {
   font-size: 22px;
@@ -405,6 +411,20 @@ body {
 .build-btn.selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent) inset;
+}
+/* Pinned for repeat placement (long-press) — a warmer ring than a plain selection, and the pin
+   badge in the corner, so it's obvious the tool will stay armed after the next placement. */
+.build-btn.pinned {
+  border-color: var(--warn);
+  box-shadow: 0 0 0 2px var(--warn) inset;
+}
+.build-btn .pin {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  font-size: 13px;
+  line-height: 1;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.6));
 }
 /*
  * A building the village has not earned yet. Dimmed rather than removed: seeing what is coming is

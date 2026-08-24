@@ -378,6 +378,10 @@ body {
 }
 .build-btn {
   position: relative;
+  /* A positioned element gets a non-auto z-index only to give it its own stacking context, so
+     `.press-fill`'s negative z-index (below) is scoped to this button and can never slip behind
+     a sibling button's opaque background. */
+  z-index: 0;
   flex: 0 0 auto;
   min-width: 76px;
   border-radius: 12px;
@@ -395,6 +399,32 @@ body {
   touch-action: manipulation;
   -webkit-user-select: none;
   user-select: none;
+}
+/*
+ * The hold-to-pin countdown (see `buildBtn` in ui.ts): an amber circle grows from the button's
+ * centre. `circle(<pct>)` is measured to the box's *farthest corner*, so 100% always just reaches
+ * every corner regardless of the button's aspect ratio — no per-button sizing math needed. Because
+ * the fill's own `border-radius` matches the button's, whatever the circle doesn't yet cover stays
+ * square-cornered and invisible; once it does cover the corners, what's left visible is exactly the
+ * button's rounded-rect outline, filled in — hence the reveal *becomes* the outline right as the
+ * hold completes. `growing`'s transition-duration is set inline to match `BUILD_LONG_PRESS_MS`
+ * exactly, so the animation doubles as the countdown rather than approximating it; letting go
+ * before it finishes drops back to this rule's own quick transition instead, for a snappy cancel.
+ */
+.build-btn .press-fill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--warn);
+  opacity: 0.32;
+  clip-path: circle(0% at 50% 50%);
+  transition: clip-path 180ms ease-out;
+  pointer-events: none;
+}
+.build-btn .press-fill.growing {
+  clip-path: circle(100% at 50% 50%);
+  transition-timing-function: linear;
 }
 .build-btn .emoji {
   font-size: 22px;

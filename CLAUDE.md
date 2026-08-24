@@ -141,8 +141,11 @@ adding a kind is a table edit. Core tables (all `src/types.ts`): `RESOURCE_ICON`
 - **Low-stock signalling** is a fraction of each resource's own cap (`LOW_STOCK_FRACTION` 0.2 reddens
   the chip, `WARN_STOCK_FRACTION` 0.1 logs a warning), floored by per-citizen seasonal need.
 - **The tool ladder is per villager, not per village.** `tools` (iron) and `steeltools` are **two barn
-  goods, one HUD chip** — the top bar folds them into a single 🛠️ figure, the barn/smith/villager
-  sheets keep them apart — but what a villager actually works with is their own belonging,
+  goods, one HUD chip, one stockpile-limit row** — the top bar folds them into a single 🛠️ figure and
+  the limits panel offers one "Tools" cap for both (`LIMITABLE`/`limitStock`), while the
+  barn/smith/villager sheets keep them apart. A smith on either recipe reads `limitedOutput` as
+  `'tools'` and stands down once the *combined* stock hits that one cap — steel carries no ceiling
+  of its own. What a villager actually works with is their own belonging,
   `Citizen.tool` (`'iron' | 'steel' | undefined`), not a village-wide fact: two workers at the same
   bench can be on different tiers at once. Steel (`STEEL_TOOL_PROD` 1.15) beats iron (`IRON_TOOL_PROD`
   1.0) beats bare hands (`NO_TOOLS_PENALTY` 0.75), read off that citizen by `citizenToolFactor`. A

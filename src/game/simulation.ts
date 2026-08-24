@@ -531,9 +531,15 @@ function staffWanted(s: GameState, b: Building): number {
   return Math.min(BUILDING_DEFS[b.type].jobs, b.desiredWorkers);
 }
 
-/** What the village has stored of whatever a limit is set on — food being every edible kind. */
+/**
+ * What the village has stored of whatever a limit is set on — food being every edible kind, tools
+ * being iron and steel together (one cap for the whole tool ladder, the same figure the HUD chip
+ * already folds them into; steel carries no cap of its own).
+ */
 export function limitStock(s: GameState, key: LimitKey): number {
-  return key === 'food' ? totalFood(s) : totalStored(s, key);
+  if (key === 'food') return totalFood(s);
+  if (key === 'tools') return totalStored(s, 'tools') + totalStored(s, 'steeltools');
+  return totalStored(s, key);
 }
 
 /** Has this stock reached the limit the player set on it? No limit set is never "at" one. */

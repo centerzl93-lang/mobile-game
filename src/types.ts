@@ -1477,9 +1477,10 @@ export function limitedOutput(b: Building): LimitKey | null {
     case 'woodcutter': return 'firewood';
     case 'quarry': return 'stone';
     case 'mine': return b.output === 'iron' ? 'iron' : 'coal';
-    // A smith set to steel answers to the steel-tool cap, one set to iron to the plain-tool cap —
-    // so a limit on one seam of the tool supply stands down only the smiths making that kind.
-    case 'blacksmith': return b.recipe === 'steel' ? 'steeltools' : 'tools';
+    // Iron and steel tools share one cap — the same "tools" figure the HUD already folds them
+    // into (see `limitStock`) — so a smith on either recipe stands down together, not one seam of
+    // the tool supply at a time. Steel tools carry no cap of their own.
+    case 'blacksmith': return 'tools';
     case 'tailor': return 'clothing';
     case 'herbalist': return 'medicine';
     // The workshop is judged against whatever bench it is running — the recipe *is* the output
@@ -1495,9 +1496,11 @@ export function limitedOutput(b: Building): LimitKey | null {
  * A cap only means anything for a good the village *makes*: `atLimit` stands a producer down, so a
  * limit on gold, dye or silk — bought off a ship, made by nobody — would sit in the panel doing
  * nothing. The five luxury goods a town produces are here; the three it only buys are not.
+ * `steeltools` is absent too, on purpose: it shares the `tools` cap (see `limitStock`) rather than
+ * carrying a second one of its own, so the panel offers one "Tools" row, not two.
  */
 export const LIMITABLE: LimitKey[] = [
-  'food', 'wood', 'firewood', 'stone', 'coal', 'iron', 'tools', 'steeltools', 'clothing', 'medicine',
+  'food', 'wood', 'firewood', 'stone', 'coal', 'iron', 'tools', 'clothing', 'medicine',
   'sand', 'glass', 'jewelry', 'finejewelry', 'fineclothes',
 ];
 

@@ -8860,6 +8860,50 @@ test.describe('stockpile limits', () => {
     expect(out.desired).toBeGreaterThan(0);
   });
 
+  test('one tools cap covers iron and steel together, not one seam at a time', { tag: '@slow' }, async ({ page }) => {
+    test.setTimeout(180_000);
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        const g = window.__village;
+        g.startNewGame('small', 'easy', false);
+        g.debugPinTier('city');
+        const s = g.state;
+        s.limits = {};
+        const barn = s.buildings.find((b) => b.type === 'barn');
+        for (const k of ['wood', 'stone', 'iron', 'coal']) barn.store[k] = 2000;
+        let id = null;
+        for (let r = 3; r < 30 && id == null; r++)
+          for (let dy = -r; dy <= r && id == null; dy++)
+            for (let dx = -r; dx <= r && id == null; dx++) {
+              const x = barn.x + dx, y = barn.y + dy;
+              if (!g.debugCanPlace('blacksmith', x, y).ok) continue;
+              id = g.debugPlace('blacksmith', x, y);
+            }
+        if (id == null) throw new Error('no placeable blacksmith site');
+        const w = s.buildings.find((b) => b.id === id);
+        w.built = true;
+        w.progress = g.debugBuildWork('blacksmith');
+        w.recipe = 'steel'; // this smith makes steeltools, not tools
+        w.desiredWorkers = g.debugJobCount('blacksmith');
+
+        // A cap on "tools" that the barn's *plain iron* tools alone already meet, with no steel in
+        // the barns at all — the steel smith should still stand down, because one cap counts both
+        // kinds together rather than the steel seam having room of its own.
+        s.limits.tools = 50;
+        barn.store.tools = 50;
+        delete barn.store.steeltools;
+        for (let i = 0; i < 20; i++) g.debugAdvance(0.5);
+        g.inspectSel = { kind: 'building', id };
+        g.refreshInspect();
+        return { workers: w.workers.length, text: document.getElementById('inspect').innerText };
+      `) as () => any,
+    );
+
+    expect(out.workers, 'the smith is staffed').toBeGreaterThan(0);
+    expect(out.text.toLowerCase()).toContain('tools at your limit');
+  });
+
   test('one food limit covers every food trade, and fields and pens ignore it', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(() => {
@@ -8986,10 +9030,10 @@ test.describe('stockpile limits', () => {
       caps: [...document.querySelectorAll('#village .limit-row .count')].map((e) => e.textContent!.trim()),
     }));
 
-    // A row per limitable resource — the ten core (iron and steel tools counted apart) plus the
-    // five luxury goods a town can make.
+    // A row per limitable resource — the nine core (iron and steel tools share one "Tools" row)
+    // plus the five luxury goods a town can make.
     expect(out.rows, 'a row per limitable resource').toBe(out.limitable);
-    expect(out.rows).toBe(15);
+    expect(out.rows).toBe(14);
     expect(out.subs, 'and nothing under the name but the stepper').toBe(0);
     expect(out.caps.length).toBe(out.limitable);
     expect(out.caps.every((c) => /^(\d+|—)$/.test(c)), 'each row shows its limit, or none').toBe(true);

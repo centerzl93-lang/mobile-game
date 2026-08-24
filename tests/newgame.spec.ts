@@ -7043,12 +7043,34 @@ test.describe('placement controls', () => {
     await expect(page.locator('#popout')).toBeVisible();
     expect(await page.evaluate(() => (window as any).__village.selectedBuild)).toBeNull();
 
-    // Select House again, then hold the button down past the long-press threshold to pin it.
+    // Select House again, then hold the button down.
     await houseBtn.click();
     const box = (await houseBtn.boundingBox())!;
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+    await page.mouse.move(cx, cy);
+
+    // Dragging off the button mid-hold cancels it via `pointerleave` — the fill's `growing`
+    // class (the countdown — see `buildBtn`) comes off again and nothing pins. Releasing off the
+    // button (rather than back on it) also means no trailing click lands to toggle the selection,
+    // which a plain release-in-place would do — that's the ordinary tap path, not what's under
+    // test here.
     await page.mouse.down();
-    await page.waitForTimeout(700); // comfortably past BUILD_LONG_PRESS_MS (550ms)
+    await page.waitForTimeout(150);
+    await expect(page.locator('#popout .press-fill')).toHaveClass(/growing/);
+    await page.mouse.move(cx - 200, cy - 200);
+    await expect(page.locator('#popout .press-fill')).not.toHaveClass(/growing/);
+    await page.mouse.up();
+    expect(await page.evaluate(() => (window as any).__village.buildLocked)).toBe(false);
+    expect(await page.evaluate(() => (window as any).__village.selectedBuild)).toBe('house');
+
+    // Held past the long-press threshold this time — the fill is still mid-grow partway through,
+    // and by the time the pin lands the pop-out has moved on to the pinned button (a fresh DOM
+    // node, since placing/pinning re-renders it), so there's nothing left to assert on the fill.
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.waitForTimeout(250);
+    await expect(page.locator('#popout .press-fill')).toHaveClass(/growing/);
+    await page.waitForTimeout(450); // total comfortably past BUILD_LONG_PRESS_MS (550ms)
     await page.mouse.up();
 
     expect(await page.evaluate(() => (window as any).__village.buildLocked)).toBe(true);

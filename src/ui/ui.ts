@@ -676,6 +676,9 @@ export class UI {
     btn.className =
       'build-btn' + (selected ? ' selected' : '') + (lockedAt ? ' locked' : '') + (pinned ? ' pinned' : '');
     btn.innerHTML =
+      // The fill sits first in the DOM (painted behind the label via its negative z-index — see
+      // the CSS) and only exists on buttons that can be held to pin.
+      (onLongPress ? `<span class="press-fill"></span>` : '') +
       `<span class="emoji">${emoji}</span><span class="name">${name}</span>` +
       (lockedAt
         ? `<span class="cost lock">🔒 ${TIER_META[lockedAt].name}</span>`
@@ -693,6 +696,15 @@ export class UI {
       // `lockBuild`. `pointerdown`/`up`/`leave`/`cancel` cover mouse and touch alike; a hold that
       // completes fires `onLongPress` and swallows the `click` that follows the release, so a pin
       // doesn't also toggle the selection off again.
+      //
+      // `.press-fill` gives the hold a visible countdown: an amber circle grows from the button's
+      // centre, clipped to the button's own rounded corners (`clip-path: circle()` at 100% just
+      // reaches the far corners), so by the time it fully covers the button it *is* the button's
+      // outline, filled in — the moment that coincides with the pin taking effect. Its transition
+      // is stretched to exactly `BUILD_LONG_PRESS_MS` while held, so the fill *is* the timer, not
+      // a decoration guessing at it; letting go early snaps it back on the CSS rule's own short
+      // transition instead.
+      const fillEl = btn.querySelector<HTMLElement>('.press-fill');
       let timer: number | undefined;
       let fired = false;
       const cancelTimer = () => {
@@ -701,17 +713,28 @@ export class UI {
           timer = undefined;
         }
       };
+      const releasePress = () => {
+        cancelTimer();
+        if (fillEl && !fired) {
+          fillEl.style.transitionDuration = '';
+          fillEl.classList.remove('growing');
+        }
+      };
       btn.addEventListener('pointerdown', () => {
         fired = false;
         cancelTimer();
+        if (fillEl) {
+          fillEl.style.transitionDuration = `${BUILD_LONG_PRESS_MS}ms`;
+          fillEl.classList.add('growing');
+        }
         timer = window.setTimeout(() => {
           fired = true;
           onLongPress();
         }, BUILD_LONG_PRESS_MS);
       });
-      btn.addEventListener('pointerup', cancelTimer);
-      btn.addEventListener('pointerleave', cancelTimer);
-      btn.addEventListener('pointercancel', cancelTimer);
+      btn.addEventListener('pointerup', releasePress);
+      btn.addEventListener('pointerleave', releasePress);
+      btn.addEventListener('pointercancel', releasePress);
       btn.addEventListener('click', () => {
         if (fired) {
           fired = false;

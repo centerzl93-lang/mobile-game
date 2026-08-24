@@ -1779,38 +1779,110 @@ export class Renderer3D {
     return mesh;
   }
 
+  /** Local Y offset (0 on flat land) at a plot-local (lx, lz), used when no `elevation` is given. */
+  private static readonly FLAT_GROUND = () => 0;
+
   /**
-   * A fenced plot: a low ground slab (pen grass or tilled soil) with thin fence rails around the
-   * border, optionally a corner shed. Used for both the ranch (with shed) and the field (without).
+   * A fenced plot: a ground plane (pen grass or tilled soil) with a post-and-rail wooden fence
+   * around the border, optionally a corner shed. Used for both the ranch (with shed) and the field
+   * (without) — and, with the default flat `elevation`, for the translucent placement ghost too.
+   *
+   * `elevation(lx, lz)` gives the local Y offset of the real ground at a plot-local position — 0 on
+   * ordinary flat land, positive on the raised foothill shelf a pen or field can just as well stand
+   * on. Every part below reads its own height off it, so a plot on a foothill sits on the actual
+   * slope instead of hovering over (or sinking into) it as one flat slab pinned to the plains height.
    */
-  private makeFencedPlot(fw: number, fh: number, opts: { shed: boolean; ground: number }): THREE.Object3D {
+  private makeFencedPlot(
+    fw: number,
+    fh: number,
+    opts: { shed: boolean; ground: number; elevation?: (lx: number, lz: number) => number },
+  ): THREE.Object3D {
+    const elevation = opts.elevation ?? Renderer3D.FLAT_GROUND;
     const group = new THREE.Group();
-    // Ground slab covering the plot (the tilled soil / pen floor).
+
+    // Ground: one flagstone-sized slab per tile cell rather than one slab for the whole plot, so a
+    // pen or field that spans a step in the terrain (grass up onto a foothill shelf) rises with it
+    // instead of tilting or floating. On flat land every cell samples the same height and it reads
+    // exactly as one slab did before.
     const slabH = 0.12;
-    const slab = new THREE.Mesh(
-      new THREE.BoxGeometry(fw - 0.1, slabH, fh - 0.1),
-      new THREE.MeshStandardMaterial({ color: opts.ground, roughness: 1 }),
-    );
-    slab.position.y = slabH / 2;
-    group.add(slab);
+    const cols = Math.max(1, Math.round(fw));
+    const rows = Math.max(1, Math.round(fh));
+    const cellW = fw / cols, cellD = fh / rows;
+    const cells: THREE.BufferGeometry[] = [];
+    for (let cx = 0; cx < cols; cx++) {
+      for (let cz = 0; cz < rows; cz++) {
+        const lx = -fw / 2 + (cx + 0.5) * cellW;
+        const lz = -fh / 2 + (cz + 0.5) * cellD;
+        const cell = new THREE.BoxGeometry(cellW + 0.02, slabH, cellD + 0.02); // slight overlap, no seams
+        cell.translate(lx, elevation(lx, lz) + slabH / 2, lz);
+        cells.push(cell);
+      }
+    }
+    const groundGeo = mergeGeometries(cells, false);
+    if (groundGeo) {
+      group.add(new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ color: opts.ground, roughness: 1 })));
+    }
+
     // Corner shed (top-left 1×1 tile), centred within the group whose origin is the plot centre.
     if (opts.shed) {
       const shedH = 1.2;
+      const sx = -fw / 2 + 0.5, sz = -fh / 2 + 0.5;
       const shedMat = new THREE.MeshStandardMaterial({ color: BUILDING_COLORS.ranch, roughness: 1 });
       const shed = new THREE.Mesh(new THREE.BoxGeometry(0.85, shedH, 0.85), shedMat);
-      shed.position.set(-fw / 2 + 0.5, shedH / 2, -fh / 2 + 0.5);
+      shed.position.set(sx, elevation(sx, sz) + shedH / 2, sz);
       group.add(shed);
     }
-    // Fence rails: a thin low bar along each of the four sides.
-    const railH = 0.4;
-    const railMat = new THREE.MeshStandardMaterial({ color: 0xa4813f, roughness: 1 });
-    const hbar = () => new THREE.BoxGeometry(fw - 0.1, railH, 0.12);
-    const vbar = () => new THREE.BoxGeometry(0.12, railH, fh - 0.1);
-    const north = new THREE.Mesh(hbar(), railMat); north.position.set(0, railH / 2, -fh / 2 + 0.06);
-    const south = new THREE.Mesh(hbar(), railMat); south.position.set(0, railH / 2, fh / 2 - 0.06);
-    const west = new THREE.Mesh(vbar(), railMat); west.position.set(-fw / 2 + 0.06, railH / 2, 0);
-    const east = new THREE.Mesh(vbar(), railMat); east.position.set(fw / 2 - 0.06, railH / 2, 0);
-    group.add(north, south, west, east);
+
+    // A real post-and-rail fence: upright posts every tile round the perimeter (corners shared, not
+    // doubled), with two horizontal rails per gap between them — not the single flat bar this used
+    // to be. Each post takes its own height off `elevation`, so the fence steps up a slope with the
+    // ground instead of burying its low side or leaving its high side hanging.
+    const postT = 0.09, postH = 0.62;
+    const railT = 0.05, railW = 0.07;
+    const railYs = [0.22, 0.46];
+    const fenceMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3f, roughness: 0.95 });
+    const fenceParts: THREE.BufferGeometry[] = [];
+    const post = (lx: number, lz: number) => {
+      const geo = new THREE.BoxGeometry(postT, postH, postT);
+      geo.translate(lx, elevation(lx, lz) + postH / 2, lz);
+      fenceParts.push(geo);
+    };
+    const rail = (x0: number, z0: number, x1: number, z1: number) => {
+      const len = Math.hypot(x1 - x0, z1 - z0);
+      const midx = (x0 + x1) / 2, midz = (z0 + z1) / 2;
+      const midY = (elevation(x0, z0) + elevation(x1, z1)) / 2;
+      const horiz = Math.abs(x1 - x0) >= Math.abs(z1 - z0);
+      for (const ry of railYs) {
+        const geo = new THREE.BoxGeometry(horiz ? len : railT, railW, horiz ? railT : len);
+        geo.translate(midx, midY + ry, midz);
+        fenceParts.push(geo);
+      }
+    };
+    // North/south runs (along X) get a post every tile including both corners; east/west runs
+    // (along Z) skip the two corners, already placed by the X pass, and post the run in between.
+    for (let i = 0; i <= cols; i++) {
+      const lx = -fw / 2 + i * cellW;
+      post(lx, -fh / 2);
+      post(lx, fh / 2);
+    }
+    for (let i = 1; i < rows; i++) {
+      const lz = -fh / 2 + i * cellD;
+      post(-fw / 2, lz);
+      post(fw / 2, lz);
+    }
+    for (let i = 0; i < cols; i++) {
+      const x0 = -fw / 2 + i * cellW, x1 = -fw / 2 + (i + 1) * cellW;
+      rail(x0, -fh / 2, x1, -fh / 2);
+      rail(x0, fh / 2, x1, fh / 2);
+    }
+    for (let i = 0; i < rows; i++) {
+      const z0 = -fh / 2 + i * cellD, z1 = -fh / 2 + (i + 1) * cellD;
+      rail(-fw / 2, z0, -fw / 2, z1);
+      rail(fw / 2, z0, fw / 2, z1);
+    }
+    const fenceGeo = mergeGeometries(fenceParts, false);
+    if (fenceGeo) group.add(new THREE.Mesh(fenceGeo, fenceMat));
+
     group.userData.model = false;
     group.userData.ranch = true; // reuse the ranch flag so styleBuilding leaves the plot's own colours
     return group;
@@ -1822,7 +1894,12 @@ export class Renderer3D {
    * the cheap first pass `PLAYTEST.md` U2 asked for, at the `makeFencedPlot` hook it names.
    */
   private makeFarmField(b: Building, fw: number, fh: number): THREE.Object3D {
-    const group = this.makeFencedPlot(fw, fh, { shed: false, ground: 0x7a5a34 }) as THREE.Group;
+    // The plot's own patch of the real terrain height field, in plot-local coordinates — so a field
+    // dragged out onto a foothill's raised shelf sits on it rather than floating at the plains
+    // height. See `makeFencedPlot`'s `elevation` doc.
+    const elevation = (lx: number, lz: number): number =>
+      this.groundAt(b.x + fw / 2 + lx, b.y + fh / 2 + lz) - TOP;
+    const group = this.makeFencedPlot(fw, fh, { shed: false, ground: 0x7a5a34, elevation }) as THREE.Group;
 
     // Furrow lines: dark strips run the width of the field, one per row, echoing the 2D tilled look.
     const rows = Math.max(2, Math.round(fh));
@@ -1831,7 +1908,7 @@ export class Renderer3D {
     for (let i = 1; i < rows; i++) {
       const z = -fh / 2 + (i / rows) * fh;
       const furrow = new THREE.BoxGeometry(fw - 0.2, 0.02, 0.05);
-      furrow.translate(0, 0.13, z);
+      furrow.translate(0, elevation(0, z) + 0.13, z);
       furrows.push(furrow);
     }
     const furrowGeo = mergeGeometries(furrows, false);
@@ -1854,7 +1931,7 @@ export class Renderer3D {
           const pz = -fh / 2 + (cz + 0.5) + this.tileJitter(idx, 0x9a2) * 0.3;
           const r = 0.08 + 0.03 * this.tileRand(idx, 0x9a3);
           const cone = new THREE.ConeGeometry(r, h, 6);
-          cone.translate(px, 0.13 + h / 2, pz);
+          cone.translate(px, elevation(px, pz) + 0.13 + h / 2, pz);
           plants.push(cone);
         }
       }
@@ -1872,7 +1949,11 @@ export class Renderer3D {
    * as populated without turning into a field of meshes.
    */
   private makeRanchPen(b: Building, fw: number, fh: number): THREE.Object3D {
-    const group = this.makeFencedPlot(fw, fh, { shed: true, ground: 0x6f7a3f }) as THREE.Group;
+    // See `makeFarmField` / `makeFencedPlot`'s `elevation` doc — same reasoning, for a pen dragged
+    // out onto a foothill instead of a field.
+    const elevation = (lx: number, lz: number): number =>
+      this.groundAt(b.x + fw / 2 + lx, b.y + fh / 2 + lz) - TOP;
+    const group = this.makeFencedPlot(fw, fh, { shed: true, ground: 0x6f7a3f, elevation }) as THREE.Group;
     const animal: RanchAnimal = b.animal ?? 'cattle';
     const count = Math.floor(b.animals ?? 0);
     const shown = Math.min(count, 12);
@@ -1890,7 +1971,7 @@ export class Renderer3D {
       const px = -fw / 2 + (cx + 0.5) + this.tileJitter(salt, 0xa61) * 0.4;
       const pz = -fh / 2 + (cz + 0.5) + this.tileJitter(salt, 0xa62) * 0.4;
       const yaw = this.tileRand(salt, 0xa63) * Math.PI * 2;
-      this.addCritter(parts, animal, px, pz, yaw);
+      this.addCritter(parts, animal, px, pz, elevation(px, pz), yaw);
     }
     const geo = mergeGeometries(parts, false);
     if (geo) {
@@ -1901,11 +1982,13 @@ export class Renderer3D {
   }
 
   /** Push one animal's body (+ head) geometry, in local pen space, at (x, z) facing `yaw`. */
-  private addCritter(parts: THREE.BufferGeometry[], animal: RanchAnimal, x: number, z: number, yaw: number): void {
+  private addCritter(
+    parts: THREE.BufferGeometry[], animal: RanchAnimal, x: number, z: number, groundY: number, yaw: number,
+  ): void {
     const place = (geo: THREE.BufferGeometry, ly: number, lz: number) => {
       geo.translate(0, ly, lz);
       geo.rotateY(yaw);
-      geo.translate(x, 0.13, z);
+      geo.translate(x, groundY + 0.13, z);
       parts.push(geo);
     };
     switch (animal) {

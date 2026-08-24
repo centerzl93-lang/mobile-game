@@ -48,7 +48,11 @@ export const TIER_META: Record<VillageTier, TierReq> = {
   // City: a town that built out what the town tier opened — twice the people, its learning and
   // faith crowned by a university and a cathedral, and a luxury workshop turning out fine goods.
   // The port a city unlocks is *reach*, not a gate: a city is a city before a single fleet calls.
-  city: { name: 'City', emoji: '🌆', pop: 200, needs: ['university', 'cathedral', 'luxury'] },
+  // The schooled-adult bar rises with it — a university standing is not the same as a university
+  // that has actually taught most of the town.
+  city: {
+    name: 'City', emoji: '🌆', pop: 200, needs: ['university', 'cathedral', 'luxury'], educated: 150,
+  },
 };
 
 /**
@@ -90,15 +94,16 @@ export const BUILDING_TIER: Record<BuildingType, VillageTier> = {
   tavern: 'village',
   trading: 'village',
   // Town: what a place stops being a village to build. Learning past school, deep water, houses
-  // for people with money, a church for thousands, fine goods, and stone raised for pride alone.
+  // for people with money, a church for thousands, and fine goods.
   university: 'town',
   grandhouse: 'town',
   cathedral: 'town',
   luxury: 'town',
-  monument: 'town',
   // City: the deep-water quay, and with it merchants that keep a calendar. Everything the port
-  // trades in can already be made or bought by a town — what a city buys is *reach*.
+  // trades in can already be made or bought by a town — what a city buys is *reach*. Stone raised
+  // for pride alone belongs here too: a monument is a boast a place only makes once it has made it.
   port: 'city',
+  monument: 'city',
 };
 
 /** The tier each kind of roadway becomes available at. */

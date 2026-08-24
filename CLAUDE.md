@@ -241,7 +241,7 @@ Five tiers (`src/game/tiers.ts`): **settlement → hamlet → village → town �
 **computed live from the village as it stands** (`villageTier`), never stored or ratcheted — lose the
 population or let a required building burn and the tier (and the right to build what it unlocked) goes
 with it; what's already built stays. `TIER_META` sets each tier's `pop`, required `needs` buildings,
-and (town) schooled-adult count. `BUILDING_TIER` (exhaustive `Record<BuildingType>`) gates each
+and (town, city) schooled-adult count. `BUILDING_TIER` (exhaustive `Record<BuildingType>`) gates each
 building; `PATH_TIER_AT` gates roadwork. `tierChecks` shows the player exactly which requirement is
 holding them back.
 

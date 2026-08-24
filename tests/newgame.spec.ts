@@ -4915,7 +4915,10 @@ test.describe('what a town builds', () => {
   const stock = `
     const g = window.__village;
     g.startNewGame('small', 'easy', false);
-    g.debugPinTier('town');
+    // City, not Town: this stock also raises the monument, which only unlocks at City. Everything
+    // else this suite builds here (university, port, grandhouse, cathedral, luxury) unlocks a rung
+    // lower and stays buildable at City too.
+    g.debugPinTier('city');
     const s = g.state;
     const barn = s.buildings.find((b) => b.type === 'barn');
     for (const k of ['wood', 'stone', 'iron']) barn.store[k] = 99000;
@@ -4935,7 +4938,7 @@ test.describe('what a town builds', () => {
     };
   `;
 
-  test('all six are priced and sized as specified, and only a town may raise them', async ({ page }) => {
+  test('all six are priced and sized as specified, and none of them may rise on a mere village', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -6226,9 +6229,15 @@ test.describe('a village climbs through tiers', () => {
     const town = blocks.nth(3);
     await expect(town).toContainText('Town');
     await expect(town).toContainText('Schooled adults');
-    await expect(town, 'and the six things a town can build').toContainText('Cathedral');
+    await expect(town, 'and the five things a town can build').toContainText('Cathedral');
     await expect(town).toContainText('University');
-    await expect(town).toContainText('Monument');
+    await expect(town, 'the monument is a City boast, not a Town one').not.toContainText('Monument');
+
+    // City is the top rung, and the monument stands among what it opens.
+    const city = blocks.nth(4);
+    await expect(city).toContainText('City');
+    await expect(city, 'a body of schooled adults, deeper than a town\'s').toContainText('Schooled adults');
+    await expect(city, 'stone raised for pride only comes once the pride is earned').toContainText('Monument');
   });
 
   test('the build menu greys what the village has not earned', async ({ page }) => {

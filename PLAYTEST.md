@@ -45,8 +45,8 @@ Status: 🔴 open · 🟡 mitigated / watching · 🟢 by-design (working as int
 | # | Issue | Status | Notes |
 |---|---|---|---|
 | U1 | **Top-line HUD wraps to two rows** at 430px with the nine requested chips. | 🔵 decision | One row would need materially smaller chips or a horizontal scroll (which hides items on mobile). |
-| U2 | **Per-crop field art draws generically** — `CROP_DESIGN` has a distinct color + reserved `model` per crop, but fields render generic. | 🟡 planned | Scaffolding in place; next step is real art at the `drawFarm`/`makeFencedPlot` hook, or a cheap color tint first. (Phase 7) |
-| U3 | **3D ranch pen shows no live animal glyphs/count** (the 2D renderer does). | 🟡 minor | Cosmetic gap between renderers. (Phase 7) |
+| U2 | **Per-crop field art draws generically.** `makeFarmField` (3D) now furrows the plot and grows a stand of crop clumps tinted by `cropDesign(b.crop).color`, ripening from green toward the crop's colour as `growth` climbs 0→1 — the "cheap color tint first" pass this row asked for. | 🟡 planned | 3D done; the 2D `drawFarm` still draws every crop the same generic tilled soil + emoji marker. Real per-crop *models* (the reserved `CropDesign.model` slot) remain future work. (Phase 7) |
+| U3 | **3D ranch pen shows no live animal glyphs/count** (the 2D renderer does). | 🟢 done | `makeRanchPen` scatters low-poly critters (shape/size/colour by `RanchAnimal`) across the pen, count-capped and refreshed whenever the herd or species changes. The exact head count stays in the inspect sheet, same as before — this is the glyphs half of the gap, not a 3D count badge. |
 | U4 | **Rotate-button direction.** Verified correct against the glyphs and covered by a test. | 🟢 by-design | If a player still wants it inverted after trying it, it's a one-line sign flip in `Game.rotateView` (+ the two rotate-suite assertions). |
 
 ## Placement / world

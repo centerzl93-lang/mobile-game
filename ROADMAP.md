@@ -105,12 +105,13 @@ Concrete, code-grounded items (see `PLAYTEST.md` for detail):
 ### Phase 7 — UI/UX polish ⏳
 - 🎯 **Top-line HUD wraps to two rows** at 430px with the nine requested chips; fitting one row needs
   materially smaller chips or a horizontal scroll (which hides items on mobile). Decide the trade-off.
-- ⏳ **Per-crop field art** — `CROP_DESIGN` already carries a distinct `color` and a **reserved
-  `model` slot** per crop; renderers draw a generic field today. Next step is real per-crop art at
-  the `drawFarm`/`makeFencedPlot` hook, or a cheap first pass tinting the field by
-  `cropDesign(crop).color`.
-- ⏳ **Ranch 3D animal glyphs** — the 2D renderer shows live animals/count in a pen; the 3D one does
-  not yet.
+- ✅ **Per-crop field art (3D, first pass)** — `makeFarmField` furrows the plot and grows a stand of
+  crop clumps at the `makeFencedPlot` hook, tinted by `cropDesign(crop).color` and ripening as
+  `growth` climbs 0→1. The 2D `drawFarm` still draws every crop the same generic tilled soil; real
+  per-crop *models* (the reserved `CropDesign.model` slot) remain future work.
+- ✅ **Ranch 3D animal glyphs** — `makeRanchPen` scatters low-poly critters (shape/size/colour by
+  `RanchAnimal`, capped and refreshed with the herd) across the pen, closing the gap with the 2D
+  renderer.
 
 ### Phase 8 — Full balance / playtesting ⏳
 - 🎯 Whole-economy **balance review** of the dials that moved recently and want play, not more code:

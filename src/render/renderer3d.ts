@@ -32,6 +32,8 @@ import {
   HARVEST_WOOD,
   HARVEST_STONE,
   fireIntensity,
+  cropDesign,
+  RanchAnimal,
 } from '../types';
 import { tileIndex, inBounds } from '../game/world';
 import { Camera3D } from '../engine/camera3d';
@@ -134,6 +136,11 @@ const BUILDING_COLORS: Record<BuildingType, number> = {
   lumberyard: 0x3f7a3a, woodcutter: 0x8a6a3c, quarry: 0x8b8e95, mine: 0x4a4a52, blacksmith: 0x565059,
   tailor: 0x9a5f92, trading: 0x46708f, school: 0x8f7d3f, herbalist: 0x4f8a5a, hospital: 0xb85a5a,
   well: 0x5f7fa0, market: 0xa07a3f, barn: 0x6f6a4a, townhall: 0xa8b0c4,
+};
+
+/** Body colour for a ranch's herd glyphs — one flat tint per species, distinct from its neighbours. */
+const ANIMAL_COLOR: Record<RanchAnimal, number> = {
+  cattle: 0x8a6a4a, pigs: 0xdba39a, sheep: 0xefe9d8, chickens: 0xe8d27a,
 };
 
 /**
@@ -1652,11 +1659,18 @@ export class Renderer3D {
       // rebuild this whole pass on every frame of a build.
       const stage = buildStage(b);
       const step = stage === 'framing' ? Math.round(framedFraction(b) * 12) : 0;
+      // A ranch's live herd and a farm's crop/growth drive their plot's own detail (animal glyphs,
+      // ripening plants) rather than a model, so they need to be in the signature too — quantised
+      // the same way `step` quantises framing, so growth doesn't force a rebuild every frame.
+      const plot = b.type === 'ranch' ? (b.animal ?? '') + ':' + Math.floor(b.animals ?? 0)
+        : b.type === 'farm' ? (b.crop ?? '') + ':' + Math.round((b.growth ?? 0) * 10)
+        : '';
       // `demolish` is in the signature as well as the stage: a building that has been marked but
       // not started on looks exactly like one that has not, and the mark is what the player wants
       // to see. `type` too — an upgrade changes it in place, on the same building id.
       sig += b.id + ':' + b.type + ':' + stage + ':' + step + ':' + (b.fireTimer ? 1 : 0) +
-        ':' + (b.damaged ? 1 : 0) + ':' + (b.demolish ? 1 : 0) + ':' + (b.rot ?? 0) + ';';
+        ':' + (b.damaged ? 1 : 0) + ':' + (b.demolish ? 1 : 0) + ':' + (b.rot ?? 0) +
+        ':' + plot + ';';
     }
     if (sig === this.sig.bld) return;
     this.sig.bld = sig;
@@ -1755,8 +1769,8 @@ export class Renderer3D {
   private makeBuildingBox(b: Building): THREE.Object3D {
     const fw = footprintW(b);
     const fh = footprintH(b);
-    if (b.type === 'ranch') return this.makeFencedPlot(fw, fh, { shed: true, ground: 0x6f7a3f });
-    if (b.type === 'farm') return this.makeFencedPlot(fw, fh, { shed: false, ground: 0x7a5a34 });
+    if (b.type === 'ranch') return this.makeRanchPen(b, fw, fh);
+    if (b.type === 'farm') return this.makeFarmField(b, fw, fh);
     const h = buildingHeight(b.type);
     const geo = new THREE.BoxGeometry(fw * 0.9, h, fh * 0.9);
     geo.translate(0, h / 2, 0);
@@ -1800,6 +1814,131 @@ export class Renderer3D {
     group.userData.model = false;
     group.userData.ranch = true; // reuse the ranch flag so styleBuilding leaves the plot's own colours
     return group;
+  }
+
+  /**
+   * A farm field: the fenced plot, furrowed, with a stand of crop plants that fills in and ripens
+   * as `growth` climbs (0 bare soil → 1 ready to harvest), tinted by `cropDesign(b.crop).color` —
+   * the cheap first pass `PLAYTEST.md` U2 asked for, at the `makeFencedPlot` hook it names.
+   */
+  private makeFarmField(b: Building, fw: number, fh: number): THREE.Object3D {
+    const group = this.makeFencedPlot(fw, fh, { shed: false, ground: 0x7a5a34 }) as THREE.Group;
+
+    // Furrow lines: dark strips run the width of the field, one per row, echoing the 2D tilled look.
+    const rows = Math.max(2, Math.round(fh));
+    const furrowMat = new THREE.MeshStandardMaterial({ color: 0x4a3720, roughness: 1 });
+    const furrows: THREE.BufferGeometry[] = [];
+    for (let i = 1; i < rows; i++) {
+      const z = -fh / 2 + (i / rows) * fh;
+      const furrow = new THREE.BoxGeometry(fw - 0.2, 0.02, 0.05);
+      furrow.translate(0, 0.13, z);
+      furrows.push(furrow);
+    }
+    const furrowGeo = mergeGeometries(furrows, false);
+    if (furrowGeo) group.add(new THREE.Mesh(furrowGeo, furrowMat));
+
+    // Crop plants: one clump per tile, growing from a bare sprout to a full, ripe-coloured stand —
+    // the field's honest state at a glance, not just a number in the inspect panel. Position is a
+    // stable hash of the tile under it, so replanting the same ground doesn't jitter the stand.
+    const growth = Math.max(0, Math.min(1, b.growth ?? 0));
+    if (growth > 0.03) {
+      const design = cropDesign(b.crop);
+      const color = new THREE.Color(0x6a9c4a).lerp(new THREE.Color(design.color), growth);
+      const h = 0.08 + 0.30 * growth;
+      const cols = Math.max(1, Math.round(fw));
+      const plants: THREE.BufferGeometry[] = [];
+      for (let cx = 0; cx < cols; cx++) {
+        for (let cz = 0; cz < rows; cz++) {
+          const idx = tileIndex(Math.floor(b.x) + cx, Math.floor(b.y) + cz);
+          const px = -fw / 2 + (cx + 0.5) + this.tileJitter(idx, 0x9a1) * 0.3;
+          const pz = -fh / 2 + (cz + 0.5) + this.tileJitter(idx, 0x9a2) * 0.3;
+          const r = 0.08 + 0.03 * this.tileRand(idx, 0x9a3);
+          const cone = new THREE.ConeGeometry(r, h, 6);
+          cone.translate(px, 0.13 + h / 2, pz);
+          plants.push(cone);
+        }
+      }
+      const plantGeo = mergeGeometries(plants, false);
+      if (plantGeo) group.add(new THREE.Mesh(plantGeo, new THREE.MeshStandardMaterial({ color, roughness: 0.9 })));
+    }
+    return group;
+  }
+
+  /**
+   * A ranch pen: the fenced plot with its corner shed, plus a scatter of low-poly critters standing
+   * in for the live herd — the `PLAYTEST.md` U3 gap ("the 3D renderer shows no live animal glyphs").
+   * Shape, size and colour differ by `RanchAnimal`; the count shown is capped well under a big pen's
+   * real capacity (the exact head count is one tap away, in the inspect sheet) so a full pen reads
+   * as populated without turning into a field of meshes.
+   */
+  private makeRanchPen(b: Building, fw: number, fh: number): THREE.Object3D {
+    const group = this.makeFencedPlot(fw, fh, { shed: true, ground: 0x6f7a3f }) as THREE.Group;
+    const animal: RanchAnimal = b.animal ?? 'cattle';
+    const count = Math.floor(b.animals ?? 0);
+    const shown = Math.min(count, 12);
+    if (shown <= 0) return group;
+
+    const cols = Math.max(1, Math.round(fw));
+    const rows = Math.max(1, Math.round(fh));
+    const parts: THREE.BufferGeometry[] = [];
+    for (let i = 0; i < shown; i++) {
+      // Grid cells in row-major order, skipping cell 0 (the shed's corner) same as the 2D renderer.
+      const cell = 1 + (i % Math.max(1, cols * rows - 1));
+      const cx = cell % cols;
+      const cz = Math.floor(cell / cols) % rows;
+      const salt = (b.id * 977 + i) | 0;
+      const px = -fw / 2 + (cx + 0.5) + this.tileJitter(salt, 0xa61) * 0.4;
+      const pz = -fh / 2 + (cz + 0.5) + this.tileJitter(salt, 0xa62) * 0.4;
+      const yaw = this.tileRand(salt, 0xa63) * Math.PI * 2;
+      this.addCritter(parts, animal, px, pz, yaw);
+    }
+    const geo = mergeGeometries(parts, false);
+    if (geo) {
+      const mat = new THREE.MeshStandardMaterial({ color: ANIMAL_COLOR[animal], roughness: 0.95 });
+      group.add(new THREE.Mesh(geo, mat));
+    }
+    return group;
+  }
+
+  /** Push one animal's body (+ head) geometry, in local pen space, at (x, z) facing `yaw`. */
+  private addCritter(parts: THREE.BufferGeometry[], animal: RanchAnimal, x: number, z: number, yaw: number): void {
+    const place = (geo: THREE.BufferGeometry, ly: number, lz: number) => {
+      geo.translate(0, ly, lz);
+      geo.rotateY(yaw);
+      geo.translate(x, 0.13, z);
+      parts.push(geo);
+    };
+    switch (animal) {
+      case 'cattle': {
+        const body = new THREE.BoxGeometry(0.32, 0.26, 0.52);
+        place(body, 0.13, 0);
+        const head = new THREE.BoxGeometry(0.17, 0.18, 0.18);
+        place(head, 0.15, 0.32);
+        break;
+      }
+      case 'pigs': {
+        const body = new THREE.BoxGeometry(0.28, 0.18, 0.36);
+        place(body, 0.09, 0);
+        const head = new THREE.BoxGeometry(0.14, 0.13, 0.14);
+        place(head, 0.10, 0.22);
+        break;
+      }
+      case 'sheep': {
+        const body = new THREE.SphereGeometry(0.19, 7, 5);
+        body.scale(1.25, 1, 1.5);
+        place(body, 0.19, 0);
+        const head = new THREE.SphereGeometry(0.10, 6, 5);
+        place(head, 0.19, 0.28);
+        break;
+      }
+      case 'chickens': {
+        const body = new THREE.SphereGeometry(0.11, 6, 5);
+        place(body, 0.11, 0);
+        const head = new THREE.SphereGeometry(0.055, 6, 5);
+        place(head, 0.17, 0.10);
+        break;
+      }
+    }
   }
 
   /**

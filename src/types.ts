@@ -219,22 +219,13 @@ export const HUD_RESOURCES: ResourceKind[] = [
 ];
 
 /**
- * The luxury goods, in HUD display order. They live in the expandable half of the resources row
- * (see `HUD_EXTRA`), so a founding camp never sees them and a town finds them one tap away.
+ * The resources row, in HUD display order — the 🍽️ food total leads, then these. This is a fixed,
+ * deliberately short list (not "every resource"): the building materials and personal necessities a
+ * village watches constantly. Everything else (processed intermediates, livestock, luxuries) is left
+ * off the top line entirely — still readable in any barn's inspect sheet, the trading post, and the
+ * stockpile limits panel — so the HUD stays a glance, not a ledger.
  */
-export const HUD_LUXURY: ResourceKind[] = [
-  'sand', 'glass', 'jewelry', 'finejewelry', 'gold', 'dye', 'silk', 'fineclothes',
-];
-
-/**
- * The resources row is split in two. The **core** four are always on the HUD — the building
- * materials a village burns through and watches constantly — with the 🍽️ food total ahead of them.
- * Everything **else** sits behind an expand button: the processed goods a settlement rarely thinks
- * about and every luxury a town trades in. This is what keeps the top line to a glanceable handful
- * without hiding anything: the chips are all there, a tap away, rather than culled to fit.
- */
-export const HUD_CORE: ResourceKind[] = ['wood', 'stone', 'iron', 'firewood'];
-export const HUD_EXTRA: ResourceKind[] = ['coal', 'tools', 'clothing', 'medicine', ...HUD_LUXURY];
+export const HUD_CORE: ResourceKind[] = ['wood', 'stone', 'iron', 'firewood', 'tools', 'clothing', 'medicine'];
 
 /** Icon for the combined food total shown in the HUD. */
 export const FOOD_ICON = '🍽️';

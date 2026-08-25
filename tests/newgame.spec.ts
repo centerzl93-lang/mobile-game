@@ -1481,11 +1481,11 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
       const hut = eval(placeSrc)(g, 'gatherer');
       g.debugIgnite(hut.id);
       const atIgnition = g.debugFireIntensity(hut.id);
-      const burn = g.debugFireBurnSeconds();
       // Jump straight to "nearly burned down" without waiting the real time out — `fireIntensity`
       // is a pure function of the current fields, so this is a fair way to sample it partway
-      // through a burn.
-      hut.fireTimer = burn * 0.05;
+      // through a burn. Intensity tracks structural damage (`fireHealth`), not elapsed time —
+      // `FIRE_BURN_SECONDS` is only a rarely-hit safety net now, not a duration every fire runs.
+      hut.fireHealth = g.debugFireBurndownHealth() + 1;
       const nearCollapse = g.debugFireIntensity(hut.id);
       hut.fireWater = Math.ceil(g.debugFireDouseTripsNeeded() / 2);
       const halfDoused = g.debugFireIntensity(hut.id);

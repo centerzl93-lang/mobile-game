@@ -3120,18 +3120,21 @@ export const FIRE_MIN_INTENSITY = 0.16;
 /**
  * How large a fire reads right now, 0..1 — for the renderers only, no gameplay effect.
  *
- * Grows with how long it has burned (barely alight at ignition, largest just before it would
- * collapse), the same way a real fire spreads and climbs the longer it goes unanswered. A bucket
- * brigade runs the other way: every load of water landed (`fireWater`, against
- * `FIRE_DOUSE_TRIPS_NEEDED`) damps it back down, so a fire being fought visibly shrinks *before*
- * `processFires` actually resolves it — the flame dying down is the tell that it is being won,
- * not only the burn-down/survive result at the very end.
+ * Grows with how much structural damage the building has actually taken (barely alight at
+ * ignition, largest just before `fireHealth` would burn it down) rather than with elapsed time —
+ * `FIRE_BURN_SECONDS` is now only a rarely-hit safety net, not a duration every fire runs to, so
+ * an age basis tied to it would leave most fires reading as barely-lit for their whole visible
+ * life. Tying it to health instead means the flame really does climb the longer a fire goes
+ * unanswered, the same way a real one does. A bucket brigade runs the other way: every load of
+ * water landed (`fireWater`, against `FIRE_DOUSE_TRIPS_NEEDED`) damps it back down, so a fire
+ * being fought visibly shrinks *before* `processFires` actually resolves it — the flame dying
+ * down is the tell that it is being won, not only the burn-down/survive result at the very end.
  */
 export function fireIntensity(b: Building): number {
   if (!b.fireTimer) return 0;
-  const age = 1 - Math.max(0, Math.min(1, b.fireTimer / FIRE_BURN_SECONDS));
+  const damage = 1 - Math.max(0, Math.min(1, (b.fireHealth ?? 100) / 100));
   const doused = Math.min(1, (b.fireWater ?? 0) / FIRE_DOUSE_TRIPS_NEEDED);
-  return Math.max(FIRE_MIN_INTENSITY, age) * (1 - doused);
+  return Math.max(FIRE_MIN_INTENSITY, damage) * (1 - doused);
 }
 // ---- Famine (summer-only, farms only) ----
 /**

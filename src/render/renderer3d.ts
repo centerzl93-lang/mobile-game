@@ -1804,8 +1804,14 @@ export class Renderer3D {
           // Above the roofline, not mid-body — a flame centred inside a building's own footprint
           // sits behind its (opaque, depth-written) walls from every camera angle, so it never
           // actually reads as visible; the smoke emitters above already place their puff the same
-          // way for the same reason.
-          flame.position.set(b.x + fw / 2, TOP + buildingHeight(b.type) + 0.3, b.y + fh / 2);
+          // way for the same reason. A real model's roof commonly stands taller than the abstract
+          // `buildingHeight` a box placeholder uses for its own geometry — a pitched roof or a
+          // chimney can clear it easily — so prefer the model's own measured `worldHeight`
+          // (`makeBuildingModel`) when this building actually is one; the flame would otherwise
+          // sit at the box height, inside the model's own roof, and read as invisible all over
+          // again.
+          const roofH = (obj.userData.worldHeight as number | undefined) ?? buildingHeight(b.type);
+          flame.position.set(b.x + fw / 2, TOP + roofH + 0.3, b.y + fh / 2);
           this.scene.add(flame);
           this.flames.set(b.id, flame);
         }
@@ -2647,9 +2653,14 @@ export class Renderer3D {
       cone.position.y = y;
       g.add(cone);
     };
-    layer(0xb5320f, 0.24, 0.5, 0.25, 0.85);
-    layer(0xef7a1a, 0.16, 0.42, 0.34, 0.9);
-    layer(0xffd873, 0.09, 0.3, 0.42, 0.95);
+    // Sized to actually read at the game's normal, zoomed-out isometric camera distance — the
+    // original cones (r 0.09–0.24) were true to a "small flame" in the abstract but worked out to
+    // a couple of pixels on screen at play distance, which is what made a burning building look
+    // like nothing more than a red-tinted box. These are close to a full storey tall at maximum
+    // intensity, on par with the roofline they're licking over.
+    layer(0xb5320f, 0.55, 1.1, 0.55, 0.85);
+    layer(0xef7a1a, 0.36, 0.92, 0.75, 0.9);
+    layer(0xffd873, 0.2, 0.66, 0.95, 0.95);
     g.renderOrder = 15; // over buildings, under UI overlays
     g.traverse((o) => { o.renderOrder = 15; });
     return g;

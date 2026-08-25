@@ -86,8 +86,47 @@ renderer, the camera, input, and the DOM UI.
 | `src/render/models.ts`, `villager.ts`, `bridges.ts` | 3D model loading, villager meshes, bridge geometry. |
 | `src/engine/` | `camera.ts`, `camera3d.ts`, `input.ts`. |
 | `tests/` | Playwright specs (see Testing). |
+| `sim-tests/` | Headless Node tests against the simulation directly — no browser, no renderer (see Testing). |
 | `tools/` | `icon/` (app-icon build), `models/` (Python/Blender building geometry + `check.py`), `textures/`. |
 | `public/` | Built `.gltf` models, PWA icons. |
+
+---
+
+## Unity migration architecture
+
+The WebGL/Three.js version is the only shipping target and stays the development priority — nothing
+below authorizes slowing feature work down for portability's own sake. But a native Unity build is a
+live possibility, so new code should default to keeping four layers conceptually separate: **game
+data** (`src/types.ts`'s tables and constants), **simulation** (`src/game/*.ts`, driven by `update()`),
+**presentation** (`src/render/*.ts`, `src/engine/*.ts`), and **platform-specific glue** (`localStorage`,
+DOM, PWA — mostly `src/game/save.ts` and the browser-facing edges of `src/main.ts`). `src/ui/ui.ts` is
+presentation too: it reads state and issues commands, it doesn't decide outcomes.
+
+**The rule that matters day to day:** gameplay doesn't know about `THREE.*`, and a renderer reads state
+rather than deciding it (`building.fireState = 'burning'` in the sim; `if (fireState === 'burning')
+showFireEffect()` in the renderer, never the reverse). This already mostly holds — `src/game/*.ts` has
+no `THREE` imports, `src/ui/ui.ts` doesn't mutate `GameState` fields directly, and `sim-tests/` proves
+the sim runs headless in Node with no browser or renderer at all. Keep it that way rather than
+introducing a parallel Unity-shaped abstraction: no C#-style interfaces, no engine-neutral wrapper
+classes, no speculative plumbing for a migration that isn't happening yet. A new building/resource/
+recipe/policy is a table entry in `src/types.ts` as it always was; that table *is* the portable
+artifact, not a new indirection layer around it.
+
+When a system is genuinely Unity-relevant, classify it in passing (commit message or PR description is
+enough — this file doesn't need a running log): **A** highly reusable as-is (production formulas,
+trade values, progression/achievement conditions); **B** reusable design, C# rewrite required
+(villager task machine, construction, disasters, save schema); **C** engine-specific, rebuilt in Unity
+outright (anything in `src/render/`, `src/engine/`); **D** web-specific, needs a native replacement
+(`localStorage`, DOM, PWA install/offline). Don't produce this classification for every commit — only
+when a system is new or has substantially changed.
+
+**Known coupling to watch, not to fix opportunistically:** `src/game/achievements.ts` mixes the
+(portable) achievement table and `evaluateAchievements` logic with direct `localStorage` calls
+(`loadUnlocked`/`saveUnlocked`) — a Unity port keeps the table and swaps ~15 lines for PlayerPrefs, but
+today the whole file reads as "needs porting." `src/render/renderer3d.ts` reads the `'village-gfx'`
+graphics-quality preference straight out of `localStorage` inside the renderer rather than taking it as
+a parameter — harmless today, but it's platform code living inside Category C. Neither blocks anything;
+note them if you're touching that code anyway, don't detour to fix them on their own.
 
 ---
 
@@ -412,6 +451,11 @@ preview` on port 4173 under `/mobile-game/`; `worker: 1`, `fullyParallel: false`
   on it. Don't flood a barn to full (a worker holding a load with nowhere to put it looks like
   stopped production).
 - CI: `.github/workflows/test.yml` runs the full suite on every push to `main` and every PR (~20 min).
+- **`sim-tests/`** (`npm run test:sim`, `tsx --test sim-tests/*.test.ts`) drives `update()` directly in
+  Node — no browser, no renderer, no Playwright. It's the concrete example of the engine-independence
+  principle in "Unity migration architecture": pure simulation-in, assertions-on-`GameState`-out, so it
+  will still make sense once there's a second (Unity) presentation layer reading the same sim. Prefer
+  it over a Playwright spec for a pure economy/logic assertion that doesn't need a rendered frame.
 
 ## Important balance constants
 

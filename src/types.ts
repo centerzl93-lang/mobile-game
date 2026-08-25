@@ -3115,8 +3115,10 @@ export function isStoneBuilt(type: BuildingType): boolean {
  */
 export const FIRE_BURN_SECONDS = SEASON_LENGTH / 4;
 /** Floor on `fireIntensity` while a building is still burning — a fire is never drawn as fully
- *  out until it actually is; this is what keeps the very first frame from reading as unlit. */
-export const FIRE_MIN_INTENSITY = 0.16;
+ *  out until it actually is, and a building that has only just caught should already read as
+ *  genuinely on fire rather than smouldering, the same way a real house fire doesn't visibly
+ *  ramp up from a spark. */
+export const FIRE_MIN_INTENSITY = 0.42;
 /**
  * How large a fire reads right now, 0..1 — for the renderers only, no gameplay effect.
  *

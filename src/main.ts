@@ -167,6 +167,7 @@ import {
   workplaceStatus,
   citizenToolFactor,
   wearCitizenTool,
+  tryEquipTool,
   debugWorkSpotFor,
   debugApproach,
   debugReachable,
@@ -1906,11 +1907,12 @@ class Game {
       // a village-wide fact, so two workers at the same bench can read differently here. Children
       // carry none, so the row is for working-age villagers only.
       if (adult) {
+        const spareNote = c.spareTool ? ` — spare ${c.spareTool === 'steel' ? 'steel' : 'iron'} tool in hand` : '';
         const toolValue =
           c.tool === 'steel'
-            ? `${RESOURCE_ICON.steeltools} Steel tools (+15% work)`
+            ? `${RESOURCE_ICON.steeltools} Steel tools (+15% work)${spareNote}`
             : c.tool === 'iron'
-              ? `${RESOURCE_ICON.tools} Iron tools`
+              ? `${RESOURCE_ICON.tools} Iron tools${spareNote}`
               : '✋ Bare hands (−25% work) — picks one up at the next barn with a spare';
         rows.push({ label: 'Tool', value: toolValue, tone: c.tool ? undefined : 'warn' });
       }
@@ -2534,6 +2536,12 @@ class Game {
     return c?.tool ?? 'none';
   }
 
+  /** Debug/testing helper: the spare tool a citizen is holding in reserve (steel / iron / none). */
+  debugCitizenSpareTool(id: number): 'steel' | 'iron' | 'none' {
+    const c = this.state.citizens.find((x) => x.id === id);
+    return c?.spareTool ?? 'none';
+  }
+
   /** Debug/testing helper: the output multiplier that citizen's own kit applies to their labour. */
   debugCitizenToolFactor(id: number): number {
     const c = this.state.citizens.find((x) => x.id === id);
@@ -2556,6 +2564,17 @@ class Game {
   debugWearCitizenTool(id: number, workerSeasons: number): void {
     const c = this.state.citizens.find((x) => x.id === id);
     if (c) wearCitizenTool(c, workerSeasons);
+  }
+
+  /**
+   * Debug/testing helper: run the shelf-check a citizen already at a barn gets for free
+   * (`tryEquipTool`) — equip if bare-handed, or pick up a spare if their tool is running low —
+   * without waiting on the worker AI to actually walk them there.
+   */
+  debugTryEquipTool(citizenId: number, barnId: number): void {
+    const c = this.state.citizens.find((x) => x.id === citizenId);
+    const barn = this.state.buildings.find((x) => x.id === barnId);
+    if (c && barn) tryEquipTool(this.state, c, barn);
   }
 
   /** Debug/testing helper: wear accumulated on the tool a citizen is currently holding (0 if none). */

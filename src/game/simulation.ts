@@ -98,6 +98,7 @@ import {
   IRON_TOOL_PROD,
   STEEL_TOOL_PROD,
   STEEL_DURABILITY,
+  TOOL_SPARE_FRACTION,
   COLD_WORK_FACTOR,
   COLD_WORK_MIN,
   UNCLOTHED_HEALTH_PENALTY,
@@ -821,15 +822,20 @@ export function citizenToolFactor(c: Citizen): number {
 }
 
 /**
- * A bare-handed villager who has just arrived at a barn checks its shelf: steel first, then iron,
- * one unit taken off the shelf and into their own kit (`Citizen.tool`). Nothing happens if they
- * already have a tool (a working tool is not traded in just because a better one showed up — they
- * upgrade next time theirs wears out) or the barn has neither in stock. Called wherever a citizen
- * already has a reason to be standing at a barn — delivering a load, fetching a converter input or
- * builder materials — rather than sending anyone on a dedicated trip just to fetch one.
+ * A villager who has just arrived at a barn checks its shelf. Bare-handed, they take one unit off
+ * the shelf — steel first, then iron — straight into their own kit (`Citizen.tool`). Already
+ * holding a tool that's running low on wear (`TOOL_SPARE_FRACTION`) and not already carrying a
+ * spare, they take one the same way but hold it in reserve (`Citizen.spareTool`) instead of
+ * swapping it in — a working tool is never traded in early, whether for a spare or a better tier;
+ * it's only ever replaced once it actually gives out (`wearCitizenTool`). Nothing happens if
+ * neither case applies or the barn has neither tool in stock. Called wherever a citizen already
+ * has a reason to be standing at a barn — delivering a load, fetching a converter input or builder
+ * materials — rather than sending anyone on a dedicated trip just to fetch one.
  */
-function tryEquipTool(s: GameState, c: Citizen, barn: Building): void {
-  if (c.tool) return;
+export function tryEquipTool(s: GameState, c: Citizen, barn: Building): void {
+  if (c.tool && (c.spareTool || (c.toolWear ?? 0) < (c.tool === 'steel' ? STEEL_DURABILITY : 1) * TOOL_SPARE_FRACTION)) {
+    return;
+  }
   const takeFrom = (kind: 'steeltools' | 'tools', tier: 'steel' | 'iron'): boolean => {
     const have = barn.store[kind] ?? 0;
     if (have <= 0) return false;
@@ -837,8 +843,12 @@ function tryEquipTool(s: GameState, c: Citizen, barn: Building): void {
     if ((barn.store[kind] ?? 0) <= 0) delete barn.store[kind];
     const spent = (s.spent ??= {});
     spent[kind] = (spent[kind] ?? 0) + 1;
-    c.tool = tier;
-    c.toolWear = 0;
+    if (c.tool) {
+      c.spareTool = tier;
+    } else {
+      c.tool = tier;
+      c.toolWear = 0;
+    }
     return true;
   };
   if (takeFrom('steeltools', 'steel')) return;
@@ -849,16 +859,19 @@ function tryEquipTool(s: GameState, c: Citizen, barn: Building): void {
  * Wear `workerSeasons` onto the tool this villager is holding — a slice each time they complete a
  * producer cycle, and per unit of builder-work they lay at a site. A steel tool absorbs
  * `STEEL_DURABILITY` worker-seasons before it gives out, so the same labour wears it half as fast
- * as an iron one; once the wear reaches the tier's durability the tool is spent and they go
- * bare-handed until their next barn visit re-equips them. A villager holding nothing has nothing
- * to wear, so an idle or unequipped worker costs no one anything.
+ * as an iron one; once the wear reaches the tier's durability the tool is spent. A villager who
+ * picked up a spare in time (`Citizen.spareTool`, see `tryEquipTool`) has it promoted straight into
+ * `tool` with fresh wear, so they carry on without a gap; one who didn't goes bare-handed until
+ * their next barn visit re-equips them. A villager holding nothing has nothing to wear, so an idle
+ * or unequipped worker costs no one anything.
  */
 export function wearCitizenTool(c: Citizen, workerSeasons: number): void {
   if (!c.tool || workerSeasons <= 0) return;
   c.toolWear = (c.toolWear ?? 0) + workerSeasons;
   const durability = c.tool === 'steel' ? STEEL_DURABILITY : 1;
   if (c.toolWear >= durability) {
-    c.tool = undefined;
+    c.tool = c.spareTool;
+    c.spareTool = undefined;
     c.toolWear = 0;
   }
 }

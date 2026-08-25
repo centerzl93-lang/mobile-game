@@ -99,10 +99,11 @@ test.describe('save/load reliability', () => {
       if (site) site.progress = 3.5; // caught mid-construction
       const unbuiltHousesBefore = s.buildings.filter((b: any) => b.type === 'house' && !b.built).length;
 
-      // A villager mid-way through a steel tool's durability — a personal belonging, not a barn
-      // stock, so it has to round-trip on the citizen itself.
+      // A villager mid-way through a steel tool's durability, with an iron spare already in hand —
+      // both personal belongings, not a barn stock, so they have to round-trip on the citizen itself.
       s.citizens[0].tool = 'steel';
       s.citizens[0].toolWear = 0.6;
+      s.citizens[0].spareTool = 'iron';
 
       // Varied, deterministic state across every category the plan lists.
       s.year = 7; s.season = 2; s.seasonTimer = 123;
@@ -118,6 +119,7 @@ test.describe('save/load reliability', () => {
         .map((c) => ({
           id: c.id, age: c.age, sex: c.sex, name: c.name, homeId: c.homeId, jobId: c.jobId, x: c.x, y: c.y,
           health: c.health, happiness: c.happiness, tool: c.tool ?? null, toolWear: c.toolWear ?? 0,
+          spareTool: c.spareTool ?? null,
         }))
         .sort((a, b) => a.id - b.id);
 

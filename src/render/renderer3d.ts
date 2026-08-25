@@ -367,6 +367,18 @@ export class Renderer3D {
   private fireSmokeLife: Float32Array | null = null;
   private fireSmokeAccum = 0;
   private fireEmitters: number[][] = []; // [x,y,z] one per currently-burning building
+  /** One template flame lick (`buildFlameLickTemplate`), built once and `.clone()`d for every
+   *  lick of every burning building — cloning shares the template's geometry and materials
+   *  (three.js's default `Object3D.clone()` behaviour) rather than allocating a fresh
+   *  ConeGeometry/MeshBasicMaterial per lick per building, so a village with several fires
+   *  burning at once is still just a handful of shared GPU resources, many small transforms. */
+  private flameLickTemplate: THREE.Group | null = null;
+  /** A sparse scatter of glowing embers drifting up off burning buildings — see `initEmbers`.
+   *  Deliberately few and short-lived per the "alive, not a particle storm" brief. */
+  private embers: THREE.Points | null = null;
+  private emberVel: Float32Array | null = null;
+  private emberLife: Float32Array | null = null;
+  private emberAccum = 0;
   private heads: THREE.InstancedMesh | null = null; // villager heads (high tier only)
 
   // Instanced static/dynamic layers.
@@ -733,6 +745,11 @@ export class Renderer3D {
 
     // Fire smoke: its own pooled Points cloud, every tier — see the field doc on `fireSmoke`.
     this.initFireSmoke();
+    // Embers: a third, sparser pooled Points cloud — see the field doc on `embers`.
+    this.initEmbers();
+    // The one flame-lick template every burning building's fire clones from — see the field doc
+    // on `flameLickTemplate`.
+    this.flameLickTemplate = this.buildFlameLickTemplate();
 
     // Reusable overlays.
     // The placement ghost is a container: `syncOverlays` swaps the actual building's silhouette
@@ -900,6 +917,7 @@ export class Renderer3D {
     this.animateWater(dt);
     if (this.tier === 'high') this.updateSmoke(dt);
     this.updateFireSmoke(dt); // every tier — see the field doc on `fireSmoke`
+    this.updateEmbers(dt); // every tier — see the field doc on `embers`
   }
 
   private animateWater(dt: number): void {
@@ -1021,6 +1039,65 @@ export class Renderer3D {
       }
     }
     this.fireSmoke.geometry.attributes.position.needsUpdate = true;
+  }
+
+  /** A sparse pool of glowing embers for burning buildings — see the field doc on `embers`. Far
+   *  smaller and shorter-lived than either smoke pool: the brief is "a small number... alive, not
+   *  a particle storm", so this cap and its spawn rate (`updateEmbers`) are deliberately modest. */
+  private initEmbers(): void {
+    const CAP = 40;
+    const geo = new THREE.BufferGeometry();
+    const positions = new Float32Array(CAP * 3).fill(-999);
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({
+      color: 0xffb347, size: 0.14, transparent: true, opacity: 0.95, depthWrite: false,
+      sizeAttenuation: true, blending: THREE.AdditiveBlending,
+    });
+    this.embers = new THREE.Points(geo, mat);
+    this.embers.frustumCulled = false;
+    this.emberVel = new Float32Array(CAP * 3);
+    this.emberLife = new Float32Array(CAP);
+    this.scene.add(this.embers);
+  }
+
+  /**
+   * Embers drift up and sideways off a burning building, guttering out quickly — short lifetimes
+   * and a low spawn rate keep this a handful visible at once, not a shower. Additive-blended and
+   * small, so at rest they read as hot glowing motes rather than solid dots.
+   */
+  private updateEmbers(dt: number): void {
+    if (!this.embers || !this.emberLife || !this.emberVel) return;
+    const pos = this.embers.geometry.attributes.position.array as Float32Array;
+    const life = this.emberLife;
+    const vel = this.emberVel;
+    const CAP = life.length;
+    for (let i = 0; i < CAP; i++) {
+      if (life[i] <= 0) continue;
+      life[i] -= dt;
+      pos[i * 3] += vel[i * 3] * dt;
+      pos[i * 3 + 1] += vel[i * 3 + 1] * dt;
+      pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
+      if (life[i] <= 0) { pos[i * 3] = -999; pos[i * 3 + 1] = -999; pos[i * 3 + 2] = -999; }
+    }
+    if (this.fireEmitters.length > 0) {
+      this.emberAccum += dt * this.fireEmitters.length * 0.9; // sparse — well under the smoke rate
+      while (this.emberAccum >= 1) {
+        this.emberAccum -= 1;
+        const e = this.fireEmitters[(Math.random() * this.fireEmitters.length) | 0];
+        for (let i = 0; i < CAP; i++) {
+          if (life[i] > 0) continue;
+          pos[i * 3] = e[0] + (Math.random() - 0.5) * 1.2;
+          pos[i * 3 + 1] = e[1] - 0.4 + Math.random() * 0.4; // born low, around the flames
+          pos[i * 3 + 2] = e[2] + (Math.random() - 0.5) * 1.2;
+          vel[i * 3] = (Math.random() - 0.5) * 0.5;
+          vel[i * 3 + 1] = 0.6 + Math.random() * 0.7;
+          vel[i * 3 + 2] = (Math.random() - 0.5) * 0.5;
+          life[i] = 0.8 + Math.random() * 0.9; // short — a gutter, not a lantern
+          break;
+        }
+      }
+    }
+    this.embers.geometry.attributes.position.needsUpdate = true;
   }
 
   // ---- terrain ----
@@ -2710,15 +2787,17 @@ export class Renderer3D {
   }
 
   /**
-   * One lick of flame: three stacked, unlit cones (deep orange base, orange middle, pale yellow
-   * tip) with additive blending, so overlapping layers read as a hot glow rather than flat,
-   * stacked colour, and a slight lean so it doesn't read as a perfectly upright candle flame.
-   * Sized to actually show at the game's normal, zoomed-out isometric camera distance — the
-   * original single-flame cones were true to "a small flame" in the abstract but worked out to a
-   * couple of pixels on screen at play distance, which is what made a burning building look like
-   * nothing more than a red-tinted box.
+   * The one flame-lick shape every burning building's fire clones from: four stacked, unlit,
+   * tall-tapered cones (deep red-orange base, through orange and amber, to a pale yellow tip)
+   * with additive blending, so overlapping layers read as a hot glow rather than flat, stacked
+   * colour, and each layer nudged slightly off the vertical axis so the tongue reads as
+   * wavering rather than a perfectly straight, static spike. Built exactly once — see the field
+   * doc on `flameLickTemplate` — and cloned per lick per building; `Object3D.clone()` shares the
+   * clone's geometry/material with the template rather than duplicating them, which is what
+   * keeps several buildings burning at once cheap (a handful of shared GPU resources, many small
+   * transforms, not a fresh ConeGeometry/MeshBasicMaterial for every lick of every fire).
    */
-  private makeFlameLick(): THREE.Group {
+  private buildFlameLickTemplate(): THREE.Group {
     const g = new THREE.Group();
     const layer = (color: number, r: number, h: number, y: number, xo: number, zo: number, opacity: number) => {
       const mat = new THREE.MeshBasicMaterial({
@@ -2726,11 +2805,13 @@ export class Renderer3D {
       });
       const cone = new THREE.Mesh(new THREE.ConeGeometry(r, h, 7), mat);
       cone.position.set(xo, y, zo);
+      cone.userData.sharedGeo = true; // template's own geometry/material — never disposed per-clone
       g.add(cone);
     };
-    // Four layers, tall and tapered rather than a short stubby cone, each nudged slightly off the
-    // vertical axis so the tongue reads as wavering rather than a perfectly straight, static
-    // spike — deep red-orange base, through orange and amber, to a pale flickering tip.
+    // Sized to actually show at the game's normal, zoomed-out isometric camera distance — small,
+    // literal-scale cones were true to "a small flame" in the abstract but worked out to a
+    // couple of pixels on screen at play distance, which is what made a burning building look
+    // like nothing more than a red-tinted box.
     layer(0xa8280a, 0.42, 1.05, 0.5, 0.02, -0.03, 0.85);
     layer(0xe8630f, 0.28, 0.95, 0.75, -0.04, 0.05, 0.9);
     layer(0xf99a1c, 0.17, 0.75, 1.0, 0.05, -0.02, 0.92);
@@ -2740,54 +2821,85 @@ export class Renderer3D {
     return g;
   }
 
+  /** A fresh lick instance sharing the template's geometry/materials — see `flameLickTemplate`. */
+  private cloneFlameLick(): THREE.Group {
+    // Guarded for the theoretical case a fire syncs before the constructor reaches its init —
+    // never happens in practice (the template is built synchronously right after), but a stray
+    // flame is a worse failure than one skipped this frame.
+    return (this.flameLickTemplate?.clone(true) as THREE.Group | undefined) ?? this.buildFlameLickTemplate();
+  }
+
   /**
-   * A whole burning building's fire: a scatter of `makeFlameLick`s breaking out around the
-   * footprint and up the roofline, rather than one flame planted dead-centre on the roof —
-   * several small licks read as a building actually on fire the way a single (however large)
-   * cone never quite does. Most sit low (out of walls/windows), a couple break through near the
-   * roof peak; both the spread and each lick's own size are stable per building (`tileRand`
-   * keyed on `b.id`) so nothing reshuffles from one sync to the next while it burns. `updateFlames`
-   * drives each lick's own scale from `fireIntensity`, its own `baseScale` (the variety here) and
-   * its own `phase` (so they flicker out of sync with each other, not as one pulsing blob).
+   * Where a building's fire actually breaks out, in the building's own local space (origin at
+   * its footprint centre, floor level) — building-aware placement, independent of how those
+   * points get turned into visible objects (`makeFireCluster`) or removed (`disposeFlame`).
+   * Count scales with footprint area (small houses get a handful of licks, a barn or a grand
+   * house gets more, clamped so nothing is either a single flame or a fireworks display).
+   * Positions sit right at the wall line or just past it (`ring` ~0.9–1.2 of the half-footprint)
+   * rather than deep inside the footprint — a lick planted well inside instead sits behind the
+   * building's own opaque walls/roof from most camera angles and simply never reads as visible,
+   * the exact bug the original single centred flame had. Breaking the silhouette is what makes
+   * it read as fire pouring out of windows and walls rather than floating somewhere inside the
+   * building; a camera on the far side still has the near wall occlude some of these on its own,
+   * for free, from ordinary depth testing — which is exactly the "the building should partially
+   * hide its own fire" look a real house fire has. Most points sit low — window and eave height;
+   * a smaller share climb up near the roof peak, the frame itself catching. Both the spread and
+   * each point's own size/timing are stable per building (`tileRand` keyed on `b.id`) so nothing
+   * reshuffles from one sync to the next while it burns.
+   */
+  private getFireEmitterPoints(
+    b: Building,
+    fw: number,
+    fh: number,
+    roofH: number,
+  ): { x: number; y: number; z: number; kind: 'window' | 'roof'; yaw: number; baseScale: number; phase: number }[] {
+    const count = Math.max(6, Math.min(12, Math.round((fw * fh) / 1.6)));
+    const points: ReturnType<typeof this.getFireEmitterPoints> = [];
+    for (let i = 0; i < count; i++) {
+      const ang = this.tileRand(b.id, 0x6000 + i * 11) * Math.PI * 2;
+      const ring = 0.9 + this.tileRand(b.id, 0x6100 + i * 11) * 0.3;
+      const low = this.tileRand(b.id, 0x6200 + i * 11) < 0.65;
+      points.push({
+        x: Math.cos(ang) * (fw / 2) * ring,
+        z: Math.sin(ang) * (fh / 2) * ring,
+        y: low
+          ? roofH * (0.25 + this.tileRand(b.id, 0x6300 + i * 11) * 0.35)
+          : roofH * (0.85 + this.tileRand(b.id, 0x6300 + i * 11) * 0.45),
+        kind: low ? 'window' : 'roof',
+        yaw: this.tileRand(b.id, 0x6400 + i * 11) * Math.PI * 2,
+        baseScale: 0.65 + this.tileRand(b.id, 0x6500 + i * 11) * 0.75,
+        phase: this.tileRand(b.id, 0x6600 + i * 11) * Math.PI * 2,
+      });
+    }
+    return points;
+  }
+
+  /**
+   * A whole burning building's fire: one `cloneFlameLick` per point from `getFireEmitterPoints`,
+   * several small licks reading as a building actually on fire the way a single (however large)
+   * flame planted dead-centre on the roof never quite does. `updateFlames` drives each lick's own
+   * scale every frame from `fireIntensity`, its own `baseScale` (the size variety here) and its
+   * own `phase` (so they flicker out of sync with each other, not as one pulsing blob).
    */
   private makeFireCluster(b: Building, fw: number, fh: number, roofH: number): THREE.Group {
     const group = new THREE.Group();
-    const count = Math.max(6, Math.min(12, Math.round((fw * fh) / 1.6)));
-    for (let i = 0; i < count; i++) {
-      const ang = this.tileRand(b.id, 0x6000 + i * 11) * Math.PI * 2;
-      // Right at the wall line or spilling just past it (ring ~0.9–1.2 of the half-footprint) —
-      // a lick planted well inside the footprint instead sits behind the building's own opaque
-      // walls/roof from most camera angles and simply never reads as visible, the exact bug the
-      // single centred flame had. Breaking the silhouette is what makes it read as fire pouring
-      // out of the building rather than floating somewhere inside it.
-      const ring = 0.9 + this.tileRand(b.id, 0x6100 + i * 11) * 0.3;
-      const lx = Math.cos(ang) * (fw / 2) * ring;
-      const lz = Math.sin(ang) * (fh / 2) * ring;
-      // Most licks break out low — window and eave height; a smaller share climb up near the
-      // roof peak, the building's own frame catching.
-      const low = this.tileRand(b.id, 0x6200 + i * 11) < 0.65;
-      const ly = low
-        ? roofH * (0.25 + this.tileRand(b.id, 0x6300 + i * 11) * 0.35)
-        : roofH * (0.85 + this.tileRand(b.id, 0x6300 + i * 11) * 0.45);
-      const lick = this.makeFlameLick();
-      lick.position.set(lx, ly, lz);
-      lick.rotation.y = this.tileRand(b.id, 0x6400 + i * 11) * Math.PI * 2;
-      lick.userData.baseScale = 0.65 + this.tileRand(b.id, 0x6500 + i * 11) * 0.75;
-      lick.userData.phase = this.tileRand(b.id, 0x6600 + i * 11) * Math.PI * 2;
+    for (const p of this.getFireEmitterPoints(b, fw, fh, roofH)) {
+      const lick = this.cloneFlameLick();
+      lick.position.set(p.x, p.y, p.z);
+      lick.rotation.y = p.yaw;
+      lick.userData.baseScale = p.baseScale;
+      lick.userData.phase = p.phase;
       group.add(lick);
     }
     group.position.set(b.x + fw / 2, TOP, b.y + fh / 2);
     return group;
   }
 
+  /** Removes a fire cluster from the scene. Never disposes geometry/material — every lick's are
+   *  shared with `flameLickTemplate` (`cloneFlameLick`), which is disposed exactly once, in
+   *  `dispose()`, not per burning building. */
   private disposeFlame(g: THREE.Group): void {
     this.scene.remove(g);
-    g.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
-      m.geometry?.dispose();
-      (m.material as THREE.Material)?.dispose();
-    });
   }
 
   /** How much flood damage to actually draw at each cosmetic severity — see `DamageSeverity`. */
@@ -3317,6 +3429,12 @@ export class Renderer3D {
       this.fireSmoke = null;
     }
     this.fireEmitters = [];
+    if (this.embers) {
+      this.scene.remove(this.embers);
+      this.embers.geometry.dispose();
+      (this.embers.material as THREE.Material).dispose();
+      this.embers = null;
+    }
     this.scene.remove(this.water);
     (this.water.material as THREE.Material).dispose();
     this.water.geometry.dispose();
@@ -3324,6 +3442,20 @@ export class Renderer3D {
     this.buildingMeshes.clear();
     for (const [, flame] of this.flames) this.disposeFlame(flame);
     this.flames.clear();
+    // The template every flame lick clones from (`cloneFlameLick`) — disposed exactly once here,
+    // never per-building; the `disposeFlame` loop just above only removes the clones from the
+    // scene, since they share this template's geometry/materials rather than owning their own.
+    if (this.flameLickTemplate) {
+      this.flameLickTemplate.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
+        m.geometry?.dispose();
+        const mat = m.material;
+        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+        else mat?.dispose();
+      });
+      this.flameLickTemplate = null;
+    }
     for (const o of [this.ghost, this.selRing, this.workRing, this.marquee, this.boat]) this.scene.remove(o);
     // The facing arrows are rebuilt by `init`, so the old ones have to go with the rest of the
     // map. They draw with `depthTest: false` — a leaked one is not merely still there, it is still

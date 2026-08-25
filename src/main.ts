@@ -172,6 +172,18 @@ import {
   avgHappiness,
   debugConverterInputs,
   debugEndSeason,
+  workerPolicyFactor,
+  builderPolicyFactor,
+  workerCategoryFactor,
+  householdFoodFactor,
+  householdFuelFactor,
+  birthChancePerSeasonOf,
+  fireDestroyChance,
+  floodDamageChance,
+  forestRegrowFactor,
+  foresterLumberFactor,
+  immigrationChanceFactor,
+  immigrantSickChanceFactor,
 } from './game/simulation';
 import {
   canPlace,
@@ -1686,6 +1698,8 @@ class Game {
           const enacted = this.state.policies ?? [];
           const active = activePolicies(this.state);
           const capacity = policyCapacity(this.state);
+          const hasFood = totalFoodAvailable(this.state) >= FESTIVAL_FOOD;
+          const canFestival = capacity >= 1 && hasFood;
           controls = {
             ...controls,
             townhall: {
@@ -1701,7 +1715,16 @@ class Game {
                 active: active.includes(id),
               })),
               capacity,
-              canFestival: capacity >= 1 && totalFoodAvailable(this.state) >= FESTIVAL_FOOD,
+              canFestival,
+              // Two distinct reasons hide behind one disabled button — no clerk at the desk at all,
+              // or a clerk but not enough food banked — and they call for different player action, so
+              // spell out which one it actually is rather than leaving a bare disabled button to
+              // guess at (see the Town Hall UI expansion's own note on this).
+              festivalReason: canFestival
+                ? undefined
+                : capacity < 1
+                  ? 'Needs a clerk at the Town Hall'
+                  : `Needs ${FESTIVAL_FOOD} food banked`,
             },
           };
         }
@@ -1958,9 +1981,18 @@ class Game {
     return FLOOD_RISK_RADIUS;
   }
 
-  /** Debug/testing helper: per-building damage chance at each flood-risk tier. */
+  /**
+   * Debug/testing helper: per-building damage chance at each flood-risk tier — see
+   * `floodDamageChance`. Reads live policy state (Emergency Preparedness softens every tier by the
+   * same factor), so with nothing enacted this is exactly the base `FLOOD_DAMAGE_CHANCE` table a
+   * test comparing before/after already expects.
+   */
   debugFloodDamageChance(): Record<FloodRiskTier, number> {
-    return { ...FLOOD_DAMAGE_CHANCE };
+    const out = {} as Record<FloodRiskTier, number>;
+    for (const tier of Object.keys(FLOOD_DAMAGE_CHANCE) as FloodRiskTier[]) {
+      out[tier] = floodDamageChance(this.state, tier);
+    }
+    return out;
   }
 
   /** Debug/testing helper: the odds multiplier a flood the year before leaves this year's roll. */
@@ -2119,6 +2151,16 @@ class Game {
   }
 
   /**
+   * Debug/testing helper: the chance a fire that just burned out destroys `type` outright rather
+   * than leaving it DAMAGED — see `fireDestroyChance`. Reads live policy state (Emergency
+   * Preparedness), so a test compares this before/after enacting it instead of hard-coding either
+   * figure.
+   */
+  debugFireDestroyChance(type: BuildingType, doused: boolean): number {
+    return fireDestroyChance(this.state, type, doused);
+  }
+
+  /**
    * Debug/testing helper: hold the simulation's rolls at a fixed value, or `null` to release.
    *
    * The replacement for tests that used to pin `Math.random`; see `pinRandom` in `game/rng.ts`.
@@ -2130,6 +2172,12 @@ class Game {
   /** Debug/testing helper: enact or repeal a standing rule; returns whether it is now in force. */
   debugSetPolicy(id: PolicyId, on: boolean): boolean {
     return setPolicy(this.state, id, on);
+  }
+
+  /** Debug/testing helper: every standing rule the Town Hall offers, so a test sweeps them without
+   *  hard-coding the list — see `POLICIES`. */
+  debugAllPolicyIds(): PolicyId[] {
+    return [...POLICIES];
   }
 
   /** Debug/testing helper: the rules enacted, those actually in force, and how many clerks allow. */
@@ -2144,6 +2192,57 @@ class Game {
   /** Debug/testing helper: hold a festival. */
   debugFestival(): boolean {
     return holdFestival(this.state, this.log);
+  }
+
+  /**
+   * Debug/testing helpers: the exact policy multipliers `runWorker`/`runBuilder` are about to use
+   * this tick — see `workerPolicyFactor`/`builderPolicyFactor`/`workerCategoryFactor`. Reading the
+   * live number a test enacts/repeals around, rather than the raw `POLICY_*` constant, is what
+   * actually proves the wiring (Long Hours feeding worker output but never builder speed, Public
+   * Works the other way round, and the two stacking the ordinary multiplicative way together).
+   */
+  debugWorkerPolicyFactor(): number {
+    return workerPolicyFactor(this.state);
+  }
+  debugBuilderPolicyFactor(): number {
+    return builderPolicyFactor(this.state);
+  }
+  debugWorkerCategoryFactor(type: BuildingType): number {
+    return workerCategoryFactor(this.state, type);
+  }
+
+  /** Debug/testing helper: the live per-citizen food/firewood consumption multiplier from standing
+   *  rules — see `householdFoodFactor`/`householdFuelFactor` (Rationing, Population Drive). */
+  debugHouseholdFoodFactor(): number {
+    return householdFoodFactor(this.state);
+  }
+  debugHouseholdFuelFactor(): number {
+    return householdFuelFactor(this.state);
+  }
+
+  /** Debug/testing helper: the live per-season birth chance `births` is about to roll against,
+   *  before the per-couple parity brake — see `birthChancePerSeasonOf`. `null` if the village has
+   *  no food surplus banked at all this season, same as `births` itself would read it. */
+  debugBirthChancePerSeason(): number | null {
+    return birthChancePerSeasonOf(this.state);
+  }
+
+  /** Debug/testing helpers: Conservation's live regrowth/lumber multipliers — see
+   *  `forestRegrowFactor`/`foresterLumberFactor`. */
+  debugForestRegrowFactor(): number {
+    return forestRegrowFactor(this.state);
+  }
+  debugForesterLumberFactor(): number {
+    return foresterLumberFactor(this.state);
+  }
+
+  /** Debug/testing helpers: Open Gates' live immigration/sickness multipliers — see
+   *  `immigrationChanceFactor`/`immigrantSickChanceFactor`. */
+  debugImmigrationChanceFactor(): number {
+    return immigrationChanceFactor(this.state);
+  }
+  debugImmigrantSickChanceFactor(): number {
+    return immigrantSickChanceFactor(this.state);
   }
 
   /**

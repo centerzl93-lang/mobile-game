@@ -22,6 +22,15 @@ import {
   POLICY_CONSERVE_LUMBER,
   POLICY_GATES_IMMIGRATION,
   POLICY_GATES_SICK,
+  POLICY_INDUSTRIAL_BONUS,
+  POLICY_INDUSTRIAL_FOOD_PENALTY,
+  POLICY_PUBLICWORKS_BUILD,
+  POLICY_PUBLICWORKS_WORKER,
+  POLICY_POPDRIVE_BIRTH,
+  POLICY_POPDRIVE_FOOD,
+  POLICY_POPDRIVE_FUEL,
+  POLICY_EMERGENCY_DAMAGE,
+  POLICY_EMERGENCY_PROD,
   LedgerRow,
   LEDGER_SEASONS,
   BUILD_WORK_RATE,
@@ -391,6 +400,81 @@ function reachableFrom(p: { x: number; y: number }, tx: number, ty: number): boo
   return from >= 0 && from === to;
 }
 
+/**
+ * The village-wide multiplier on *ordinary* worker output this tick — everything that is not
+ * builder labour. Three standing rules can each contribute a factor here, and they simply
+ * multiply: Long Hours (`POLICY_HOURS_PROD`, up), Public Works' own worker-side cost
+ * (`POLICY_PUBLICWORKS_WORKER`, down — its *gain* is builder-only, see `builderPolicyFactor`), and
+ * Emergency Preparedness's flat production cost (`POLICY_EMERGENCY_PROD`, down). No special-casing
+ * between them: the existing convention is a straight product, same as `citizenToolFactor` folding
+ * into the same number for tools.
+ *
+ * Exported so a test can read the exact number `runWorker` is about to use without re-deriving it,
+ * the same way `debugFoodPerCitizen` exposes a tuned constant rather than a guess.
+ */
+export function workerPolicyFactor(s: GameState): number {
+  return (
+    (policyActive(s, 'longHours') ? POLICY_HOURS_PROD : 1) *
+    (policyActive(s, 'publicWorks') ? POLICY_PUBLICWORKS_WORKER : 1) *
+    (policyActive(s, 'emergencyPreparedness') ? POLICY_EMERGENCY_PROD : 1)
+  );
+}
+
+/**
+ * The village-wide multiplier on builder labour this tick — construction, repairs, and
+ * demolition/salvage (an upgrade's teardown phase included) all run through `labour()`, and this is
+ * the one number that scales it. Public Works is the *only* policy allowed to touch it
+ * (`POLICY_PUBLICWORKS_BUILD`) — Long Hours' production bonus is worker-only (see
+ * `workerPolicyFactor`) and must never be added back in here.
+ */
+export function builderPolicyFactor(s: GameState): number {
+  return policyActive(s, 'publicWorks') ? POLICY_PUBLICWORKS_BUILD : 1;
+}
+
+/**
+ * Industrial Focus's per-building swing: `BuildCategory` 'resources' (the mines, quarry,
+ * blacksmith, tailor, foresters and luxury workshop — every building that actually produces
+ * something in that category; a market/barn have no work cycle to speed up) produce more, `food`
+ * buildings (farm, fishing, hunting, gathering, ranch) produce less. Every other category is
+ * untouched — this is deliberately narrower than "every building", per the policy's own design.
+ * Inert when the policy is not enacted, so a village that never touches it pays nothing here.
+ */
+export function workerCategoryFactor(s: GameState, type: BuildingType): number {
+  if (!policyActive(s, 'industrialFocus')) return 1;
+  const cat = BUILDING_DEFS[type].category;
+  if (cat === 'resources') return POLICY_INDUSTRIAL_BONUS;
+  if (cat === 'food') return POLICY_INDUSTRIAL_FOOD_PENALTY;
+  return 1;
+}
+
+/**
+ * Population Drive's cost, folded into the same per-citizen food need `eat()` already bills
+ * continuously — see the module doc on `eat`. Rationing and Population Drive stack the same
+ * multiplicative way as every other pair of policies (and in practice never fight over the same
+ * clerk's desk purpose: one cuts the ration, the other raises it for faster growth).
+ */
+export function householdFoodFactor(s: GameState): number {
+  return (
+    (policyActive(s, 'rationing') ? POLICY_RATION_FOOD : 1) *
+    (policyActive(s, 'populationDrive') ? POLICY_POPDRIVE_FOOD : 1)
+  );
+}
+
+/** Population Drive's fuel cost, folded into the same per-citizen heat need `heat()` bills continuously. */
+export function householdFuelFactor(s: GameState): number {
+  return policyActive(s, 'populationDrive') ? POLICY_POPDRIVE_FUEL : 1;
+}
+
+/** Conservation: how much faster felled forest tiles regrow — see `regrowForest`. */
+export function forestRegrowFactor(s: GameState): number {
+  return policyActive(s, 'conservation') ? POLICY_CONSERVE_REGROW : 1;
+}
+
+/** Conservation: the forester's own trade-off for that faster regrowth — less wood per load. */
+export function foresterLumberFactor(s: GameState): number {
+  return policyActive(s, 'conservation') ? POLICY_CONSERVE_LUMBER : 1;
+}
+
 export function update(s: GameState, dt: number, log: LogFn): void {
   if (s.gameOver) return;
   routeBudget = 0;
@@ -401,10 +485,14 @@ export function update(s: GameState, dt: number, log: LogFn): void {
   assignHomesAndJobs(s);
   // The tool factor used to live here too, one number for the whole village — it is now read per
   // citizen (`citizenToolFactor`, off `Citizen.tool`) at the point each one actually works, since
-  // different villagers can be on different tiers at once. Long Hours is still village-wide (a
-  // policy, not a belonging), so it stays a single number threaded through as before.
-  const policyFactor = policyActive(s, 'longHours') ? POLICY_HOURS_PROD : 1;
-  for (const c of s.citizens) runCitizen(s, c, dt, policyFactor, log);
+  // different villagers can be on different tiers at once. The standing rules are still
+  // village-wide (a policy, not a belonging), so they stay two single numbers threaded through as
+  // before — one for ordinary work, one for builder labour, kept strictly apart (see
+  // `workerPolicyFactor`/`builderPolicyFactor`) so Long Hours can never again leak into
+  // construction/repair speed the way it used to before Public Works split the two out.
+  const workerFactor = workerPolicyFactor(s);
+  const builderFactor = builderPolicyFactor(s);
+  for (const c of s.citizens) runCitizen(s, c, dt, workerFactor, builderFactor, log);
   processFires(s, dt, log);
   regrowForest(s, dt);
   updateMerchant(s, dt, log);
@@ -459,12 +547,12 @@ function eat(s: GameState, dt: number, log: LogFn): void {
   for (const b of s.buildings) if (b.built && isDwelling(b.type)) homeById.set(b.id, b);
 
   const starved: Citizen[] = [];
+  // Both standing rules that touch a mouth's ration are read once for the whole village rather
+  // than per citizen — see `householdFoodFactor`. Rationing cuts it, Population Drive raises it
+  // (a bigger, faster-growing village costs more to feed), and they stack the ordinary way.
+  const foodFactor = householdFoodFactor(s);
   for (const c of s.citizens) {
-    let need =
-      FOOD_PER_CITIZEN_PER_SEASON *
-      (isAdult(c) ? 1 : CHILD_FOOD_FACTOR) *
-      rate *
-      (policyActive(s, 'rationing') ? POLICY_RATION_FOOD : 1);
+    let need = FOOD_PER_CITIZEN_PER_SEASON * (isAdult(c) ? 1 : CHILD_FOOD_FACTOR) * rate * foodFactor;
     const home = c.homeId !== null ? homeById.get(c.homeId) : undefined;
     if (home) need = takeFoodFromLarder(s, home, need);
     if (need > 0.000001) need = consumeFood(s, need);
@@ -509,13 +597,15 @@ function heat(s: GameState, dt: number, log: LogFn): void {
   for (const b of s.buildings) if (b.built && isDwelling(b.type)) homeById.set(b.id, b);
 
   const froze: Citizen[] = [];
+  // Population Drive's cost, read once for the whole village — see `householdFuelFactor`.
+  const fuelFactor = householdFuelFactor(s);
   for (const c of s.citizens) {
     const home = c.homeId !== null ? homeById.get(c.homeId) : undefined;
     const stoneFactor = home?.type === 'stonehouse' ? STONE_HOUSE_HEAT_FACTOR : 1;
     // A wool coat saves fuel; nothing else does. Fine clothes are never worn (they are export
     // goods), so the only two states left are coated and not.
     const clothFactor = c.clothed ? CLOTHED_HEAT_FACTOR : 1;
-    let need = HEAT_PER_CITIZEN_WINTER * rate * stoneFactor * clothFactor; // heat units
+    let need = HEAT_PER_CITIZEN_WINTER * rate * stoneFactor * clothFactor * fuelFactor; // heat units
     // Fuel is burned where it is kept: in the hearth of the house the villager lives in. A housed
     // villager has no fall-back to the village fuel pile — a barn is a woodshed, not a fire, and
     // letting everyone draw on it directly meant the stockpile drained on its own while the houses
@@ -938,15 +1028,30 @@ function lives(s: GameState, dt: number, log: LogFn): void {
  *
  * `elapsed` is the span this roll covers — `BIRTH_CHANCE` is quoted per season and restated for it.
  */
-function births(s: GameState, elapsed: number, log: LogFn): void {
+/**
+ * The per-season chance of a birth in a *qualifying* household — before the household's own parity
+ * brake (`BIRTH_PARITY_FACTOR`), which `births` applies per couple. Pulled out on its own so a test
+ * (and `debugBirthChancePerSeason`) can read the exact number Population Drive is about to scale,
+ * the same way `debugFoodPerCitizen` reads a tuned constant rather than a guess. `null` means no
+ * births are possible at all this season — the village has no food surplus banked (`births` reads
+ * that as its own "nothing to do" and returns early).
+ */
+export function birthChancePerSeasonOf(s: GameState): number | null {
   const seasonsBanked = totalFoodAvailable(s) / (s.citizens.length * FOOD_PER_CITIZEN_PER_SEASON);
-  if (seasonsBanked <= 1) return;
+  if (seasonsBanked <= 1) return null;
   const surplus = clamp((seasonsBanked - 1) / (BIRTH_FOOD_SURPLUS_TARGET - 1), 0, 1);
   const wellbeing = 0.5 * (avgHealth(s) / 100) + 0.5 * (avgHappiness(s) / 100);
-  const perSeason =
+  return (
     BIRTH_CHANCE *
     (BIRTH_SURPLUS_FLOOR + (1 - BIRTH_SURPLUS_FLOOR) * surplus) *
-    (BIRTH_WELLBEING_FLOOR + (1 - BIRTH_WELLBEING_FLOOR) * wellbeing);
+    (BIRTH_WELLBEING_FLOOR + (1 - BIRTH_WELLBEING_FLOOR) * wellbeing) *
+    (policyActive(s, 'populationDrive') ? POLICY_POPDRIVE_BIRTH : 1)
+  );
+}
+
+function births(s: GameState, elapsed: number, log: LogFn): void {
+  const perSeason = birthChancePerSeasonOf(s);
+  if (perSeason === null) return;
   const chance = chanceOver(perSeason, elapsed, SEASON_LENGTH);
   let born = 0;
   for (const h of s.buildings) {
@@ -1265,7 +1370,14 @@ function stepOutOfWalls(s: GameState, c: Citizen): void {
 }
 
 // ---- per-citizen behaviour ----
-function runCitizen(s: GameState, c: Citizen, dt: number, policyFactor: number, log: LogFn): void {
+function runCitizen(
+  s: GameState,
+  c: Citizen,
+  dt: number,
+  workerFactor: number,
+  builderFactor: number,
+  log: LogFn,
+): void {
   stepOutOfWalls(s, c);
   // Out of the building unless this tick puts them back at their bench, so a worker who breaks off
   // to haul, shop or rest reappears rather than staying invisible on the doorstep.
@@ -1321,11 +1433,11 @@ function runCitizen(s: GameState, c: Citizen, dt: number, policyFactor: number, 
         runForesterReplant(s, c, job, dt);
         return;
       }
-      runBuilder(s, c, dt, log, policyFactor);
+      runBuilder(s, c, dt, log, builderFactor);
       return;
     }
-    runWorker(s, c, job, dt, policyFactor);
-  } else runBuilder(s, c, dt, log, policyFactor);
+    runWorker(s, c, job, dt, workerFactor);
+  } else runBuilder(s, c, dt, log, builderFactor);
 }
 
 /**
@@ -1519,7 +1631,7 @@ function firstMissingInput(b: Building): ResourceKind | null {
   return null;
 }
 
-function runWorker(s: GameState, c: Citizen, b: Building, dt: number, policyFactor: number): void {
+function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workerFactor: number): void {
   if (b.type === 'market') {
     runVendor(s, c, b, dt);
     return;
@@ -1600,8 +1712,10 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, policyFact
     if (c.timer >= WORK_SECONDS) {
       c.timer = 0;
       // This villager's own kit decides their tool factor now — a bare-handed worker next to a
-      // steel-equipped one at the same bench produces at two different rates.
-      const tf = citizenToolFactor(c) * policyFactor;
+      // steel-equipped one at the same bench produces at two different rates. Industrial Focus's
+      // swing is per-*building* rather than village-wide (see `workerCategoryFactor`), so it is
+      // folded in here rather than into `workerFactor` itself.
+      const tf = citizenToolFactor(c) * workerFactor * workerCategoryFactor(s, b.type);
       const out = workOutput(s, b, dt, tf, c);
       c.workAt = undefined; // next cycle picks somewhere new
       if (out && out.amount > 0.01) {
@@ -2124,7 +2238,7 @@ function workOutput(
       }
       return {
         kind: 'wood',
-        amount: LOAD_MAT * f * tf * (policyActive(s, 'conservation') ? POLICY_CONSERVE_LUMBER : 1),
+        amount: LOAD_MAT * f * tf * foresterLumberFactor(s),
       };
     }
     case 'herbalist':
@@ -2339,7 +2453,7 @@ function labour(c: Citizen, dt: number, factor = 1): number {
   return done;
 }
 
-function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, policyFactor = 1): void {
+function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, builderFactor = 1): void {
   // Deliver carried material to a site that needs it, else return it to a barn.
   if (c.carry) {
     const kind = c.carry.kind;
@@ -2405,7 +2519,9 @@ function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, policyFact
       // demolition is not construction run backwards.
       goTo(c, buildingApproach(s, pick.site, c));
       if (stepTo(s, c, dt)) {
-        const done = labour(c, dt);
+        // Public Works speeds this the same way it speeds every other builder task; nothing else
+        // (Long Hours included) may touch it — see `builderPolicyFactor`.
+        const done = labour(c, dt, builderFactor);
         pick.site.demoProgress = (pick.site.demoProgress ?? 0) + done;
         wearCitizenTool(c, done * TOOL_WEAR_PER_BUILD_WORK); // tearing down is tool-work too
         if (pick.site.demoProgress >= demoWorkOf(pick.site.type)) razeBuilding(s, pick.site);
@@ -2437,7 +2553,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, policyFact
     goTo(c, buildingApproach(s, pick.site, c));
     if (stepTo(s, c, dt)) {
       const site = pick.site;
-      const done = labour(c, dt, citizenToolFactor(c) * policyFactor);
+      const done = labour(c, dt, citizenToolFactor(c) * builderFactor);
       wearCitizenTool(c, done * TOOL_WEAR_PER_BUILD_WORK); // raising or repairing draws on this builder's own tool
       if (site.damaged) {
         site.repairProgress = (site.repairProgress ?? 0) + done;
@@ -4435,6 +4551,16 @@ function updateWellbeing(s: GameState, foodShort: boolean, deaths: number, taver
  * taking strangers in is a gamble, decided on the offer, not on an inspection.
  */
 const NOMAD_MIN_TIER: VillageTier = 'village';
+/** Open Gates: how much likelier a nomad band is to actually knock this season — see `immigrate`. */
+export function immigrationChanceFactor(s: GameState): number {
+  return policyActive(s, 'openGates') ? POLICY_GATES_IMMIGRATION : 1;
+}
+
+/** Open Gates: how much likelier each arriving nomad is to be sick — see `immigrate`. */
+export function immigrantSickChanceFactor(s: GameState): number {
+  return policyActive(s, 'openGates') ? POLICY_GATES_SICK : 1;
+}
+
 function immigrate(s: GameState, log: LogFn): void {
   if (s.pendingNomads) return; // an offer is already awaiting the player's decision
   if (!meetsTier(s, NOMAD_MIN_TIER)) return; // too small a place to draw settlers yet
@@ -4447,12 +4573,11 @@ function immigrate(s: GameState, log: LogFn): void {
   // the new one are the same amount of food. Left at 1.5 a founding village cleared it three
   // times over on day one, and nomads knocked every single season from the start.
   if (totalFoodAvailable(s) <= pop * FOOD_PER_CITIZEN_PER_SEASON * NOMAD_SURPLUS_SEASONS) return;
-  const gates = policyActive(s, 'openGates');
-  if (rand(s) >= IMMIGRATION_CHANCE * (gates ? POLICY_GATES_IMMIGRATION : 1)) return;
+  if (rand(s) >= IMMIGRATION_CHANCE * immigrationChanceFactor(s)) return;
 
   const count = IMMIGRATION_MIN + Math.floor(rand(s) * (IMMIGRATION_MAX - IMMIGRATION_MIN + 1));
   let sick = 0;
-  const sickChance = IMMIGRANT_SICK_CHANCE * (gates ? POLICY_GATES_SICK : 1);
+  const sickChance = IMMIGRANT_SICK_CHANCE * immigrantSickChanceFactor(s);
   for (let i = 0; i < count; i++) if (rand(s) < sickChance) sick++;
   s.pendingNomads = { count, sick };
   log(`${count} nomads ask to join your village`, 'info');
@@ -4611,6 +4736,17 @@ export function debugTriggerFamine(s: GameState, severity: FamineSeverity, log: 
  * within `FLOOD_RISK_RADIUS` of open water, tagged with the tier its distance falls in. Buildings
  * further out than that never appear here at all: distance alone rules them out, not a roll.
  */
+/**
+ * The chance a flood candidate at `tier` actually takes damage this flood — `FLOOD_DAMAGE_CHANCE`,
+ * softened by Emergency Preparedness the same way `fireDestroyChance` softens fire's own destroy
+ * roll. This never touches whether a flood happens at all (`FLOOD_CHANCE_PER_SPRING`, rolled once in
+ * `floodSeason` before any candidate is even considered) — only how likely a given at-risk building
+ * is to come out of it damaged.
+ */
+export function floodDamageChance(s: GameState, tier: FloodRiskTier): number {
+  return FLOOD_DAMAGE_CHANCE[tier] * (policyActive(s, 'emergencyPreparedness') ? POLICY_EMERGENCY_DAMAGE : 1);
+}
+
 function floodCandidates(s: GameState): { b: Building; tier: FloodRiskTier }[] {
   const out: { b: Building; tier: FloodRiskTier }[] = [];
   for (const b of s.buildings) {
@@ -4655,7 +4791,7 @@ export function floodSeason(s: GameState, log: LogFn): void {
   s.lastFloodYear = s.year;
   let damaged = 0;
   for (const { b, tier } of candidates) {
-    if (rand(s) < FLOOD_DAMAGE_CHANCE[tier]) {
+    if (rand(s) < floodDamageChance(s, tier)) {
       floodDamageBuilding(s, b, log, tier);
       damaged++;
     }
@@ -4950,6 +5086,23 @@ function runFirefighter(s: GameState, c: Citizen, dt: number): boolean {
 }
 
 /**
+ * The chance a fire that has just burned out actually destroys `type` outright, rather than
+ * leaving it DAMAGED (an untreated fire's `doused` is `false`, and this always comes back `1` —
+ * the roll still happens, so the fire consumes the same draw from the stream either way).
+ *
+ * Emergency Preparedness (`POLICY_EMERGENCY_DAMAGE`) is the *only* thing that touches this: it
+ * softens how bad a fire that does happen turns out, never whether one starts (`FIRE_CHANCE`,
+ * untouched) or how long it burns (`b.fireTimer`, untouched). Exported so `processFires` and a test
+ * read the identical number rather than the test re-deriving the formula by hand.
+ */
+export function fireDestroyChance(s: GameState, type: BuildingType, doused: boolean): number {
+  let destroyChance = doused ? 1 - FIRE_SURVIVAL_CHANCE : 1;
+  if (doused && isStoneBuilt(type)) destroyChance *= STONE_FIRE_FACTOR;
+  if (policyActive(s, 'emergencyPreparedness')) destroyChance *= POLICY_EMERGENCY_DAMAGE;
+  return destroyChance;
+}
+
+/**
  * A building's fire burns out. An *untreated* fire — one that never got `FIRE_DOUSE_TRIPS_NEEDED`
  * water in time (see `runFirefighter`) — always burns down; only a fire that was fought for gets a
  * chance to survive as DAMAGED (`FIRE_SURVIVAL_CHANCE`, better for masonry). Destroyed either way
@@ -4971,8 +5124,7 @@ function processFires(s: GameState, dt: number, log: LogFn): void {
       // An untreated fire is certain to destroy the building — `rand()` always comes back under 1
       // — but the draw still happens, so the sequence of rolls a fire consumes from the stream
       // never depends on whether firefighters reached it in time.
-      let destroyChance = doused ? 1 - FIRE_SURVIVAL_CHANCE : 1;
-      if (doused && isStoneBuilt(b.type)) destroyChance *= STONE_FIRE_FACTOR;
+      const destroyChance = fireDestroyChance(s, b.type, doused);
       if (rand(s) < destroyChance) {
         markScorched(s, b); // a burn scar, not the bare ground an ordinary demolition leaves
         razeBuilding(s, b);
@@ -5034,7 +5186,7 @@ function markScorched(s: GameState, b: Building): void {
 // ---- forest upkeep ----
 function regrowForest(s: GameState, dt: number): void {
   const n = s.tiles.length;
-  if (policyActive(s, 'conservation')) dt *= POLICY_CONSERVE_REGROW;
+  dt *= forestRegrowFactor(s);
   for (let i = 0; i < 40; i++) {
     const idx = (rand(s) * n) | 0;
     const t = s.tiles[idx];

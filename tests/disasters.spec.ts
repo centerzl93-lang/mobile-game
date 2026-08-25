@@ -805,14 +805,11 @@ test.describe('existing disaster mechanics keep working alongside famine and flo
       const burning = !!hut.fireTimer;
       // A doused fire, forced directly — this test is a sanity check that fire's own machinery
       // still runs after the flood/famine changes, not a re-test of the bucket brigade itself
-      // (`tests/newgame.spec.ts` already covers that in depth).
+      // (`tests/newgame.spec.ts` already covers that in depth). Reaching `FIRE_DOUSE_TRIPS_NEEDED`
+      // guarantees the fire survives as DAMAGED, resolving on the very next tick — see
+      // `processFires`.
       hut.fireWater = g.debugFireDouseTripsNeeded();
-      g.debugPinRandom(0.99); // survive as damaged
-      try {
-        g.debugAdvance(g.debugFireBurnSeconds() + 1);
-      } finally {
-        g.debugPinRandom(null);
-      }
+      g.debugAdvance(g.debugFireBurnSeconds() + 1);
       return { burning, damaged: hut.damaged, reason: hut.damageReason, built: hut.built };
     }, [placeBuilt, SEED] as const);
     expect(out.burning).toBe(true);

@@ -283,10 +283,19 @@ part of the village economy rather than being an undifferentiated "bad thing hap
 - **Fire** (`FIRE_CHANCE`, any season): a building goes BURNING (`fireTimer`) the instant it
   ignites — workers and residents turned out at once (`evictOccupants`), the building still
   standing. Any adult within `FIRE_RESPONSE_RADIUS` drops what they're doing to run water from the
-  nearest well (`runFirefighter`); enough deliveries (`FIRE_DOUSE_TRIPS_NEEDED`) buys a chance
-  (`FIRE_SURVIVAL_CHANCE`, better for masonry — `STONE_FIRE_FACTOR`) to end up DAMAGED instead of
-  burning down (`razeBuilding`, a scorch mark left by `markScorched`). Can spread to neighbours
-  (`FIRE_SPREAD_ADJACENT`/`FIRE_SPREAD_NEAR`).
+  nearest well (`runFirefighter`). A burning building also has structural health (`fireHealth`,
+  0..100) that a small, steady `FIRE_DAMAGE_PER_TICK` wears down every `FIRE_DAMAGE_INTERVAL`
+  seconds it keeps burning (halved for masonry — `STONE_FIRE_FACTOR` — and softened by Emergency
+  Preparedness — see `fireDamagePerTick`), scaled down as `fireWater` climbs toward
+  `FIRE_DOUSE_TRIPS_NEEDED` — see `processFires` — so real (if slow) progress on the bucket count
+  is already slowing the damage, not racing an unmoved clock; how long the brigade takes to finish
+  is what decides how much damage the building actually takes.
+  Reaching that many loads (`processFires`) guarantees the fire is put out and the building ends up
+  DAMAGED rather than destroyed — *unless* `fireHealth` has already burned through to
+  `FIRE_BURNDOWN_HEALTH` first, which burns the building down (`razeBuilding`, a scorch mark left by
+  `markScorched`) outright, whatever the water count. `FIRE_BURN_SECONDS` is only a safety-net cap
+  now — almost every fire resolves via water or health well before it runs out. Can spread to
+  neighbours (`FIRE_SPREAD_ADJACENT`/`FIRE_SPREAD_NEAR`).
 - **Sickness** (`DISEASE_CHANCE`, any season): a share of the healthy population falls sick
   (`DISEASE_INFECT_FRACTION`); each sick citizen rolls for recovery every season, the odds lifted
   by health, a staffed hospital, and medicine administered from the household larder or the barns.

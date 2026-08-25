@@ -234,7 +234,9 @@ import {
   isFireproof,
   freshStats,
   disabledByFire,
-  FIRE_SURVIVAL_CHANCE,
+  FIRE_DAMAGE_INTERVAL,
+  FIRE_DAMAGE_PER_TICK,
+  FIRE_BURNDOWN_HEALTH,
   repairWorkOf,
   repairCostOf,
 } from '../types';
@@ -4738,8 +4740,8 @@ export function debugTriggerFamine(s: GameState, severity: FamineSeverity, log: 
  */
 /**
  * The chance a flood candidate at `tier` actually takes damage this flood — `FLOOD_DAMAGE_CHANCE`,
- * softened by Emergency Preparedness the same way `fireDestroyChance` softens fire's own destroy
- * roll. This never touches whether a flood happens at all (`FLOOD_CHANCE_PER_SPRING`, rolled once in
+ * softened by Emergency Preparedness the same way `fireDamagePerTick` softens fire's own damage.
+ * This never touches whether a flood happens at all (`FLOOD_CHANCE_PER_SPRING`, rolled once in
  * `floodSeason` before any candidate is even considered) — only how likely a given at-risk building
  * is to come out of it damaged.
  */
@@ -4940,6 +4942,8 @@ function tryIgnite(s: GameState, b: Building, log: LogFn, announce: boolean): vo
   if (b.fireTimer || isFireproof(b.type)) return;
   b.fireTimer = FIRE_BURN_SECONDS;
   b.fireWater = 0; // nothing delivered yet — see `runFirefighter`
+  b.fireHealth = 100; // full structural health — see `processFires`
+  b.fireDamageAccum = 0; // seconds toward the next FIRE_DAMAGE_INTERVAL tick
   // BURNING starts at once, not when the fire finishes: nobody works or sleeps in a building
   // that's alight. It stays `built` and standing — see `disabledByFire` — only its occupants and
   // staff are turned out, exactly as a demolition turns them out (see `razeBuilding`).
@@ -5086,60 +5090,84 @@ function runFirefighter(s: GameState, c: Citizen, dt: number): boolean {
 }
 
 /**
- * The chance a fire that has just burned out actually destroys `type` outright, rather than
- * leaving it DAMAGED (an untreated fire's `doused` is `false`, and this always comes back `1` —
- * the roll still happens, so the fire consumes the same draw from the stream either way).
- *
- * Emergency Preparedness (`POLICY_EMERGENCY_DAMAGE`) is the *only* thing that touches this: it
- * softens how bad a fire that does happen turns out, never whether one starts (`FIRE_CHANCE`,
- * untouched) or how long it burns (`b.fireTimer`, untouched). Exported so `processFires` and a test
- * read the identical number rather than the test re-deriving the formula by hand.
+ * Structural damage `type` takes every `FIRE_DAMAGE_INTERVAL` seconds it keeps burning, out of the
+ * 100 `fireHealth` starts at. Masonry halves it the same way it halves everything else about fire
+ * — see `STONE_FIRE_FACTOR` — so a stone building is still more likely to come through a slow
+ * bucket brigade than a timber one. Emergency Preparedness (`POLICY_EMERGENCY_DAMAGE`) is the only
+ * other thing that touches this: it softens how bad a fire that does happen turns out, never
+ * whether one starts (`FIRE_CHANCE`, untouched) or how long the safety-net timer runs
+ * (`FIRE_BURN_SECONDS`, untouched). Exported so `processFires` and a test read the identical number
+ * rather than the test re-deriving the formula by hand.
  */
-export function fireDestroyChance(s: GameState, type: BuildingType, doused: boolean): number {
-  let destroyChance = doused ? 1 - FIRE_SURVIVAL_CHANCE : 1;
-  if (doused && isStoneBuilt(type)) destroyChance *= STONE_FIRE_FACTOR;
-  if (policyActive(s, 'emergencyPreparedness')) destroyChance *= POLICY_EMERGENCY_DAMAGE;
-  return destroyChance;
+export function fireDamagePerTick(s: GameState, type: BuildingType): number {
+  let dmg = FIRE_DAMAGE_PER_TICK;
+  if (isStoneBuilt(type)) dmg *= STONE_FIRE_FACTOR;
+  if (policyActive(s, 'emergencyPreparedness')) dmg *= POLICY_EMERGENCY_DAMAGE;
+  return dmg;
 }
 
 /**
- * A building's fire burns out. An *untreated* fire — one that never got `FIRE_DOUSE_TRIPS_NEEDED`
- * water in time (see `runFirefighter`) — always burns down; only a fire that was fought for gets a
- * chance to survive as DAMAGED (`FIRE_SURVIVAL_CHANCE`, better for masonry). Destroyed either way
- * goes down exactly the way any other demolished building does — `razeBuilding` turns it into a
- * salvageable rubble pile rather than deleting it outright, so the player gets the same
- * `REFUND_FRACTION` recovery a teardown gives and nothing is invented twice. Either outcome can
- * still set its neighbours alight.
+ * A building's fire is over, one way or the other. `survives` is true only when it was doused to
+ * `FIRE_DOUSE_TRIPS_NEEDED` before `fireHealth` burned through to `FIRE_BURNDOWN_HEALTH` — reaching
+ * that many buckets guarantees the building comes through as DAMAGED, but reaching the health floor
+ * first burns it down outright even if the water count would otherwise have been enough by the time
+ * the safety-net timer ran out. Destroyed goes down exactly the way any other demolished building
+ * does — `razeBuilding` turns it into a salvageable rubble pile rather than deleting it outright, so
+ * the player gets the same `REFUND_FRACTION` recovery a teardown gives and nothing is invented
+ * twice. Either outcome can still set its neighbours alight.
+ */
+function resolveFire(s: GameState, b: Building, survives: boolean, log: LogFn): void {
+  b.fireTimer = undefined;
+  b.fireWater = undefined;
+  b.fireHealth = undefined;
+  b.fireDamageAccum = undefined;
+  const name = BUILDING_DEFS[b.type].name;
+  const neighbours = adjacentBuildings(s, b);
+  if (survives) {
+    b.damaged = true;
+    b.damageReason = 'fire';
+    log(`⚠️ The ${name} survived the fire but is damaged and needs repair`, 'bad');
+  } else {
+    markScorched(s, b); // a burn scar, not the bare ground an ordinary demolition leaves
+    razeBuilding(s, b);
+    log(`The ${name} burned down`, 'bad');
+  }
+  for (const { building: n, gap } of neighbours) {
+    let chance = gap === 0 ? FIRE_SPREAD_ADJACENT : FIRE_SPREAD_NEAR;
+    if (isStoneBuilt(n.type)) chance *= STONE_FIRE_FACTOR;
+    if (rand(s) < chance) tryIgnite(s, n, log, false);
+  }
+}
+
+/**
+ * Advance every burning building's fire by `dt`: wear down its `fireHealth` on a
+ * `FIRE_DAMAGE_INTERVAL` clock, then check whether it resolves this tick. The damage taken each
+ * tick is `fireDamagePerTick`'s ceiling scaled down by how close `fireWater` already is to
+ * `FIRE_DOUSE_TRIPS_NEEDED` — a brigade that has landed half its loads is already taking half the
+ * damage from then on, not merely racing an unmoved clock, so real (if slow) progress buys real
+ * time rather than none until the last bucket lands. Three ways out, checked in order of how
+ * urgent they are: burned through to `FIRE_BURNDOWN_HEALTH` (destroyed, whatever the water count
+ * says); doused to `FIRE_DOUSE_TRIPS_NEEDED` (guaranteed saved, the instant the last load lands —
+ * a bucket brigade that hits the target does not have to wait out the rest of the safety-net timer
+ * to know it worked); or the safety-net timer (`b.fireTimer`) finally running out on a fire that
+ * was never fully doused (destroyed, same as an untreated fire always was).
  */
 function processFires(s: GameState, dt: number, log: LogFn): void {
   for (const b of [...s.buildings]) {
     if (!b.fireTimer) continue;
     b.fireTimer -= dt;
-    if (b.fireTimer <= 0) {
-      b.fireTimer = undefined;
-      const doused = (b.fireWater ?? 0) >= FIRE_DOUSE_TRIPS_NEEDED;
-      b.fireWater = undefined;
-      const name = BUILDING_DEFS[b.type].name;
-      const neighbours = adjacentBuildings(s, b);
-      // An untreated fire is certain to destroy the building — `rand()` always comes back under 1
-      // — but the draw still happens, so the sequence of rolls a fire consumes from the stream
-      // never depends on whether firefighters reached it in time.
-      const destroyChance = fireDestroyChance(s, b.type, doused);
-      if (rand(s) < destroyChance) {
-        markScorched(s, b); // a burn scar, not the bare ground an ordinary demolition leaves
-        razeBuilding(s, b);
-        log(`The ${name} burned down`, 'bad');
-      } else {
-        b.damaged = true;
-        b.damageReason = 'fire';
-        log(`⚠️ The ${name} survived the fire but is damaged and needs repair`, 'bad');
-      }
-      for (const { building: n, gap } of neighbours) {
-        let chance = gap === 0 ? FIRE_SPREAD_ADJACENT : FIRE_SPREAD_NEAR;
-        if (isStoneBuilt(n.type)) chance *= STONE_FIRE_FACTOR;
-        if (rand(s) < chance) tryIgnite(s, n, log, false);
-      }
+    b.fireDamageAccum = (b.fireDamageAccum ?? 0) + dt;
+    const dousedFraction = Math.min(1, (b.fireWater ?? 0) / FIRE_DOUSE_TRIPS_NEEDED);
+    const perTick = fireDamagePerTick(s, b.type) * (1 - dousedFraction);
+    while (b.fireDamageAccum >= FIRE_DAMAGE_INTERVAL) {
+      b.fireDamageAccum -= FIRE_DAMAGE_INTERVAL;
+      b.fireHealth = Math.max(0, (b.fireHealth ?? 100) - perTick);
     }
+    const burnedDown = (b.fireHealth ?? 100) <= FIRE_BURNDOWN_HEALTH;
+    const doused = dousedFraction >= 1;
+    if (burnedDown) resolveFire(s, b, false, log);
+    else if (doused) resolveFire(s, b, true, log);
+    else if (b.fireTimer <= 0) resolveFire(s, b, false, log);
   }
 }
 

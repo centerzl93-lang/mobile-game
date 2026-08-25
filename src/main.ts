@@ -30,6 +30,8 @@ import {
   FIRE_BURN_SECONDS,
   FIRE_DOUSE_TRIPS_NEEDED,
   FIRE_RESPONSE_RADIUS,
+  FIRE_DAMAGE_INTERVAL,
+  FIRE_BURNDOWN_HEALTH,
   fireIntensity,
   FAMINE_CHANCE_PER_SUMMER,
   FAMINE_SEVERE_CHANCE,
@@ -178,7 +180,7 @@ import {
   householdFoodFactor,
   householdFuelFactor,
   birthChancePerSeasonOf,
-  fireDestroyChance,
+  fireDamagePerTick,
   floodDamageChance,
   forestRegrowFactor,
   foresterLumberFactor,
@@ -1538,11 +1540,17 @@ class Game {
         // (its occupants were turned out the moment it caught — see `tryIgnite`).
         if (b.fireTimer) {
           rows.push({ label: 'Status', value: '🔥 On fire — evacuated, not working', tone: 'bad' });
+          const health = Math.round(b.fireHealth ?? 100);
+          rows.push({
+            label: 'Building health',
+            value: `${health}% — burns down at ${FIRE_BURNDOWN_HEALTH}%`,
+            tone: health <= FIRE_BURNDOWN_HEALTH * 2 ? 'bad' : health <= FIRE_BURNDOWN_HEALTH * 3 ? 'warn' : 'good',
+          });
           const water = b.fireWater ?? 0;
           rows.push({
             label: 'Bucket brigade',
             value: `${Math.min(water, FIRE_DOUSE_TRIPS_NEEDED)}/${FIRE_DOUSE_TRIPS_NEEDED} loads — ${
-              water >= FIRE_DOUSE_TRIPS_NEEDED ? 'may survive' : 'needs more water, fast'
+              water >= FIRE_DOUSE_TRIPS_NEEDED ? 'puts the fire out' : 'needs more water, fast'
             }`,
             tone: water >= FIRE_DOUSE_TRIPS_NEEDED ? 'good' : 'warn',
           });
@@ -2129,12 +2137,12 @@ class Game {
     return repairWorkOf(type);
   }
 
-  /** Debug/testing helper: how long a building burns before survive/destroy is decided. */
+  /** Debug/testing helper: the safety-net cap on how long an unresolved fire can burn. */
   debugFireBurnSeconds(): number {
     return FIRE_BURN_SECONDS;
   }
 
-  /** Debug/testing helper: water deliveries a fire needs to be in the running to survive at all. */
+  /** Debug/testing helper: water deliveries that guarantee putting a fire out for good. */
   debugFireDouseTripsNeeded(): number {
     return FIRE_DOUSE_TRIPS_NEEDED;
   }
@@ -2150,14 +2158,30 @@ class Game {
     return b ? fireIntensity(b) : 0;
   }
 
+  /** Debug/testing helper: a burning building's current structural health, 0..100, or `null` if
+   *  it isn't on fire — see `Building.fireHealth`. */
+  debugFireHealth(id: number): number | null {
+    const b = this.state.buildings.find((x) => x.id === id);
+    return b?.fireTimer ? (b.fireHealth ?? 100) : null;
+  }
+
+  /** Debug/testing helper: the `fireHealth` floor a fire burns a building down at. */
+  debugFireBurndownHealth(): number {
+    return FIRE_BURNDOWN_HEALTH;
+  }
+
+  /** Debug/testing helper: seconds between each fire-damage tick — see `FIRE_DAMAGE_INTERVAL`. */
+  debugFireDamageInterval(): number {
+    return FIRE_DAMAGE_INTERVAL;
+  }
+
   /**
-   * Debug/testing helper: the chance a fire that just burned out destroys `type` outright rather
-   * than leaving it DAMAGED — see `fireDestroyChance`. Reads live policy state (Emergency
-   * Preparedness), so a test compares this before/after enacting it instead of hard-coding either
-   * figure.
+   * Debug/testing helper: structural health `type` loses every `FIRE_DAMAGE_INTERVAL` while
+   * burning — see `fireDamagePerTick`. Reads live policy state (Emergency Preparedness), so a test
+   * compares this before/after enacting it instead of hard-coding either figure.
    */
-  debugFireDestroyChance(type: BuildingType, doused: boolean): number {
-    return fireDestroyChance(this.state, type, doused);
+  debugFireDamagePerTick(type: BuildingType): number {
+    return fireDamagePerTick(this.state, type);
   }
 
   /**

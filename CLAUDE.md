@@ -256,7 +256,10 @@ part of the village economy rather than being an undifferentiated "bad thing hap
   gathering and ranching are untouched, so a food economy that isn't farm-only rides it out. Set on
   `state.famine` the moment it's warned about (giving the player the rest of the growing season to
   react), read once by that year's harvest in `endSeason`, then cleared — recovery is automatic,
-  never a repair job, and a farm is never destroyed by one.
+  never a repair job, and a farm is never destroyed by one. While it stands, the 3D renderer draws a
+  share of each field's stand matching `1 - FAMINE_PENALTY` as withered stalks (grey, drooped, no
+  ripe head) — see `makeFarmField` — so the shortfall is visible growing, not just totalled at
+  harvest.
 - **Flood** (`FLOOD_CHANCE_PER_SPRING`, **Spring only**): every built building within
   `FLOOD_RISK_RADIUS` tiles of open water (`nearestWaterDist`, measured from the footprint's edge)
   is a candidate, tiered by distance (`floodRiskTier`) into a `FLOOD_DAMAGE_CHANCE` of actually
@@ -264,14 +267,25 @@ part of the village economy rather than being an undifferentiated "bad thing hap
   typically damages a handful of riverside buildings, not all of them. Damage goes straight to
   DAMAGED (`floodDamageBuilding`) with no BURNING-equivalent warning phase — flood isn't something a
   bucket brigade fights tile by tile, so the strategic response is where a building was put, not a
-  scramble once the water's here.
+  scramble once the water's here. Each resident/worker the flood catches in a building it damages
+  also rolls `FLOOD_DEATH_CHANCE` (3%) before being turned out — rare, and only for someone actually
+  there — see `floodDamageBuilding`. A flood-damaged building's risk tier becomes its cosmetic
+  `damageSeverity` (`floodDamageSeverity`: high→severe, medium→moderate, low→minor), which the 3D
+  renderer reads for a waterlogged puddle, scattered debris, wall cracks and a leaning door scaled
+  to match (`makeFloodDamageDecor`) — fire keeps its own plain damaged tint; this dressing is
+  flood-only.
+- **Cooldown.** A famine or flood that actually rolled true the year before halves *that hazard's
+  own* chance this year (`FAMINE_COOLDOWN_FACTOR`/`FLOOD_COOLDOWN_FACTOR`, both 0.5) — tracked on
+  `state.lastFamineYear`/`lastFloodYear`, compared against the current `state.year`. One year's grace
+  only: two quiet years after either and the odds are back to full. Fire and Sickness are unaffected.
 
 **DAMAGED is one state, shared by both causes.** `Building.damaged` gates occupancy/output exactly
 once (`disabledByFire`, despite the name — it now means BURNING *or* DAMAGED) everywhere a building
 can be worked, lived in, or stored in: `staffWanted`, the houses/shelters filters in
 `assignHomesAndJobs` and `rehouseVillagers`, and `births`. `Building.damageReason` (`'fire' |
-'flood'`) is carried purely so the inspect sheet can say which — it changes no gameplay. Repair
-reuses the ordinary construction pipeline (`pickSite`/`runBuilder`) against a smaller bill —
+'flood'`) is carried purely so the inspect sheet can say which, and `Building.damageSeverity`
+(flood only) purely for the 3D renderer's decor — neither changes any gameplay. Repair reuses the
+ordinary construction pipeline (`pickSite`/`runBuilder`) against a smaller bill —
 `REPAIR_FRACTION` (0.4) of the build cost and work, landing in `repairStore`/`repairProgress`
 rather than the building's own `store`/`progress` — and finishes instantly and fully
 (`finishRepair`) the moment it's paid, whatever put the building there. A DAMAGED barn or market

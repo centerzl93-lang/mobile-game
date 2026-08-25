@@ -15,6 +15,7 @@ import {
   buildStage,
   framedFraction,
   entrancesAt,
+  entranceTile,
   MAP_W,
   MAP_H,
   ADULT_AGE,
@@ -38,6 +39,8 @@ import {
   CropStage,
   Crop,
   RanchAnimal,
+  FAMINE_PENALTY,
+  DamageSeverity,
 } from '../types';
 import { tileIndex, inBounds } from '../game/world';
 import { Camera3D } from '../engine/camera3d';
@@ -379,6 +382,10 @@ export class Renderer3D {
    *  `updateFlames`. Created/removed in `syncBuildings`, alongside everything else keyed to
    *  whether a building is currently on fire. */
   private flames = new Map<number, THREE.Group>();
+  /** Debris, cracks, a leaning door and a waterlogged puddle for every currently flood-DAMAGED
+   *  building — see `syncBuildings`/`makeFloodDamageDecor`. Keyed and lifecycled the same way
+   *  `flames` is, off `b.damaged && b.damageReason === 'flood'` instead of `b.fireTimer`. */
+  private floodDecor = new Map<number, THREE.Group>();
   /** One instanced surface per path kind, so each can carry its own texture. */
   private pathLayers: Record<PathSurface, THREE.InstancedMesh> = {} as Record<PathSurface, THREE.InstancedMesh>;
   /** The masonry (or trestle) that holds each bridge deck up, one box per tile under the deck. */
@@ -1710,7 +1717,7 @@ export class Renderer3D {
       // not the smoothly-moving `farmDisplayGrowth` behind it — is what's quantised in, the same way
       // `step` quantises framing: five discrete looks, not a rebuild every frame growth ticks up.
       const plot = b.type === 'ranch' ? (b.animal ?? '') + ':' + Math.floor(b.animals ?? 0)
-        : b.type === 'farm' ? (b.crop ?? '') + ':' + cropStageOf(farmDisplayGrowth(b, s))
+        : b.type === 'farm' ? (b.crop ?? '') + ':' + cropStageOf(farmDisplayGrowth(b, s)) + ':' + (s.famine ? s.famine.severity : '')
         : '';
       // `demolish` is in the signature as well as the stage: a building that has been marked but
       // not started on looks exactly like one that has not, and the mark is what the player wants
@@ -1735,6 +1742,12 @@ export class Renderer3D {
         this.flames.delete(id);
       }
     }
+    for (const [id, decor] of this.floodDecor) {
+      if (!alive.has(id)) {
+        this.disposeFloodDecor(decor);
+        this.floodDecor.delete(id);
+      }
+    }
     for (const b of s.buildings) {
       const fw = footprintW(b);
       const fh = footprintH(b);
@@ -1753,7 +1766,7 @@ export class Renderer3D {
       // whole time it's built — so `kind` alone can't tell this pass whether to rebuild one. Track
       // the same string the outer signature folded in, and rebuild whenever *it* changes instead.
       const plot = b.type === 'ranch' ? (b.animal ?? '') + ':' + Math.floor(b.animals ?? 0)
-        : b.type === 'farm' ? (b.crop ?? '') + ':' + cropStageOf(farmDisplayGrowth(b, s))
+        : b.type === 'farm' ? (b.crop ?? '') + ':' + cropStageOf(farmDisplayGrowth(b, s)) + ':' + (s.famine ? s.famine.severity : '')
         : '';
       let obj = this.buildingMeshes.get(b.id);
       if (!obj || obj.userData.kind !== kind || obj.userData.plot !== plot) {
@@ -1797,6 +1810,22 @@ export class Renderer3D {
         if (flame) {
           this.disposeFlame(flame);
           this.flames.delete(b.id);
+        }
+      }
+      // Flood-specific damage dressing — debris, wall cracks, a leaning door, a waterlogged puddle
+      // — appears the instant a flood lands (same moment `b.damaged` flips) and clears the instant
+      // it's repaired. Fire keeps its own look (the emissive tint above); this is flood's alone.
+      if (b.damaged && b.damageReason === 'flood') {
+        if (!this.floodDecor.has(b.id)) {
+          const decor = this.makeFloodDamageDecor(b, fw, fh, b.damageSeverity ?? 'minor');
+          this.scene.add(decor);
+          this.floodDecor.set(b.id, decor);
+        }
+      } else {
+        const decor = this.floodDecor.get(b.id);
+        if (decor) {
+          this.disposeFloodDecor(decor);
+          this.floodDecor.delete(b.id);
         }
       }
     }
@@ -2151,6 +2180,13 @@ export class Renderer3D {
       const cols = Math.max(1, Math.round(fw));
       const stems: THREE.BufferGeometry[] = [];
       const toppers: THREE.BufferGeometry[] = [];
+      // A famine (see `famineSeason`) docks this year's *harvest*, not any one plant, but the field
+      // has to show that shortfall growing in front of the player, not just spring it on them at
+      // Autumn — so a share of the stand, matching `1 - FAMINE_PENALTY`, is drawn withered for as
+      // long as `s.famine` stands. Nothing else about the crop (its actual yield) reads this; it's
+      // the same number the harvest already uses, just drawn instead of only totalled.
+      const deadShare = s.famine ? 1 - FAMINE_PENALTY[s.famine.severity] : 0;
+      const deadStems: THREE.BufferGeometry[] = [];
       // CROP_DENSITY_X/Z plants per tile along each axis, not one — see their own doc comment.
       const subCols = cols * CROP_DENSITY_X, subRows = rows * CROP_DENSITY_Z;
       const cellScale = style.scale * CROP_DENSITY_SCALE;
@@ -2166,7 +2202,13 @@ export class Renderer3D {
           const pz = -fh / 2 + (cz + 0.5) / CROP_DENSITY_Z + this.tileJitter(idx, 0x9a20 + sub) * (0.3 / CROP_DENSITY_Z);
           const jr1 = this.tileRand(idx, 0x9a30 + sub);
           const jr2 = this.tileRand(idx, 0x9a40 + sub);
-          this.addCropPlant(stems, toppers, style.kind, stage, px, pz, elevation(px, pz) + 0.13, cellScale, jr1, jr2);
+          // A whole tile withers together, not individual plants speckled through it — a field with
+          // a famine reads as patches that failed, the way a real one would, not an even greying.
+          const dead = deadShare > 0 && this.tileRand(idx, 0x9a50) < deadShare;
+          this.addCropPlant(
+            dead ? deadStems : stems, dead ? [] : toppers,
+            style.kind, stage, px, pz, elevation(px, pz) + 0.13, cellScale, jr1, jr2, dead,
+          );
         }
       }
       const stemGeo = mergeGeometries(stems, false);
@@ -2174,6 +2216,12 @@ export class Renderer3D {
       if (toppers.length) {
         const topGeo = mergeGeometries(toppers, false);
         if (topGeo) group.add(new THREE.Mesh(topGeo, new THREE.MeshStandardMaterial({ color: topperColor, roughness: 0.75 })));
+      }
+      if (deadStems.length) {
+        const deadGeo = mergeGeometries(deadStems, false);
+        // A grey-ash colour, not just a duller brown — the field's own soil is already brown, so a
+        // withered plant has to read as *dead*, not merely a shade darker than the dirt it stands in.
+        if (deadGeo) group.add(new THREE.Mesh(deadGeo, new THREE.MeshStandardMaterial({ color: 0x8c8168, roughness: 1 })));
       }
     }
     return group;
@@ -2188,7 +2236,7 @@ export class Renderer3D {
   private addCropPlant(
     stems: THREE.BufferGeometry[], toppers: THREE.BufferGeometry[],
     kind: CropArchetype, stage: CropStage, x: number, z: number, groundY: number,
-    scale: number, jr1: number, jr2: number,
+    scale: number, jr1: number, jr2: number, dead = false,
   ): void {
     if (stage === 'empty') return;
     const local: { stems: THREE.BufferGeometry[]; toppers: THREE.BufferGeometry[] } = { stems: [], toppers: [] };
@@ -2196,13 +2244,18 @@ export class Renderer3D {
     else if (kind === 'leafy') this.buildLeafyPlant(local, stage, scale, jr1);
     else this.buildFruitPlant(local, stage, scale, jr1);
     const yaw = jr2 * Math.PI * 2;
+    // A withered plant slumps rather than standing to attention — the same clump, just given up on.
+    const wilt = dead ? 0.55 + jr1 * 0.35 : 0;
     const place = (geo: THREE.BufferGeometry, into: THREE.BufferGeometry[]) => {
       geo.rotateY(yaw);
+      if (dead) geo.rotateX(wilt);
       geo.translate(x, groundY, z);
       into.push(geo);
     };
     for (const g of local.stems) place(g, stems);
-    for (const g of local.toppers) place(g, toppers);
+    // Toppers (the ripe grain head / fruit) never show on a dead plant — the caller already passes
+    // an empty `toppers` array for one, but the guard makes that not accidental.
+    if (!dead) for (const g of local.toppers) place(g, toppers);
   }
 
   /**
@@ -2599,6 +2652,108 @@ export class Renderer3D {
   }
 
   private disposeFlame(g: THREE.Group): void {
+    this.scene.remove(g);
+    g.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
+      m.geometry?.dispose();
+      (m.material as THREE.Material)?.dispose();
+    });
+  }
+
+  /** How much flood damage to actually draw at each cosmetic severity — see `DamageSeverity`. */
+  private static readonly FLOOD_DECOR_COUNT: Record<DamageSeverity, { debris: number; cracks: number; puddle: number }> = {
+    minor: { debris: 3, cracks: 2, puddle: 0.22 },
+    moderate: { debris: 5, cracks: 4, puddle: 0.32 },
+    severe: { debris: 8, cracks: 6, puddle: 0.42 },
+  };
+
+  /**
+   * A flood-damaged building's cosmetic tell, built once when it's damaged and torn down the
+   * instant it's repaired (see `syncBuildings`): a waterlogged puddle spread across the ground
+   * around it, a scatter of fallen debris (broken shingles, split timber), a few dark cracks up
+   * its walls, and one plank of its door hanging loose by the entrance. All world-positioned
+   * directly off the building's own footprint/rotation rather than nested under its mesh, so
+   * there's no need to fight the model's own local transform to land a crack on the right wall.
+   *
+   * Deliberately model-agnostic: a GLTF building and the box placeholder get exactly the same
+   * treatment, since neither one exposes named parts a "missing shingle" could hook into. Placed
+   * with a stable per-building hash (`tileRand` keyed on `b.id`) so nothing reshuffles from one
+   * sync to the next while the damage stands.
+   */
+  private makeFloodDamageDecor(b: Building, fw: number, fh: number, severity: DamageSeverity): THREE.Group {
+    const group = new THREE.Group();
+    const cx = b.x + fw / 2;
+    const cz = b.y + fh / 2;
+    const h = buildingHeight(b.type);
+    const counts = Renderer3D.FLOOD_DECOR_COUNT[severity];
+
+    // Waterlogged ground: a shallow, murky puddle spread a little beyond the footprint itself —
+    // the water the flood left behind, not the building's own damage.
+    const puddleR = Math.max(fw, fh) / 2 + 0.7;
+    const puddleGeo = new THREE.CircleGeometry(puddleR, 16);
+    puddleGeo.rotateX(-Math.PI / 2);
+    const puddleMat = new THREE.MeshStandardMaterial({
+      color: 0x3d5a63, roughness: 0.35, metalness: 0.05,
+      transparent: true, opacity: counts.puddle, depthWrite: false,
+    });
+    const puddle = new THREE.Mesh(puddleGeo, puddleMat);
+    puddle.position.set(cx, TOP + 0.03, cz);
+    puddle.renderOrder = 3; // over bare ground/scorch, under buildings and marks
+    group.add(puddle);
+
+    // Fallen debris — broken shingles and split timber — scattered just outside the footprint.
+    const debrisMat = new THREE.MeshStandardMaterial({ color: 0x5c4a34, roughness: 1 });
+    const debrisGeos: THREE.BufferGeometry[] = [];
+    for (let i = 0; i < counts.debris; i++) {
+      const ang = this.tileRand(b.id, 0xf000 + i) * Math.PI * 2;
+      const dist = (Math.max(fw, fh) / 2) * (0.5 + this.tileRand(b.id, 0xf100 + i) * 0.7);
+      const size = 0.09 + this.tileRand(b.id, 0xf200 + i) * 0.08;
+      const geo = new THREE.BoxGeometry(size, size * 0.25, size * 1.7);
+      geo.rotateY(this.tileRand(b.id, 0xf300 + i) * Math.PI);
+      geo.translate(cx + Math.cos(ang) * dist, TOP + size * 0.13, cz + Math.sin(ang) * dist);
+      debrisGeos.push(geo);
+    }
+    const debrisGeo = mergeGeometries(debrisGeos, false);
+    if (debrisGeo) group.add(new THREE.Mesh(debrisGeo, debrisMat));
+
+    // Cracks up the walls — thin dark slashes on a random face, roughly wall height.
+    const crackMat = new THREE.MeshStandardMaterial({ color: 0x1c1712, roughness: 1 });
+    const crackGeos: THREE.BufferGeometry[] = [];
+    for (let i = 0; i < counts.cracks; i++) {
+      const side = Math.floor(this.tileRand(b.id, 0xf400 + i) * 4);
+      // Kept close to the middle of each side and low on the wall — a model's own silhouette tapers
+      // in toward the roof and narrows at a gable end, and this is the band most building shapes
+      // still actually occupy near their base, model or box placeholder alike.
+      const along = (this.tileRand(b.id, 0xf500 + i) - 0.5) * (side % 2 === 0 ? fw : fh) * 0.45;
+      const wx = side === 1 ? cx + fw / 2 + 0.03 : side === 3 ? cx - fw / 2 - 0.03 : cx + along;
+      const wz = side === 0 ? cz - fh / 2 - 0.03 : side === 2 ? cz + fh / 2 + 0.03 : cz + along;
+      const len = h * (0.12 + this.tileRand(b.id, 0xf600 + i) * 0.22);
+      const geo = new THREE.BoxGeometry(0.02, len, 0.02);
+      geo.rotateZ((this.tileRand(b.id, 0xf700 + i) - 0.5) * 0.6);
+      geo.translate(wx, TOP + h * (0.06 + this.tileRand(b.id, 0xf800 + i) * 0.25), wz);
+      crackGeos.push(geo);
+    }
+    const crackGeo = mergeGeometries(crackGeos, false);
+    if (crackGeo) group.add(new THREE.Mesh(crackGeo, crackMat));
+
+    // One plank of the door, hanging off its hinges by the entrance — a beat more visible on a
+    // worse flood: nearly upright but slumped for a minor one, fallen flat for a severe one.
+    const door = entranceTile(b);
+    const doorH = Math.min(h * 0.6, 0.6);
+    const lean = severity === 'severe' ? 1.1 : severity === 'moderate' ? 0.6 : 0.3;
+    const plankGeo = new THREE.BoxGeometry(0.32, doorH, 0.03);
+    plankGeo.translate(0, doorH / 2, 0);
+    plankGeo.rotateX(lean);
+    plankGeo.rotateY(this.tileRand(b.id, 0xf900) * 0.6 - 0.3);
+    plankGeo.translate(door.x + 0.5, TOP, door.y + 0.5);
+    group.add(new THREE.Mesh(plankGeo, debrisMat));
+
+    group.traverse((o) => { o.renderOrder = Math.max(o.renderOrder, 3); });
+    return group;
+  }
+
+  private disposeFloodDecor(g: THREE.Group): void {
     this.scene.remove(g);
     g.traverse((o) => {
       const m = o as THREE.Mesh;

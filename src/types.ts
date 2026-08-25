@@ -764,6 +764,9 @@ export interface Building {
    * Meaningless unless `damaged`; cleared alongside it in `finishRepair`/`razeBuilding`.
    */
   damageReason?: DamageReason;
+  /** How badly a flood hit it, purely cosmetic — see `floodDamageSeverity`. Undefined for a
+   *  fire-damaged building (fire has no tier to derive one from) and meaningless unless `damaged`. */
+  damageSeverity?: DamageSeverity;
   /** Builder-work laid toward a repair so far, 0..`repairWorkOf(type)`. Meaningless unless `damaged`. */
   repairProgress?: number;
   /** Materials builders have delivered toward the current repair, against `repairCostOf`. */
@@ -1873,6 +1876,12 @@ export interface GameState {
    * unless it rolls again. See `FAMINE_PENALTY` for what the severity costs a farm's yield.
    */
   famine?: { severity: FamineSeverity };
+  /** The last year a famine actually rolled true, or undefined if there's never been one — read by
+   *  `famineSeason` so the year right after gets `FAMINE_COOLDOWN_FACTOR` off its odds. */
+  lastFamineYear?: number;
+  /** The last year a flood rolled true (water rising, whether or not it went on to damage anything)
+   *  — read by `floodSeason` the same way `lastFamineYear` is. */
+  lastFloodYear?: number;
   /** Harvest orders (per tile): HARVEST_* — trees/loose stone marked for gathering. */
   harvest: number[];
   /**
@@ -3037,6 +3046,14 @@ export type FamineSeverity = 'moderate' | 'severe';
  * ranch alongside its fields rides it out on the rest of its larder.
  */
 export const FAMINE_PENALTY: Record<FamineSeverity, number> = { moderate: 0.5, severe: 0.25 };
+/**
+ * A famine the year before makes this year's less likely — a village that just weathered one has
+ * usually eaten into its reserves and diversified rather than replanted the exact same risk, and a
+ * back-to-back famine every single year the odds allowed would read as punishing rather than as a
+ * crisis with a recovery. Applies only when `state.lastFamineYear` is exactly one year ago; two
+ * quiet years apart and the odds are back to `FAMINE_CHANCE_PER_SUMMER` in full — see `famineSeason`.
+ */
+export const FAMINE_COOLDOWN_FACTOR = 0.5;
 
 // ---- Flood (spring-only, water-proximity buildings) ----
 /** Rolled once a year, only entering Spring — see `floodSeason`. */
@@ -3067,6 +3084,29 @@ export function floodRiskTier(dist: number): FloodRiskTier | null {
   if (dist <= FLOOD_HIGH_RISK_DIST) return 'high';
   if (dist <= FLOOD_MEDIUM_RISK_DIST) return 'medium';
   return 'low';
+}
+/** See `FAMINE_COOLDOWN_FACTOR` — the same one-year recovery window, for floods. */
+export const FLOOD_COOLDOWN_FACTOR = 0.5;
+/**
+ * Chance a villager caught in a building the flood damages drowns rather than merely losing their
+ * roof or their bench — rolled once per occupant (a resident of a flooded home, a worker at a
+ * flooded workplace) the instant the building takes damage. Small and deliberately rare: the flood
+ * is meant to be a property crisis the village recovers from, not a mass-casualty event, so this is
+ * the one place it can turn fatal, and only for someone who was actually there.
+ */
+export const FLOOD_DEATH_CHANCE = 0.03;
+/**
+ * How badly a flood-damaged building was hit — cosmetic only (repair cost/time are the same
+ * `REPAIR_FRACTION` regardless, per `repairCostOf`/`repairWorkOf`): it's what the 3D renderer reads
+ * to decide how many cracks, how much missing roofing, how battered the door looks. Derived from
+ * the `FloodRiskTier` the building was in when the water reached it — the closer to the bank, the
+ * worse it looks — so it costs nothing extra to compute and always agrees with the risk the player
+ * could see coming. A fire-damaged building has no tier to derive one from and is left `undefined`;
+ * the renderer treats that as its own single fire-damaged look, same as before this existed.
+ */
+export type DamageSeverity = 'minor' | 'moderate' | 'severe';
+export function floodDamageSeverity(tier: FloodRiskTier): DamageSeverity {
+  return tier === 'high' ? 'severe' : tier === 'medium' ? 'moderate' : 'minor';
 }
 
 /**

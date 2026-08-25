@@ -283,6 +283,43 @@ test.describe('famine — summer-only farm shortfall', () => {
     expect(out.warned).toBe(true);
     expect(out.reported).toBe(true);
   });
+
+  test('a famine last year halves this year\'s odds, and only for that one year', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true, undefined, 20260824);
+      const s = g.state;
+      const base = g.debugFamineChancePerSummer();
+      const factor = g.debugFamineCooldownFactor();
+      const halved = base * factor;
+      // Strictly between the halved and full odds: passes a full-strength roll, fails a halved one.
+      const probe = (halved + base) / 2;
+      const roll = (lastFamineYear: number | undefined) => {
+        s.famine = undefined;
+        s.lastFamineYear = lastFamineYear;
+        s.year = 5;
+        s.season = 1; // Summer
+        g.debugPinRandom(probe);
+        try {
+          g.debugFamineSeason();
+        } finally {
+          g.debugPinRandom(null);
+        }
+        return !!s.famine;
+      };
+      return {
+        base, factor, halved,
+        noHistory: roll(undefined), // never happened before — full odds
+        rightAfter: roll(4), // last year (year - 1) — halved odds
+        twoYearsAfter: roll(2), // two quiet years since — back to full odds
+      };
+    });
+    expect(out.factor).toBeCloseTo(0.5, 5);
+    expect(out.noHistory).toBe(true); // the probe roll clears full odds
+    expect(out.rightAfter).toBe(false); // the same roll misses the halved odds
+    expect(out.twoYearsAfter).toBe(true); // and clears full odds again once it's been a year
+  });
 });
 
 test.describe('flood — spring-only, water-proximity building damage', () => {
@@ -574,6 +611,7 @@ test.describe('flood — spring-only, water-proximity building damage', () => {
         staffedBefore, buildCost, repairCost, repaired,
         stillBuilt: hut.built,
         damageReasonCleared: hut.damageReason === undefined,
+        damageSeverityCleared: hut.damageSeverity === undefined,
         restaffed: staffed.count,
       };
     }, [placeBuilt, SEED] as const);
@@ -581,6 +619,7 @@ test.describe('flood — spring-only, water-proximity building damage', () => {
     expect(out.repaired).toBe(true);
     expect(out.stillBuilt).toBe(true);
     expect(out.damageReasonCleared).toBe(true);
+    expect(out.damageSeverityCleared).toBe(true);
     expect(out.restaffed).toBeGreaterThan(0);
     // 25–50% of the original build, per resource.
     for (const k of Object.keys(out.buildCost)) {
@@ -616,6 +655,142 @@ test.describe('flood — spring-only, water-proximity building damage', () => {
       return { named };
     }, [placeBuilt, SEED] as const);
     expect(out.named).toBe(true);
+  });
+
+  test('a flood last year halves this year\'s odds, and only for that one year', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      ([placeSrc, waterSrc, seed]) => {
+        const g = (window as any).__village;
+        g.startNewGame('small', 'easy', true, undefined, seed);
+        const s = g.state;
+        const water = eval(waterSrc)(s);
+        // A single candidate right on the bank, so `floodCandidates` is never empty and the odds
+        // themselves are what's on trial here, not whether anything is even in reach.
+        const b = eval(placeSrc)(g, 'house');
+        b.x = water.x;
+        b.y = Math.max(0, water.y - 1);
+        const base = g.debugFloodChancePerSpring();
+        const factor = g.debugFloodCooldownFactor();
+        const halved = base * factor;
+        const probe = (halved + base) / 2;
+        const roll = (lastFloodYear: number | undefined) => {
+          // Reset the one candidate between rolls — a previous roll may well have damaged it (the
+          // per-building chance roll shares the same pinned `probe`), and a damaged building drops
+          // out of `floodCandidates` entirely, which would silently starve every roll after the first.
+          b.damaged = false;
+          b.damageReason = undefined;
+          b.damageSeverity = undefined;
+          s.lastFloodYear = lastFloodYear;
+          s.year = 5;
+          s.season = 0; // Spring
+          const before = s.lastFloodYear;
+          g.debugPinRandom(probe);
+          try {
+            g.debugFloodSeason();
+          } finally {
+            g.debugPinRandom(null);
+          }
+          // `lastFloodYear` only moves when the flood-at-all roll actually clears its odds — see
+          // `floodSeason` — regardless of whether this one building's own damage roll then lands.
+          return s.lastFloodYear !== before;
+        };
+        return {
+          base, factor, halved,
+          noHistory: roll(undefined),
+          rightAfter: roll(4),
+          twoYearsAfter: roll(2),
+        };
+      },
+      [placeBuilt, findWaterTile, SEED] as const,
+    );
+    expect(out.factor).toBeCloseTo(0.5, 5);
+    expect(out.noHistory).toBe(true);
+    expect(out.rightAfter).toBe(false);
+    expect(out.twoYearsAfter).toBe(true);
+  });
+
+  test('flood damage severity follows the risk tier a building was actually in', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      ([placeSrc, waterSrc, seed]) => {
+        const g = (window as any).__village;
+        g.startNewGame('small', 'easy', true, undefined, seed);
+        const s = g.state;
+        const water = eval(waterSrc)(s);
+        // A short row stepping back from the water — whatever tiers these actually land in (the
+        // map's own layout, not asserted here), the severity→tier mapping is what's on trial.
+        const candidates: any[] = [];
+        for (let d = 0; d <= 6; d += 2) {
+          const b = eval(placeSrc)(g, 'house');
+          b.x = water.x;
+          b.y = Math.max(0, water.y - d);
+          candidates.push(b);
+        }
+        s.season = 0; // Spring
+        g.debugPinRandom(0.0); // every roll (flood-at-all, and every per-building chance) succeeds
+        try {
+          g.debugFloodSeason();
+        } finally {
+          g.debugPinRandom(null);
+        }
+        return candidates.map((b) => ({
+          tier: g.debugFloodRisk(b.id).tier,
+          damaged: !!b.damaged,
+          severity: g.debugDamageSeverity(b.id),
+        }));
+      },
+      [placeBuilt, findWaterTile, SEED] as const,
+    );
+    const expectedSeverity: Record<string, string> = { high: 'severe', medium: 'moderate', low: 'minor' };
+    let checked = 0;
+    for (const c of out) {
+      if (!c.tier) continue; // outside the radius — never a candidate, never damaged
+      checked++;
+      expect(c.damaged, JSON.stringify(c)).toBe(true); // pinned 0.0 — every candidate's own roll clears too
+      expect(c.severity, JSON.stringify(c)).toBe(expectedSeverity[c.tier]);
+    }
+    // Sanity: at least one candidate actually fell inside the radius, so the loop above asserted
+    // something. Which tier(s) it landed in is the map's own layout, not something this test pins.
+    expect(checked, JSON.stringify(out)).toBeGreaterThan(0);
+  });
+
+  test('a flood drowns roughly FLOOD_DEATH_CHANCE of the occupants it displaces — rare, never the rule', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      const house: any = {
+        id: s.nextId++, type: 'house', x: barn.x, y: barn.y, built: true, progress: 99,
+        workers: [], desiredWorkers: 0, growth: 0, output: 'iron', recipe: 'iron', store: {},
+      };
+      s.buildings.push(house);
+      const trials = 4000;
+      let deaths = 0;
+      for (let i = 0; i < trials; i++) {
+        const c: any = {
+          id: s.nextId++, name: 'Resident' + i, age: 30, sex: i % 2 ? 'm' : 'f',
+          health: 100, happiness: 50, homeId: house.id, jobId: null, carry: null, pending: null,
+          task: { kind: 'idle' }, x: house.x, y: house.y, tx: house.x, ty: house.y, timer: 0, rest: 0,
+        };
+        s.citizens.push(c);
+        house.damaged = false;
+        house.damageReason = undefined;
+        house.damageSeverity = undefined;
+        house.workers = [];
+        g.debugFloodDamage(house.id);
+        if (!s.citizens.some((o: any) => o.id === c.id)) deaths++;
+      }
+      return { trials, deaths, rate: deaths / trials, deathChance: g.debugFloodDeathChance() };
+    });
+    expect(out.deathChance).toBeCloseTo(0.03, 5);
+    // A wide statistical band (4000 trials at p=0.03 has a standard deviation of ~10.8) — this is
+    // checking the roll is in the right ballpark and clearly neither 0% nor anywhere near "the rule",
+    // not pinning the exact rate.
+    expect(out.rate, JSON.stringify(out)).toBeGreaterThan(0.01);
+    expect(out.rate, JSON.stringify(out)).toBeLessThan(0.06);
   });
 });
 

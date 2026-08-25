@@ -206,12 +206,16 @@ import {
   FAMINE_CHANCE_PER_SUMMER,
   FAMINE_SEVERE_CHANCE,
   FAMINE_PENALTY,
+  FAMINE_COOLDOWN_FACTOR,
   FamineSeverity,
   FLOOD_CHANCE_PER_SPRING,
   FLOOD_RISK_RADIUS,
   FLOOD_DAMAGE_CHANCE,
+  FLOOD_COOLDOWN_FACTOR,
+  FLOOD_DEATH_CHANCE,
   FloodRiskTier,
   floodRiskTier,
+  floodDamageSeverity,
   MARKET_STOCK_TARGET,
   RESOURCE_KINDS,
   BuildingType,
@@ -283,7 +287,7 @@ export function recordEvent(s: GameState, text: string, kind: LogKind = 'info'):
 }
 
 /** The ways a villager can die. Each names a cause the player can act on (or mourn). */
-type DeathCause = 'starvation' | 'cold' | 'illness' | 'old age' | 'cave-in';
+type DeathCause = 'starvation' | 'cold' | 'illness' | 'old age' | 'cave-in' | 'flood';
 
 /**
  * How each cause reads in the chronicle. Written to follow a subject and read the same whether one
@@ -296,6 +300,7 @@ const DEATH_PHRASE: Record<DeathCause, string> = {
   illness: 'died of illness',
   'old age': 'died of old age',
   'cave-in': 'died in a mine cave-in',
+  flood: 'drowned in the flood',
 };
 
 /**
@@ -2699,6 +2704,7 @@ function nearestSiteNeeding(s: GameState, c: Citizen, kind: ResourceKind): Build
 function finishRepair(s: GameState, b: Building, log: LogFn): void {
   b.damaged = false;
   b.damageReason = undefined;
+  b.damageSeverity = undefined;
   b.repairProgress = 0;
   b.repairStore = {};
   log(`✓ The ${BUILDING_DEFS[b.type].name} has been repaired`, 'good');
@@ -4580,9 +4586,14 @@ export function famineSeason(s: GameState, log: LogFn): void {
   if (!s.disasters) return;
   if (SEASONS[s.season] !== 'Summer') return;
   if (s.famine) return; // one brewing already — this year has had its famine
-  if (rand(s) >= FAMINE_CHANCE_PER_SUMMER) return;
+  // A famine last year buys this year's a lighter roll — see `FAMINE_COOLDOWN_FACTOR`. `s.year`
+  // only changes at the Spring turn, so "last year" is simply one less than it reads right now.
+  const onCooldown = s.lastFamineYear === s.year - 1;
+  const chance = FAMINE_CHANCE_PER_SUMMER * (onCooldown ? FAMINE_COOLDOWN_FACTOR : 1);
+  if (rand(s) >= chance) return;
   const severity: FamineSeverity = rand(s) < FAMINE_SEVERE_CHANCE ? 'severe' : 'moderate';
   s.famine = { severity };
+  s.lastFamineYear = s.year;
   log('🌾 Reports of poor crops are spreading — farmers warn of a difficult harvest this year', 'bad');
   s.disasterAlert = true;
 }
@@ -4630,12 +4641,22 @@ export function floodSeason(s: GameState, log: LogFn): void {
   if (SEASONS[s.season] !== 'Spring') return;
   const candidates = floodCandidates(s);
   if (candidates.length === 0) return;
-  if (rand(s) >= FLOOD_CHANCE_PER_SPRING) return;
+  // A flood last year buys this year's a lighter roll — see `FAMINE_COOLDOWN_FACTOR`'s twin,
+  // `FLOOD_COOLDOWN_FACTOR`. Unlike `s.year` for famine, this check needs no "-1": `endSeason`
+  // bumps the year at the very top of the Spring turn, before this ever runs, so `s.year` here is
+  // already this Spring's year and "last year" is one less.
+  const onCooldown = s.lastFloodYear === s.year - 1;
+  const chance = FLOOD_CHANCE_PER_SPRING * (onCooldown ? FLOOD_COOLDOWN_FACTOR : 1);
+  if (rand(s) >= chance) return;
   log('🌊 Water levels are rising — flooding has been reported along the river', 'bad');
+  // The event itself happened — water rose — whether or not any particular building's own roll
+  // goes on to take damage from it. That is what the cooldown remembers, same as `s.famine` is set
+  // the moment famine is warned about rather than only once a harvest actually comes in short.
+  s.lastFloodYear = s.year;
   let damaged = 0;
   for (const { b, tier } of candidates) {
     if (rand(s) < FLOOD_DAMAGE_CHANCE[tier]) {
-      floodDamageBuilding(s, b, log);
+      floodDamageBuilding(s, b, log, tier);
       damaged++;
     }
   }
@@ -4650,10 +4671,15 @@ export function debugFloodRisk(s: GameState, b: Building): { dist: number; tier:
 }
 
 /** Testing/debug: force a building straight to flood-DAMAGED, bypassing the distance/chance rolls
- *  `floodSeason` itself runs — for a test that wants a specific building damaged deterministically. */
+ *  `floodSeason` itself runs — for a test that wants a specific building damaged deterministically.
+ *  The severity tier is read off the building's actual position when one is available (same as a
+ *  natural flood would), and falls back to 'medium' — a middling `damageSeverity` — for a building
+ *  parked out of water's reach entirely, so a test can still ask for *a* damaged building without
+ *  also having to stand it somewhere real. */
 export function debugFloodDamageBuilding(s: GameState, b: Building, log: LogFn): void {
   if (!b.built || b.razed || b.demolish || b.damaged || b.fireTimer) return;
-  floodDamageBuilding(s, b, log);
+  const tier = floodRiskTier(nearestWaterDist(s, b, FLOOD_RISK_RADIUS)) ?? 'medium';
+  floodDamageBuilding(s, b, log, tier);
 }
 
 /**
@@ -4790,17 +4816,34 @@ function tryIgnite(s: GameState, b: Building, log: LogFn, announce: boolean): vo
 
 /**
  * A flood lands on a building: straight to DAMAGED, no BURNING phase in between (see the module
- * doc for `floodSeason` on why flood skips it) — occupants are turned out the same moment
- * `evictOccupants`, workers included, and repair is the same pipeline a fire-damaged building
- * uses (`repairCostOf`/`repairWorkOf`/`pickSite`/`finishRepair`), just tagged with a different
- * `damageReason` so the inspect sheet can say which disaster did it.
+ * doc for `floodSeason` on why flood skips it) — occupants are turned out the same moment,
+ * workers included, and repair is the same pipeline a fire-damaged building uses
+ * (`repairCostOf`/`repairWorkOf`/`pickSite`/`finishRepair`), just tagged with a different
+ * `damageReason` so the inspect sheet can say which disaster did it. `tier` — the risk tier the
+ * building was actually in — sets its cosmetic `damageSeverity` (see `floodDamageSeverity`) and,
+ * separately, how many of its occupants FLOOD_DEATH_CHANCE gets to roll against.
+ *
+ * Turning out is not automatically survival: each resident or worker the flood catches here rolls
+ * `FLOOD_DEATH_CHANCE` before `evictOccupants` runs, so most walk away homeless or jobless but a
+ * few, rarely, do not. Only someone actually in the building at the moment it's damaged is ever at
+ * risk — nobody elsewhere in the village is touched.
  */
-function floodDamageBuilding(s: GameState, b: Building, log: LogFn): void {
+function floodDamageBuilding(s: GameState, b: Building, log: LogFn, tier: FloodRiskTier): void {
   const wasHome = isDwelling(b.type);
   const wasStaffed = b.workers.length > 0;
+  const occupantIds = new Set<number>();
+  for (const c of s.citizens) if (c.jobId === b.id || c.homeId === b.id) occupantIds.add(c.id);
+  const drowned: Citizen[] = [];
+  if (occupantIds.size > 0) {
+    for (const c of s.citizens) {
+      if (occupantIds.has(c.id) && rand(s) < FLOOD_DEATH_CHANCE) drowned.push(c);
+    }
+    for (const c of drowned) removeCitizen(s, c);
+  }
   evictOccupants(s, b);
   b.damaged = true;
   b.damageReason = 'flood';
+  b.damageSeverity = floodDamageSeverity(tier);
   b.repairProgress = 0;
   b.repairStore = {};
   const name = BUILDING_DEFS[b.type].name;
@@ -4811,6 +4854,7 @@ function floodDamageBuilding(s: GameState, b: Building, log: LogFn): void {
   } else {
     log(`🌊 The ${name} was damaged by the flood and needs repair`, 'bad');
   }
+  announceDeaths(log, drowned, 'flood', 'bad');
 }
 
 /**

@@ -34,11 +34,15 @@ import {
   FAMINE_CHANCE_PER_SUMMER,
   FAMINE_SEVERE_CHANCE,
   FAMINE_PENALTY,
+  FAMINE_COOLDOWN_FACTOR,
   FamineSeverity,
   FLOOD_CHANCE_PER_SPRING,
   FLOOD_RISK_RADIUS,
   FLOOD_DAMAGE_CHANCE,
+  FLOOD_COOLDOWN_FACTOR,
+  FLOOD_DEATH_CHANCE,
   FloodRiskTier,
+  DamageSeverity,
   FESTIVAL_FOOD,
   POLICY_META,
   POLICIES,
@@ -1537,6 +1541,10 @@ class Game {
           const reason = b.damageReason === 'flood' ? 'Flood damage' : b.damageReason === 'fire' ? 'Fire damage' : 'Damage';
           rows.push({ label: 'Status', value: '⚠️ Damaged — awaiting repair', tone: 'bad' });
           rows.push({ label: 'Cause', value: reason });
+          if (b.damageSeverity) {
+            const label = b.damageSeverity === 'severe' ? 'Severe' : b.damageSeverity === 'moderate' ? 'Moderate' : 'Minor';
+            rows.push({ label: 'Severity', value: label });
+          }
           if (isDwelling(b.type)) {
             rows.push({ label: '—', value: 'Uninhabitable — residents are temporarily homeless', tone: 'warn' });
           } else if (isWorkplace(b.type)) {
@@ -1918,6 +1926,11 @@ class Game {
     return FAMINE_CHANCE_PER_SUMMER;
   }
 
+  /** Debug/testing helper: the odds multiplier a famine the year before leaves this year's roll. */
+  debugFamineCooldownFactor(): number {
+    return FAMINE_COOLDOWN_FACTOR;
+  }
+
   /** Debug/testing helper: run the once-per-spring flood roll without waiting for the season. */
   debugFloodSeason(): void {
     floodSeason(this.state, this.log);
@@ -1948,6 +1961,22 @@ class Game {
   /** Debug/testing helper: per-building damage chance at each flood-risk tier. */
   debugFloodDamageChance(): Record<FloodRiskTier, number> {
     return { ...FLOOD_DAMAGE_CHANCE };
+  }
+
+  /** Debug/testing helper: the odds multiplier a flood the year before leaves this year's roll. */
+  debugFloodCooldownFactor(): number {
+    return FLOOD_COOLDOWN_FACTOR;
+  }
+
+  /** Debug/testing helper: chance a flood drowns an occupant of a building it damages. */
+  debugFloodDeathChance(): number {
+    return FLOOD_DEATH_CHANCE;
+  }
+
+  /** Debug/testing helper: a damaged building's cosmetic severity, or null if it isn't damaged. */
+  debugDamageSeverity(id: number): DamageSeverity | null {
+    const b = this.state.buildings.find((x) => x.id === id);
+    return b?.damageSeverity ?? null;
   }
 
   /** Debug/testing helper: the tile the placement ghost is standing on right now. */

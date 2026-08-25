@@ -431,6 +431,7 @@ export function razeBuilding(s: GameState, b: Building): void {
   }
   b.damaged = false;
   b.damageReason = undefined;
+  b.damageSeverity = undefined;
   b.repairProgress = 0;
   for (const [kind, amount] of Object.entries(costOf(b)) as [ResourceKind, number][]) {
     const refund = Math.floor(amount * REFUND_FRACTION);

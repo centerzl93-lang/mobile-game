@@ -367,12 +367,15 @@ export class Renderer3D {
   private fireSmokeLife: Float32Array | null = null;
   private fireSmokeAccum = 0;
   private fireEmitters: number[][] = []; // [x,y,z] one per currently-burning building
-  /** One template flame lick (`buildFlameLickTemplate`), built once and `.clone()`d for every
-   *  lick of every burning building — cloning shares the template's geometry and materials
-   *  (three.js's default `Object3D.clone()` behaviour) rather than allocating a fresh
-   *  ConeGeometry/MeshBasicMaterial per lick per building, so a village with several fires
-   *  burning at once is still just a handful of shared GPU resources, many small transforms. */
-  private flameLickTemplate: THREE.Group | null = null;
+  /** Shared, additive-blended sprite materials the flame licks are built from — a soft flame-tongue
+   *  texture (`flameMat`) and a hotter, whiter core blob (`flameCoreMat`), both procedurally drawn
+   *  once (`buildFlameTextures`) and referenced by every sprite of every burning building. A flame
+   *  lick is a small stack of camera-facing `THREE.Sprite`s of these (`cloneFlameLick`) rather than
+   *  cone geometry: billboards always face the camera, so a soft glowing flame texture reads as
+   *  real fire from any angle and never as a hard-edged solid shape, and the whole village's fire
+   *  is a handful of shared materials + many cheap two-triangle sprites. */
+  private flameMat: THREE.SpriteMaterial | null = null;
+  private flameCoreMat: THREE.SpriteMaterial | null = null;
   /** A sparse scatter of glowing embers drifting up off burning buildings — see `initEmbers`.
    *  Deliberately few and short-lived per the "alive, not a particle storm" brief. */
   private embers: THREE.Points | null = null;
@@ -747,9 +750,9 @@ export class Renderer3D {
     this.initFireSmoke();
     // Embers: a third, sparser pooled Points cloud — see the field doc on `embers`.
     this.initEmbers();
-    // The one flame-lick template every burning building's fire clones from — see the field doc
-    // on `flameLickTemplate`.
-    this.flameLickTemplate = this.buildFlameLickTemplate();
+    // The shared flame sprite materials every burning building's licks are built from — see the
+    // field docs on `flameMat`/`flameCoreMat`.
+    this.buildFlameTextures();
 
     // Reusable overlays.
     // The placement ghost is a container: `syncOverlays` swaps the actual building's silhouette
@@ -2787,46 +2790,120 @@ export class Renderer3D {
   }
 
   /**
-   * The one flame-lick shape every burning building's fire clones from: four stacked, unlit,
-   * tall-tapered cones (deep red-orange base, through orange and amber, to a pale yellow tip)
-   * with additive blending, so overlapping layers read as a hot glow rather than flat, stacked
-   * colour, and each layer nudged slightly off the vertical axis so the tongue reads as
-   * wavering rather than a perfectly straight, static spike. Built exactly once — see the field
-   * doc on `flameLickTemplate` — and cloned per lick per building; `Object3D.clone()` shares the
-   * clone's geometry/material with the template rather than duplicating them, which is what
-   * keeps several buildings burning at once cheap (a handful of shared GPU resources, many small
-   * transforms, not a fresh ConeGeometry/MeshBasicMaterial for every lick of every fire).
+   * Draw a soft flame-tongue onto an offscreen canvas and hand back the canvas. Built by stacking
+   * many small radial-gradient blobs from a wide, hot base up to a narrow wavering tip, so the
+   * silhouette is an organic feathered tongue rather than a flat shape with a hard edge.
+   *
+   * Two variants, drawn deliberately differently because they blend differently in the scene:
+   *  - the **body** (`core:false`) is drawn with ordinary `source-over` compositing so overlapping
+   *    warm blobs *cover* rather than *sum*: orange stays orange instead of piling up toward white.
+   *    That is the whole reason the flame keeps a fierce, saturated colour — it is alpha-blended in
+   *    the scene, not additively blended, so its own painted colours are what you see.
+   *  - the **core** (`core:true`) is drawn with `'lighter'` (additive) into a tight hot centre and
+   *    is *additively* blended in the scene, so it reads as a bright glow sitting inside the body
+   *    rather than a second opaque shape.
+   * The colour ramps hottest at the base (amber-yellow / white for the core) through orange to a
+   * deep red, translucent tip — the vertical heat falloff a real flame has.
    */
-  private buildFlameLickTemplate(): THREE.Group {
-    const g = new THREE.Group();
-    const layer = (color: number, r: number, h: number, y: number, xo: number, zo: number, opacity: number) => {
-      const mat = new THREE.MeshBasicMaterial({
-        color, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending,
-      });
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(r, h, 7), mat);
-      cone.position.set(xo, y, zo);
-      cone.userData.sharedGeo = true; // template's own geometry/material — never disposed per-clone
-      g.add(cone);
-    };
-    // Sized to actually show at the game's normal, zoomed-out isometric camera distance — small,
-    // literal-scale cones were true to "a small flame" in the abstract but worked out to a
-    // couple of pixels on screen at play distance, which is what made a burning building look
-    // like nothing more than a red-tinted box.
-    layer(0xa8280a, 0.42, 1.05, 0.5, 0.02, -0.03, 0.85);
-    layer(0xe8630f, 0.28, 0.95, 0.75, -0.04, 0.05, 0.9);
-    layer(0xf99a1c, 0.17, 0.75, 1.0, 0.05, -0.02, 0.92);
-    layer(0xffe184, 0.08, 0.5, 1.2, -0.02, 0.03, 0.95);
-    g.renderOrder = 15; // over buildings, under UI overlays
-    g.traverse((o) => { o.renderOrder = 15; });
-    return g;
+  private drawFlameTexture(size: number, core: boolean): HTMLCanvasElement {
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d')!;
+    ctx.clearRect(0, 0, size, size); // transparent background — the body is alpha-blended
+    ctx.globalCompositeOperation = core ? 'lighter' : 'source-over';
+    const cx = size / 2;
+    const N = 72;
+    for (let i = 0; i < N; i++) {
+      const t = i / (N - 1); // 0 = base, 1 = tip
+      // Keep the whole tongue clear of the canvas edges — an ~12% margin at the base — so no blob
+      // is clipped flat by the quad's own border, which is what read as a hard bright box under
+      // each flame. The base is soft and rounded instead.
+      const y = size * (0.88 - t * 0.82);
+      const spread = core ? 0.13 : 0.32;
+      const r = size * spread * (1 - t) * (1 - t * 0.25) + size * 0.02;
+      const x = cx + Math.sin(t * Math.PI * 3) * size * (core ? 0.02 : 0.06) * (1 - t);
+      // Height-graded flame colours — saturated, not pale. The body holds orange/red through most
+      // of its height and warms only to amber (not white) right at the base; the core is a warm
+      // amber glow, deliberately not pure white, so it reads as heat inside the flame rather than
+      // a bleached spot.
+      let col: string;
+      if (core) col = t < 0.45 ? '255,226,150' : '255,196,96';
+      else if (t < 0.14) col = '255,196,86';
+      else if (t < 0.34) col = '255,150,34';
+      else if (t < 0.56) col = '255,100,16';
+      else if (t < 0.78) col = '222,54,12';
+      else col = '146,24,8';
+      // Body blobs are fairly opaque at centre (so the flame reads as a solid tongue, not a faint
+      // haze) and fade to nothing at the rim; the additive core stays lower-alpha so it glows.
+      // The base fades *in* (lower alpha at the very bottom) rather than starting at full so the
+      // flame rises out of the wall instead of stamping a bright disc on it.
+      const baseFade = Math.min(1, t / 0.14); // 0 at the very base, 1 by ~14% up
+      const alpha = (core ? 0.3 * (0.6 + 0.4 * (1 - t)) : 0.82 * (0.55 + 0.45 * (1 - t))) * (0.35 + 0.65 * baseFade);
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+      grad.addColorStop(0, `rgba(${col},${alpha})`);
+      grad.addColorStop(core ? 1 : 0.85, `rgba(${col},${alpha * (core ? 0 : 0.35)})`);
+      grad.addColorStop(1, `rgba(${col},0)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return c;
   }
 
-  /** A fresh lick instance sharing the template's geometry/materials — see `flameLickTemplate`. */
+  /** Build the two shared flame sprite materials — see the field docs on `flameMat`/`flameCoreMat`.
+   *  Camera-facing sprites (billboards) are used instead of cone geometry so a soft, glowing flame
+   *  texture always faces the camera and reads as real fire from every angle. The body is
+   *  alpha-blended (`NormalBlending`) to keep its saturated colour; only the hot core is additive. */
+  private buildFlameTextures(): void {
+    const tongue = new THREE.CanvasTexture(this.drawFlameTexture(128, false));
+    const core = new THREE.CanvasTexture(this.drawFlameTexture(96, true));
+    tongue.colorSpace = THREE.SRGBColorSpace;
+    core.colorSpace = THREE.SRGBColorSpace;
+    this.flameMat = new THREE.SpriteMaterial({
+      map: tongue, transparent: true, depthWrite: false, blending: THREE.NormalBlending,
+    });
+    this.flameCoreMat = new THREE.SpriteMaterial({
+      map: core, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+  }
+
+  /**
+   * One flame lick: a small stack of camera-facing `THREE.Sprite`s of the shared flame textures —
+   * a broad outer tongue, a narrower brighter inner tongue offset a touch, and a small hot core
+   * blob low down. Each sprite's `center` is pinned to its base (`(0.5, 0)`) so the lick rises
+   * from the group origin (the emitter point) rather than straddling it, which is what lets the
+   * building's own wall occlude the base while the flame licks up past the roofline. Per-sprite
+   * `phase`/`speed`/`sway` (in `userData`) drive `updateFlames`'s organic, out-of-sync flicker.
+   * Sprites are cheap two-triangle billboards sharing the two materials, so a whole village's fire
+   * is a handful of GPU resources; they're built when a building catches, not per frame.
+   */
   private cloneFlameLick(): THREE.Group {
-    // Guarded for the theoretical case a fire syncs before the constructor reaches its init —
-    // never happens in practice (the template is built synchronously right after), but a stray
-    // flame is a worse failure than one skipped this frame.
-    return (this.flameLickTemplate?.clone(true) as THREE.Group | undefined) ?? this.buildFlameLickTemplate();
+    const g = new THREE.Group();
+    // Sprites reference the two shared materials directly (no per-sprite clone): all the
+    // per-flame life is animated through each sprite's own scale/position in `updateFlames`,
+    // which are `Object3D` transforms, not material state — so nothing here needs its own
+    // material, and `disposeFlame` never has anything to release.
+    const add = (mat: THREE.SpriteMaterial, w: number, h: number, y: number, phase: number, speed: number, sway: number) => {
+      const s = new THREE.Sprite(mat);
+      // Anchor at the *flame's* base, which sits ~12% up the texture (the base margin drawn in
+      // `drawFlameTexture`), so the visible flame rises from the emitter point rather than
+      // floating a gap above it — while the texture's clear bottom margin keeps the quad edge
+      // from ever clipping the flame flat.
+      s.center.set(0.5, 0.12);
+      s.scale.set(w, h, 1);
+      s.position.y = y;
+      s.renderOrder = 15; // over the opaque buildings, under UI overlays
+      s.userData.w = w; s.userData.h = h;
+      s.userData.phase = phase; s.userData.speed = speed; s.userData.sway = sway;
+      g.add(s);
+    };
+    // A broad outer tongue, a narrower brighter inner tongue, and a small hot core tucked inside
+    // (raised a touch and kept small, so it glows within the flame rather than pooling at the base).
+    add(this.flameMat!, 1.05, 1.7, 0, 0.0, 8.5, 0.12);
+    add(this.flameMat!, 0.78, 1.32, 0.05, 2.1, 11.0, 0.16);
+    add(this.flameCoreMat!, 0.4, 0.72, 0.18, 4.0, 14.0, 0.08);
+    return g;
   }
 
   /**
@@ -2895,9 +2972,10 @@ export class Renderer3D {
     return group;
   }
 
-  /** Removes a fire cluster from the scene. Never disposes geometry/material — every lick's are
-   *  shared with `flameLickTemplate` (`cloneFlameLick`), which is disposed exactly once, in
-   *  `dispose()`, not per burning building. */
+  /** Removes a fire cluster from the scene. Never disposes any material — every sprite references
+   *  the two shared `flameMat`/`flameCoreMat` (`cloneFlameLick`), disposed exactly once in
+   *  `dispose()`, not per burning building; the sprites' own geometry is three.js's shared
+   *  internal sprite quad, which is not ours to release either. */
   private disposeFlame(g: THREE.Group): void {
     this.scene.remove(g);
   }
@@ -3015,15 +3093,30 @@ export class Renderer3D {
     for (const [id, cluster] of this.flames) {
       const b = byId.get(id);
       const intensity = b ? fireIntensity(b) : 0;
-      // Each lick flickers and sways on its own phase (baked in by `makeFireCluster`), not in
-      // lockstep — a building on fire reads as many small flames doing their own thing, not one
-      // shape pulsing uniformly.
+      // Two layers of flicker, none in lockstep: each lick has its own `phase` (so a building's
+      // several flames pulse independently — many small fires, not one uniformly throbbing
+      // shape), and within a lick each sprite has its own `phase`/`speed`/`sway` (so the tongue
+      // itself writhes — the tall outer flame, the inner flame and the hot core each stretch,
+      // shrink and lean on their own clock). Everything rides `fireIntensity`, so the whole
+      // fire grows as a building burns and shrinks as it's doused.
       for (const lick of cluster.children) {
-        const base = (lick.userData.baseScale as number | undefined) ?? 1;
-        const phase = (lick.userData.phase as number | undefined) ?? 0;
-        const flicker = 1 + Math.sin(now * 9 + phase) * 0.12 + Math.sin(now * 19 + phase * 2.3) * 0.08;
-        lick.scale.setScalar(Math.max(0.001, intensity * base * flicker));
-        lick.rotation.z = Math.sin(now * 3 + phase) * 0.12; // a slight lean, not a rigid stalk
+        const lbase = (lick.userData.baseScale as number | undefined) ?? 1;
+        const lphase = (lick.userData.phase as number | undefined) ?? 0;
+        const lickAmt = intensity * lbase * (1 + Math.sin(now * 6 + lphase) * 0.1);
+        for (const spr of lick.children as THREE.Sprite[]) {
+          const w = (spr.userData.w as number) ?? 1;
+          const h = (spr.userData.h as number) ?? 1;
+          const phase = (spr.userData.phase as number) ?? 0;
+          const speed = (spr.userData.speed as number) ?? 10;
+          const sway = (spr.userData.sway as number) ?? 0.1;
+          // Height flutters more than width — a flame stretches and gutters vertically far more
+          // than it fattens — and the base stays put (`center` is pinned to the bottom), so it
+          // licks upward rather than ballooning in place.
+          const hf = 1 + Math.sin(now * speed + phase) * 0.22 + Math.sin(now * speed * 1.9 + phase * 2.7) * 0.12;
+          const wf = 1 + Math.sin(now * speed * 0.7 + phase * 1.3) * 0.1;
+          spr.scale.set(Math.max(0.001, lickAmt * w * wf), Math.max(0.001, lickAmt * h * hf), 1);
+          spr.position.x = Math.sin(now * speed * 0.5 + phase) * sway * lickAmt; // gentle sideways lean
+        }
       }
     }
   }
@@ -3442,20 +3535,16 @@ export class Renderer3D {
     this.buildingMeshes.clear();
     for (const [, flame] of this.flames) this.disposeFlame(flame);
     this.flames.clear();
-    // The template every flame lick clones from (`cloneFlameLick`) — disposed exactly once here,
-    // never per-building; the `disposeFlame` loop just above only removes the clones from the
-    // scene, since they share this template's geometry/materials rather than owning their own.
-    if (this.flameLickTemplate) {
-      this.flameLickTemplate.traverse((o) => {
-        const m = o as THREE.Mesh;
-        if (!(m as unknown as { isMesh?: boolean }).isMesh) return;
-        m.geometry?.dispose();
-        const mat = m.material;
-        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-        else mat?.dispose();
-      });
-      this.flameLickTemplate = null;
+    // The two shared flame sprite materials (and their canvas textures) every burning building's
+    // sprites reference — disposed exactly once here, never per-building; the `disposeFlame` loop
+    // just above only removes each fire's sprites from the scene, since they share these.
+    for (const mat of [this.flameMat, this.flameCoreMat]) {
+      if (!mat) continue;
+      mat.map?.dispose();
+      mat.dispose();
     }
+    this.flameMat = null;
+    this.flameCoreMat = null;
     for (const o of [this.ghost, this.selRing, this.workRing, this.marquee, this.boat]) this.scene.remove(o);
     // The facing arrows are rebuilt by `init`, so the old ones have to go with the rest of the
     // map. They draw with `depthTest: false` — a leaked one is not merely still there, it is still

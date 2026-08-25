@@ -1512,15 +1512,21 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
       const hx = hut.x;
       const hy = hut.y;
       const { w: fw, h: fh } = g.debugFootprint('gatherer');
+      // The exact tile indices this hut's own footprint covers — checked directly rather than
+      // the whole village's `s.scorched` list, which an unrelated neighbour catching fire (the
+      // same spread roll `resolveFire` always makes) could also add to on its own schedule,
+      // unconnected to whether *this* footprint's scar cleared.
+      const footprintTiles: number[] = [];
+      for (let dy = 0; dy < fh; dy++) for (let dx = 0; dx < fw; dx++) footprintTiles.push((hy + dy) * s.w + (hx + dx));
       g.debugIgnite(hut.id);
       // No well anywhere — untreated, so `fireHealth` burns straight through and destroys it.
       g.debugAdvance(g.debugFireBurnSeconds() + 1);
-      const scorchedAfterBurn = (s.scorched ?? []).length;
+      const scorchedAfterBurn = footprintTiles.filter((i) => (s.scorched ?? []).includes(i)).length;
       // Clear the rubble so the plot is free to build on again.
       g.debugSetBuilders(6);
       for (let i = 0; i < 3000 && s.buildings.some((b: any) => b.id === hut.id); i++) g.debugAdvance(0.2);
       const id2 = g.debugPlace('gatherer', hx, hy);
-      const stillScorched = (s.scorched ?? []).length;
+      const stillScorched = footprintTiles.filter((i) => (s.scorched ?? []).includes(i)).length;
       return { footprintArea: fw * fh, scorchedAfterBurn, placedAgain: id2 != null, stillScorched };
     }, placeBuilt);
     expect(out.scorchedAfterBurn).toBe(out.footprintArea);

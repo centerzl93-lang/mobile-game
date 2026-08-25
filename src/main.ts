@@ -31,6 +31,18 @@ import {
   FIRE_DOUSE_TRIPS_NEEDED,
   FIRE_RESPONSE_RADIUS,
   fireIntensity,
+  FAMINE_CHANCE_PER_SUMMER,
+  FAMINE_SEVERE_CHANCE,
+  FAMINE_PENALTY,
+  FAMINE_COOLDOWN_FACTOR,
+  FamineSeverity,
+  FLOOD_CHANCE_PER_SPRING,
+  FLOOD_RISK_RADIUS,
+  FLOOD_DAMAGE_CHANCE,
+  FLOOD_COOLDOWN_FACTOR,
+  FLOOD_DEATH_CHANCE,
+  FloodRiskTier,
+  DamageSeverity,
   FESTIVAL_FOOD,
   POLICY_META,
   POLICIES,
@@ -135,6 +147,11 @@ import {
   eligibleRanchTargets,
   igniteBuilding,
   fireSeason,
+  famineSeason,
+  floodSeason,
+  debugTriggerFamine,
+  debugFloodRisk,
+  debugFloodDamageBuilding,
   bridgeFireSeason,
   acceptNomads,
   rejectNomads,
@@ -1518,7 +1535,21 @@ class Game {
             tone: water >= FIRE_DOUSE_TRIPS_NEEDED ? 'good' : 'warn',
           });
         } else {
+          // Same DAMAGED state, whatever caused it — but the sheet says which, and adds the one
+          // line particular to a home (uninhabitable) or a workplace (paused), so the player never
+          // has to guess why a building that isn't on fire still isn't working.
+          const reason = b.damageReason === 'flood' ? 'Flood damage' : b.damageReason === 'fire' ? 'Fire damage' : 'Damage';
           rows.push({ label: 'Status', value: '⚠️ Damaged — awaiting repair', tone: 'bad' });
+          rows.push({ label: 'Cause', value: reason });
+          if (b.damageSeverity) {
+            const label = b.damageSeverity === 'severe' ? 'Severe' : b.damageSeverity === 'moderate' ? 'Moderate' : 'Minor';
+            rows.push({ label: 'Severity', value: label });
+          }
+          if (isDwelling(b.type)) {
+            rows.push({ label: '—', value: 'Uninhabitable — residents are temporarily homeless', tone: 'warn' });
+          } else if (isWorkplace(b.type)) {
+            rows.push({ label: '—', value: 'Production paused — workers reassigned until repaired', tone: 'warn' });
+          }
           const cost = repairCostOf(b);
           const pct = Math.floor(repairFraction(b) * 100);
           rows.push({ label: 'Repair', value: `${pct}% — builders will finish it` });
@@ -1592,6 +1623,15 @@ class Game {
           rows.push({ label: 'Crop', value: b.crop ? `${CROP_META[b.crop].emoji} ${CROP_META[b.crop].label}` : '🌱 No seed — buy from a trader' });
           rows.push({ label: 'Field', value: `${footprintW(b)}×${footprintH(b)}` });
           rows.push({ label: 'Growth', value: `${Math.round((b.growth ?? 0) * 100)}%` });
+          // A famine only ever docks the crop actually harvested at Autumn (see `endSeason`), but
+          // it's set the moment it's warned about — Summer — so this reads reduced for the whole
+          // stretch the player has to react in, not just the instant the harvest lands short.
+          const famineFactor = this.state.famine ? FAMINE_PENALTY[this.state.famine.severity] : 1;
+          rows.push({
+            label: 'Crop Output',
+            value: famineFactor < 1 ? `${Math.round(famineFactor * 100)}% — Reason: Famine` : '100%',
+            tone: famineFactor < 1 ? 'bad' : undefined,
+          });
         }
         if (b.type === 'ranch') {
           const a = ANIMAL_META[b.animal ?? 'cattle'];
@@ -1859,6 +1899,84 @@ class Game {
   debugIgnite(id: number): void {
     const b = this.state.buildings.find((x) => x.id === id);
     if (b) igniteBuilding(this.state, b, this.log);
+  }
+
+  /** Debug/testing helper: run the once-per-summer famine roll without waiting for the season. */
+  debugFamineSeason(): void {
+    famineSeason(this.state, this.log);
+  }
+
+  /** Debug/testing helper: set a famine brewing directly, at a given severity — see `s.famine`. */
+  debugTriggerFamine(severity: FamineSeverity = 'moderate'): void {
+    debugTriggerFamine(this.state, severity, this.log);
+  }
+
+  /** Debug/testing helper: the famine currently brewing, or null. */
+  debugFamine(): { severity: FamineSeverity } | null {
+    return this.state.famine ?? null;
+  }
+
+  /** Debug/testing helper: the crop-output multiplier a farm reads right now — 1 with no famine. */
+  debugFamineCropFactor(): number {
+    return this.state.famine ? FAMINE_PENALTY[this.state.famine.severity] : 1;
+  }
+
+  /** Debug/testing helper: base per-summer famine chance, so a test never hard-codes it. */
+  debugFamineChancePerSummer(): number {
+    return FAMINE_CHANCE_PER_SUMMER;
+  }
+
+  /** Debug/testing helper: the odds multiplier a famine the year before leaves this year's roll. */
+  debugFamineCooldownFactor(): number {
+    return FAMINE_COOLDOWN_FACTOR;
+  }
+
+  /** Debug/testing helper: run the once-per-spring flood roll without waiting for the season. */
+  debugFloodSeason(): void {
+    floodSeason(this.state, this.log);
+  }
+
+  /** Debug/testing helper: force a specific building straight to flood-DAMAGED. */
+  debugFloodDamage(id: number): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (b) debugFloodDamageBuilding(this.state, b, this.log);
+  }
+
+  /** Debug/testing helper: the flood-risk distance/tier `floodSeason` would judge a building at. */
+  debugFloodRisk(id: number): { dist: number; tier: FloodRiskTier | null } {
+    const b = this.state.buildings.find((x) => x.id === id);
+    return b ? debugFloodRisk(this.state, b) : { dist: Infinity, tier: null };
+  }
+
+  /** Debug/testing helper: base per-spring flood chance, so a test never hard-codes it. */
+  debugFloodChancePerSpring(): number {
+    return FLOOD_CHANCE_PER_SPRING;
+  }
+
+  /** Debug/testing helper: how far (tiles) from water a flood can reach at all. */
+  debugFloodRiskRadius(): number {
+    return FLOOD_RISK_RADIUS;
+  }
+
+  /** Debug/testing helper: per-building damage chance at each flood-risk tier. */
+  debugFloodDamageChance(): Record<FloodRiskTier, number> {
+    return { ...FLOOD_DAMAGE_CHANCE };
+  }
+
+  /** Debug/testing helper: the odds multiplier a flood the year before leaves this year's roll. */
+  debugFloodCooldownFactor(): number {
+    return FLOOD_COOLDOWN_FACTOR;
+  }
+
+  /** Debug/testing helper: chance a flood drowns an occupant of a building it damages. */
+  debugFloodDeathChance(): number {
+    return FLOOD_DEATH_CHANCE;
+  }
+
+  /** Debug/testing helper: a damaged building's cosmetic severity, or null if it isn't damaged. */
+  debugDamageSeverity(id: number): DamageSeverity | null {
+    const b = this.state.buildings.find((x) => x.id === id);
+    return b?.damageSeverity ?? null;
   }
 
   /** Debug/testing helper: the tile the placement ghost is standing on right now. */

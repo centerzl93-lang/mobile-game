@@ -50,6 +50,22 @@ export function storageNodes(s: GameState): Building[] {
   return s.buildings.filter((b) => b.built && (b.type === 'barn' || b.type === 'market'));
 }
 
+/**
+ * Storage a citizen can actually walk into right now — built, and not DAMAGED. A barn or market a
+ * flood has landed on keeps whatever it was holding (see `Building.damaged`) — nothing is deleted
+ * or duplicated — but nobody can fetch from it or drop a load in it until it is repaired, so every
+ * function below that moves goods in or out of a *specific* building works off this list rather
+ * than `storageNodes`.
+ *
+ * The village-wide totals (`totalStored`, `totalStoredAll`, `totalHeldAll`, `freeCapacity`,
+ * `canAffordCost`) deliberately still use `storageNodes` and so still count a damaged building's
+ * stock: the goods are not gone, only unreachable, and reporting them as gone would make the
+ * ledger show a season's stores vanishing into thin air the instant a barn floods.
+ */
+function accessibleStorageNodes(s: GameState): Building[] {
+  return storageNodes(s).filter((b) => !b.damaged);
+}
+
 /** Space taken by what a building holds, in volume (see `RESOURCE_VOLUME`). */
 export function barnLoad(b: Building): number {
   let n = 0;
@@ -127,14 +143,14 @@ export function freeCapacity(s: GameState): number {
 
 /** Nearest storage node that holds at least 1 of `kind`. */
 export function nearestBarnWith(s: GameState, pos: Pos, kind: ResourceKind): Building | null {
-  return nearestHolding(storageNodes(s), pos, kind);
+  return nearestHolding(accessibleStorageNodes(s), pos, kind);
 }
 
 /** Nearest storage node with any free room. */
 export function nearestBarnWithRoom(s: GameState, pos: Pos): Building | null {
   let best: Building | null = null;
   let bestD = Infinity;
-  for (const b of storageNodes(s)) {
+  for (const b of accessibleStorageNodes(s)) {
     if (barnFree(b) <= 0) continue;
     const d = dist2(center(b), pos);
     if (d < bestD) {
@@ -148,7 +164,7 @@ export function nearestBarnWithRoom(s: GameState, pos: Pos): Building | null {
 /** Nearest *barn* (not a market) holding `kind` — used by market vendors restocking. */
 export function nearestBarnOnlyWith(s: GameState, pos: Pos, kind: ResourceKind): Building | null {
   return nearestHolding(
-    s.buildings.filter((b) => b.built && b.type === 'barn'),
+    s.buildings.filter((b) => b.built && b.type === 'barn' && !b.damaged),
     pos,
     kind,
   );
@@ -163,7 +179,7 @@ export function nearestBarnOnlyWith(s: GameState, pos: Pos, kind: ResourceKind):
 export function nearestStockWith(s: GameState, pos: Pos, kind: ResourceKind): Building | null {
   return nearestHolding(
     s.buildings.filter(
-      (b) => b.built && (b.type === 'barn' || b.type === 'trading' || b.type === 'port'),
+      (b) => b.built && !b.damaged && (b.type === 'barn' || b.type === 'trading' || b.type === 'port'),
     ),
     pos,
     kind,
@@ -187,7 +203,7 @@ function nearestHolding(list: Building[], pos: Pos, kind: ResourceKind): Buildin
 /** Remove up to `amount` of `kind` starting from the nearest storage. Returns amount taken. */
 export function takeNearest(s: GameState, pos: Pos, kind: ResourceKind, amount: number): number {
   let need = amount;
-  const list = storageNodes(s)
+  const list = accessibleStorageNodes(s)
     .filter((b) => (b.store[kind] ?? 0) > 0)
     .sort((a, b) => dist2(center(a), pos) - dist2(center(b), pos));
   for (const b of list) {
@@ -204,7 +220,7 @@ export function takeNearest(s: GameState, pos: Pos, kind: ResourceKind, amount: 
 /** Add `amount` of `kind` into the nearest storage with room. Returns leftover not stored. */
 export function addNearest(s: GameState, pos: Pos, kind: ResourceKind, amount: number): number {
   let left = amount;
-  const list = storageNodes(s)
+  const list = accessibleStorageNodes(s)
     .filter((b) => barnFree(b) > 0)
     .sort((a, b) => dist2(center(a), pos) - dist2(center(b), pos));
   for (const b of list) {
@@ -221,7 +237,7 @@ export function addNearest(s: GameState, pos: Pos, kind: ResourceKind, amount: n
 /** Non-spatial removal (eating/heating): take from any storage. Returns shortfall. */
 export function consume(s: GameState, kind: ResourceKind, amount: number): number {
   let need = amount;
-  for (const b of storageNodes(s)) {
+  for (const b of accessibleStorageNodes(s)) {
     if (need <= 0) break;
     const have = b.store[kind] ?? 0;
     const take = Math.min(have, need);

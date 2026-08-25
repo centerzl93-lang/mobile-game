@@ -1801,7 +1801,11 @@ export class Renderer3D {
       if (b.fireTimer) {
         if (!this.flames.has(b.id)) {
           const flame = this.makeFlame();
-          flame.position.set(b.x + fw / 2, TOP + buildingHeight(b.type) * 0.55, b.y + fh / 2);
+          // Above the roofline, not mid-body — a flame centred inside a building's own footprint
+          // sits behind its (opaque, depth-written) walls from every camera angle, so it never
+          // actually reads as visible; the smoke emitters above already place their puff the same
+          // way for the same reason.
+          flame.position.set(b.x + fw / 2, TOP + buildingHeight(b.type) + 0.3, b.y + fh / 2);
           this.scene.add(flame);
           this.flames.set(b.id, flame);
         }

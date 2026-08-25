@@ -745,22 +745,42 @@ export interface Building {
    */
   store: Partial<Record<ResourceKind, number>>;
   /**
-   * Seconds of fire remaining while the building is BURNING (undefined = not on fire). A burning
-   * building stays `built` and standing — it is a wall, not a hole — but is not `disabledByFire`'s
-   * business alone: everything that gates on occupancy/output also checks this. See `processFires`.
+   * Seconds of fire remaining before the safety-net timeout forces a resolution (undefined = not
+   * on fire) — a burning building almost always resolves earlier than this, either doused (see
+   * `fireWater`) or burned down outright (see `fireHealth`). A burning building stays `built` and
+   * standing — it is a wall, not a hole — but is not `disabledByFire`'s business alone: everything
+   * that gates on occupancy/output also checks this. See `processFires`.
    */
   fireTimer?: number;
   /**
-   * Water deliveries landed on this fire so far, against `FIRE_DOUSE_TRIPS_NEEDED` — see
-   * `runFirefighter`/`processFires`. Reset to `undefined` the moment the fire resolves either way;
-   * meaningless while `fireTimer` is unset.
+   * Water deliveries landed on this fire so far. The instant this reaches `FIRE_DOUSE_TRIPS_NEEDED`
+   * the fire is guaranteed out — see `runFirefighter`/`processFires` — unless `fireHealth` had
+   * already burned the building down first. Reset to `undefined` the moment the fire resolves
+   * either way; meaningless while `fireTimer` is unset.
    */
   fireWater?: number;
   /**
-   * DAMAGED: the building survived a fire (`fireTimer` ran out and it was not destroyed) but
-   * cannot function until repaired. Builders repair it exactly as they raise a new site — see
-   * `repairCostOf`/`repairWorkOf` — except the materials land in `repairStore`, not `store`, so a
-   * partly-repaired workshop's leftover production stock is never mistaken for delivered repairs.
+   * Structural health, 0..100, while the building is BURNING (undefined while it isn't). Set to
+   * 100 the instant it catches and worn down every `FIRE_DAMAGE_INTERVAL` seconds the fire keeps
+   * burning, at up to `FIRE_DAMAGE_PER_TICK` — see `processFires`, which scales that rate down as
+   * `fireWater` climbs toward `FIRE_DOUSE_TRIPS_NEEDED`, so real progress on the bucket count is
+   * already slowing the damage, not just racing a clock that ignores it. How long a bucket brigade
+   * takes to finish still directly decides how much of this a building has left when (or whether)
+   * it's saved. Reaching `FIRE_BURNDOWN_HEALTH` burns the building down outright, whatever the
+   * water count. Reset to `undefined` the moment the fire resolves either way.
+   */
+  fireHealth?: number;
+  /**
+   * Seconds accumulated toward the next `FIRE_DAMAGE_INTERVAL` damage tick — see `fireHealth`.
+   * Purely a scheduling counter; meaningless while `fireTimer` is unset.
+   */
+  fireDamageAccum?: number;
+  /**
+   * DAMAGED: the building survived a fire (doused to `FIRE_DOUSE_TRIPS_NEEDED` before `fireHealth`
+   * ran out) but cannot function until repaired. Builders repair it exactly as they raise a new
+   * site — see `repairCostOf`/`repairWorkOf` — except the materials land in `repairStore`, not
+   * `store`, so a partly-repaired workshop's leftover production stock is never mistaken for
+   * delivered repairs.
    */
   damaged?: boolean;
   /**
@@ -3008,15 +3028,39 @@ export const HOSPITAL_MEDICINE_PER_CITIZEN = 0.15;
 export const MED_LOAD = 5; // medicine produced per herbalist work cycle (× forest)
 export const FIRE_CHANCE = 0.05; // base chance per season a building ignites
 /**
- * How many water deliveries a fire needs, from any well, before the building is even in the
- * running to survive. Below this it is an *untreated* fire — see `FIRE_SURVIVAL_CHANCE` below and
+ * How many water deliveries a fire needs, from any well, before it is put out for good. Reaching
+ * this guarantees the fire is extinguished the instant the last load lands — see
  * `runFirefighter`/`processFires` in `simulation.ts`, which is where the deliveries actually
- * happen: a villager round-trips between the nearest well to the fire and the fire itself, and how
- * many trips land before `FIRE_BURN_SECONDS` runs out is purely a function of how far that well is
- * and how many hands are free to make the trip. Wells no longer prevent ignition on their own —
- * this is the only thing distance to one now buys a village.
+ * happen: a villager round-trips between the nearest well to the fire and the fire itself. The one
+ * thing that guarantee doesn't cover is a building that has already burned down to
+ * `FIRE_BURNDOWN_HEALTH` first — see `fireHealth` — so how many trips land *before* that happens is
+ * purely a function of how far that well is and how many hands are free to make the trip. Wells no
+ * longer prevent ignition on their own — this is the only thing distance to one now buys a village.
  */
-export const FIRE_DOUSE_TRIPS_NEEDED = 3;
+export const FIRE_DOUSE_TRIPS_NEEDED = 12;
+/**
+ * How often (seconds) a burning building takes another hit of structural damage — see
+ * `fireHealth`/`FIRE_DAMAGE_PER_TICK`. Small and frequent rather than one lump at some later
+ * checkpoint, so the building's condition visibly worsens for exactly as long as the fire keeps
+ * burning, and a bucket brigade that lands its loads faster demonstrably saves more building.
+ */
+export const FIRE_DAMAGE_INTERVAL = 3;
+/**
+ * The *ceiling* on structural health lost every `FIRE_DAMAGE_INTERVAL` a building keeps burning
+ * with no water on it at all, out of the 100 `fireHealth` starts at — see `fireDamagePerTick` for
+ * the masonry/policy multipliers on top of it. `processFires` scales this down as water arrives —
+ * proportionally to how close the bucket count is to `FIRE_DOUSE_TRIPS_NEEDED` — so a brigade that
+ * is only partway there is already slowing the damage, not merely racing an unmoved clock; a fire
+ * nobody answers at all takes the full rate the whole time and costs the building outright.
+ */
+export const FIRE_DAMAGE_PER_TICK = 3;
+/**
+ * The `fireHealth` floor: a building that burns down to this many points (out of 100) collapses
+ * outright, whatever its water count is doing at that moment — see `processFires`. This is what
+ * makes a slow bucket brigade a real risk again even once `FIRE_DOUSE_TRIPS_NEEDED` is in reach:
+ * arriving after the building has already burned through is too late.
+ */
+export const FIRE_BURNDOWN_HEALTH = 20;
 /**
  * How far (tiles) a villager will drop what they're doing — their job, their break, a laborer's
  * harvesting or road-laying — to go help fight a fire. This is deliberately not the free-labour
@@ -3056,23 +3100,20 @@ export function isStoneBuilt(type: BuildingType): boolean {
   return STONE_BUILT.includes(type);
 }
 /**
- * How long a building spends BURNING before the outcome (survive/destroy) is decided.
+ * A safety-net cap on how long a building can spend BURNING. In practice almost every fire
+ * resolves well before this: doused to `FIRE_DOUSE_TRIPS_NEEDED` (guaranteed out) or burned down to
+ * `FIRE_BURNDOWN_HEALTH` (guaranteed destroyed) both cut it short — see `processFires`. This is
+ * only what forces a resolution if, somehow, neither has happened yet: an untreated fire whose
+ * `fireHealth` hasn't quite reached the floor still burns down the instant this runs out.
  *
- * Tied to `SEASON_LENGTH` rather than picked out of the air: an eighth of a season is ~75 real
+ * Tied to `SEASON_LENGTH` rather than picked out of the air: a quarter of a season is 150 real
  * seconds at 1× — long enough that a player who is actually looking at the village (the game
  * itself drops back to 1× the moment anything catches — see `disasterAlert`) has time to notice
- * the 🔥, free up hands to fight it, and reassign whoever the building just let go — but short
- * enough that a fire is still a crisis, not a slow leak the player can ignore.
+ * the 🔥, free up hands to fight it, and reassign whoever the building just let go, and for a real
+ * bucket brigade to land `FIRE_DOUSE_TRIPS_NEEDED` loads even from a well that isn't right next
+ * door — but short enough that a fire is still a crisis, not a slow leak the player can ignore.
  */
-export const FIRE_BURN_SECONDS = SEASON_LENGTH / 8;
-/**
- * Chance a fire that got `FIRE_DOUSE_TRIPS_NEEDED` water in time survives as DAMAGED rather than
- * being destroyed outright. Masonry halves the destroy chance the same way it halves everything
- * else about fire — see `STONE_FIRE_FACTOR` — so a stone building is still more likely to come
- * through it than a timber one. An *untreated* fire (see `FIRE_DOUSE_TRIPS_NEEDED`) never reaches
- * this roll at all — it always burns down.
- */
-export const FIRE_SURVIVAL_CHANCE = 0.55;
+export const FIRE_BURN_SECONDS = SEASON_LENGTH / 4;
 /** Floor on `fireIntensity` while a building is still burning — a fire is never drawn as fully
  *  out until it actually is; this is what keeps the very first frame from reading as unlit. */
 export const FIRE_MIN_INTENSITY = 0.16;

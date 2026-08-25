@@ -1282,7 +1282,11 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
     const out = await page.evaluate(
       ([placeSrc, placeNearSrc]) => {
         const g = (window as any).__village;
-        g.startNewGame('small', 'easy', false);
+        // A pinned seed, not the default random one — reaching `FIRE_DOUSE_TRIPS_NEEDED` takes a
+        // real bucket-brigade stretch of simulated time, and this seed is known to lay out a
+        // reachable well; an unseeded village occasionally scatters one out of reach in the time
+        // this test allows.
+        g.startNewGame('small', 'easy', false, undefined, 1000);
         const s = g.state; // captured *after* startNewGame — it replaces g.state outright
         // Two huts, not one, so the proof doesn't ride on a single trip landing exactly on time:
         // six employed hands give the brigade the same kind of margin the other fire-recovery
@@ -1322,15 +1326,17 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
           c.y = spot.y;
         }
         g.debugIgnite(house.id);
-        const needed = g.debugFireDouseTripsNeeded();
         const burn = g.debugFireBurnSeconds();
-        for (let i = 0; i < burn / 0.2 && (house.fireWater ?? 0) < needed; i++) g.debugAdvance(0.2);
+        // Reaching `FIRE_DOUSE_TRIPS_NEEDED` resolves the fire immediately (see `processFires`),
+        // so wait out `fireTimer` itself rather than polling `fireWater` — the moment the brigade
+        // lands the last load, `fireWater` is reset to `undefined` in the very same tick.
+        for (let i = 0; i < burn / 0.2 && house.fireTimer; i++) g.debugAdvance(0.2);
         // Every citizen left in the village still has a `jobId` at one of the two huts — none of
         // them were ever evicted, only diverted for the emergency (see
         // `runFirefighter`/`nearbyFire`) — so this also confirms the water didn't cost anyone
         // their post.
         const allStillEmployed = s.citizens.every((c: any) => c.age < 16 || jobIds.has(c.jobId));
-        return { doused: (house.fireWater ?? 0) >= needed, allStillEmployed };
+        return { doused: !!house.damaged, allStillEmployed };
       },
       [placeBuilt, placeBuiltNear],
     );
@@ -1393,7 +1399,8 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
     const out = await page.evaluate(
       ([placeSrc, placeNearSrc]) => {
         const g = (window as any).__village;
-        g.startNewGame('small', 'easy', false);
+        // A pinned seed, not the default random one — see the note in "employed workers...".
+        g.startNewGame('small', 'easy', false, undefined, 1000);
         const s = g.state;
         const barn = s.buildings.find((b: any) => b.type === 'barn');
         const hut = eval(placeNearSrc)(g, 'gatherer', barn.x, barn.y);
@@ -1422,23 +1429,15 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
           c.y = spot.y;
         }
         g.debugIgnite(hut.id);
-        const needed = g.debugFireDouseTripsNeeded();
         const burn = g.debugFireBurnSeconds();
         // Let the real stream run the firefighting itself — the point of this test is that a
-        // close well and free hands are enough to hit the target unaided.
-        let elapsed = 0;
-        for (; elapsed < burn && (hut.fireWater ?? 0) < needed; elapsed += 0.2) g.debugAdvance(0.2);
-        const dousedInTime = (hut.fireWater ?? 0) >= needed;
-        // Pinned high only for the resolving roll itself: dousedInTime already decided whether
-        // that roll even runs — an untreated fire never gets it (see `processFires`).
-        g.debugPinRandom(0.99);
-        try {
-          g.debugAdvance(burn - elapsed + 1);
-        } finally {
-          g.debugPinRandom(null);
-        }
+        // close well and free hands are enough to hit the target unaided. Reaching
+        // `FIRE_DOUSE_TRIPS_NEEDED` resolves the fire immediately (see `processFires`), so wait
+        // out `fireTimer` itself rather than polling `fireWater`, which is reset to `undefined`
+        // the same tick the brigade lands its last load.
+        for (let elapsed = 0; elapsed < burn && hut.fireTimer; elapsed += 0.2) g.debugAdvance(0.2);
         return {
-          dousedInTime,
+          dousedInTime: !hut.fireTimer && hut.damaged === true,
           wellId: well.id,
           damaged: hut.damaged,
           built: hut.built,
@@ -1463,15 +1462,10 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
       const hut = eval(placeSrc)(g, 'gatherer');
-      // No well anywhere and no builders assigned — nobody can or will fetch water.
+      // No well anywhere and no builders assigned — nobody can or will fetch water, so
+      // `fireHealth` burns straight through to `FIRE_BURNDOWN_HEALTH` — see `processFires`.
       g.debugIgnite(hut.id);
-      // Pinned high — if the survival roll ran at all, this would save it. It must never run.
-      g.debugPinRandom(0.99);
-      try {
-        g.debugAdvance(g.debugFireBurnSeconds() + 1);
-      } finally {
-        g.debugPinRandom(null);
-      }
+      g.debugAdvance(g.debugFireBurnSeconds() + 1);
       return { damaged: hut.damaged, razed: !!hut.razed, built: hut.built };
     }, placeBuilt);
     expect(out.damaged).toBe(false);
@@ -1519,12 +1513,8 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
       const hy = hut.y;
       const { w: fw, h: fh } = g.debugFootprint('gatherer');
       g.debugIgnite(hut.id);
-      g.debugPinRandom(0.01); // untreated fire — guaranteed destroy
-      try {
-        g.debugAdvance(g.debugFireBurnSeconds() + 1);
-      } finally {
-        g.debugPinRandom(null);
-      }
+      // No well anywhere — untreated, so `fireHealth` burns straight through and destroys it.
+      g.debugAdvance(g.debugFireBurnSeconds() + 1);
       const scorchedAfterBurn = (s.scorched ?? []).length;
       // Clear the rubble so the plot is free to build on again.
       g.debugSetBuilders(6);
@@ -1603,7 +1593,8 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
     const out = await page.evaluate(
       ([placeSrc, placeNearSrc]) => {
         const g = (window as any).__village;
-        g.startNewGame('small', 'easy', false);
+        // A pinned seed, not the default random one — see the note in "employed workers...".
+        g.startNewGame('small', 'easy', false, undefined, 1000);
         const s = g.state;
         const barn = s.buildings.find((b: any) => b.type === 'barn');
         const hut = eval(placeNearSrc)(g, 'gatherer', barn.x, barn.y);
@@ -1623,16 +1614,10 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
         }
         const cost = g.debugRepairCost(hut.id);
         g.debugIgnite(hut.id);
-        const needed = g.debugFireDouseTripsNeeded();
         const burn = g.debugFireBurnSeconds();
-        let elapsed = 0;
-        for (; elapsed < burn && (hut.fireWater ?? 0) < needed; elapsed += 0.2) g.debugAdvance(0.2);
-        g.debugPinRandom(0.99); // survive the resolving roll, now that it's earned the chance to
-        try {
-          g.debugAdvance(burn - elapsed + 1);
-        } finally {
-          g.debugPinRandom(null);
-        }
+        // Reaching `FIRE_DOUSE_TRIPS_NEEDED` resolves the fire immediately and guarantees it
+        // survives as DAMAGED (see `processFires`) — wait out `fireTimer` itself.
+        for (let elapsed = 0; elapsed < burn && hut.fireTimer; elapsed += 0.2) g.debugAdvance(0.2);
         if (!hut.damaged) throw new Error('expected the well-served hut to survive as damaged');
         const woodBefore = g.debugTotalHeld('wood');
         const stoneBefore = g.debugTotalHeld('stone');
@@ -1679,12 +1664,8 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
       const salvage = g.debugSalvage('gatherer'); // REFUND_FRACTION of the build cost
       g.debugIgnite(hut.id);
       const burn = g.debugFireBurnSeconds();
-      g.debugPinRandom(0.01); // destroy roll well under any destroy chance in play
-      try {
-        g.debugAdvance(burn + 1);
-      } finally {
-        g.debugPinRandom(null);
-      }
+      // No well anywhere — untreated, so `fireHealth` burns straight through and destroys it.
+      g.debugAdvance(burn + 1);
       const justBurned = {
         built: hut.built,
         razed: hut.razed,
@@ -1725,12 +1706,13 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
           return n;
         };
         const run = (survive: boolean) => {
-          g.startNewGame('small', 'easy', false);
+          // A pinned seed, not the default random one — see the note in "employed workers...".
+          g.startNewGame('small', 'easy', false, undefined, 1000);
           const s = g.state;
-          // A doused fire is the only way to reach the survival roll at all — see the "untreated
-          // fire" test — so the survive run needs an actual bucket brigade, close to the barn so
-          // the free hands `debugSetBuilders` raises are near enough to reach it (see the note in
-          // "a bucket brigade...").
+          // Reaching `FIRE_DOUSE_TRIPS_NEEDED` guarantees the fire survives as DAMAGED — see
+          // `processFires` — so the survive run needs an actual bucket brigade, close to the barn
+          // so the free hands `debugSetBuilders` raises are near enough to reach it (see the note
+          // in "a bucket brigade...").
           const barn = s.buildings.find((b: any) => b.type === 'barn');
           const hut = survive ? eval(placeNearSrc)(g, 'gatherer', barn.x, barn.y) : eval(placeSrc)(g, 'gatherer');
           if (survive) {
@@ -1748,18 +1730,13 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
           }
           const before = totalWood();
           g.debugIgnite(hut.id);
-          const needed = g.debugFireDouseTripsNeeded();
           const burn = g.debugFireBurnSeconds();
-          let elapsed = 0;
-          if (survive) {
-            for (; elapsed < burn && (hut.fireWater ?? 0) < needed; elapsed += 0.2) g.debugAdvance(0.2);
-          }
-          g.debugPinRandom(survive ? 0.99 : 0.01);
-          try {
-            g.debugAdvance(burn - elapsed + 1);
-          } finally {
-            g.debugPinRandom(null);
-          }
+          // Wait out `fireTimer` rather than polling `fireWater` — a doused fire resolves the
+          // instant the last load lands (see `processFires`), and an untreated one resolves once
+          // `fireHealth` burns through. Stop there rather than padding on: every extra second past
+          // resolution is one more chance for the rest of the village's own, unrelated production to
+          // land a delivery inside the measurement window.
+          for (let elapsed = 0; elapsed < burn + 1 && hut.fireTimer; elapsed += 0.2) g.debugAdvance(0.2);
           // Surviving spends nothing by itself — only a completed repair does, and repair is not
           // run here — so the total must not have moved at all. Destroyed hands back
           // REFUND_FRACTION of the cost, into the rubble this same total already counts.
@@ -1779,7 +1756,8 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
     const out = await page.evaluate(
       ([placeSrc, placeNearSrc]) => {
         const g = (window as any).__village;
-        g.startNewGame('small', 'easy', false);
+        // A pinned seed, not the default random one — see the note in "employed workers...".
+        g.startNewGame('small', 'easy', false, undefined, 1000);
         const s = g.state;
         const barn = s.buildings.find((b: any) => b.type === 'barn');
         const hut = eval(placeNearSrc)(g, 'gatherer', barn.x, barn.y);
@@ -1796,26 +1774,22 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
           c.y = spot.y;
         }
         g.debugIgnite(hut.id);
-        const needed = g.debugFireDouseTripsNeeded();
         const burn = g.debugFireBurnSeconds();
-        let elapsed = 0;
-        for (; elapsed < burn && (hut.fireWater ?? 0) < needed; elapsed += 0.2) g.debugAdvance(0.2);
-        g.debugPinRandom(0.99); // leave it DAMAGED, the shape a pre-rework save never had
-        try {
-          g.debugAdvance(burn - elapsed + 1);
-        } finally {
-          g.debugPinRandom(null);
-        }
+        // Reaching `FIRE_DOUSE_TRIPS_NEEDED` resolves the fire immediately and guarantees it
+        // survives as DAMAGED (see `processFires`) — the shape a pre-rework save never had.
+        for (let elapsed = 0; elapsed < burn && hut.fireTimer; elapsed += 0.2) g.debugAdvance(0.2);
         if (!hut.damaged) throw new Error('expected the well-served hut to be damaged going into the save');
         if (!g.debugSaveSlot(0)) throw new Error('save failed');
         const env = JSON.parse(g.debugRawSlot(0)!);
         // Simulate a save written before `damaged`/`repairProgress`/`repairStore`/`fireWater`/
-        // `waterLoad` existed.
+        // `fireHealth`/`fireDamageAccum`/`waterLoad` existed.
         for (const b of env.state.buildings) {
           delete b.damaged;
           delete b.repairProgress;
           delete b.repairStore;
           delete b.fireWater;
+          delete b.fireHealth;
+          delete b.fireDamageAccum;
         }
         for (const c of env.state.citizens) delete c.waterLoad;
         g.debugWriteRawSlot(0, JSON.stringify(env));
@@ -6971,11 +6945,11 @@ test.describe('policies', () => {
       g.startNewGame('small', 'easy', false);
       eval(mk)(g, 1);
       const read = () => ({
-        fireDoused: g.debugFireDestroyChance('house', true),
-        fireUntreated: g.debugFireDestroyChance('house', false),
+        fireDamagePerTick: g.debugFireDamagePerTick('house'),
         flood: g.debugFloodDamageChance(),
         worker: g.debugWorkerPolicyFactor(),
         fireBurnSeconds: g.debugFireBurnSeconds(),
+        fireDouseTripsNeeded: g.debugFireDouseTripsNeeded(),
         floodChancePerSpring: g.debugFloodChancePerSpring(),
       });
       const before = read();
@@ -6984,16 +6958,20 @@ test.describe('policies', () => {
       return { before, after };
     }, hall);
 
-    expect(out.after.fireDoused / out.before.fireDoused, 'a doused fire destroys 30% less often').toBeCloseTo(0.7, 5);
     expect(
-      out.after.fireUntreated / out.before.fireUntreated,
-      'an untreated fire is softened the same way',
+      out.after.fireDamagePerTick / out.before.fireDamagePerTick,
+      'a burning building takes 30% less structural damage per tick',
     ).toBeCloseTo(0.7, 5);
     for (const tier of Object.keys(out.before.flood)) {
       expect(out.after.flood[tier] / out.before.flood[tier], `${tier}-tier flood damage down 30%`).toBeCloseTo(0.7, 5);
     }
     expect(out.after.worker, 'production down 10%, not 8%').toBeCloseTo(0.9, 5);
-    expect(out.after.fireBurnSeconds, 'never touches how long a fire burns').toBe(out.before.fireBurnSeconds);
+    expect(out.after.fireBurnSeconds, 'never touches the safety-net cap on how long a fire burns').toBe(
+      out.before.fireBurnSeconds,
+    );
+    expect(out.after.fireDouseTripsNeeded, 'never touches how much water puts a fire out').toBe(
+      out.before.fireDouseTripsNeeded,
+    );
     expect(out.after.floodChancePerSpring, 'never touches whether a flood happens at all').toBe(
       out.before.floodChancePerSpring,
     );

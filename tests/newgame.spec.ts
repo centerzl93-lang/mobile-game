@@ -6526,27 +6526,37 @@ test.describe('a field is priced by its size', () => {
   });
 });
 
+/**
+ * A standing, staffed Town Hall with `n` clerks at their desks. Module-level (not nested in one
+ * `describe`) so both `'policies'` and `'Town Hall uniqueness'` below can build one the same way.
+ */
+const hall = `(g, n) => {
+  const s = g.state;
+  g.debugAfford('townhall');
+  const barn = s.buildings.find((b) => b.type === 'barn');
+  let th = null;
+  for (let r = 3; r < 26 && !th; r++)
+    for (let dy = -r; dy <= r && !th; dy++)
+      for (let dx = -r; dx <= r && !th; dx++)
+        if (g.debugCanPlace('townhall', barn.x + dx, barn.y + dy).ok) {
+          const id = g.debugPlace('townhall', barn.x + dx, barn.y + dy);
+          if (id != null) th = s.buildings.find((b) => b.id === id);
+        }
+  th.built = true;
+  th.progress = g.debugBuildWork('townhall');
+  th.desiredWorkers = n;
+  // Sit clerks at the desks directly: this is about the rule, not about hiring. Still stamp each
+  // one's own \`jobId\` to match — \`assignHomesAndJobs\` reads \`b.workers\` for who is *hired*, but
+  // reads \`c.jobId\` (via \`countFreeAdults\`/the builder pool) for who is *free*, and a test that
+  // ticks the sim (not just reads policy state) needs those to agree or the clerks get double-booked
+  // as builders too, on top of being unable to leave their desks.
+  const clerks = s.citizens.filter((c) => c.age >= 16).slice(0, n);
+  th.workers = clerks.map((c) => c.id);
+  for (const c of clerks) c.jobId = th.id;
+  return th;
+}`;
+
 test.describe('policies', () => {
-  /** A standing, staffed Town Hall with `n` clerks at their desks. */
-  const hall = `(g, n) => {
-    const s = g.state;
-    g.debugAfford('townhall');
-    const barn = s.buildings.find((b) => b.type === 'barn');
-    let th = null;
-    for (let r = 3; r < 26 && !th; r++)
-      for (let dy = -r; dy <= r && !th; dy++)
-        for (let dx = -r; dx <= r && !th; dx++)
-          if (g.debugCanPlace('townhall', barn.x + dx, barn.y + dy).ok) {
-            const id = g.debugPlace('townhall', barn.x + dx, barn.y + dy);
-            if (id != null) th = s.buildings.find((b) => b.id === id);
-          }
-    th.built = true;
-    th.progress = g.debugBuildWork('townhall');
-    th.desiredWorkers = n;
-    // Sit clerks at the desks directly: this is about the rule, not about hiring.
-    th.workers = s.citizens.filter((c) => c.age >= 16).slice(0, n).map((c) => c.id);
-    return th;
-  }`;
 
   test('a rule needs a clerk to keep it, and lapses when the desk empties', async ({ page }) => {
     await open2d(page);
@@ -6660,6 +6670,450 @@ test.describe('policies', () => {
     expect(out.held, 'one clerk is enough').toBe(true);
     expect(out.ate, 'it was paid for in food').toBeGreaterThan(50);
     expect(out.happyAfter, 'and the village enjoyed it').toBeGreaterThan(out.happyBefore);
+  });
+
+  test('every one of the eight rules enacts, lapses, reactivates, and repeals while lapsed', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const th = eval(mk)(g, 1);
+      const adult = s.citizens.filter((c: any) => c.age >= 16).map((c: any) => c.id)[0];
+      const results: any[] = [];
+      for (const id of g.debugAllPolicyIds()) {
+        th.workers = [adult];
+        const enactedOk = g.debugSetPolicy(id, true);
+        const afterEnact = g.debugPolicies();
+
+        th.workers = []; // the desk empties — the rule should lapse, not be forgotten
+        const afterLapse = g.debugPolicies();
+
+        th.workers = [adult]; // and come back on its own once a clerk returns
+        const afterRestaff = g.debugPolicies();
+
+        th.workers = []; // repeal is checked lapsed, since it must never need a staffed desk
+        g.debugSetPolicy(id, false);
+        const afterRepeal = g.debugPolicies();
+
+        results.push({ id, enactedOk, afterEnact, afterLapse, afterRestaff, afterRepeal });
+      }
+      return results;
+    }, hall);
+
+    expect(out.length, 'all eight standing rules were swept').toBe(8);
+    for (const r of out) {
+      expect(r.enactedOk, `${r.id} enacts with a clerk free`).toBe(true);
+      expect(r.afterEnact.active, `${r.id} is active once enacted`).toContain(r.id);
+      expect(r.afterLapse.active, `${r.id} lapses once the desk empties`).not.toContain(r.id);
+      expect(r.afterLapse.enacted, `${r.id} is still remembered while lapsed`).toContain(r.id);
+      expect(r.afterRestaff.active, `${r.id} reactivates once a clerk returns, unprompted`).toContain(r.id);
+      expect(r.afterRepeal.enacted, `${r.id} can be repealed while lapsed`).not.toContain(r.id);
+    }
+  });
+
+  test('Rationing costs happiness and Long Hours costs health, and neither leaks into the other', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      // Same seed, same hall staffed every run (so the "two clerks off the job board" cost is
+      // identical in all three) — the only variable is which rule, if any, is enacted. A few
+      // `debugEndSeason` calls converge `lives`' wellbeing targets (it drifts 25% of the gap per
+      // call) without waiting through real season-length ticks, and with disasters off nothing
+      // else moves the population in between, so the three runs stay directly comparable.
+      const run = (policy: string | null) => {
+        g.startNewGame('small', 'easy', false, 0, 4242);
+        const s = g.state;
+        eval(mk)(g, 1);
+        if (policy) g.debugSetPolicy(policy, true);
+        for (let i = 0; i < 8; i++) g.debugEndSeason();
+        const avg = (key: 'happiness' | 'health') =>
+          s.citizens.reduce((t: number, c: any) => t + c[key], 0) / s.citizens.length;
+        return { happiness: avg('happiness'), health: avg('health'), pop: s.citizens.length };
+      };
+      return { plain: run(null), rationed: run('rationing'), longHours: run('longHours') };
+    }, hall);
+
+    expect(out.rationed.pop, 'a comparable population').toBe(out.plain.pop);
+    expect(out.longHours.pop, 'a comparable population').toBe(out.plain.pop);
+    const rationHappyDrop = out.plain.happiness - out.rationed.happiness;
+    expect(rationHappyDrop, 'Rationing settles happiness about 8 lower').toBeGreaterThan(5);
+    expect(rationHappyDrop).toBeLessThan(11);
+    expect(Math.abs(out.plain.health - out.rationed.health), 'and leaves health alone').toBeLessThan(1);
+    const hoursHealthDrop = out.plain.health - out.longHours.health;
+    expect(hoursHealthDrop, 'Long Hours settles health about 6 lower').toBeGreaterThan(4);
+    expect(hoursHealthDrop).toBeLessThan(8);
+    expect(Math.abs(out.plain.happiness - out.longHours.happiness), 'and leaves happiness alone').toBeLessThan(1);
+  });
+
+  test('Long Hours raises worker output only, and never builder speed', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      eval(mk)(g, 1);
+      const before = { worker: g.debugWorkerPolicyFactor(), builder: g.debugBuilderPolicyFactor() };
+      g.debugSetPolicy('longHours', true);
+      const after = { worker: g.debugWorkerPolicyFactor(), builder: g.debugBuilderPolicyFactor() };
+      return { before, after };
+    }, hall);
+
+    expect(out.before).toEqual({ worker: 1, builder: 1 });
+    expect(out.after.worker, 'workers produce 12% more').toBeCloseTo(1.12, 5);
+    expect(out.after.builder, 'builder/construction/repair speed is untouched').toBeCloseTo(1, 10);
+  });
+
+  test('Public Works speeds builders, costs normal workers, and Long Hours adds nothing to it', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      eval(mk)(g, 2); // two clerks — room for both rules at once
+      const base = { worker: g.debugWorkerPolicyFactor(), builder: g.debugBuilderPolicyFactor() };
+      g.debugSetPolicy('publicWorks', true);
+      const pwOnly = { worker: g.debugWorkerPolicyFactor(), builder: g.debugBuilderPolicyFactor() };
+      g.debugSetPolicy('longHours', true);
+      const both = { worker: g.debugWorkerPolicyFactor(), builder: g.debugBuilderPolicyFactor() };
+      g.debugSetPolicy('publicWorks', false);
+      const longHoursOnly = { worker: g.debugWorkerPolicyFactor(), builder: g.debugBuilderPolicyFactor() };
+      return { base, pwOnly, both, longHoursOnly };
+    }, hall);
+
+    expect(out.base).toEqual({ worker: 1, builder: 1 });
+    expect(out.pwOnly.builder, 'Public Works speeds builders 20%').toBeCloseTo(1.2, 5);
+    expect(out.pwOnly.worker, 'and costs normal workers 10%').toBeCloseTo(0.9, 5);
+    expect(out.longHoursOnly.builder, 'Long Hours alone never touches builder speed').toBeCloseTo(1, 10);
+    expect(out.longHoursOnly.worker, 'Long Hours alone raises worker output 12%').toBeCloseTo(1.12, 5);
+    // The explicit interaction the design calls for: stacked, builder speed is Public Works' own
+    // bonus alone (Long Hours contributes nothing to it), while normal worker production is the
+    // ordinary multiplicative stack of both policies' own worker-side numbers.
+    expect(out.both.builder, 'builder speed with both enacted is Public Works alone').toBeCloseTo(1.2, 5);
+    expect(out.both.worker, 'worker output stacks the ordinary multiplicative way').toBeCloseTo(1.12 * 0.9, 5);
+  });
+
+  test('Public Works speeds real construction, and Long Hours no longer does', { tag: '@slow' }, async ({ page }) => {
+    test.setTimeout(180_000);
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      // A real construction site — placed, not force-built — with the barns holding materials and
+      // a real crew, on a job (a cathedral) big enough that 800 sim-seconds lands comfortably short
+      // of "done" even at Public Works' faster pace (measured: a plain run finishes around 1187
+      // ticks of 0.5s here; 800 stops at roughly two-thirds of the way through), so the three runs
+      // stay comparable mid-build rather than any of them capping out and hiding the difference.
+      const run = (policy: string | null) => {
+        g.startNewGame('small', 'easy', false, 0, 90210);
+        const s = g.state;
+        const barn = s.buildings.find((b: any) => b.type === 'barn');
+        barn.store.wood = 5000;
+        barn.store.stone = 5000;
+        barn.store.iron = 5000;
+        let siteId: number | null = null;
+        for (let r = 3; r < 26 && siteId == null; r++)
+          for (let dy = -r; dy <= r && siteId == null; dy++)
+            for (let dx = -r; dx <= r && siteId == null; dx++) {
+              const x = barn.x + dx, y = barn.y + dy;
+              if (g.debugCanPlace('cathedral', x, y).ok) siteId = g.debugPlace('cathedral', x, y);
+            }
+        const site = s.buildings.find((b: any) => b.id === siteId);
+        // This test measures labour speed, not footprint-clearing — so hand-clear whatever trees
+        // or loose stone the cathedral's 7x7 plot landed on rather than leaving it to the harvest
+        // task queue, which would otherwise spend a variable, seed-sensitive amount of the crew's
+        // time clearing ground before a single builder-work point is laid.
+        const fp = g.debugFootprint('cathedral');
+        for (let dy = 0; dy < fp.h; dy++) {
+          for (let dx = 0; dx < fp.w; dx++) {
+            const idx = (site.y + dy) * s.w + (site.x + dx);
+            s.harvest[idx] = 0;
+            const t = s.tiles[idx];
+            t.trees = 0;
+            delete t.stone;
+            delete t.iron;
+          }
+        }
+        // The same two clerks staffed in every run, policy enacted or not, so the "two adults off
+        // the builder pool" cost is identical throughout and the only variable is the rule itself.
+        eval(mk)(g, 2);
+        // Every adult starts fully tooled. Public Works also costs *other* workers 10% production
+        // (see the policy's own worker-side test), which in an untooled village can throttle the
+        // blacksmith and leave fewer tools for the builders to check out — a real, separate economy
+        // interaction, but not the one this test is isolating. Pre-equipping removes that variable
+        // so the only thing changing between runs is the builder-speed dial itself.
+        for (const c of s.citizens) if (c.age >= 16) c.tool = 'steel';
+        if (policy) g.debugSetPolicy(policy, true);
+        g.debugSetBuilders(6);
+        for (let i = 0; i < 800; i++) g.debugAdvance(0.5);
+        return site.progress;
+      };
+      return {
+        plain: run(null),
+        longHours: run('longHours'),
+        publicWorks: run('publicWorks'),
+        totalWork: g.debugBuildWork('cathedral'),
+      };
+    }, hall);
+
+    expect(out.plain, 'a real crew actually laid work on the plain run').toBeGreaterThan(0);
+    expect(out.plain, 'and the job is still big enough not to have finished').toBeLessThan(out.totalWork);
+    expect(out.publicWorks, 'nor has the faster run, so the comparison is a fair one').toBeLessThan(out.totalWork);
+    expect(out.longHours, 'Long Hours no longer speeds real construction').toBeCloseTo(out.plain, 3);
+    expect(out.publicWorks, 'Public Works does speed real construction').toBeGreaterThan(out.plain * 1.05);
+  });
+
+  test('Conservation speeds forest regrowth and cuts forester lumber output', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      eval(mk)(g, 1);
+      const before = { regrow: g.debugForestRegrowFactor(), lumber: g.debugForesterLumberFactor() };
+      g.debugSetPolicy('conservation', true);
+      const after = { regrow: g.debugForestRegrowFactor(), lumber: g.debugForesterLumberFactor() };
+      return { before, after };
+    }, hall);
+
+    expect(out.before).toEqual({ regrow: 1, lumber: 1 });
+    expect(out.after.regrow, 'woods regrow 50% faster').toBeCloseTo(1.5, 5);
+    expect(out.after.lumber, 'foresters fell 15% less').toBeCloseTo(0.85, 5);
+  });
+
+  test('Open Gates doubles the immigration chance and raises the sick-arrival chance', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      eval(mk)(g, 1);
+      const before = { immigration: g.debugImmigrationChanceFactor(), sick: g.debugImmigrantSickChanceFactor() };
+      g.debugSetPolicy('openGates', true);
+      const after = { immigration: g.debugImmigrationChanceFactor(), sick: g.debugImmigrantSickChanceFactor() };
+      return { before, after };
+    }, hall);
+
+    expect(out.before).toEqual({ immigration: 1, sick: 1 });
+    expect(out.after.immigration, 'twice as many newcomers').toBeCloseTo(2, 5);
+    expect(out.after.sick, 'half again as likely to arrive sick').toBeCloseTo(1.5, 5);
+  });
+
+  test('Industrial Focus raises resource-building output and cuts food-building output, only', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      eval(mk)(g, 1);
+      const types = ['blacksmith', 'mine', 'quarry', 'luxury', 'lumberyard', 'woodcutter', 'tailor',
+        'farm', 'fishing', 'hunting', 'gatherer', 'ranch', 'townhall', 'house', 'market', 'barn'];
+      const read = () => Object.fromEntries(types.map((t) => [t, g.debugWorkerCategoryFactor(t)]));
+      const before = read();
+      const costBefore = g.debugCost('blacksmith');
+      g.debugSetPolicy('industrialFocus', true);
+      const after = read();
+      const costAfter = g.debugCost('blacksmith');
+      return { before, after, costBefore, costAfter };
+    }, hall);
+
+    for (const t of Object.keys(out.before)) expect(out.before[t], `${t} starts unaffected`).toBe(1);
+    // The factor is read off the building's `resources`/`food` *category*, the same table every
+    // other building grouping in the game already uses — it is 1.15 on `market`/`barn` too, since
+    // they share the `resources` category with the blacksmith and the mines. That never actually
+    // pays out in play: a market's workers are vendors (`runVendor`, never `workOutput`) and a barn
+    // has no jobs (`jobs: 0`) to put anyone at, so neither ever reaches the multiplication this
+    // factor feeds — but the pure category factor itself is honestly 1.15 for both, and the test
+    // says so rather than pretending otherwise.
+    for (const t of ['blacksmith', 'mine', 'quarry', 'luxury', 'lumberyard', 'woodcutter', 'tailor', 'market', 'barn']) {
+      expect(out.after[t], `${t} shares the resources category`).toBeCloseTo(1.15, 5);
+    }
+    for (const t of ['farm', 'fishing', 'hunting', 'gatherer', 'ranch']) {
+      expect(out.after[t], `${t} produces 10% less`).toBeCloseTo(0.9, 5);
+    }
+    for (const t of ['townhall', 'house']) {
+      expect(out.after[t], `${t} is in neither category and stays untouched`).toBe(1);
+    }
+    expect(out.costAfter, 'building costs are untouched').toEqual(out.costBefore);
+  });
+
+  test('Population Drive raises birth chance and household food/firewood use, only for households', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      eval(mk)(g, 1);
+      g.debugStockFood(); // bank a surplus so there is a real birth chance to compare
+      const before = {
+        birth: g.debugBirthChancePerSeason(),
+        food: g.debugHouseholdFoodFactor(),
+        fuel: g.debugHouseholdFuelFactor(),
+      };
+      g.debugSetPolicy('populationDrive', true);
+      const after = {
+        birth: g.debugBirthChancePerSeason(),
+        food: g.debugHouseholdFoodFactor(),
+        fuel: g.debugHouseholdFuelFactor(),
+      };
+      g.debugSetPolicy('populationDrive', false);
+      const repealed = { birth: g.debugBirthChancePerSeason(), food: g.debugHouseholdFoodFactor() };
+      return { before, after, repealed };
+    }, hall);
+
+    expect(out.before.birth, 'a surplus village has a real birth chance to begin with').toBeGreaterThan(0);
+    expect(out.after.birth / out.before.birth, 'birth chance rises by exactly the policy factor').toBeCloseTo(1.25, 5);
+    expect(out.before.food).toBeCloseTo(1, 5);
+    expect(out.after.food, 'household food use up 10%').toBeCloseTo(1.1, 5);
+    expect(out.before.fuel).toBeCloseTo(1, 5);
+    expect(out.after.fuel, 'household firewood use up 10%').toBeCloseTo(1.1, 5);
+    expect(out.repealed.birth, 'repealing drops the birth chance back').toBeCloseTo(out.before.birth, 10);
+    expect(out.repealed.food, 'and the food factor back too').toBeCloseTo(1, 5);
+  });
+
+  test('Emergency Preparedness softens fire/flood damage and costs production, without touching frequency or duration', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      eval(mk)(g, 1);
+      const read = () => ({
+        fireDoused: g.debugFireDestroyChance('house', true),
+        fireUntreated: g.debugFireDestroyChance('house', false),
+        flood: g.debugFloodDamageChance(),
+        worker: g.debugWorkerPolicyFactor(),
+        fireBurnSeconds: g.debugFireBurnSeconds(),
+        floodChancePerSpring: g.debugFloodChancePerSpring(),
+      });
+      const before = read();
+      g.debugSetPolicy('emergencyPreparedness', true);
+      const after = read();
+      return { before, after };
+    }, hall);
+
+    expect(out.after.fireDoused / out.before.fireDoused, 'a doused fire destroys 30% less often').toBeCloseTo(0.7, 5);
+    expect(
+      out.after.fireUntreated / out.before.fireUntreated,
+      'an untreated fire is softened the same way',
+    ).toBeCloseTo(0.7, 5);
+    for (const tier of Object.keys(out.before.flood)) {
+      expect(out.after.flood[tier] / out.before.flood[tier], `${tier}-tier flood damage down 30%`).toBeCloseTo(0.7, 5);
+    }
+    expect(out.after.worker, 'production down 10%, not 8%').toBeCloseTo(0.9, 5);
+    expect(out.after.fireBurnSeconds, 'never touches how long a fire burns').toBe(out.before.fireBurnSeconds);
+    expect(out.after.floodChancePerSpring, 'never touches whether a flood happens at all').toBe(
+      out.before.floodChancePerSpring,
+    );
+  });
+});
+
+test.describe('Town Hall uniqueness', () => {
+  test('a second Town Hall cannot be placed anywhere, by any path, once one stands', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      g.debugAfford('townhall');
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      let spot: { x: number; y: number } | null = null;
+      for (let r = 3; r < 26 && !spot; r++)
+        for (let dy = -r; dy <= r && !spot; dy++)
+          for (let dx = -r; dx <= r && !spot; dx++)
+            if (g.debugCanPlace('townhall', barn.x + dx, barn.y + dy).ok) spot = { x: barn.x + dx, y: barn.y + dy };
+      const firstId = g.debugPlace('townhall', spot!.x, spot!.y);
+
+      // The uniqueness check runs before terrain/overlap in `canPlace`, so it refuses a second hall
+      // identically at *any* coordinate — a wholly different plot proves it as well as the occupied
+      // one does, and cheaper than scanning the whole map for "nowhere works".
+      const elsewhereCheck = g.debugCanPlace('townhall', spot!.x + 20, spot!.y + 20);
+      const secondId = g.debugPlace('townhall', spot!.x + 20, spot!.y + 20);
+
+      return {
+        firstOk: firstId != null,
+        townhallCount: s.buildings.filter((b: any) => b.type === 'townhall').length,
+        elsewhereOk: elsewhereCheck.ok,
+        elsewhereReason: elsewhereCheck.reason,
+        secondId,
+      };
+    });
+
+    expect(out.firstOk, 'the first Town Hall goes up fine').toBe(true);
+    expect(out.townhallCount, 'exactly one hall stands').toBe(1);
+    expect(out.elsewhereOk, 'a wholly different plot still refuses a second hall').toBe(false);
+    expect(out.elsewhereReason ?? '', 'canPlace names the reason').toMatch(/only one/i);
+    expect(out.secondId, "placeBuilding refuses it too, not just the ghost-preview check").toBeNull();
+  });
+
+  test('Town Hall grants exactly two policy capacity, however many desks are actually filled', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const th = eval(mk)(g, 2);
+      const capTwoStaffed = g.debugPolicies().capacity;
+      // More bodies at the desk than the hall actually has jobs for — capacity still reads off the
+      // building's own job count, not the raw worker list.
+      th.workers = s.citizens.filter((c: any) => c.age >= 16).map((c: any) => c.id);
+      const capOverstaffed = g.debugPolicies().capacity;
+      return { capTwoStaffed, capOverstaffed, overstaffedCount: th.workers.length };
+    }, hall);
+
+    expect(out.capTwoStaffed, 'two clerks grant exactly two policy slots').toBe(2);
+    expect(out.overstaffedCount, 'the desk really was overfilled for this check').toBeGreaterThan(2);
+    expect(out.capOverstaffed, 'and capacity still holds at two').toBe(2);
+  });
+
+  test('a save carrying more than one Town Hall (from before it was made unique) still caps capacity at two', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const th1 = eval(mk)(g, 2);
+      // Simulate a legacy save: a second Town Hall the current build could never place through
+      // `canPlace`, added directly the way an old save (from before the Town Hall was made unique)
+      // might still carry one after an upgrade.
+      const th2 = JSON.parse(JSON.stringify(th1));
+      th2.id = s.nextId++;
+      th2.x = th1.x + 20;
+      th2.y = th1.y + 20;
+      th2.workers = s.citizens
+        .filter((c: any) => c.age >= 16 && !th1.workers.includes(c.id))
+        .slice(0, 2)
+        .map((c: any) => c.id);
+      s.buildings.push(th2);
+
+      const beforeSave = {
+        townhalls: s.buildings.filter((b: any) => b.type === 'townhall').length,
+        capacity: g.debugPolicies().capacity,
+      };
+
+      // One old policy, one new one — both should round-trip through the save just as any other
+      // field would.
+      g.debugSetPolicy('rationing', true);
+      g.debugSetPolicy('emergencyPreparedness', true);
+
+      const saved = g.debugSaveSlot(1);
+      const loaded = g.debugLoadSlot(1);
+      const s2 = g.state;
+
+      return {
+        beforeSave,
+        saved,
+        loaded,
+        townhallsAfterLoad: s2.buildings.filter((b: any) => b.type === 'townhall').length,
+        capacityAfterLoad: g.debugPolicies().capacity,
+        activeAfterLoad: g.debugPolicies().active,
+        enactedAfterLoad: g.debugPolicies().enacted,
+      };
+    }, hall);
+
+    expect(out.beforeSave.townhalls, 'two halls stand, simulating a pre-uniqueness save').toBe(2);
+    expect(out.beforeSave.capacity, 'four desks filled across two halls still cap at two').toBe(2);
+    expect(out.saved, 'the fabricated legacy-shaped state still saves').toBe(true);
+    expect(out.loaded, 'and loads back without crashing').toBe(true);
+    expect(out.townhallsAfterLoad, 'both halls are preserved — nothing is silently deleted').toBe(2);
+    expect(out.capacityAfterLoad, 'capacity is still held to two after a reload').toBe(2);
+    expect(out.activeAfterLoad, 'both the old and the new policy id are still in force').toEqual([
+      'rationing',
+      'emergencyPreparedness',
+    ]);
+    expect(out.enactedAfterLoad).toEqual(['rationing', 'emergencyPreparedness']);
   });
 });
 

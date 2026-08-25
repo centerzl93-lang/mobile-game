@@ -186,8 +186,11 @@ export interface InspectControls {
     policies: { id: PolicyId; label: string; emoji: string; gain: string; cost: string; enacted: boolean; active: boolean }[];
     /** Clerks at their desks, and how many rules that allows. */
     capacity: number;
-    /** Whether a festival could be held right now (a clerk free, and the food for it). */
+    /** Whether a festival could be held right now (a clerk at the desk, and the food for it). */
     canFestival: boolean;
+    /** Why not, when `canFestival` is false — shown under the disabled button so the player isn't
+     *  left guessing between "no clerk" and "not enough food banked". Undefined when it can be held. */
+    festivalReason?: string;
   };
 }
 
@@ -634,12 +637,18 @@ export class UI {
         const locked = this.tier && !tierReaches(this.tier, BUILDING_TIER[type])
           ? BUILDING_TIER[type]
           : undefined;
+        // A unique building (the Town Hall) greys out the moment one is standing — the menu says so
+        // rather than letting the player pick it and only learn it is refused once they try to place
+        // it. `canPlace` is still the one refusing the second hall; this only keeps the button honest.
+        const builtUnique =
+          !!def.unique && !!this.lastState?.buildings.some((b) => b.type === type && !b.razed);
         po.appendChild(
           this.buildBtn(
             def.emoji, def.name, cost, type === this.selectedBuild,
             () => this.selectBuild(type), locked,
             type === this.selectedBuild && this.buildLocked,
             () => this.lockBuild(type),
+            builtUnique,
           ),
         );
       }
@@ -661,6 +670,9 @@ export class UI {
    *
    * `pinned` marks a button whose building is pinned for repeat placement (see `lockBuild`);
    * `onLongPress`, when given, wires up the hold-to-pin gesture — a plain tap still runs `fn`.
+   *
+   * `builtUnique` greys out a one-per-village building (the Town Hall) once one is already
+   * standing — the same disabled treatment as a tier lock, but naming the reason instead of a tier.
    */
   private buildBtn(
     emoji: string,
@@ -671,10 +683,12 @@ export class UI {
     lockedAt?: VillageTier,
     pinned?: boolean,
     onLongPress?: () => void,
+    builtUnique?: boolean,
   ): HTMLElement {
     const btn = document.createElement('button');
+    const disabled = !!lockedAt || !!builtUnique;
     btn.className =
-      'build-btn' + (selected ? ' selected' : '') + (lockedAt ? ' locked' : '') + (pinned ? ' pinned' : '');
+      'build-btn' + (selected ? ' selected' : '') + (disabled ? ' locked' : '') + (pinned ? ' pinned' : '');
     btn.innerHTML =
       // The fill sits first in the DOM (painted behind the label via its negative z-index — see
       // the CSS) and only exists on buttons that can be held to pin.
@@ -682,15 +696,20 @@ export class UI {
       `<span class="emoji">${emoji}</span><span class="name">${name}</span>` +
       (lockedAt
         ? `<span class="cost lock">🔒 ${TIER_META[lockedAt].name}</span>`
-        : cost
-          ? `<span class="cost">${cost}</span>`
-          : '') +
+        : builtUnique
+          ? `<span class="cost lock">🔒 Built</span>`
+          : cost
+            ? `<span class="cost">${cost}</span>`
+            : '') +
       (pinned ? `<span class="pin" title="Pinned for repeat placement">📌</span>` : '');
     if (lockedAt) {
       btn.disabled = true;
       // Still worth a tap: a disabled button that does nothing at all reads as broken, and this is
       // where the player learns *why* it is locked and what would open it.
       btn.addEventListener('click', () => this.flashHint(this.lockedHint(name, lockedAt)));
+    } else if (builtUnique) {
+      btn.disabled = true;
+      btn.addEventListener('click', () => this.flashHint(`Only one ${name} may stand at a time`));
     } else if (onLongPress) {
       // Hold the button down to pin the building instead of picking it for one placement — see
       // `lockBuild`. `pointerdown`/`up`/`leave`/`cancel` cover mouse and touch alike; a hold that
@@ -1052,7 +1071,8 @@ export class UI {
       ctrlHtml +=
         `<div class="th-sec">Policies <small>${t.policies.filter((p) => p.active).length}/${t.capacity} clerks</small></div>` +
         `<div class="th-policies">${pol}</div>` +
-        `<div class="inv-ctrl"><button class="ranch-btn" id="insp-festival"${t.canFestival ? '' : ' disabled'}>🎉 Hold a festival</button></div>`;
+        `<div class="inv-ctrl"><button class="ranch-btn" id="insp-festival"${t.canFestival ? '' : ' disabled'}>🎉 Hold a festival</button></div>` +
+        (!t.canFestival && t.festivalReason ? `<p class="th-none">${t.festivalReason}</p>` : '');
     }
     if (controls?.upgrade) {
       const u = controls.upgrade;

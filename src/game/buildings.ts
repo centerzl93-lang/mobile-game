@@ -59,6 +59,14 @@ export function canPlace(
   if (!opts.ignoreTier && !buildingUnlocked(s, type)) {
     return { ok: false, reason: `Unlocks at ${TIER_META[BUILDING_TIER[type]].name}` };
   }
+  // Unique buildings (the Town Hall) top out at one. Checked unconditionally — not folded into
+  // `ignoreTier` — since a debug/test placement bypassing progression should not also be able to
+  // bypass this; a second one is refused a plot no matter how it was picked. A razed one (rubble
+  // being salvaged, or mid-way through an upgrade's demolition) no longer counts as "standing", so
+  // its plot can be reused the moment the old hall is actually gone.
+  if (def.unique && s.buildings.some((b) => b.type === type && !b.razed)) {
+    return { ok: false, reason: `Only one ${def.name} may stand at a time` };
+  }
   const baseW = w ?? def.w;
   const baseH = h ?? def.h;
   // A quarter turn swaps the footprint, so everything below works in map space.

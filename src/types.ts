@@ -661,6 +661,12 @@ export interface BuildingDef {
    * whichever end is nearer.
    */
   doors?: 2;
+  /**
+   * At most one standing at a time. Enforced in `canPlace` (so every placement path — the build
+   * menu, `debugPlace`, anything else that goes through `placeBuilding` — is refused a second one),
+   * not just greyed out in the build menu.
+   */
+  unique?: boolean;
   desc: string;
 }
 
@@ -2731,25 +2737,77 @@ export const LEDGER_SEASONS = 8;
  * Town Hall, so a policy costs a pair of hands to keep as well as a price to run. Lose the clerk
  * and the rule lapses until someone takes the desk again.
  */
-export type PolicyId = 'rationing' | 'longHours' | 'conservation' | 'openGates';
+export type PolicyId =
+  | 'rationing'
+  | 'longHours'
+  | 'conservation'
+  | 'openGates'
+  | 'industrialFocus'
+  | 'publicWorks'
+  | 'populationDrive'
+  | 'emergencyPreparedness';
 
-export const POLICIES: PolicyId[] = ['rationing', 'longHours', 'conservation', 'openGates'];
+export const POLICIES: PolicyId[] = [
+  'rationing',
+  'longHours',
+  'conservation',
+  'openGates',
+  'industrialFocus',
+  'publicWorks',
+  'populationDrive',
+  'emergencyPreparedness',
+];
 
 export const POLICY_META: Record<PolicyId, { label: string; emoji: string; gain: string; cost: string }> = {
   rationing: { label: 'Rationing', emoji: '🥣', gain: 'Eats 20% less food', cost: 'Happiness −8' },
-  longHours: { label: 'Long Hours', emoji: '⏳', gain: 'Produces 12% more', cost: 'Health −6' },
+  // Builder/construction/repair speed moved to Public Works — see POLICY_HOURS_PROD's own comment.
+  longHours: { label: 'Long Hours', emoji: '⏳', gain: 'Workers produce 12% more', cost: 'Health −6' },
   conservation: { label: 'Conservation', emoji: '🌱', gain: 'Woods regrow 50% faster', cost: 'Foresters fell 15% less' },
   openGates: { label: 'Open Gates', emoji: '🚪', gain: 'Twice as many newcomers', cost: 'Half again as likely to arrive sick' },
+  industrialFocus: {
+    label: 'Industrial Focus', emoji: '🏭',
+    gain: 'Industrial buildings produce 15% more', cost: 'Food production −10%',
+  },
+  publicWorks: {
+    label: 'Public Works', emoji: '🏗️',
+    gain: 'Builders work 20% faster', cost: 'Other workers produce 10% less',
+  },
+  populationDrive: {
+    label: 'Population Drive', emoji: '👶',
+    gain: 'Birth rate +25%', cost: 'Households use 10% more food & firewood',
+  },
+  emergencyPreparedness: {
+    label: 'Emergency Preparedness', emoji: '🛡️',
+    gain: 'Disasters cause 30% less damage', cost: 'Production −10%',
+  },
 };
 
 export const POLICY_RATION_FOOD = 0.8;
 export const POLICY_RATION_HAPPY = 8;
+/**
+ * Long Hours now touches normal worker production only — building/repairing runs on the same
+ * dial as every other job (`citizenToolFactor`), but the *policy* half of that dial for builders
+ * comes exclusively from Public Works (`POLICY_PUBLICWORKS_BUILD`) since that split was made. Long
+ * Hours must never again feed into `builderPolicyFactor`.
+ */
 export const POLICY_HOURS_PROD = 1.12;
 export const POLICY_HOURS_HEALTH = 6;
 export const POLICY_CONSERVE_REGROW = 1.5;
 export const POLICY_CONSERVE_LUMBER = 0.85;
 export const POLICY_GATES_IMMIGRATION = 2;
 export const POLICY_GATES_SICK = 1.5;
+/** Industrial Focus: `BuildCategory` 'resources' output up, 'food' output down — see `workerCategoryFactor`. */
+export const POLICY_INDUSTRIAL_BONUS = 1.15;
+export const POLICY_INDUSTRIAL_FOOD_PENALTY = 0.9;
+/** Public Works: the *only* policy allowed to touch builder/repair speed — see `builderPolicyFactor`. */
+export const POLICY_PUBLICWORKS_BUILD = 1.2;
+export const POLICY_PUBLICWORKS_WORKER = 0.9;
+export const POLICY_POPDRIVE_BIRTH = 1.25;
+export const POLICY_POPDRIVE_FOOD = 1.1;
+export const POLICY_POPDRIVE_FUEL = 1.1;
+/** Emergency Preparedness: cuts the fire/flood *damage* rolls, never the chance a disaster starts. */
+export const POLICY_EMERGENCY_DAMAGE = 0.7;
+export const POLICY_EMERGENCY_PROD = 0.9;
 
 /** A festival is an act, not a rule: paid for once, felt once. Needs a clerk to organise it. */
 export const FESTIVAL_FOOD = 60;
@@ -2776,13 +2834,21 @@ export function activePolicies(s: { policies?: PolicyId[]; buildings: Building[]
   return want.slice(0, policyCapacity(s));
 }
 
-/** How many rules the village can keep: one per clerk at work in a standing Town Hall. */
+/**
+ * How many rules the village can keep: one per clerk at work in a standing Town Hall.
+ *
+ * The Town Hall is `unique` (see `BuildingDef.unique`/`canPlace`), so a new village can never raise
+ * a second one and this only ever sums one hall's desks. It still loops and clamps to the def's own
+ * `jobs` rather than just reading one hall's worker count, so a save from before the Town Hall was
+ * made unique — one that somehow banked more than one — keeps every hall standing (nothing is
+ * deleted on load) while the capacity it grants is held to the one-hall ceiling the design intends.
+ */
 export function policyCapacity(s: { buildings: Building[] }): number {
   let n = 0;
   for (const b of s.buildings) {
     if (b.built && b.type === 'townhall') n += Math.min(b.workers.length, BUILDING_DEFS.townhall.jobs);
   }
-  return n;
+  return Math.min(n, BUILDING_DEFS.townhall.jobs);
 }
 
 export const LEISURE_CHANCE_PER_SEC = 1 / 90; // ~one break per 90s of work
@@ -3455,8 +3521,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   townhall: {
     type: 'townhall', name: 'Town Hall', emoji: '🏛️', category: 'civic', w: 5, h: 5,
-    cost: { wood: 124, stone: 84, iron: 84 }, jobs: 2, work: 180,
-    desc: 'The seat of the village. Its clerks keep the books — a ledger of what every store gained and spent last season — and enact the policies the village lives under. Each clerk at work carries one policy, so a hall with one is a hall with one rule in force.',
+    cost: { wood: 124, stone: 84, iron: 84 }, jobs: 2, work: 180, unique: true,
+    desc: 'The seat of the village, and there is only ever one. Its clerks keep the books — a ledger of what every store gained and spent last season — and enact the policies the village lives under. Two desks, two clerks, so a hall at full staff carries two policies in force at once.',
   },
   chapel: {
     type: 'chapel', name: 'Chapel', emoji: '⛪', category: 'civic', w: 4, h: 5,

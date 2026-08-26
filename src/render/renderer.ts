@@ -47,6 +47,12 @@ export interface PlacementView {
    * `placementReachable`). Only meaningful when `valid` is true.
    */
   warn?: boolean;
+  /**
+   * Draw the ghost fully solid instead of see-through — used while founding a village, where the
+   * barn being sited is the only thing on the map and a faint translucent silhouette is easy to
+   * lose against the terrain. Every other placement stays a see-through preview.
+   */
+  opaque?: boolean;
   /** True while in path-drawing mode (shows a hint reticle at screen centre). */
   pathTier?: 'dirt' | 'stone' | 'bridge' | 'stonebridge' | 'tunnel' | null;
   selBuildingId?: number | null;
@@ -451,7 +457,7 @@ export class Renderer {
         ctx.lineWidth = 2;
         ctx.stroke();
       }
-      ctx.globalAlpha = 0.5;
+      ctx.globalAlpha = placement.opaque ? 1 : 0.5;
       // Green go, red no, amber go-but-unreachable — matching the 3D ghost tint.
       ctx.fillStyle = !placement.valid ? '#e0574a' : placement.warn ? '#e0b84a' : '#5ad06a';
       roundRect(ctx, sx, sy, pw * p, ph * p, 4);

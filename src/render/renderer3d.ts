@@ -761,6 +761,13 @@ export class Renderer3D {
     this.ghost = new THREE.Group();
     this.ghost.visible = false;
     this.scene.add(this.ghost);
+    // `teardown` throws the old (populated) group away and this makes a fresh, empty one — but
+    // `ghostKey` is a plain string on the renderer, not on the group, so without resetting it here
+    // it would still read as "already built" from the last map. `syncOverlays` only calls
+    // `makeGhostShape` when the key *changes*, so the next placement (the same building type as
+    // last time — a barn founding a second village is the common case) would sit forever on an
+    // empty group: `ghost.visible = true` with nothing inside it to see.
+    this.ghostKey = '';
     // Which way is the front. Positioned in *world* space on the tile `entranceAt` picks, rather
     // than parented to the turned ghost — that way it can only ever point where villagers will
     // actually walk in, whatever convention the model happens to have been authored with.
@@ -3318,9 +3325,16 @@ export class Renderer3D {
       // be able to reach it. The tint is applied over the silhouette rather than replacing it, so
       // the building stays recognisable either way.
       const tint = !pv.valid ? 0x6b1a12 : pv.warn ? 0x6b5310 : 0x1d5c26;
+      // Opacity is set here rather than baked into `makeGhostShape`, so it always matches this
+      // frame's `pv.opaque` even when the shape itself is reused unchanged from a prior frame
+      // (the common case — a mesh is only rebuilt when the building type/size key changes).
       this.ghost.traverse((o) => {
         const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
-        if (m && !Array.isArray(m) && m.emissive) m.emissive.set(tint);
+        if (!m || Array.isArray(m)) return;
+        if (m.emissive) m.emissive.set(tint);
+        m.transparent = !pv.opaque;
+        m.opacity = pv.opaque ? 1 : GHOST_OPACITY;
+        m.depthWrite = !!pv.opaque; // avoid punching holes through a see-through ghost's own faces
       });
     } else {
       this.ghost.visible = false;
@@ -3411,17 +3425,15 @@ export class Renderer3D {
       shape = this.makeFencedPlot(pw, ph, { shed: type === 'ranch', ground: type === 'ranch' ? 0x6f7a3f : 0x7a5a34, texture: type === 'ranch' ? 'grass' : 'soil' });
     }
     // Ghost materials are cloned so tinting the preview never bleeds into the real buildings,
-    // which share the model's materials through `clone(true)`.
+    // which share the model's materials through `clone(true)`. Transparency/opacity are set every
+    // frame in `syncOverlays` instead of here, since they depend on `pv.opaque` — this shape is
+    // reused unchanged across frames whenever the building type/size hasn't changed.
     shape.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!(mesh as unknown as { isMesh?: boolean }).isMesh) return;
       const src = mesh.material as THREE.MeshStandardMaterial;
       if (!src || Array.isArray(src)) return;
-      const m = src.clone();
-      m.transparent = true;
-      m.opacity = GHOST_OPACITY;
-      m.depthWrite = false; // or the near faces punch holes in the far ones through the glass
-      mesh.material = m;
+      mesh.material = src.clone();
       mesh.castShadow = false;
       mesh.receiveShadow = false;
     });

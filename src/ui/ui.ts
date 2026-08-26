@@ -2610,14 +2610,14 @@ export class UI {
   showSettings(opts: {
     gfx: 'auto' | 'low' | 'high';
     tips: boolean;
-    autoStaff: boolean;
+    haptics: boolean;
     musicVolume: number;
     notificationsVolume: number;
     villageVolume: number;
     disasterVolume: number;
     onSetGfx: (g: 'auto' | 'low' | 'high') => void;
     onSetTips: (on: boolean) => void;
-    onSetAutoStaff: (on: boolean) => void;
+    onSetHaptics: (on: boolean) => void;
     onSetMusicVolume: (v: number) => void;
     onSetNotificationsVolume: (v: number) => void;
     onSetVillageVolume: (v: number) => void;
@@ -2630,8 +2630,8 @@ export class UI {
       `<button class="seg${opts.gfx === g ? ' on' : ''}" id="set-gfx-${g}">${label}</button>`;
     const tipBtn = (on: boolean, label: string) =>
       `<button class="seg${opts.tips === on ? ' on' : ''}" id="set-tips-${on ? 'on' : 'off'}">${label}</button>`;
-    const staffBtn = (on: boolean, label: string) =>
-      `<button class="seg${opts.autoStaff === on ? ' on' : ''}" id="set-staff-${on ? 'on' : 'off'}">${label}</button>`;
+    const hapticBtn = (on: boolean, label: string) =>
+      `<button class="seg${opts.haptics === on ? ' on' : ''}" id="set-haptics-${on ? 'on' : 'off'}">${label}</button>`;
     // The volume sliders below are wired to preferences only — there's no audio in the game yet, so
     // moving one just persists a number for a future sound system to read.
     const volumeRow = (id: string, label: string, value: number) =>
@@ -2644,13 +2644,12 @@ export class UI {
         `<div class="set-label">Graphics</div>` +
         `<div class="seg-row">${gfxBtn('auto', 'Auto')}${gfxBtn('low', 'Low')}${gfxBtn('high', 'High')}</div>` +
         `<div class="set-note">Graphics changes apply after reloading.</div>` +
-        `<div class="set-label">Staff new workplaces</div>` +
-        `<div class="seg-row">${staffBtn(true, 'On')}${staffBtn(false, 'Off')}</div>` +
-        `<div class="set-note">A finished workplace hires whoever is free instead of standing empty until you staff it. ` +
-        `A job left open by a villager dying is always refilled, either way.</div>` +
         `<div class="set-label">Tips</div>` +
         `<div class="seg-row">${tipBtn(true, 'On')}${tipBtn(false, 'Off')}</div>` +
         `<div class="set-note">The hint bar explaining each tool. Warnings and the event log are unaffected.</div>` +
+        `<div class="set-label">Haptic feedback</div>` +
+        `<div class="seg-row">${hapticBtn(true, 'On')}${hapticBtn(false, 'Off')}</div>` +
+        `<div class="set-note">There's no haptic feedback wired up yet — this is ready for when there is.</div>` +
         `<div class="set-label">Audio</div>` +
         volumeRow('music', 'Music', opts.musicVolume) +
         volumeRow('notifications', 'Notifications', opts.notificationsVolume) +
@@ -2677,9 +2676,9 @@ export class UI {
       }),
     );
     ([true, false] as const).forEach((on) =>
-      byId(`set-staff-${on ? 'on' : 'off'}`).addEventListener('click', () => {
-        opts.onSetAutoStaff(on);
-        this.showSettings({ ...opts, autoStaff: on });
+      byId(`set-haptics-${on ? 'on' : 'off'}`).addEventListener('click', () => {
+        opts.onSetHaptics(on);
+        this.showSettings({ ...opts, haptics: on });
       }),
     );
     // Each slider: live read-out while dragging (`input`), value committed on release (`change`) —

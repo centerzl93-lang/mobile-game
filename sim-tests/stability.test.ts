@@ -178,7 +178,6 @@ test('enable/disable: a disabled converter does not consume inputs or produce', 
 test('population: grows steadily and never exceeds four children per mother', () => {
   const s = mk(777, 'easy');
   const barn = barnOf(s);
-  s.autoStaff = true;
   // Ample housing so growth is demographic, not housing-limited.
   let placed = 0;
   for (let r = 3; r < 20 && placed < 30; r++)

@@ -7251,6 +7251,72 @@ test.describe('the Town Hall books', () => {
   });
 });
 
+test.describe('Town Hall dashboard', () => {
+  test('debugTownHallDashboard: figures agree with the raw village state', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 999);
+      eval(mk)(g, 2);
+      g.debugSetPolicy('rationing', true);
+      g.debugAdvance(0.5); // let assignHomesAndJobs settle staffing before reading the dashboard
+      const s = g.state;
+      const dash = g.debugTownHallDashboard();
+      return {
+        popTotal: dash.population.total,
+        citizens: s.citizens.length,
+        popParts: dash.population.children + dash.population.students + dash.population.adults,
+        capacity: dash.capacity,
+        clerks: dash.clerks,
+        activeCount: dash.activeEffects.length,
+        rationingActive: dash.policies.find((p: any) => p.id === 'rationing')?.active,
+        inventoryStocksMatch: dash.inventory.every((r: any) =>
+          Math.abs(r.stock - (r.kind === 'food' ? g.debugTotalFoodAvailable() : g.debugTotalAvailable(r.kind))) < 0.5,
+        ),
+      };
+    }, hall);
+    expect(out.popTotal).toBe(out.citizens);
+    expect(out.popParts).toBe(out.citizens);
+    expect(out.clerks).toBe(2);
+    expect(out.capacity).toBe(2);
+    expect(out.activeCount).toBe(1);
+    expect(out.rationingActive).toBe(true);
+    expect(out.inventoryStocksMatch, 'every inventory row matches the state it was read from').toBe(true);
+  });
+
+  test('the dashboard overlay opens, switches tabs, shows active policy effects, and closes', async ({ page }) => {
+    await open2d(page);
+    const setup = await page.evaluate((mk) => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false, 0, 1234);
+      const th = eval(mk)(g, 1);
+      g.debugSetPolicy('longHours', true);
+      g.debugAdvance(0.5);
+      g.debugOpenTownHall(th.id);
+      g.ui.refreshPanels(g.state); // populate the just-opened overlay deterministically
+      return { id: th.id };
+    }, hall);
+    void setup;
+
+    const overlay = page.locator('#townhall-overlay');
+    await expect(overlay).toBeVisible();
+    // The active policy's impact is on the header line without switching tabs — it's the one thing
+    // shown on every tab, per the dashboard's own priority order.
+    await expect(overlay.locator('.th2-meta')).toContainText('Workers produce 12% more');
+    await expect(overlay.locator('[data-th-tab="inventory"]')).toHaveClass(/on/);
+
+    await overlay.locator('[data-th-tab="production"]').click();
+    await expect(overlay.locator('[data-th-tab="production"]')).toHaveClass(/on/);
+    await overlay.locator('[data-th-tab="population"]').click();
+    await expect(overlay.locator('.th2-stats').first()).toBeVisible();
+    await overlay.locator('[data-th-tab="policies"]').click();
+    await expect(overlay.locator('[data-policy="longHours"]')).toHaveClass(/on/);
+
+    await overlay.locator('#th2-close').click();
+    await expect(overlay).toBeHidden();
+  });
+});
+
 test.describe('the New Village screen', () => {
   test('every setting is on one card, and the seed can be typed, rerolled and copied', { tag: '@slow' }, async ({ page }) => {
     await open2d(page);

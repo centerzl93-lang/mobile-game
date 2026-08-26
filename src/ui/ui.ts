@@ -58,12 +58,18 @@ import {
   demoFraction,
   LimitKey,
   limitedOutput,
+  ResourceCategory,
+  RESOURCE_CATEGORY_META,
+  FESTIVAL_FOOD,
+  FESTIVAL_HAPPY,
 } from '../types';
 import { footprintToClear } from '../game/buildings';
 import { atLimit, cappedOut, isLowStock, limitStock } from '../game/simulation';
 import { SLOT_NAME_MAX } from '../game/save';
 import { newSeed } from '../game/rng';
 import { totalStored, totalStoredAll, totalFoodAvailable, totalInLarders } from '../game/storage';
+import { townHallDashboard, TownHallDashboard } from '../game/townhall';
+import { sparklineSVG } from './chart';
 import {
   LogKind,
   TradeResult,
@@ -107,6 +113,9 @@ export type PathTier = 'dirt' | 'stone' | 'bridge' | 'stonebridge' | 'tunnel';
 
 /** The four tabs of the one village menu — jobs and limits to set, history and progress to read. */
 export type VillageTab = 'jobs' | 'limits' | 'history' | 'progress';
+
+/** The four tabs of the Town Hall dashboard. */
+export type TownHallTab = 'inventory' | 'production' | 'population' | 'policies';
 
 /** One row of the achievements ledger, ready for the UI — no game logic, just what to draw. */
 export interface AchRow {
@@ -184,22 +193,11 @@ export interface InspectControls {
     targets: { id: number; label: string }[];
   };
   /**
-   * Town Hall: the books and the rules. Both live here rather than in the HUD on purpose — they
-   * are what this building is *for*, so they arrive when it is built and are found by tapping it.
+   * Town Hall: just enough for the inspect sheet's compact summary line and its "Open" button — the
+   * full dashboard (books, production, population, policy detail) is its own overlay, opened off
+   * `townHallDashboard(state)` fresh rather than threaded through here (see `openTownHall`).
    */
-  townhall?: {
-    /** One row per resource the village holds, as the books recorded it last season. */
-    ledger: { kind: ResourceKind; stock: number; inn: number; out: number; net: number; seasonsLeft: number | null }[];
-    /** Every standing rule, whether it is enacted, and whether a clerk is actually keeping it. */
-    policies: { id: PolicyId; label: string; emoji: string; gain: string; cost: string; enacted: boolean; active: boolean }[];
-    /** Clerks at their desks, and how many rules that allows. */
-    capacity: number;
-    /** Whether a festival could be held right now (a clerk at the desk, and the food for it). */
-    canFestival: boolean;
-    /** Why not, when `canFestival` is false — shown under the disabled button so the player isn't
-     *  left guessing between "no clerk" and "not enough food banked". Undefined when it can be held. */
-    festivalReason?: string;
-  };
+  townhall?: { clerks: number; clerkJobs: number; activePolicyCount: number };
 }
 
 export interface UICallbacks {
@@ -310,6 +308,7 @@ export class UI {
     village: byId('village'),
     trade: byId('trade-overlay'),
     nomad: byId('nomad'),
+    townhall: byId('townhall-overlay'),
   };
   private resChips = new Map<ResourceKind, HTMLElement>();
   private mode: 'inspect' | 'build' | 'path' | 'demolish' | 'harvest' = 'inspect';
@@ -334,6 +333,15 @@ export class UI {
   private basketGet: Partial<Record<ResourceKind, number>> = {};
   private basketSeeds: Crop[] = [];
   private tradeSig = '';
+
+  // Town Hall dashboard overlay: which hall is open (its id), which tab, and which series each of
+  // the three trend graphs is showing — all remembered across openings, like the village panel's tab.
+  private townhallId: number | null = null;
+  private townhallTab: TownHallTab = 'inventory';
+  private townhallInvKind: LimitKey = 'food';
+  private townhallProdCategory: ResourceCategory = 'food';
+  private townhallPopMetric: 'pop' | 'births' | 'deaths' | 'immigrants' = 'pop';
+  private townhallSig = '';
 
   constructor(private cb: UICallbacks) {
     this.buildResourceChips();
@@ -1056,46 +1064,13 @@ export class UI {
     }
     if (controls?.townhall) {
       const t = controls.townhall;
-      // The books. One row a resource: what is held, what last season brought in and took out,
-      // and how long the store lasts at that rate. Measured, never modelled — see `ledgerFor`.
-      const num = (n: number) => (Math.abs(n) >= 10 ? Math.round(n) : Math.round(n * 10) / 10);
-      const rows = t.ledger
-        .map((r) => {
-          const cls = r.net > 0.05 ? 'up' : r.net < -0.05 ? 'down' : '';
-          const left =
-            r.seasonsLeft === null
-              ? ''
-              : `<span class="th-left${r.seasonsLeft <= 4 ? ' warn' : ''}">${Math.floor(r.seasonsLeft)} left</span>`;
-          return (
-            `<div class="th-row"><span class="th-kind">${RESOURCE_ICON[r.kind]}</span>` +
-            `<span class="th-held">${num(r.stock)}</span>` +
-            `<span class="th-flow">+${num(r.inn)} / −${num(r.out)}</span>` +
-            `<span class="th-net ${cls}">${r.net >= 0 ? '+' : ''}${num(r.net)}</span>${left}</div>`
-          );
-        })
-        .join('');
+      // The full dashboard — books, production, population, every policy's detail — lives in its
+      // own overlay now (see `openTownHall`). The inspect sheet only needs to say enough to make
+      // opening it worthwhile: how the desks stand, and how many rules they're keeping.
       ctrlHtml +=
-        `<div class="th-sec">Last season's books</div>` +
-        (rows ? `<div class="th-ledger">${rows}</div>` : `<p class="th-none">The clerks have not closed a season yet.</p>`);
-
-      // The rules. Every one shows what it gives and what it costs, because that is the decision.
-      const pol = t.policies
-        .map((p) => {
-          const state = p.active ? ' on' : p.enacted ? ' lapsed' : '';
-          const note = p.enacted && !p.active ? '<span class="th-lapsed">No clerk — lapsed</span>' : '';
-          return (
-            `<button class="th-policy${state}" data-policy="${p.id}">` +
-            `<span class="th-pname">${p.emoji} ${p.label}</span>` +
-            `<span class="th-pgain">${p.gain}</span>` +
-            `<span class="th-pcost">${p.cost}</span>${note}</button>`
-          );
-        })
-        .join('');
-      ctrlHtml +=
-        `<div class="th-sec">Policies <small>${t.policies.filter((p) => p.active).length}/${t.capacity} clerks</small></div>` +
-        `<div class="th-policies">${pol}</div>` +
-        `<div class="inv-ctrl"><button class="ranch-btn" id="insp-festival"${t.canFestival ? '' : ' disabled'}>🎉 Hold a festival</button></div>` +
-        (!t.canFestival && t.festivalReason ? `<p class="th-none">${t.festivalReason}</p>` : '');
+        `<div class="inv-row"><span>🪑 Clerks</span><span>${t.clerks} / ${t.clerkJobs}</span></div>` +
+        `<div class="inv-row"><span>📜 Active policies</span><span>${t.activePolicyCount}</span></div>` +
+        `<div class="inv-ctrl"><button class="ranch-btn" id="insp-townhall">🏛️ Open Town Hall</button></div>`;
     }
     if (controls?.upgrade) {
       const u = controls.upgrade;
@@ -1168,12 +1143,7 @@ export class UI {
         this.el.inspect.querySelector('#insp-transfer')?.addEventListener('click', () => this.openRanchPicker(id, 'transfer', rc.targets));
       }
       if (controls.townhall) {
-        this.el.inspect.querySelectorAll('[data-policy]').forEach((btn) =>
-          btn.addEventListener('click', () =>
-            this.cb.onTogglePolicy((btn as HTMLElement).dataset.policy as PolicyId),
-          ),
-        );
-        this.el.inspect.querySelector('#insp-festival')?.addEventListener('click', () => this.cb.onFestival());
+        this.el.inspect.querySelector('#insp-townhall')?.addEventListener('click', () => this.openTownHall(id));
       }
       const tog = controls.toggle;
       if (tog) {
@@ -1281,6 +1251,7 @@ export class UI {
   refreshPanels(s: GameState): void {
     if (this.villagePanelOpen) this.refreshVillagePanel(s);
     if (this.tradingPostId !== null) this.refreshTradingPost(s);
+    if (this.townhallId !== null) this.refreshTownHall(s);
     this.refreshNomadPrompt(s);
   }
 
@@ -1551,6 +1522,283 @@ export class UI {
     this.el.trade.classList.add('hidden');
     this.el.trade.innerHTML = '';
     this.el.trade.onclick = null;
+  }
+
+  // ---- Town Hall: compact tabbed management dashboard ----
+  /** Open the Town Hall dashboard for a building id (also the entry point debug hooks use). */
+  openTownHall(id: number): void {
+    this.townhallId = id;
+    this.el.townhall.classList.remove('hidden');
+    this.el.townhall.onclick = (e) => {
+      if (e.target === this.el.townhall) this.closeTownHall();
+    };
+    this.townhallSig = '';
+  }
+  closeTownHall(): void {
+    this.townhallId = null;
+    this.el.townhall.classList.add('hidden');
+    this.el.townhall.innerHTML = '';
+    this.el.townhall.onclick = null;
+  }
+
+  private thNum(n: number): string {
+    const r = Math.abs(n) >= 10 ? Math.round(n) : Math.round(n * 10) / 10;
+    return Math.abs(r) >= 1000 ? r.toLocaleString() : String(r);
+  }
+
+  /** One compact trend graph with a dropdown to pick what it's showing — the one chart component
+   *  every tab's history strip renders through (see `sparklineSVG`). */
+  private thChart(title: string, selectId: string, options: { value: string; label: string }[], selected: string, series: { seasonLabels: string[]; values: number[] }): string {
+    const sel = `<select id="${selectId}" class="th2-select">${options
+      .map((o) => `<option value="${o.value}"${o.value === selected ? ' selected' : ''}>${o.label}</option>`)
+      .join('')}</select>`;
+    const pts = series.seasonLabels.map((label, i) => ({ label, value: series.values[i] ?? 0 }));
+    // A single point has no trend to show — the books need a second season closed before there is
+    // a line to draw at all (see `closeLedger`'s own note on why the first turnover banks no row).
+    const chart = pts.length >= 2
+      ? sparklineSVG(pts, { width: 260, height: 52, formatValue: (v) => this.thNum(v) })
+      : `<p class="th-none">Not enough history yet — check back after a season closes.</p>`;
+    return `<div class="th2-chart-sec"><div class="th2-chart-head"><span>${title}</span>${sel}</div><div class="th2-chart">${chart}</div></div>`;
+  }
+
+  private thInventoryTab(dash: TownHallDashboard): string {
+    const cards = dash.inventory
+      .map((r) => {
+        const cls = r.net > 0.05 ? 'up' : r.net < -0.05 ? 'down' : '';
+        const arrow = r.net > 0.05 ? '↑' : r.net < -0.05 ? '↓' : '·';
+        return (
+          `<button class="th2-res${r.kind === this.townhallInvKind ? ' picked' : ''}" data-th-res="${r.kind}">` +
+          `<span class="th2-res-head"><span>${r.icon}</span><span class="th2-res-name">${r.label}</span></span>` +
+          `<span class="th2-res-amt">${this.thNum(r.stock)}${r.cap !== null ? ` / ${this.thNum(r.cap)}` : ''}</span>` +
+          `<span class="th2-res-trend ${cls}">${arrow} ${r.net >= 0 ? '+' : ''}${this.thNum(r.net)}</span>` +
+          `</button>`
+        );
+      })
+      .join('');
+    const picked = dash.inventory.find((r) => r.kind === this.townhallInvKind) ?? dash.inventory[0];
+    const chart = picked
+      ? this.thChart(
+          `${picked.icon} ${picked.label} stockpile`,
+          'th2-inv-select',
+          dash.inventory.map((r) => ({ value: r.kind, label: `${r.icon} ${r.label}` })),
+          picked.kind,
+          picked.trend,
+        )
+      : '';
+    return `<div class="th2-grid">${cards}</div>${chart}`;
+  }
+
+  private thProductionTab(dash: TownHallDashboard): string {
+    if (dash.production.length === 0) {
+      // Nothing to summarise until the books have closed at least one season — this is the
+      // village's very first season, not a broken tab, so say so rather than leaving it blank.
+      return `<p class="th-none">The clerks have not closed a season yet — check back once one has.</p>`;
+    }
+    const cards = dash.production
+      .map(
+        (r) =>
+          `<button class="th2-res${r.category === this.townhallProdCategory ? ' picked' : ''}" data-th-cat="${r.category}">` +
+          `<span class="th2-res-head"><span>${r.icon}</span><span class="th2-res-name">${r.label}</span></span>` +
+          `<span class="th2-res-amt">${r.perSeason >= 0 ? '+' : ''}${this.thNum(r.perSeason)} <small>/ season</small></span>` +
+          `</button>`,
+      )
+      .join('');
+    const picked = dash.production.find((r) => r.category === this.townhallProdCategory) ?? dash.production[0];
+    const chart = this.thChart(
+      `${picked.icon} ${picked.label} production`,
+      'th2-prod-select',
+      dash.production.map((r) => ({ value: r.category, label: `${r.icon} ${r.label}` })),
+      picked.category,
+      picked.trend,
+    );
+    const buildings = dash.buildingProduction
+      .map((b) => {
+        const made = b.produced.length > 0
+          ? b.produced.map((p) => `${p.icon} +${this.thNum(p.amount)}`).join(', ')
+          : '<span class="th-none">No output last season</span>';
+        return (
+          `<div class="th2-bldg"><span class="th2-bldg-name">${b.emoji} ${b.name}</span>` +
+          `<span class="th2-bldg-workers">${b.workers}/${b.jobs}</span>` +
+          `<span class="th2-bldg-made">${made}</span></div>`
+        );
+      })
+      .join('');
+    const bldgSec = dash.buildingProduction.length
+      ? `<div class="th-sec">Production by building${dash.buildingProductionTruncated ? ' <small>(busiest shown)</small>' : ''}</div><div class="th2-bldgs">${buildings}</div>`
+      : '';
+    return `<div class="th2-grid">${cards}</div>${chart}${bldgSec}`;
+  }
+
+  private thPopulationTab(dash: TownHallDashboard): string {
+    const p = dash.population;
+    const g = dash.growth;
+    const stat = (icon: string, label: string, value: number | string) =>
+      `<div class="th2-stat"><span class="th2-stat-icon">${icon}</span><span class="th2-stat-label">${label}</span><span class="th2-stat-val">${value}</span></div>`;
+    const stats =
+      stat('👥', 'Population', p.total) +
+      stat('🧒', 'Children', p.children) +
+      stat('🎓', 'Students', p.students) +
+      stat('🧑', 'Adults', p.adults) +
+      stat('💼', 'Working', p.workers) +
+      stat('🔨', 'Builders', p.builders) +
+      stat('🙌', 'Available', p.available) +
+      stat('🤒', 'Sick', p.sick);
+    const growth =
+      stat('📈', 'Growth this year', `${g.netThisYear >= 0 ? '+' : ''}${g.netThisYear}`) +
+      stat('👶', 'Births', g.births) +
+      stat('⚰️', 'Deaths', g.deaths) +
+      stat('🧳', 'Immigration', g.immigrants);
+    const metricSeries: Record<string, { label: string; series: { seasonLabels: string[]; values: number[] } }> = {
+      pop: { label: '👥 Population', series: g.popTrend },
+      births: { label: '👶 Births', series: g.birthsTrend },
+      deaths: { label: '⚰️ Deaths', series: g.deathsTrend },
+      immigrants: { label: '🧳 Immigration', series: g.immigrantsTrend },
+    };
+    const m = metricSeries[this.townhallPopMetric];
+    const chart = this.thChart(
+      m.label,
+      'th2-pop-select',
+      Object.entries(metricSeries).map(([value, v]) => ({ value, label: v.label })),
+      this.townhallPopMetric,
+      m.series,
+    );
+    return (
+      `<div class="th-sec">Population</div><div class="th2-stats">${stats}</div>` +
+      `<div class="th-sec">This year</div><div class="th2-stats">${growth}</div>` +
+      chart
+    );
+  }
+
+  private thPoliciesTab(dash: TownHallDashboard): string {
+    const cards = dash.policies
+      .map((p) => {
+        const state = p.active ? ' on' : p.enacted ? ' lapsed' : '';
+        const status = p.active ? 'ACTIVE' : p.enacted ? 'LAPSED' : '';
+        const note = p.lapsedReason ? `<span class="th-lapsed">${p.lapsedReason}</span>` : '';
+        return (
+          `<button class="th-policy${state}" data-policy="${p.id}">` +
+          `<span class="th-pname">${p.emoji} ${p.label}${status ? ` <small class="th-pstatus">${status}</small>` : ''}</span>` +
+          `<span class="th-pgain">${p.gain}</span>` +
+          `<span class="th-pcost">${p.cost}</span>${note}</button>`
+        );
+      })
+      .join('');
+    const festival =
+      `<div class="th-sec">Festival</div>` +
+      `<div class="th2-festival"><div class="th2-fest-cost">🍽️ ${FESTIVAL_FOOD} food · +${FESTIVAL_HAPPY} happiness for everyone</div>` +
+      `<div class="inv-ctrl"><button class="ranch-btn" id="th2-festival"${dash.canFestival ? '' : ' disabled'}>🎉 Hold Festival</button></div>` +
+      (!dash.canFestival && dash.festivalReason ? `<p class="th-none">${dash.festivalReason}</p>` : '') +
+      `</div>`;
+    return (
+      `<div class="th-sec">All policies <small>${dash.capacity} capacity</small></div>` +
+      `<div class="th-policies">${cards}</div>${festival}`
+    );
+  }
+
+  private readonly THTAB_LABEL: Record<TownHallTab, string> = {
+    inventory: '📦 Inventory', production: '⚙️ Production', population: '👥 Population', policies: '📜 Policies',
+  };
+
+  private refreshTownHall(s: GameState): void {
+    const hall = this.townhallId === null ? null : s.buildings.find((b) => b.id === this.townhallId && b.built && b.type === 'townhall');
+    if (!hall) {
+      this.closeTownHall();
+      return;
+    }
+    const dash = townHallDashboard(s);
+    // Fall back to whatever the dashboard actually has data for the first time round, or once the
+    // picked resource/category stops existing (e.g. its stock and history both dropped to nothing).
+    if (!dash.inventory.some((r) => r.kind === this.townhallInvKind) && dash.inventory[0]) {
+      this.townhallInvKind = dash.inventory[0].kind;
+    }
+    if (!dash.production.some((r) => r.category === this.townhallProdCategory) && dash.production[0]) {
+      this.townhallProdCategory = dash.production[0].category;
+    }
+    // Rounded to whole units (matching what `thNum` actually displays for anything sizeable) rather
+    // than the raw floats `dash` carries: stock and production drift by a fraction of a unit every
+    // single tick while the game runs, and signing on the exact float rebuilt this panel every frame
+    // — including out from under a click in progress, the same way the trading post's own sig is
+    // built off rounded/coarse fields rather than raw state for exactly this reason.
+    const sig = JSON.stringify(
+      [this.townhallTab, this.townhallInvKind, this.townhallProdCategory, this.townhallPopMetric, dash],
+      (_key, value) => (typeof value === 'number' ? Math.round(value) : value),
+    );
+    if (sig === this.townhallSig) return;
+    this.townhallSig = sig;
+
+    // What's actually affecting the village, right on the header line next to the clerk/policy
+    // counts — no boxes to scan past, just the numbers a policy is worth (see POLICY_META's own
+    // gain/cost strings, already short enough to read inline: "Workers produce 12% more" sits next
+    // to "Health −6" the same way it would in a full card, just without the card).
+    const effects = dash.activeEffects
+      .map((p) => `<span class="th2-effect">${p.emoji} ${p.gain} · ${p.cost}</span>`)
+      .join('');
+    const tabs = (Object.keys(this.THTAB_LABEL) as TownHallTab[])
+      .map((k) => `<button class="tab${this.townhallTab === k ? ' on' : ''}" data-th-tab="${k}">${this.THTAB_LABEL[k]}</button>`)
+      .join('');
+    const body =
+      this.townhallTab === 'inventory' ? this.thInventoryTab(dash)
+      : this.townhallTab === 'production' ? this.thProductionTab(dash)
+      : this.townhallTab === 'population' ? this.thPopulationTab(dash)
+      : this.thPoliciesTab(dash);
+
+    this.el.townhall.innerHTML =
+      `<div class="th2-card">` +
+      `<div class="th2-head"><div class="th2-title">🏛️ Town Hall<button class="close" id="th2-close">×</button></div>` +
+      `<div class="th2-meta">` +
+      `<span>🪑 ${dash.clerks}/${dash.clerkJobs} clerks</span>` +
+      `<span>📜 ${dash.activeEffects.length}/${dash.capacity} policies</span>` +
+      `<span>${dash.season} · Yr ${dash.year}</span>` +
+      effects +
+      `</div></div>` +
+      `<div class="tabs th2-tabs">${tabs}</div>` +
+      `<div class="th2-body panel-body">${body}</div>` +
+      `</div>`;
+
+    byId('th2-close').addEventListener('click', () => this.closeTownHall());
+    this.el.townhall.querySelectorAll('[data-th-tab]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        this.townhallTab = (btn as HTMLElement).dataset.thTab as TownHallTab;
+        this.townhallSig = '';
+        this.refreshTownHall(s);
+      }),
+    );
+    this.el.townhall.querySelectorAll('[data-th-res]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        this.townhallInvKind = (btn as HTMLElement).dataset.thRes as LimitKey;
+        this.townhallSig = '';
+        this.refreshTownHall(s);
+      }),
+    );
+    this.el.townhall.querySelectorAll('[data-th-cat]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        this.townhallProdCategory = (btn as HTMLElement).dataset.thCat as ResourceCategory;
+        this.townhallSig = '';
+        this.refreshTownHall(s);
+      }),
+    );
+    const invSel = this.el.townhall.querySelector('#th2-inv-select') as HTMLSelectElement | null;
+    invSel?.addEventListener('change', () => {
+      this.townhallInvKind = invSel.value as LimitKey;
+      this.townhallSig = '';
+      this.refreshTownHall(s);
+    });
+    const prodSel = this.el.townhall.querySelector('#th2-prod-select') as HTMLSelectElement | null;
+    prodSel?.addEventListener('change', () => {
+      this.townhallProdCategory = prodSel.value as ResourceCategory;
+      this.townhallSig = '';
+      this.refreshTownHall(s);
+    });
+    const popSel = this.el.townhall.querySelector('#th2-pop-select') as HTMLSelectElement | null;
+    popSel?.addEventListener('change', () => {
+      this.townhallPopMetric = popSel.value as 'pop' | 'births' | 'deaths' | 'immigrants';
+      this.townhallSig = '';
+      this.refreshTownHall(s);
+    });
+    this.el.townhall.querySelectorAll('[data-policy]').forEach((btn) =>
+      btn.addEventListener('click', () => this.cb.onTogglePolicy((btn as HTMLElement).dataset.policy as PolicyId)),
+    );
+    this.el.townhall.querySelector('#th2-festival')?.addEventListener('click', () => this.cb.onFestival());
   }
 
   // ---- Placement widget: turn the building, and size it if it is a field or a pen ----

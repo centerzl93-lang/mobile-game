@@ -1085,7 +1085,10 @@ function births(s: GameState, elapsed: number, log: LogFn): void {
       born++;
     }
   }
-  if (born > 0) log(born > 1 ? `${born} children were born` : `A child was born`, 'good');
+  if (born > 0) {
+    log(born > 1 ? `${born} children were born` : `A child was born`, 'good');
+    s.seasonBirths = (s.seasonBirths ?? 0) + born;
+  }
 }
 
 // ---- jobs ----
@@ -1756,6 +1759,13 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workerFact
         // commuting. `pending` accumulates across cycles and only becomes a carry when it is
         // full, at which point the delivery branch above takes over.
         const made = Math.min(limit, out.amount * prod);
+        // Measured at the exact moment it happens — the Town Hall's "production by building" reads
+        // this straight off, rather than re-deriving it from a worker count and a nominal rate (see
+        // the field's own doc comment on why that would drift).
+        if (made > 0.001) {
+          const acc = (b.producedThisSeason ??= {});
+          acc[out.kind] = (acc[out.kind] ?? 0) + made;
+        }
         const held = c.pending && c.pending.kind === out.kind ? c.pending.amount : 0;
         const total = Math.min(limit, held + made);
         if (total >= limit - 0.01) {
@@ -3112,6 +3122,31 @@ function closeLedger(s: GameState): void {
   s.spent = {};
 }
 
+/** Snapshot every building's measured output for the season just closed, and start the next one's
+ *  tally at zero — the per-building counterpart to `closeLedger`, on the same cadence. */
+function closeBuildingProduction(s: GameState): void {
+  for (const b of s.buildings) {
+    b.lastSeasonProduced = b.producedThisSeason ?? {};
+    b.producedThisSeason = {};
+  }
+}
+
+/**
+ * Close the season's population count: the same idea as `closeLedger`, one row of raw counts
+ * rather than a resource flow. `deaths` is passed in rather than re-derived — `endSeason` has
+ * already tallied it (old age plus whatever this turnover itself killed) by the time this runs.
+ */
+function closePopHistory(s: GameState, deaths: number): void {
+  const rows = (s.popHistory ??= []);
+  rows.push({
+    year: s.year, season: s.season, pop: s.citizens.length,
+    births: s.seasonBirths ?? 0, deaths, immigrants: s.seasonImmigrants ?? 0,
+  });
+  if (rows.length > LEDGER_SEASONS) rows.splice(0, rows.length - LEDGER_SEASONS);
+  s.seasonBirths = 0;
+  s.seasonImmigrants = 0;
+}
+
 /**
  * What the books say about one resource: last season's flow, and how long the stock lasts at it.
  *
@@ -3329,6 +3364,8 @@ function endSeason(s: GameState, log: LogFn): void {
   updateWellbeing(s, shortFood > 0, deaths, tavernActive);
 
   closeLedger(s); // last, so a row covers everything this turnover did
+  closeBuildingProduction(s);
+  closePopHistory(s, deaths);
   recordSeasonStats(s); // read the just-closed row and the state, for the achievement tallies
 
   if (s.citizens.length === 0) {
@@ -4619,6 +4656,7 @@ function settleNomads(s: GameState, count: number, sick: number, log: LogFn): vo
   }
   log(`${count} newcomer${count > 1 ? 's' : ''} settled in your village`, 'good');
   if (sick > 0) log(`${sick} of them arrived sick`, 'bad');
+  s.seasonImmigrants = (s.seasonImmigrants ?? 0) + count;
 }
 
 /**

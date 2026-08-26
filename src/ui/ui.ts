@@ -1726,15 +1726,13 @@ export class UI {
     if (sig === this.townhallSig) return;
     this.townhallSig = sig;
 
-    const headline = dash.activeEffects.length
-      ? `<div class="th2-headline"><div class="th2-headline-title">⚡ Active policy effects</div><div class="th-policies">${dash.activeEffects
-          .map(
-            (p) =>
-              `<div class="th-policy on"><span class="th-pname">${p.emoji} ${p.label}</span>` +
-              `<span class="th-pgain">${p.gain}</span><span class="th-pcost">${p.cost}</span></div>`,
-          )
-          .join('')}</div></div>`
-      : '';
+    // What's actually affecting the village, right on the header line next to the clerk/policy
+    // counts — no boxes to scan past, just the numbers a policy is worth (see POLICY_META's own
+    // gain/cost strings, already short enough to read inline: "Workers produce 12% more" sits next
+    // to "Health −6" the same way it would in a full card, just without the card).
+    const effects = dash.activeEffects
+      .map((p) => `<span class="th2-effect">${p.emoji} ${p.gain} · ${p.cost}</span>`)
+      .join('');
     const tabs = (Object.keys(this.THTAB_LABEL) as TownHallTab[])
       .map((k) => `<button class="tab${this.townhallTab === k ? ' on' : ''}" data-th-tab="${k}">${this.THTAB_LABEL[k]}</button>`)
       .join('');
@@ -1751,8 +1749,8 @@ export class UI {
       `<span>🪑 ${dash.clerks}/${dash.clerkJobs} clerks</span>` +
       `<span>📜 ${dash.activeEffects.length}/${dash.capacity} policies</span>` +
       `<span>${dash.season} · Yr ${dash.year}</span>` +
+      effects +
       `</div></div>` +
-      headline +
       `<div class="tabs th2-tabs">${tabs}</div>` +
       `<div class="th2-body panel-body">${body}</div>` +
       `</div>`;

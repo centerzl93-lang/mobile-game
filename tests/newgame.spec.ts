@@ -7300,9 +7300,9 @@ test.describe('Town Hall dashboard', () => {
 
     const overlay = page.locator('#townhall-overlay');
     await expect(overlay).toBeVisible();
-    // The active-policy headline is visible without switching tabs — it's the one thing shown on
-    // every tab, per the dashboard's own priority order.
-    await expect(overlay.locator('.th2-headline')).toContainText('Long Hours');
+    // The active policy's impact is on the header line without switching tabs — it's the one thing
+    // shown on every tab, per the dashboard's own priority order.
+    await expect(overlay.locator('.th2-meta')).toContainText('Workers produce 12% more');
     await expect(overlay.locator('[data-th-tab="inventory"]')).toHaveClass(/on/);
 
     await overlay.locator('[data-th-tab="production"]').click();

@@ -2533,33 +2533,19 @@ body {
 .th2-meta {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 4px 12px;
   font-size: 12px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-/* The headline every tab shares: what's in force, right now, before anything else on the page. */
-.th2-headline {
-  flex: 0 0 auto;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  border: 1px solid var(--accent);
-  border-radius: 10px;
-  padding: 8px 10px;
-}
-.th2-headline-title {
-  font-size: 11px;
-  font-weight: 700;
+/* What a standing rule is actually worth, right on the header line next to the clerk/policy
+   counts — the same "impacts, not descriptions" the rest of the dashboard leads with, with no
+   card around it to scan past. */
+.th2-effect {
   color: var(--accent);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  margin-bottom: 5px;
-}
-.th2-headline .th-policies {
-  gap: 4px;
-}
-.th2-headline .th-policy {
-  padding: 6px 9px;
-  cursor: default;
+  font-weight: 600;
+  white-space: nowrap;
 }
 .th2-tabs {
   flex: 0 0 auto;

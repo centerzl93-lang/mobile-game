@@ -772,8 +772,16 @@ export interface Building {
   built: boolean;
   progress: number; // builder-work laid down so far, 0..buildWorkOf(type)
   workers: number[]; // citizen ids currently working here
-  /** Player-set target number of workers (0..jobs). */
+  /** Player-set target number of workers (0..workerCapOf(this)). */
   desiredWorkers: number;
+  /**
+   * Player-set cap on this instance's job slots (0..`BUILDING_DEFS[type].jobs`). Undefined means
+   * uncapped — the type's own `jobs` figure. Lowering it below the current `desiredWorkers` pulls
+   * that down to match at once; nobody has to be walked out by hand, since employment is
+   * recomputed live every tick (`assignHomesAndJobs`) rather than held as a standing assignment.
+   * See `workerCapOf`.
+   */
+  maxWorkers?: number;
   /** Accumulated field growth for farms (0..1). */
   growth: number;
   /** Mine: whether it digs coal or iron. */
@@ -1328,6 +1336,17 @@ export function tradePosts(s: GameState, type: BuildingType): Building[] {
 }
 
 /**
+ * How many job slots this particular building will hold, 0..`BUILDING_DEFS[type].jobs` — the
+ * type's own figure, player-narrowed by `maxWorkers` (the inspect sheet's "Max Workers" stepper).
+ * Every place that used to read `BUILDING_DEFS[type].jobs` as a per-building ceiling on
+ * `desiredWorkers` reads this instead, so a village-wide cap on one particular hut actually holds.
+ */
+export function workerCapOf(b: Building): number {
+  const jobs = BUILDING_DEFS[b.type].jobs;
+  return Math.max(0, Math.min(jobs, b.maxWorkers ?? jobs));
+}
+
+/**
  * Villagers put to a trade: what its buildings have been asked for, plus the overflow.
  *
  * This is the number the job board's stepper moves — how many of the village's people are
@@ -1349,8 +1368,7 @@ export function tradeStaff(s: GameState, type: BuildingType): number {
  * anybody yet.
  */
 export function tradeCapacity(s: GameState, type: BuildingType): number {
-  const jobs = BUILDING_DEFS[type].jobs;
-  return tradePosts(s, type).reduce((n, b) => n + (b.built ? jobs : 0), 0);
+  return tradePosts(s, type).reduce((n, b) => n + (b.built ? workerCapOf(b) : 0), 0);
 }
 
 /** Villagers actually posted to a building of this type right now. */
@@ -1375,7 +1393,7 @@ export function setTradeWanted(s: GameState, type: BuildingType, delta: number):
   if (delta > 0) {
     let best: Building | null = null;
     for (const b of posts) {
-      if (b.desiredWorkers >= jobs) continue;
+      if (b.desiredWorkers >= workerCapOf(b)) continue;
       if (!best || b.desiredWorkers < best.desiredWorkers) best = b;
     }
     if (best) best.desiredWorkers++;
@@ -1403,11 +1421,10 @@ export function setTradeWanted(s: GameState, type: BuildingType, delta: number):
  * finished, without having to go back to the board and say it again.
  */
 export function drawFromTradeExtra(s: GameState, b: Building): void {
-  const jobs = BUILDING_DEFS[b.type].jobs;
   const extras = s.tradeExtra;
   const waiting = extras?.[b.type] ?? 0;
-  if (jobs <= 0 || waiting <= 0) return;
-  const take = Math.min(jobs - b.desiredWorkers, waiting);
+  if (BUILDING_DEFS[b.type].jobs <= 0 || waiting <= 0) return;
+  const take = Math.min(workerCapOf(b) - b.desiredWorkers, waiting);
   if (take <= 0) return;
   b.desiredWorkers += take;
   extras![b.type] = waiting - take;

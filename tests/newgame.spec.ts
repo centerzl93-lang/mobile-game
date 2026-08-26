@@ -168,7 +168,8 @@ test.describe('forester', () => {
       return { text: el.innerText, r1: g.debugWorkRadius(f.id) };
     });
     expect(insp.text).toContain('Forester');
-    expect(insp.text).toContain('max 3');
+    expect(insp.text).toContain('Workers (0/3)');
+    expect(insp.text).toContain('Max Workers');
     expect(insp.text).toContain('Replant');
     expect(insp.r1).toBe(8); // 3 workers ⇒ base 4 + 2*2
   });
@@ -2381,17 +2382,16 @@ test.describe('why a workplace is idle', () => {
   });
 });
 
-test.describe('setting a workplace worker count directly', () => {
-  test('the workers slider jumps straight to any figure, including zero, without stepping', async ({ page }) => {
+test.describe('per-building worker cap and staffing steppers', () => {
+  test('the Max Workers stepper narrows this building\'s own job-slot cap, and pulls the wanted count down with it', async ({ page }) => {
     await open2d(page);
-    const out = await page.evaluate(() => {
+    const id = await page.evaluate(() => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
-      // Synthetic, built quarry (as the Forester sheet test above does): the slider is a pure UI
-      // concern, so it doesn't need a real, reachable 8x8 clearing — genuinely scarce on a small
-      // map — just to prove it commits a value.
+      // Synthetic, built quarry (as the Forester sheet test above does): the stepper is a pure UI
+      // concern, so it doesn't need a real, reachable 8x8 clearing — genuinely scarce on a small map.
       const q = {
         id: s.nextId++, type: 'quarry', x: barn.x, y: barn.y, built: true, progress: 220,
         workers: [], desiredWorkers: 6, store: {},
@@ -2399,40 +2399,44 @@ test.describe('setting a workplace worker count directly', () => {
       s.buildings.push(q);
       g.inspectSel = { kind: 'building', id: q.id };
       g.refreshInspect();
-      const range = document.getElementById('insp-workers-range') as HTMLInputElement;
-      const max = Number(range.max);
-      // A quarry's crew of up to ten used to take ten clicks to zero out — the slider commits any
-      // figure in one drag, on release (`change`), the same pattern as the ranch herd-limit slider.
-      range.value = '0';
-      range.dispatchEvent(new Event('change'));
-      const afterZero = q.desiredWorkers;
-      range.value = String(max);
-      range.dispatchEvent(new Event('change'));
-      return { max, afterZero, afterMax: q.desiredWorkers };
+      return q.id;
     });
-    expect(out.max, "a quarry's job cap").toBe(10);
-    expect(out.afterZero).toBe(0);
-    expect(out.afterMax).toBe(10);
+    // A quarry's job cap starts at its type default (10, unset `maxWorkers`) — six clicks pulls it
+    // down past the current wanted count of 6, which should be dragged down to match at once.
+    for (let i = 0; i < 6; i++) await page.locator('#insp-maxworkers-ctrl [data-step="-1"]').click();
+    const after = await page.evaluate((bid) => {
+      const s = (window as any).__village.state;
+      const q = s.buildings.find((b: any) => b.id === bid);
+      return { maxWorkers: q.maxWorkers, desiredWorkers: q.desiredWorkers };
+    }, id);
+    expect(after.maxWorkers).toBe(4);
+    expect(after.desiredWorkers, 'wanted was above the new cap, so it should follow it down').toBe(4);
   });
 
-  test('no slider is offered for a single-slot job — the stepper alone is already exact', async ({ page }) => {
+  test('the Workers stepper cannot ask for more hands than the Max Workers cap allows', async ({ page }) => {
     await open2d(page);
-    const hasSlider = await page.evaluate(() => {
+    const id = await page.evaluate(() => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
       const s = g.state;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
-      // A woodcutter's single job slot — synthetic and built, same reasoning as above.
+      // A woodcutter's single job slot — synthetic and built, same reasoning as above — with its
+      // cap pinned to zero so the Workers "+" stepper has nowhere to go.
       const wc = {
         id: s.nextId++, type: 'woodcutter', x: barn.x, y: barn.y, built: true, progress: 30,
-        workers: [], desiredWorkers: 0, store: {},
+        workers: [], desiredWorkers: 0, maxWorkers: 0, store: {},
       };
       s.buildings.push(wc);
       g.inspectSel = { kind: 'building', id: wc.id };
       g.refreshInspect();
-      return !!document.getElementById('insp-workers-range');
+      return wc.id;
     });
-    expect(hasSlider).toBe(false);
+    await page.locator('#insp-workers-ctrl [data-step="1"]').click();
+    const desired = await page.evaluate((bid) => {
+      const s = (window as any).__village.state;
+      return s.buildings.find((b: any) => b.id === bid).desiredWorkers;
+    }, id);
+    expect(desired).toBe(0);
   });
 });
 

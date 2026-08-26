@@ -1,14 +1,16 @@
 /**
  * Two path tiles that only touch at a corner are not one connected road — `pathsConnected` in
- * `paths.ts` is the shared definition, and `findPath`'s A* (`pathfind.ts`) is the one place that
- * definition actually changes behaviour: a diagonal hop between two corner-only road tiles gets
- * no ride-the-road speed credit, the same as if neither tile were a road at all.
+ * `paths.ts` is the shared definition, and two places actually change behaviour on it: `findPath`'s
+ * A* (`pathfind.ts`) denies ride-the-road speed credit for a diagonal hop between two corner-only
+ * road tiles, the same as if neither tile were a road at all, and `routePath` (the auto-router
+ * behind the drag-to-draw-a-road UX) never *proposes* such a hop in the first place — see the
+ * "no diagonals" tests below.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { newGame } from '../src/game/state';
 import { findPath, Point } from '../src/game/pathfind';
-import { pathsConnected, pathSpeedMult } from '../src/game/paths';
+import { pathsConnected, pathSpeedMult, routePath } from '../src/game/paths';
 import { PATH_NONE, PATH_STONE } from '../src/types';
 import type { GameState } from '../src/types';
 
@@ -122,4 +124,58 @@ test('visuals read the same per-tile path value pathfinding does — nothing to 
   s.paths[11 * s.w + 11] = PATH_STONE;
   assert.equal(pathSpeedMult(s, 10, 10), pathSpeedMult(s, 11, 11), 'each tile carries its own speed/visual value independently');
   assert.equal(pathsConnected(s, 10, 10, 11, 11), false, 'and the connectivity check both pathfinding and any future visual joint would read agrees: not connected');
+});
+
+/** True when every consecutive pair of tiles in a route shares a full edge (`dx+dy === 1`) rather
+ *  than merely touching at a corner — the geometric shape of `pathsConnected`'s own "orthogonal
+ *  always counts" rule, checked directly against coordinates instead of against laid tiles. */
+function isEdgeConnected(route: { x: number; y: number }[]): boolean {
+  for (let i = 1; i < route.length; i++) {
+    const dx = Math.abs(route[i].x - route[i - 1].x);
+    const dy = Math.abs(route[i].y - route[i - 1].y);
+    if (dx + dy !== 1) return false;
+  }
+  return true;
+}
+
+test('the road auto-router never proposes a diagonal, corner-only hop — a straight diagonal drag becomes a staircase', () => {
+  const s = flatState(208);
+  // A pure diagonal target: before the "orthogonal only" fix, this was A*'s *cheapest* route (one
+  // diagonal step undercuts even a single turn's TURN_COST), so the router used to hand back a
+  // straight line of corner-only tiles — exactly the shape `pathsConnected` says isn't a road.
+  const route = routePath(s, 10, 10, 20, 20);
+  assert.ok(route);
+  assert.ok(isEdgeConnected(route!), 'every step must share a full edge with the one before it');
+  // Sanity: this is a real route from start to goal, not routePath giving up and returning just
+  // the endpoints.
+  assert.equal(route![0].x, 10);
+  assert.equal(route![0].y, 10);
+  assert.equal(route![route!.length - 1].x, 20);
+  assert.equal(route![route!.length - 1].y, 20);
+});
+
+test('a route the auto-router lays down is fully pathsConnected end to end once built', () => {
+  const s = flatState(209);
+  const route = routePath(s, 5, 5, 12, 9);
+  assert.ok(route);
+  for (const p of route!) s.paths[p.y * s.w + p.x] = PATH_STONE;
+  for (let i = 1; i < route!.length; i++) {
+    const a = route![i - 1];
+    const b = route![i];
+    assert.equal(
+      pathsConnected(s, a.x, a.y, b.x, b.y), true,
+      `(${a.x},${a.y}) -> (${b.x},${b.y}) should be a genuine, speed-bonused join`,
+    );
+  }
+});
+
+test('the auto-router still finds a way round an obstacle without cutting a diagonal corner past it', () => {
+  const s = flatState(210);
+  // A wall of water dead ahead, with no gap: the router has to walk all the way round one end,
+  // which is still a real, findable, fully edge-connected route with the diagonal step removed.
+  for (let y = 5; y <= 13; y++) s.tiles[y * s.w + 15] = { type: 'water', trees: 0 };
+  const route = routePath(s, 10, 9, 20, 9);
+  assert.ok(route, 'a route around the wall should still exist');
+  assert.ok(isEdgeConnected(route!));
+  for (const p of route!) assert.notEqual(s.tiles[p.y * s.w + p.x].type, 'water', 'never routes through the wall itself');
 });

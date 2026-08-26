@@ -108,7 +108,6 @@ import {
   LuxuryRecipe,
   ResourceKind,
   RESOURCE_ICON,
-  resourceDisplayName,
   resourceWord,
   NO_TOOLS_PENALTY,
   LARDER_KINDS,
@@ -1734,7 +1733,7 @@ class Game {
         if (!isDwelling(b.type)) {
           for (const k of RESOURCE_KINDS) {
             const v = b.store[k] ?? 0;
-            if (v > 0.5) rows.push({ label: `${RESOURCE_ICON[k]} ${resourceDisplayName(k)}`, value: `${Math.floor(v)}`, grid: true });
+            if (v > 0.5) rows.push({ label: `${RESOURCE_ICON[k]} ${resourceWord(k)}`, value: `${Math.floor(v)}`, grid: true });
           }
         }
       }

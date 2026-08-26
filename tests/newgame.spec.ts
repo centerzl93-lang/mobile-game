@@ -6138,8 +6138,8 @@ test.describe('iron and steel tools', () => {
     );
     // Every raw kind reads as its player-facing name — never the bare identifier the code uses
     // internally (which would run "steel" and "tools" together with no space).
-    expect(out.some((t: string) => t.includes('Iron Tools'))).toBe(true);
-    expect(out.some((t: string) => t.includes('Steel Tools'))).toBe(true);
+    expect(out.some((t: string) => /iron tools/i.test(t))).toBe(true);
+    expect(out.some((t: string) => /steel tools/i.test(t))).toBe(true);
     expect(out.every((t: string) => !/steeltools/i.test(t))).toBe(true);
     expect(out.every((t: string) => !/warmclothing/i.test(t))).toBe(true);
   });
@@ -8427,8 +8427,11 @@ test.describe('work happens where the work is', () => {
         wc.store.wood = 9999; // keep it stocked: this is about where they stand, not logistics
         const c = s.citizens.find((x: any) => x.jobId === wc.id);
         // Stand them at their own door each tick and clear anything that would send them off, so
-        // this measures the rule and not how long a walk to the barn happens to be on this map.
+        // this measures the rule and not how long a walk to the barn happens to be on this map —
+        // tool-fetching included: a bare-handed villager prioritises a barn trip for one, so give
+        // them one up front rather than have that errand compete with what this test measures.
         if (c) {
+          g.debugSetCitizenTool(c.id, 'iron');
           const at = g.debugWorkSpot(c.id);
           c.x = at.x;
           c.y = at.y;
@@ -9663,9 +9666,11 @@ test.describe('stockpile limits', () => {
         for (let i = 0; i < ticks; i++) {
           wc.store.wood = 9999; // keep it in input, so this measures the cap and nothing else
           // Stand them at their own door and take away any reason to wander, so what is measured
-          // is the cap rather than the length of a walk on this particular map.
+          // is the cap rather than the length of a walk on this particular map — tool-fetching
+          // included, so give them one up front rather than let that errand compete with the cap.
           for (const c of s.citizens) {
             if (c.jobId !== wc.id) continue;
+            g.debugSetCitizenTool(c.id, 'iron');
             const at = g.debugWorkSpot(c.id);
             c.x = at.x;
             c.y = at.y;

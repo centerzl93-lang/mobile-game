@@ -36,7 +36,7 @@ import {
   tradeStaff,
   tradeCapacity,
   autoBuilderDemand,
-  resourceDisplayName,
+  resourceWord,
   tradeWorking,
   Building,
   HarvestKind,
@@ -2070,7 +2070,7 @@ export class UI {
     byId('tp-orders').innerHTML = RESOURCE_KINDS.map((k) => {
       const have = Math.floor(store[k] ?? 0);
       return `<div class="tp-row">
-          <span class="tp-good">${RESOURCE_ICON[k]} ${resourceDisplayName(k)}</span>
+          <span class="tp-good">${RESOURCE_ICON[k]} ${resourceWord(k)}</span>
           <span class="tp-val" title="Trade value per unit">◈${TRADE_VALUE[k]}</span>
           <span class="tp-have" title="${isPort ? 'On the quay now' : 'In the post now'}">${have}</span>
           ${this.qtyControl('ord', k, orders[k] ?? 0, -1)}
@@ -2149,7 +2149,7 @@ export class UI {
       .map((k) => {
         const stock = Math.floor(m.stock[k] ?? 0);
         return `<div class="tp-row">
-            <span class="tp-good">${RESOURCE_ICON[k]} ${resourceDisplayName(k)}</span>
+            <span class="tp-good">${RESOURCE_ICON[k]} ${resourceWord(k)}</span>
             <span class="tp-val">◈${TRADE_VALUE[k]}</span>
             <span class="tp-have"><small>of ${stock}</small></span>
             ${this.qtyControl('buy', k, this.basketGet[k] ?? 0, stock)}
@@ -2174,7 +2174,7 @@ export class UI {
           .map((k) => {
             const have = Math.floor(store[k] ?? 0);
             return `<div class="tp-row">
-                <span class="tp-good">${RESOURCE_ICON[k]} ${resourceDisplayName(k)}</span>
+                <span class="tp-good">${RESOURCE_ICON[k]} ${resourceWord(k)}</span>
                 <span class="tp-val">◈${TRADE_VALUE[k]}</span>
                 <span class="tp-have"><small>of ${have}</small></span>
                 ${this.qtyControl('give', k, this.basketGive[k] ?? 0, have)}

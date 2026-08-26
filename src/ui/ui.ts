@@ -165,8 +165,9 @@ export interface InspectControls {
    */
   tradingPost?: { merchantDocked: boolean; port: boolean; landlocked?: boolean };
   /**
-   * Pull it down, or call it off. `blocked` is the village's last barn, which has to stay
-   * standing; `marked` swaps the button for a cancel, right up until the walls actually come down.
+   * Pull it down, or call it off. `blocked` is the village's last barn, which has to stay standing
+   * — the sheet leaves the control off entirely rather than offering a button nobody can press.
+   * `marked` swaps the button for a cancel, right up until the walls actually come down.
    * `construction` flags an unfinished site: there is nothing to pull down, so the button reads
    * "Cancel construction" and takes the site away at once (materials mostly refunded) once confirmed.
    */
@@ -1100,7 +1101,9 @@ export class UI {
       const u = controls.upgrade;
       ctrlHtml += `<div class="inv-ctrl"><button class="ranch-btn" id="insp-upgrade">⬆️ Upgrade to ${u.to} <small>${u.cost}</small></button></div>`;
     }
-    if (controls?.demolish) {
+    // A blocked demolition (the village's last barn) has nothing to offer, so the control is left
+    // off the sheet entirely rather than surfacing as a button nobody can press.
+    if (controls?.demolish && !controls.demolish.blocked) {
       const d = controls.demolish;
       // Once the walls are coming down there is nothing to cancel — the button says so rather
       // than offering an undo that would leave a half-dismantled building standing.
@@ -1110,11 +1113,9 @@ export class UI {
           ? '🧱 Being pulled down'
           : d.marked
             ? '✖️ Cancel demolition'
-            : d.blocked
-              ? '🛖 Last barn — cannot demolish'
-              : '💥 Demolish';
+            : '💥 Demolish';
       const cls = d.marked && !d.underway ? 'ranch-btn' : 'ranch-btn danger';
-      const dis = d.blocked || d.underway ? ' disabled' : '';
+      const dis = d.underway ? ' disabled' : '';
       ctrlHtml += `<div class="inv-ctrl"><button class="${cls}" id="insp-demolish"${dis}>${label}</button></div>`;
     }
     this.el.inspect.innerHTML =

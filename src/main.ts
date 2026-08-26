@@ -2481,6 +2481,18 @@ class Game {
     return canFoundBarnAt(this.state.tiles, x, y);
   }
 
+  /**
+   * Debug/testing helper: is *this* camera position — right now, mid-founding — actually sitting
+   * on ground the barn can be founded on? Goes through `foundingReticle` rather than reimplementing
+   * its centring math, so a test can drive the camera the way a player pans it (aim, then check)
+   * instead of pre-computing a footprint corner and hoping it lines up with where the reticle will
+   * actually centre the barn.
+   */
+  debugFoundingSpotValid(): boolean {
+    const { tx, ty } = this.foundingReticle();
+    return canFoundBarnAt(this.state.tiles, tx, ty);
+  }
+
   /** Debug/testing helper: the tile value a path tier writes when built. */
   debugPathValue(tier: PathTier): number {
     return tier === 'dirt' ? PATH_DIRT
@@ -3318,6 +3330,9 @@ class Game {
         // No tier, no cost, no reachability — there is no village yet for any of those to mean
         // anything. Only the ground itself (see `canFoundBarnAt`) can refuse a spot.
         placement.valid = canFoundBarnAt(this.state.tiles, tx, ty);
+        // Draw it solid rather than the usual see-through ghost: this barn is the only thing on
+        // the map, so a faint silhouette is easy to lose against the terrain while panning.
+        placement.opaque = true;
       } else {
         placement.valid = canPlace(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot).ok;
         // A legal but unreachable spot is a soft-lock the player is about to build: warn, don't

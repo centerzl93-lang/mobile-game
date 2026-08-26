@@ -7745,10 +7745,12 @@ test.describe('choosing a starting spot', () => {
       const g = (window as any).__village;
       const s = g.state;
       for (let x = 4; x < s.w - 4; x++) {
-        if (g.debugCanFoundBarnAt(x, Math.floor(s.h / 2))) {
-          g.debugLookAt(x, Math.floor(s.h / 2));
-          return;
-        }
+        g.debugLookAt(x, Math.floor(s.h / 2));
+        // Check where the reticle itself will actually found the barn, not the panned-to tile —
+        // the reticle centres the barn's footprint under the camera rather than anchoring its
+        // corner there, so checking the corner instead let a narrow dry strip pass this scan and
+        // still fail at the confirm bar.
+        if (g.debugFoundingSpotValid()) return;
       }
       throw new Error('no dry spot found across the middle row');
     });
@@ -7782,10 +7784,12 @@ test.describe('choosing a starting spot', () => {
       const g = (window as any).__village;
       const s = g.state;
       for (let x = 4; x < s.w - 4; x++) {
-        if (g.debugCanFoundBarnAt(x, Math.floor(s.h / 2))) {
-          g.debugLookAt(x, Math.floor(s.h / 2));
-          return;
-        }
+        g.debugLookAt(x, Math.floor(s.h / 2));
+        // Check where the reticle itself will actually found the barn, not the panned-to tile —
+        // the reticle centres the barn's footprint under the camera rather than anchoring its
+        // corner there, so checking the corner instead let a narrow dry strip pass this scan and
+        // still fail at the confirm bar.
+        if (g.debugFoundingSpotValid()) return;
       }
       throw new Error('no dry spot found across the middle row');
     });

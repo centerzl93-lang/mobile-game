@@ -1261,10 +1261,22 @@ class Game {
     });
   }
 
+  /**
+   * Settings is reachable both mid-game (Pause) and from the title screen, where `state` is only
+   * the idle backdrop village — force-saving that would overwrite whatever is really in the
+   * autosave slot. So a settings change only forces an autosave when a real game is running; the
+   * preference itself is written to `localStorage` either way and needs no village to hold it.
+   */
+  private persistSetting(): void {
+    if (this.running) this.persist();
+  }
+
   /** Settings: graphics tier (applies on reload) and clear-all-saves. `back` returns to caller. */
   private openSettings(back: () => void): void {
+    const gfx = (localStorage.getItem('village-gfx') as 'low' | 'high' | null) ?? 'auto';
     this.ui.showSettings({
-      gfx: (localStorage.getItem('village-gfx') as 'low' | 'high' | null) ?? 'auto',
+      gfx,
+      initialGfx: gfx,
       tips: this.ui.tipsEnabled(),
       haptics: hapticsPref(),
       musicVolume: audioVolumePref(AUDIO_MUSIC_KEY),
@@ -1274,21 +1286,37 @@ class Game {
       onSetGfx: (g) => {
         if (g === 'auto') localStorage.removeItem('village-gfx');
         else localStorage.setItem('village-gfx', g);
+        this.persistSetting();
       },
       onSetTips: (on) => {
         this.ui.setTips(on);
         localStorage.setItem(TIPS_KEY, on ? 'on' : 'off');
+        this.persistSetting();
       },
-      onSetHaptics: (on) => localStorage.setItem(HAPTICS_KEY, on ? 'on' : 'off'),
-      onSetMusicVolume: (v) => localStorage.setItem(AUDIO_MUSIC_KEY, String(v)),
-      onSetNotificationsVolume: (v) => localStorage.setItem(AUDIO_NOTIFICATIONS_KEY, String(v)),
-      onSetVillageVolume: (v) => localStorage.setItem(AUDIO_VILLAGE_KEY, String(v)),
-      onSetDisasterVolume: (v) => localStorage.setItem(AUDIO_DISASTER_KEY, String(v)),
+      onSetHaptics: (on) => {
+        localStorage.setItem(HAPTICS_KEY, on ? 'on' : 'off');
+        this.persistSetting();
+      },
+      onSetMusicVolume: (v) => {
+        localStorage.setItem(AUDIO_MUSIC_KEY, String(v));
+        this.persistSetting();
+      },
+      onSetNotificationsVolume: (v) => {
+        localStorage.setItem(AUDIO_NOTIFICATIONS_KEY, String(v));
+        this.persistSetting();
+      },
+      onSetVillageVolume: (v) => {
+        localStorage.setItem(AUDIO_VILLAGE_KEY, String(v));
+        this.persistSetting();
+      },
+      onSetDisasterVolume: (v) => {
+        localStorage.setItem(AUDIO_DISASTER_KEY, String(v));
+        this.persistSetting();
+      },
       onClearSaves: () => {
         clearSave();
         this.ui.flashHint('All saves cleared');
       },
-      onReload: () => location.reload(),
       onBack: back,
     });
   }

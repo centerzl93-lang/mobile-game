@@ -2609,6 +2609,8 @@ export class UI {
   /** Settings: graphics tier (applies on reload), audio volumes, and clear-all-saves. */
   showSettings(opts: {
     gfx: 'auto' | 'low' | 'high';
+    /** What `gfx` was when the panel was first opened this visit — see the Apply handler below. */
+    initialGfx: 'auto' | 'low' | 'high';
     tips: boolean;
     haptics: boolean;
     musicVolume: number;
@@ -2623,7 +2625,6 @@ export class UI {
     onSetVillageVolume: (v: number) => void;
     onSetDisasterVolume: (v: number) => void;
     onClearSaves: () => void;
-    onReload: () => void;
     onBack: () => void;
   }): void {
     const gfxBtn = (g: 'auto' | 'low' | 'high', label: string) =>
@@ -2633,17 +2634,24 @@ export class UI {
     const hapticBtn = (on: boolean, label: string) =>
       `<button class="seg${opts.haptics === on ? ' on' : ''}" id="set-haptics-${on ? 'on' : 'off'}">${label}</button>`;
     // The volume sliders below are wired to preferences only — there's no audio in the game yet, so
-    // moving one just persists a number for a future sound system to read.
+    // moving one just persists a number for a future sound system to read. Label and slider are one
+    // `set-vol` block so the two sit close together, with a tighter gap between blocks than a full
+    // `menu-list` row gets — see `.set-vol`/`.set-audio-list` in style.css.
+    // `--fill` drives the filled portion of the track (see style.css) — a manual stand-in for the
+    // native `accent-color` progress fill, which is unavailable once the track/thumb are custom-
+    // styled. Set on render and kept live on drag by `wireVolume`'s `input` handler below.
     const volumeRow = (id: string, label: string, value: number) =>
-      `<div class="inv-ctrl"><span>${label}</span>` +
+      `<div class="set-vol">` +
+      `<div class="set-vol-label"><span>${label}</span>` +
       `<span class="ranch-avail" id="set-${id}-label">${value}</span></div>` +
-      `<div class="inv-ctrl"><input type="range" class="ranch-slider" id="set-${id}" min="0" max="10" step="1" value="${value}" /></div>`;
+      `<input type="range" class="ranch-slider" id="set-${id}" min="0" max="10" step="1" value="${value}" ` +
+      `style="--fill: ${(value / 10) * 100}%" />` +
+      `</div>`;
     this.overlayCard(
       `<h2>Settings</h2>` +
         `<div class="menu-list set-list">` +
         `<div class="set-label">Graphics</div>` +
         `<div class="seg-row">${gfxBtn('auto', 'Auto')}${gfxBtn('low', 'Low')}${gfxBtn('high', 'High')}</div>` +
-        `<div class="set-note">Graphics changes apply after reloading.</div>` +
         `<div class="set-pair">` +
         `<div class="set-pair-col">` +
         `<div class="set-label">Tips</div>` +
@@ -2655,14 +2663,17 @@ export class UI {
         `</div>` +
         `</div>` +
         `<div class="set-label">Audio</div>` +
+        `<div class="set-audio-list">` +
         volumeRow('music', 'Music', opts.musicVolume) +
         volumeRow('notifications', 'Notifications', opts.notificationsVolume) +
         volumeRow('village', 'Village noises', opts.villageVolume) +
         volumeRow('disaster', 'Disaster noises', opts.disasterVolume) +
-        `<div class="set-note">There's no sound in the game yet — these volumes are ready for when there is.</div>` +
-        `<button id="set-reload">Reload now</button>` +
-        `<button class="ghost" id="set-clear">Clear all saves</button>` +
+        `</div>` +
+        `<div class="set-pair">` +
+        `<button id="set-apply">Apply</button>` +
         `<button class="ghost" id="set-back">Back</button>` +
+        `</div>` +
+        `<button class="ghost" id="set-clear">Clear all saves</button>` +
         `</div>`,
       'menu-card settings-card',
     );
@@ -2693,6 +2704,7 @@ export class UI {
       const label = byId(`set-${id}-label`);
       slider.addEventListener('input', () => {
         label.textContent = slider.value;
+        slider.style.setProperty('--fill', `${(Number(slider.value) / 10) * 100}%`);
       });
       slider.addEventListener('change', () => {
         const v = Number(slider.value);
@@ -2704,11 +2716,27 @@ export class UI {
     wireVolume('notifications', opts.onSetNotificationsVolume, (v) => ({ ...opts, notificationsVolume: v }));
     wireVolume('village', opts.onSetVillageVolume, (v) => ({ ...opts, villageVolume: v }));
     wireVolume('disaster', opts.onSetDisasterVolume, (v) => ({ ...opts, disasterVolume: v }));
-    byId('set-reload').addEventListener('click', () => opts.onReload());
+    byId('set-apply').addEventListener('click', () => {
+      // Graphics only takes effect on reload — everything else here is already live — so Apply's
+      // one job beyond leaving (same as Back) is telling the player that, but only when it is true.
+      if (opts.gfx !== opts.initialGfx) this.showGraphicsReloadNotice(opts.onBack);
+      else opts.onBack();
+    });
     byId('set-clear').addEventListener('click', () => {
       if (confirm('Delete all saved villages? This cannot be undone.')) opts.onClearSaves();
     });
     byId('set-back').addEventListener('click', () => opts.onBack());
+  }
+
+  /** A one-button notice that the graphics change just made will apply next time the game reloads. */
+  private showGraphicsReloadNotice(onDismiss: () => void): void {
+    this.overlayCard(
+      `<h2>Graphics updated</h2>` +
+        `<p>Your new graphics setting will take effect the next time the game reloads.</p>` +
+        `<div class="menu-list"><button id="gfx-note-ok">OK</button></div>`,
+      'menu-card',
+    );
+    byId('gfx-note-ok').addEventListener('click', () => onDismiss());
   }
 
   showGameOver(s: GameState, onNew: () => void, onMainMenu: () => void): void {

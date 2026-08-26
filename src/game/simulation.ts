@@ -241,6 +241,7 @@ import {
   FIRE_BURNDOWN_HEALTH,
   repairWorkOf,
   repairCostOf,
+  workerCapOf,
 } from '../types';
 import { TIERS, TIER_META, villageTier, meetsTier, VillageTier } from './tiers';
 import { housingCapacity, buildingCenter, makeCitizen } from './state';
@@ -673,14 +674,14 @@ function heat(s: GameState, dt: number, log: LogFn): void {
   }
 }
 
-/** How many workers a building should be holding: the player's setting, capped by the job count. */
+/** How many workers a building should be holding: the player's setting, capped by its worker cap. */
 function staffWanted(s: GameState, b: Building): number {
   // A disabled workplace asks for nobody, so `assignHomesAndJobs` lets its hands go to labour
   // elsewhere — but `desiredWorkers` is untouched, so switching it back on re-staffs it exactly as
   // it was. This is the one place the enabled flag is read; the rest of the job system needs no
   // knowledge of it.
   if (!b.built || b.enabled === false || disabledByFire(b)) return 0;
-  return Math.min(BUILDING_DEFS[b.type].jobs, b.desiredWorkers);
+  return Math.min(workerCapOf(b), b.desiredWorkers);
 }
 
 /**

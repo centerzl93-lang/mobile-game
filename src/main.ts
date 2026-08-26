@@ -17,6 +17,7 @@ import {
   tradeStaff,
   tradeCapacity,
   tradeWorking,
+  workerCapOf,
   BARN_CAPACITY,
   HarvestKind,
   HARVEST_KIND_META,
@@ -365,7 +366,7 @@ class Game {
       onNewGame: () => this.openNewGameSetup(true),
       onOpenMenu: () => this.openPauseMenu(),
       onSetWorkers: (id, d) => this.setWorkers(id, d),
-      onSetWorkersTo: (id, v) => this.setWorkersTo(id, v),
+      onSetMaxWorkers: (id, d) => this.setMaxWorkers(id, d),
       onSetTradeWorkers: (type, d) => this.setTradeWorkers(type, d),
       onDemolishBuilding: (id, on) => this.setBuildingDemolish(id, on),
       onUpgradeBuilding: (id) => this.upgradeBuilding(id),
@@ -657,17 +658,21 @@ class Game {
   private setWorkers(id: number, delta: number): void {
     const b = this.state.buildings.find((x) => x.id === id);
     if (!b) return;
-    const max = BUILDING_DEFS[b.type].jobs;
-    b.desiredWorkers = Math.max(0, Math.min(max, b.desiredWorkers + delta));
+    b.desiredWorkers = Math.max(0, Math.min(workerCapOf(b), b.desiredWorkers + delta));
     this.persist();
   }
 
-  /** Set a workplace's wanted worker count directly — what the workers slider commits on release. */
-  private setWorkersTo(id: number, value: number): void {
+  /**
+   * Move this building's own worker cap (the "Max Workers" stepper), 0..`BUILDING_DEFS[type].jobs`.
+   * Pulling it below the current wanted count drops that too — a building never asks for more
+   * hands than it is now allowed to hold.
+   */
+  private setMaxWorkers(id: number, delta: number): void {
     const b = this.state.buildings.find((x) => x.id === id);
     if (!b) return;
-    const max = BUILDING_DEFS[b.type].jobs;
-    b.desiredWorkers = Math.max(0, Math.min(max, Math.round(value)));
+    const jobs = BUILDING_DEFS[b.type].jobs;
+    b.maxWorkers = Math.max(0, Math.min(jobs, workerCapOf(b) + delta));
+    if (b.desiredWorkers > b.maxWorkers) b.desiredWorkers = b.maxWorkers;
     this.persist();
   }
 
@@ -1731,7 +1736,6 @@ class Game {
         // answer to "everyone's here, so why is nothing coming out?" — see `workplaceStatus`.
         const status = workplaceStatus(this.state, b);
         if (status) rows.push({ label: 'Status', value: status.text, tone: status.tone });
-        if (def.jobs > 0) rows.push({ label: 'Workers', value: `${b.workers.length}/${b.desiredWorkers}` });
         if (isDwelling(b.type)) {
           const residents = this.state.citizens.filter((c) => c.homeId === b.id);
           rows.push({ label: 'Residents', value: `${residents.length}/${dwellingCapacityOf(b.type)}` });
@@ -1836,7 +1840,8 @@ class Game {
         controls = {
           ...controls,
           buildingId: b.id,
-          workers: { value: b.desiredWorkers, max: def.jobs },
+          workers: { value: b.desiredWorkers, max: workerCapOf(b), working: b.workers.length },
+          maxWorkers: { value: workerCapOf(b), max: def.jobs },
           // Every staffed workplace can be switched off; a disabled one reads as such and keeps its
           // worker count for when it is switched back on.
           enable: { on: b.enabled !== false },

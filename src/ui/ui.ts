@@ -165,8 +165,20 @@ export interface InspectControls {
    * itself.
    */
   rename?: string;
-  /** Worker allocation stepper (current desired vs the job cap). */
-  workers?: { value: number; max: number };
+  /**
+   * Worker allocation stepper — how many hands this building currently wants, up to its own worker
+   * cap (`maxWorkers`, below). `working` is how many are actually posted here right now, shown
+   * alongside as a read-out; the stepper itself moves `value`. Same function as the job board's
+   * per-trade stepper, just scoped to this one building.
+   */
+  workers?: { value: number; max: number; working: number };
+  /**
+   * "Max Workers" stepper — the player-set ceiling on this instance's job slots, 0..the building
+   * type's own `jobs` figure (`max`, here). Pulling it down below the current wanted count pulls
+   * that down too (see `onSetMaxWorkers`), the same way the ranch herd-limit slider culls a herd
+   * that no longer fits.
+   */
+  maxWorkers?: { value: number; max: number };
   /**
    * Switch this workplace on or off. `on` is its current state; disabled sends its workers to
    * labour elsewhere and halts production while keeping the worker count for when it comes back.
@@ -220,8 +232,8 @@ export interface UICallbacks {
   onNewGame: () => void;
   onOpenMenu: () => void;
   onSetWorkers: (buildingId: number, delta: number) => void;
-  /** Set a workplace's wanted worker count to an exact figure — what the workers slider commits on release. */
-  onSetWorkersTo: (buildingId: number, value: number) => void;
+  /** Move this building's own worker cap by one — the "Max Workers" stepper. */
+  onSetMaxWorkers: (buildingId: number, delta: number) => void;
   /** Move a whole profession's wanted count by one, spread across whatever buildings it has. */
   onSetTradeWorkers: (type: BuildingType, delta: number) => void;
   /** Mark this building for demolition, or take the mark back off. */
@@ -1021,16 +1033,21 @@ export class UI {
     }
     let ctrlHtml = '';
     if (controls?.workers) {
+      // The wanted-worker stepper — same function as the job board's per-trade row, just scoped to
+      // this one building. `working` is a read-out of who's actually posted here right now; the
+      // stepper itself moves how many the building is asking for, capped by its own `maxWorkers`
+      // (the row right below).
       const wk = controls.workers;
-      ctrlHtml += `<div class="inv-ctrl"><span>Workers <small>(max ${wk.max})</small></span>
+      ctrlHtml += `<div class="inv-ctrl" id="insp-workers-ctrl"><span>Workers <small>(${wk.working}/${wk.max})</small></span>
         <div class="stepper"><button data-step="-1">−</button><span class="count" id="insp-workers-count">${wk.value}</span><button data-step="1">+</button></div></div>`;
-      // A quick jump to any figure at once — the ±1 stepper above still does fine adjustment, but
-      // walking a ten-slot quarry down to zero one click at a time is exactly what this avoids.
-      // Same commit-on-release pattern as the ranch herd-limit slider below.
-      if (wk.max > 1) {
-        ctrlHtml += `<div class="inv-ctrl"><input type="range" class="ranch-slider" id="insp-workers-range"
-          min="0" max="${wk.max}" step="1" value="${wk.value}" aria-label="Wanted workers" /></div>`;
-      }
+    }
+    if (controls?.maxWorkers) {
+      // The per-instance job-slot cap — the denominator the row above steps up to. Bounded by the
+      // building type's own `jobs` figure; pulling it down drags the wanted count down with it
+      // (see `onSetMaxWorkers`).
+      const mw = controls.maxWorkers;
+      ctrlHtml += `<div class="inv-ctrl" id="insp-maxworkers-ctrl"><span>Max Workers</span>
+        <div class="stepper"><button data-step="-1">−</button><span class="count" id="insp-maxworkers-count">${mw.value}</span><button data-step="1">+</button></div></div>`;
     }
     if (controls?.enable) {
       // On/off is deliberately its own line, worded as the state and the action: a disabled
@@ -1128,19 +1145,10 @@ export class UI {
           this.openRenamePopup(id, current),
         );
       }
-      this.el.inspect.querySelector('[data-step="-1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, -1));
-      this.el.inspect.querySelector('[data-step="1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, 1));
-      const workersRange = this.el.inspect.querySelector('#insp-workers-range') as HTMLInputElement | null;
-      if (workersRange) {
-        const count = this.el.inspect.querySelector('#insp-workers-count') as HTMLElement | null;
-        // Live read-out while dragging, without committing: same pattern as the ranch herd-limit
-        // slider — commit lands on release (`change`) so the sheet's periodic rebuild doesn't fight
-        // an in-progress drag.
-        workersRange.addEventListener('input', () => {
-          if (count) count.textContent = workersRange.value;
-        });
-        workersRange.addEventListener('change', () => this.cb.onSetWorkersTo(id, Number(workersRange.value)));
-      }
+      this.el.inspect.querySelector('#insp-workers-ctrl [data-step="-1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, -1));
+      this.el.inspect.querySelector('#insp-workers-ctrl [data-step="1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, 1));
+      this.el.inspect.querySelector('#insp-maxworkers-ctrl [data-step="-1"]')?.addEventListener('click', () => this.cb.onSetMaxWorkers(id, -1));
+      this.el.inspect.querySelector('#insp-maxworkers-ctrl [data-step="1"]')?.addEventListener('click', () => this.cb.onSetMaxWorkers(id, 1));
       this.el.inspect
         .querySelector('#insp-enable')
         ?.addEventListener('click', () => this.cb.onSetBuildingEnabled(id, controls.enable?.on === false));

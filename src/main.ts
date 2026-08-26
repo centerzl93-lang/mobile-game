@@ -1475,6 +1475,7 @@ class Game {
   private citizenDoing(c: Citizen): string {
     // Children and the unwell come first: neither is part of the workforce.
     if (c.age < ADULT_AGE) return c.student ? '📚 At school' : '🧒 Playing';
+    if (c.undergrad) return '🎓 At university';
     if (c.sick) return '🤒 Laid up ill';
     // Groceries beat production: a `toLarder`/`toHouse` carry is household supplies, not output.
     if (c.task?.kind === 'toLarder') return '🏠 Carrying supplies home';
@@ -1869,7 +1870,10 @@ class Game {
       rows.push({ label: 'Doing', value: this.citizenDoing(c) });
       rows.push({ label: 'Sex', value: c.sex === 'm' ? '♂ Male' : '♀ Female' });
       rows.push({ label: 'Home', value: home ? `${BUILDING_DEFS[home.type].name} #${home.id}` : 'Homeless' });
-      rows.push({ label: 'Stage', value: adult ? 'Adult' : `Child · grows up at ${ADULT_AGE}` });
+      rows.push({
+        label: 'Stage',
+        value: c.undergrad ? 'University student' : adult ? 'Adult' : `Child · grows up at ${ADULT_AGE}`,
+      });
       rows.push({ label: 'Age', value: `${Math.floor(c.age)} yr` });
       rows.push({ label: 'Health', value: `❤️ ${Math.round(c.health)}%${c.sick ? ' · 🤒 sick' : ''}` });
       rows.push({ label: 'Happiness', value: `😊 ${Math.round(c.happiness)}%` });
@@ -1901,12 +1905,33 @@ class Game {
           rows.push({ label: 'Parents', value: parents.map((p) => p.name).join(' & ') });
         }
       }
-      if (adult) rows.push({ label: 'Schooling', value: c.educated ? 'Educated (+30% work)' : 'Uneducated' });
-      if (adult) rows.push({ label: 'Work', value: job ? `${BUILDING_DEFS[job.type].name} worker` : 'Builder / laborer' });
+      if (adult) {
+        // Four states, not two: still sitting the university year reads differently from having
+        // finished it, and a graduate outranks plain schooling — see `types.ts`'s `GRADUATE_BONUS`/
+        // `EDUCATED_BONUS` for what each is actually worth.
+        const schooling = c.graduate
+          ? 'University graduate'
+          : c.undergrad
+            ? 'At university'
+            : c.educated
+              ? 'Educated'
+              : 'Uneducated';
+        rows.push({ label: 'Schooling', value: schooling });
+      }
+      if (adult) {
+        // An undergrad is over-age but not in the workforce (`isAdult` excludes them) — the job
+        // board never assigns them one, so 'Builder / laborer' would be a false reading here.
+        const workValue = c.undergrad
+          ? 'Not yet — at university'
+          : job
+            ? `${BUILDING_DEFS[job.type].name} worker`
+            : 'Builder / laborer';
+        rows.push({ label: 'Work', value: workValue });
+      }
       // Which tool this *specific* villager is holding — a personal belonging (`Citizen.tool`), not
       // a village-wide fact, so two workers at the same bench can read differently here. Children
-      // carry none, so the row is for working-age villagers only.
-      if (adult) {
+      // (and undergrads, who aren't working either) carry none, so the row is for working villagers.
+      if (adult && !c.undergrad) {
         const spareNote = c.spareTool ? ` — spare ${c.spareTool === 'steel' ? 'steel' : 'iron'} tool in hand` : '';
         const toolValue =
           c.tool === 'steel'

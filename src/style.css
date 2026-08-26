@@ -842,6 +842,20 @@ body {
   color: var(--muted);
   opacity: 0.8;
 }
+/* Tips and Haptic feedback are both a plain on/off, so they share one row instead of a stacked
+   label/toggle each — a smaller "mini" toggle (`.seg-row.mini`) keeps each half narrow enough to fit. */
+.menu-card .set-pair {
+  display: flex;
+  gap: 12px;
+}
+.menu-card .set-pair-col {
+  flex: 1;
+  min-width: 0;
+}
+.menu-card .seg-row.mini button.seg {
+  padding: 7px 4px;
+  font-size: 12.5px;
+}
 /* Settings grew past a short landscape phone once the audio sliders joined it — same fix as the
    New Village card: the list scrolls inside the card rather than pushing Back off the bottom. */
 .menu-card.settings-card .set-list {

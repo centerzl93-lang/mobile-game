@@ -2644,12 +2644,16 @@ export class UI {
         `<div class="set-label">Graphics</div>` +
         `<div class="seg-row">${gfxBtn('auto', 'Auto')}${gfxBtn('low', 'Low')}${gfxBtn('high', 'High')}</div>` +
         `<div class="set-note">Graphics changes apply after reloading.</div>` +
+        `<div class="set-pair">` +
+        `<div class="set-pair-col">` +
         `<div class="set-label">Tips</div>` +
-        `<div class="seg-row">${tipBtn(true, 'On')}${tipBtn(false, 'Off')}</div>` +
-        `<div class="set-note">The hint bar explaining each tool. Warnings and the event log are unaffected.</div>` +
+        `<div class="seg-row mini">${tipBtn(true, 'On')}${tipBtn(false, 'Off')}</div>` +
+        `</div>` +
+        `<div class="set-pair-col">` +
         `<div class="set-label">Haptic feedback</div>` +
-        `<div class="seg-row">${hapticBtn(true, 'On')}${hapticBtn(false, 'Off')}</div>` +
-        `<div class="set-note">There's no haptic feedback wired up yet — this is ready for when there is.</div>` +
+        `<div class="seg-row mini">${hapticBtn(true, 'On')}${hapticBtn(false, 'Off')}</div>` +
+        `</div>` +
+        `</div>` +
         `<div class="set-label">Audio</div>` +
         volumeRow('music', 'Music', opts.musicVolume) +
         volumeRow('notifications', 'Notifications', opts.notificationsVolume) +

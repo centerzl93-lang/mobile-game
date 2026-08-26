@@ -230,6 +230,19 @@ const ROAD_REUSE = 0.35;
  * This is a separate search from `findPath`, which answers a different question — that one is
  * about where a villager can *walk*, this one about where a road can *go*, and the two differ on
  * every tile of forest, every unbuilt bridge and every stretch of open water.
+ *
+ * Orthogonal steps only — no diagonals. A diagonal hop never shares a full edge with the tile it
+ * leaves (see `pathsConnected`), so a route that took one would lay two path tiles that only touch
+ * at a bare corner: not a connected road by the game's own definition, and so one that would carry
+ * no ride-the-road speed bonus anywhere along it despite looking like a deliberate shortcut. Before
+ * this, a straight diagonal drag was A*'s *cheapest* route (one diagonal step undercuts even a
+ * single 90° turn's `TURN_COST`), so the router would confidently propose exactly the road it can
+ * never actually connect. Restricting to 4-neighbour movement makes every tile this function
+ * proposes share a full edge with its neighbour in the route, so anything it lays is a genuine,
+ * speed-bonused road — a gentle staircase where a hand-diagonal drag used to cut a corner. A player
+ * who really wants two path tiles touching only at a corner can still place them one at a time
+ * (`planPath` itself puts no restriction on that) — this only keeps the *auto-router* from ever
+ * choosing a route that can't actually connect.
  */
 export function routePath(
   s: GameState,
@@ -249,7 +262,7 @@ export function routePath(
   const start = tileIndex(fx, fy);
   const goal = tileIndex(tx, ty);
   const came = new Int32Array(N).fill(-1);
-  const dir = new Int8Array(N).fill(-1); // which of NEIGHBOURS8 arrived here, for the turn charge
+  const dir = new Int8Array(N).fill(-1); // which of ROUTE_NEIGHBOURS arrived here, for the turn charge
   const g = new Float32Array(N).fill(Infinity);
   const seen = new Uint8Array(N);
   const f = new Float32Array(N).fill(Infinity);
@@ -295,18 +308,15 @@ export function routePath(
     seen[cur] = 1;
     const cx = cur % MAP_W;
     const cy = (cur / MAP_W) | 0;
-    for (let d = 0; d < NEIGHBOURS8.length; d++) {
-      const [dx, dy] = NEIGHBOURS8[d];
+    for (let d = 0; d < ROUTE_NEIGHBOURS.length; d++) {
+      const [dx, dy] = ROUTE_NEIGHBOURS[d];
       const nx = cx + dx;
       const ny = cy + dy;
       if (!routable(s, nx, ny)) continue;
-      // No squeezing diagonally through a gap between two blocked tiles.
-      if (dx !== 0 && dy !== 0 && (!routable(s, cx + dx, cy) || !routable(s, cx, cy + dy))) continue;
       const ni = tileIndex(nx, ny);
       if (seen[ni]) continue;
-      const step = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1;
       const turn = dir[cur] >= 0 && dir[cur] !== d ? TURN_COST : 0;
-      const ng = g[cur] + step * tileCost(s, nx, ny) + turn;
+      const ng = g[cur] + tileCost(s, nx, ny) + turn;
       if (ng < g[ni]) {
         came[ni] = cur;
         dir[ni] = d as unknown as number;
@@ -325,9 +335,9 @@ export function routePath(
   return out.reverse();
 }
 
-const NEIGHBOURS8: [number, number][] = [
+// Orthogonal only — see the "no diagonals" note on `routePath` above.
+const ROUTE_NEIGHBOURS: [number, number][] = [
   [1, 0], [-1, 0], [0, 1], [0, -1],
-  [1, 1], [1, -1], [-1, 1], [-1, -1],
 ];
 
 /**
@@ -456,6 +466,14 @@ export function markPathRaze(s: GameState, idx: number): 'razed' | 'unplanned' |
     // A never-laid order: cancel it on the spot. No work, nothing to salvage.
     s.paths[idx] = PATH_NONE;
     dropPathRaze(s, idx);
+    // The harvest order `confirmPendingPaths`/`markGroundHarvest` placed on this tile (felling a
+    // tree, clearing loose stone) existed only to clear ground for *this* plan — mirrors
+    // `clearFootprintHarvest`'s reasoning for a cancelled building site. Nothing else can own a
+    // harvest order on a path tile (`planPath` refuses to plan under a building, and placing a
+    // building tears any path off its footprint first — see `clearPathsUnder`), so this can never
+    // steal a mark a different, still-active site is relying on. Leaving it standing would keep a
+    // laborer chasing wood/stone for a road that no longer exists.
+    s.harvest[idx] = HARVEST_NONE;
     return 'unplanned';
   }
   (s.razePaths ??= []);

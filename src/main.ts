@@ -1269,9 +1269,18 @@ class Game {
     return this.reticleTile('barn');
   }
 
-  /** Confirm bar action while founding: site the barn (and, on Easy, its starter houses) here. */
-  private confirmFounding(tx: number, ty: number): void {
+  /**
+   * Confirm bar action while founding: site the barn (and, on Easy, its starter houses) here.
+   *
+   * Reads the reticle itself rather than taking `(tx, ty)` as a parameter: `ui.showConfirm` only
+   * rebinds its button's click handler when the bar's *text* changes (see its `confirmSig` dedupe),
+   * and founding's text only ever reads one of two fixed strings — so a closure that captured the
+   * reticle's position at bind time would stay wired to wherever the reticle was the *first* time
+   * the bar was shown, founding there no matter how far the player had since panned.
+   */
+  private confirmFounding(): void {
     if (!this.founding) return;
+    const { tx, ty } = this.foundingReticle();
     if (!canFoundBarnAt(this.state.tiles, tx, ty)) {
       this.ui.flashHint('Too close to the water — pan to dry ground first');
       return;
@@ -3184,7 +3193,7 @@ class Game {
       this.ui.showConfirm(
         ok ? 'Pan to where you want to found your village' : 'Too close to the water — pan to dry ground',
         'Found here',
-        () => this.confirmFounding(tx, ty),
+        () => this.confirmFounding(),
         () => this.cancelFounding(),
       );
       return;

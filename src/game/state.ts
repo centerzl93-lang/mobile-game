@@ -38,6 +38,8 @@ import {
   AGE_PER_YEAR,
   BUILD_WORK_RATE,
   freshStats,
+  Tile,
+  DEFAULT_BUILDER_COUNT,
 } from '../types';
 import { generateWorld, findStartTile, getTile, emptyPaths, emptyHarvest, clearStartArea } from './world';
 import { randomName } from './names';
@@ -97,7 +99,17 @@ function makeBuilding(s: { nextId: number }, type: BuildingType, x: number, y: n
   return b;
 }
 
-export function newGame(
+/**
+ * Generate the map and the bare, population-less `GameState` around it — everything `newGame`
+ * needs before it can pick (or the player can choose) where to found the village. `origin` is a
+ * placeholder (the map's centre) until `foundVillage` sites the barn; nothing reads it before
+ * then, since there are no citizens yet to keep to it.
+ *
+ * Split out of `newGame` so manual placement (the New Village screen's "Choose starting spot"
+ * toggle) can show the player a real, generated map to plant their barn on instead of the one
+ * `findStartTile` would have picked for them.
+ */
+export function newGameWorld(
   size: MapSize = 'small',
   difficulty: Difficulty = 'normal',
   disasters = true,
@@ -111,10 +123,9 @@ export function newGame(
   // where the river went.
   const worldSeed = seed ?? newSeed();
   const tiles = generateWorld(worldSeed);
-  const start = findStartTile(tiles);
   const roll: HasRng = { rng: (worldSeed ^ 0x5bf03635) | 0 };
 
-  const state: GameState = {
+  return {
     w: MAP_W,
     h: MAP_H,
     difficulty,
@@ -135,10 +146,8 @@ export function newGame(
     events: [], // the village chronicle starts blank and fills as things happen
     pathProgress: 0,
     pendingPaths: [], // drawn-but-unconfirmed path tiles
-    desiredBuilders: 0, // no builders until the player assigns them on the Job Board
-    // Where the village was founded. Idle villagers keep to it rather than drifting toward the
-    // shifting average of every building on the map.
-    origin: { x: start.x + 1, y: start.y + 1 },
+    desiredBuilders: 0, // set once `foundVillage` has founders to assign
+    origin: { x: Math.floor(MAP_W / 2), y: Math.floor(MAP_H / 2) },
     // Crops the village can plant. Easy starts with one random seed; Normal/Hard start with none
     // and must buy seeds from a merchant before any field will grow.
     seeds: difficulty === 'easy' ? [CROPS[randInt(roll, CROPS.length)]] : [],
@@ -156,13 +165,41 @@ export function newGame(
     rng: roll.rng,
     stats: freshStats(),
   };
+}
 
+/**
+ * Can the barn's footprint sit with its top-left corner at (x, y)? The only real constraint is
+ * water — `clearStartArea` flattens forest, rock and loose deposits under the founding clearing,
+ * so anything short of water is fair game once the village lands there. Used to validate manual
+ * placement; the automatic flow never needs to ask, since `findStartTile` already avoids water.
+ */
+export function canFoundBarnAt(tiles: Tile[], x: number, y: number): boolean {
+  const def = BUILDING_DEFS.barn;
+  for (let dy = 0; dy < def.h; dy++) {
+    for (let dx = 0; dx < def.w; dx++) {
+      const t = getTile(tiles, x + dx, y + dy);
+      if (!t || t.type === 'water') return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Found the village with the barn's top-left corner at (x, y): open a clearing around it, stock
+ * the barn for the state's difficulty, plant Easy's starter houses, and spawn the founding
+ * population nearby. Shared by the automatic flow (`newGame`, which picks (x, y) itself via
+ * `findStartTile`) and manual placement, which lets the player pick it instead.
+ */
+export function foundVillage(state: GameState, x: number, y: number): void {
+  // Where the village was founded. Idle villagers keep to it rather than drifting toward the
+  // shifting average of every building on the map.
+  state.origin = { x: x + 1, y: y + 1 };
+  // Most of the map is woodland and rock, so open a clearing before founding the village.
+  clearStartArea(state.tiles, x + 1, y + 1);
   // A starting barn holds the opening stockpile for the chosen difficulty, scaled up for the
   // larger founding population so the village isn't starving on day one.
-  // Most of the map is woodland and rock, so open a clearing before founding the village.
-  clearStartArea(state.tiles, start.x + 1, start.y + 1);
-  const barn = makeBuilding(state, 'barn', start.x, start.y, true);
-  const stock = DIFFICULTY_RESOURCES[difficulty];
+  const barn = makeBuilding(state, 'barn', x, y, true);
+  const stock = DIFFICULTY_RESOURCES[state.difficulty];
   for (const k of Object.keys(stock) as ResourceKind[]) {
     const amt = stock[k] ?? 0;
     if (amt > 0) barn.store[k] = amt;
@@ -170,10 +207,10 @@ export function newGame(
   state.buildings.push(barn);
 
   // Easy grants a few built houses on the surrounding plains.
-  if (difficulty === 'easy') placeStartHouses(state, start, EASY_START_HOUSES);
+  if (state.difficulty === 'easy') placeStartHouses(state, { x, y }, EASY_START_HOUSES);
 
   const spawn = (sex: Sex, age: number) => {
-    const spot = grassSpawnNear(state, start.x + 1, start.y + 1);
+    const spot = grassSpawnNear(state, x + 1, y + 1);
     state.citizens.push(makeCitizen(state, sex, age, spot.x, spot.y));
   };
   // Founding adults (20–29), balanced men/women so couples can form.
@@ -186,6 +223,20 @@ export function newGame(
   for (let i = 0; i < START_CHILDREN; i++) {
     spawn(rand(state) < 0.5 ? 'm' : 'f', randRange(state, CHILD_MIN_AGE, ADULT_AGE));
   }
+  // A couple of founders go straight to construction rather than the harvest gangs — see
+  // `DEFAULT_BUILDER_COUNT`.
+  state.desiredBuilders = Math.min(DEFAULT_BUILDER_COUNT, START_ADULTS);
+}
+
+export function newGame(
+  size: MapSize = 'small',
+  difficulty: Difficulty = 'normal',
+  disasters = true,
+  seed?: number,
+): GameState {
+  const state = newGameWorld(size, difficulty, disasters, seed);
+  const start = findStartTile(state.tiles);
+  foundVillage(state, start.x, start.y);
   return state;
 }
 

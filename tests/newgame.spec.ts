@@ -5748,7 +5748,13 @@ test.describe('iron and steel tools', () => {
         if (workerId == null) throw new Error('the woodcutter never got staffed');
         g.debugSetCitizenTool(workerId, 'iron');
         barn.store.steeltools = 20; // a better tool sits on the very shelf they keep visiting
-        for (let i = 0; i < 2000; i++) g.debugAdvance(0.5);
+        for (let i = 0; i < 2000; i++) {
+          g.debugAdvance(0.5);
+          // Keep their kit fresh (wear pinned at 0) so this isolates the "no early swap" behaviour
+          // from the separate, newer "grab a spare once running low" one (see TOOL_SPARE_FRACTION) —
+          // a tool that never gets low never has a reason to visit the shelf for anything at all.
+          g.debugSetCitizenTool(workerId, 'iron');
+        }
         return { tool: g.debugCitizenTool(workerId), steeltoolsLeft: barn.store.steeltools };
       `) as () => any,
     );
@@ -5786,6 +5792,73 @@ test.describe('iron and steel tools', () => {
     expect(out.steelAt1_5, 'steel is still good past the point iron would have broken').toBe('steel');
     expect(out.wearSoFar, 'wear is tracked per worker-season, not reset until the tool breaks').toBeCloseTo(1.5, 5);
     expect(out.steelBroken, 'and gone once wear passes its own, doubled, durability').toBe('none');
+  });
+
+  test('a villager whose tool is running low grabs a spare at the barn, but only one', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const id = g.state.citizens[0].id;
+      const barn = g.state.buildings.find((b: any) => b.type === 'barn');
+      barn.store.tools = 20;
+
+      // Bare-handed: the ordinary equip, not a spare.
+      const freshVisit = () => {
+        g.debugSetCitizenTool(id, null);
+        g.debugTryEquipTool(id, barn.id);
+        return { tool: g.debugCitizenTool(id), spare: g.debugCitizenSpareTool(id) };
+      };
+      const bareEquip = freshVisit();
+      barn.store.tools = 20; // reset the shelf — the bare-hands equip above took one of its own
+
+      // Holding a tool that's barely worn: too early for a spare.
+      g.debugSetCitizenTool(id, 'iron');
+      g.debugWearCitizenTool(id, 0.1); // under TOOL_SPARE_FRACTION (0.2) of durability 1
+      g.debugTryEquipTool(id, barn.id);
+      const tooEarly = { tool: g.debugCitizenTool(id), spare: g.debugCitizenSpareTool(id) };
+
+      // Now past the threshold: the same barn visit grabs a spare, held in reserve.
+      g.debugWearCitizenTool(id, 0.75); // wear now 0.85, past the 0.2 threshold
+      g.debugTryEquipTool(id, barn.id);
+      const gotSpare = { tool: g.debugCitizenTool(id), spare: g.debugCitizenSpareTool(id) };
+      const toolsAfterFirst = barn.store.tools;
+
+      // A second visit while still low doesn't take a second spare.
+      g.debugTryEquipTool(id, barn.id);
+      const stillOneSpare = { tool: g.debugCitizenTool(id), spare: g.debugCitizenSpareTool(id) };
+      const toolsAfterSecond = barn.store.tools;
+
+      return { bareEquip, tooEarly, gotSpare, toolsAfterFirst, stillOneSpare, toolsAfterSecond };
+    });
+
+    expect(out.bareEquip, 'bare hands still equip straight into `tool`, not a spare').toEqual({ tool: 'iron', spare: 'none' });
+    expect(out.tooEarly, 'a barely-worn tool is not worth a spare trip yet').toEqual({ tool: 'iron', spare: 'none' });
+    expect(out.gotSpare.tool, 'the working tool is not traded in early').toBe('iron');
+    expect(out.gotSpare.spare, 'a spare was picked up to hold in reserve').toBe('iron');
+    expect(out.toolsAfterFirst, 'exactly one spare left the shelf').toBe(19);
+    expect(out.stillOneSpare, 'holding a spare already, a second visit takes nothing more').toEqual({ tool: 'iron', spare: 'iron' });
+    expect(out.toolsAfterSecond, 'and the shelf is untouched on that second visit').toBe(19);
+  });
+
+  test('a spare tool is promoted the instant the working one breaks — no bare-handed gap', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const id = g.state.citizens[0].id;
+      const c = g.state.citizens.find((x: any) => x.id === id);
+
+      g.debugSetCitizenTool(id, 'iron');
+      c.spareTool = 'steel'; // as if `tryEquipTool` had already stashed one
+      g.debugWearCitizenTool(id, 1.0); // exactly breaks the iron tool (durability 1)
+
+      return { tool: g.debugCitizenTool(id), spare: g.debugCitizenSpareTool(id), wear: g.debugCitizenToolWear(id) };
+    });
+
+    expect(out.tool, 'the spare was promoted straight into use, no bare-handed tick between').toBe('steel');
+    expect(out.spare, 'the reserve is consumed once promoted').toBe('none');
+    expect(out.wear, 'the promoted tool starts with fresh wear').toBe(0);
   });
 
   test('an idle producer wears no tools; a working one does', { tag: '@slow' }, async ({ page }) => {

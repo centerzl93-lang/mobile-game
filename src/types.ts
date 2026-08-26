@@ -995,6 +995,15 @@ export interface Citizen {
    */
   toolWear?: number;
   /**
+   * A backup tool held in reserve, picked up off a barn shelf (`tryEquipTool`) once `tool` is
+   * running low on wear (`TOOL_SPARE_FRACTION`) — same steel-first shelf order as the initial
+   * equip, and only ever one at a time. It sits unused until `tool` actually gives out
+   * (`wearCitizenTool`), at which point it's promoted straight into `tool` with fresh wear, so a
+   * villager who was carrying a spare never has a bare-handed gap between barn visits. Saved like
+   * `tool` itself — it's a real item this villager is holding, not a derived fact.
+   */
+  spareTool?: 'iron' | 'steel';
+  /**
    * Seconds this villager has gone unfed. Death comes at STARVE_SECONDS, so a short gap while a
    * hauler restocks the larder is survivable. Transient — not saved.
    */
@@ -2582,6 +2591,17 @@ export const IRON_TOOL_PROD = 1.0;
 export const STEEL_TOOL_PROD = 1.15;
 /** A steel tool wears out over this many worker-seasons — twice an iron tool's one. */
 export const STEEL_DURABILITY = 2;
+/**
+ * Once wear on the tool a villager is holding reaches this fraction of its durability,
+ * `tryEquipTool` lets them pick up a second one off the barn shelf as a spare (`Citizen.spareTool`)
+ * the next time they're already standing there — same steel-first order as the original equip. The
+ * spare sits idle until the working tool actually breaks, at which point it's promoted straight
+ * into `tool` with fresh wear, so a villager who found a spare in time never goes bare-handed. Set
+ * comfortably below 1 so there's usually a barn visit or two of runway between "running low" and
+ * "broken" — 0.2 (a fifth worn) mirrors `LOW_STOCK_FRACTION`'s reddened-chip threshold for the same
+ * "getting low, act now" read on a wear gauge instead of a stock count.
+ */
+export const TOOL_SPARE_FRACTION = 0.2;
 
 /**
  * What going without a winter coat does, now that it no longer kills. A villager kept warm by the

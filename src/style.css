@@ -1773,6 +1773,35 @@ body {
   color: var(--accent);
 }
 /*
+ * A fill bar (barn/market space used): the label/value line stacks above a thin proportional bar
+ * instead of sitting alone, so `.inv-row`'s own flex layout is overridden to stack them vertically.
+ */
+.inv-row-bar {
+  display: block;
+}
+.inv-row-head {
+  display: flex;
+  justify-content: space-between;
+}
+.inv-bar {
+  margin-top: 4px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.inv-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+.inv-row-bar.tone-warn .inv-bar-fill {
+  background: var(--warn);
+}
+.inv-row-bar.tone-bad .inv-bar-fill {
+  background: var(--danger);
+}
+/*
  * The compact stock grid: a barn's contents two to a line instead of one per row, so a full
  * storehouse reads at a glance rather than scrolling off the sheet. Each cell keeps the `.inv-row`
  * label/value shape; only the packing changes.

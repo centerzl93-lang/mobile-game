@@ -1668,12 +1668,16 @@ class Game {
         }
         if (b.type === 'barn' || b.type === 'market') {
           // Space used, not a unit count: a sack of grain takes a quarter of a log's room, so a
-          // barn holds four times as much of it. `units` is what is actually on the shelves.
+          // barn holds four times as much of it. `units` is what is actually on the shelves. The
+          // raw volume-over-capacity numbers aren't worth reading off — a fill bar says exactly as
+          // much at a glance.
           let units = 0;
           for (const k of RESOURCE_KINDS) units += b.store[k] ?? 0;
+          const cap = capacityOf(b);
           rows.push({
             label: 'Space used',
-            value: `${Math.round(barnLoad(b))} / ${capacityOf(b)} (${Math.floor(units)} items)`,
+            value: `${Math.floor(units)} items`,
+            bar: cap > 0 ? barnLoad(b) / cap : 0,
           });
         }
         // Houses already report their larder above, against its targets — skip the raw dump so the

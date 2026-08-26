@@ -136,6 +136,13 @@ export interface InspectRow {
    * ran the sheet off the screen — see `.inv-grid`.
    */
   grid?: boolean;
+  /**
+   * Draw a fill bar (0..1) under this row's label/value instead of a plain line — how full a barn
+   * or market is, at a glance, rather than a raw volume-over-capacity readout. `value` still holds
+   * whatever's worth reading alongside it (an item count, say); the bar just replaces the numbers
+   * a player would otherwise have to do the division on themselves.
+   */
+  bar?: number;
 }
 
 /** Interactive controls shown at the foot of the inspect sheet for a built workplace. */
@@ -967,9 +974,20 @@ export class UI {
     // has to know about the packing.
     const rowHtml = (r: InspectRow): string =>
       `<div class="inv-row${r.tone ? ` tone-${r.tone}` : ''}"><span>${r.label}</span><span>${r.value}</span></div>`;
+    // A fill bar replaces the label/value pair with a stacked head (still label + value) and a
+    // proportional bar underneath — how full a barn or market reads at a glance, no division required.
+    const barRowHtml = (r: InspectRow): string => {
+      const pct = Math.max(0, Math.min(100, Math.round((r.bar ?? 0) * 100)));
+      return `<div class="inv-row inv-row-bar${r.tone ? ` tone-${r.tone}` : ''}">
+        <div class="inv-row-head"><span>${r.label}</span><span>${r.value}</span></div>
+        <div class="inv-bar"><div class="inv-bar-fill" style="width:${pct}%"></div></div>
+      </div>`;
+    };
     let body = '';
     for (let i = 0; i < rows.length; i++) {
-      if (rows[i].grid) {
+      if (rows[i].bar !== undefined) {
+        body += barRowHtml(rows[i]);
+      } else if (rows[i].grid) {
         let j = i;
         while (j < rows.length && rows[j].grid) j++;
         body += `<div class="inv-grid">${rows.slice(i, j).map(rowHtml).join('')}</div>`;

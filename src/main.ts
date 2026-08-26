@@ -1907,15 +1907,14 @@ class Game {
       }
       if (adult) {
         // Four states, not two: still sitting the university year reads differently from having
-        // finished it, and a graduate's bonus compounds on top of plain schooling (`GRADUATE_BONUS`
-        // is `EDUCATED_BONUS` further multiplied) rather than replacing it — see `types.ts`.
-        const pct = (bonus: number) => Math.round((bonus - 1) * 100);
+        // finished it, and a graduate outranks plain schooling — see `types.ts`'s `GRADUATE_BONUS`/
+        // `EDUCATED_BONUS` for what each is actually worth.
         const schooling = c.graduate
-          ? `🎓 University graduate (+${pct(GRADUATE_BONUS)}% work)`
+          ? 'University graduate'
           : c.undergrad
-            ? '🎓 At university'
+            ? 'At university'
             : c.educated
-              ? `Educated (+${pct(EDUCATED_BONUS)}% work)`
+              ? 'Educated'
               : 'Uneducated';
         rows.push({ label: 'Schooling', value: schooling });
       }

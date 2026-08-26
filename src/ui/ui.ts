@@ -35,6 +35,8 @@ import {
   tradePosts,
   tradeStaff,
   tradeCapacity,
+  autoBuilderDemand,
+  resourceWord,
   tradeWorking,
   Building,
   HarvestKind,
@@ -157,7 +159,11 @@ export interface InspectRow {
 /** Interactive controls shown at the foot of the inspect sheet for a built workplace. */
 export interface InspectControls {
   buildingId: number;
-  /** Workplace only: current name, shown in an editable field so the player can rename it. */
+  /**
+   * Workplace only: current name. Its presence puts a pencil next to the sheet's title, which
+   * opens a compact rename popup (`openRenamePopup`) rather than an inline field on the sheet
+   * itself.
+   */
   rename?: string;
   /** Worker allocation stepper (current desired vs the job cap). */
   workers?: { value: number; max: number };
@@ -511,6 +517,8 @@ export class UI {
       // The top bar shows one tool figure, not two: iron and steel tools are separate goods in the
       // barn (and on a villager's belt), but a glance at the HUD only wants "have we got tools".
       if (kind === 'tools') v += (totals['steeltools'] ?? 0) + totalInLarders(s, 'steeltools');
+      // Same fold for the two clothing tiers: one 🧥 figure, not two.
+      if (kind === 'clothing') v += (totals['warmclothing'] ?? 0) + totalInLarders(s, 'warmclothing');
       chip.querySelector('.val')!.textContent = `${Math.floor(v)}`;
       this.markLimit(chip, s, kind, LIMIT_META[kind].label);
       this.markLow(chip, s, kind);
@@ -1010,10 +1018,6 @@ export class UI {
       }
     }
     let ctrlHtml = '';
-    if (controls?.rename !== undefined) {
-      ctrlHtml += `<div class="inv-ctrl"><span>Name</span>
-        <input class="inv-name" id="insp-name" type="text" maxlength="24" value="${escapeAttr(controls.rename)}" /></div>`;
-    }
     if (controls?.workers) {
       const wk = controls.workers;
       ctrlHtml += `<div class="inv-ctrl"><span>Workers <small>(max ${wk.max})</small></span>
@@ -1093,25 +1097,27 @@ export class UI {
       const dis = d.underway ? ' disabled' : '';
       ctrlHtml += `<div class="inv-ctrl"><button class="${cls}" id="insp-demolish"${dis}>${label}</button></div>`;
     }
+    // The pencil sits right beside the name, inside the same flex item as the title text, so
+    // `justify-content: space-between` on `.inv-head` still puts only the × on the far side —
+    // see `.inv-head`/`.inv-title` in the stylesheet. Renaming itself opens a compact popup
+    // (`openRenamePopup`) rather than an inline field taking up permanent room on every sheet.
+    const pencil =
+      controls?.rename !== undefined
+        ? `<button class="pencil-btn" id="insp-rename-btn" title="Rename" aria-label="Rename this building">✎</button>`
+        : '';
     this.el.inspect.innerHTML =
-      `<div class="inv-head">${title}<button class="close" id="insp-close">×</button></div>` +
+      `<div class="inv-head"><span class="inv-title">${title}${pencil}</span><button class="close" id="insp-close">×</button></div>` +
       (body || '<div class="inv-row"><span>Empty</span></div>') + ctrlHtml;
     // Closing must clear the *game's* selection, not just this sheet — see `onCloseInspect`.
     byId('insp-close').addEventListener('click', () => this.cb.onCloseInspect());
 
     if (controls) {
       const id = controls.buildingId;
-      const nameField = this.el.inspect.querySelector('#insp-name') as HTMLInputElement | null;
-      if (nameField) {
-        // Commit on blur and on Enter. The frame loop re-renders this sheet constantly, so the
-        // signature above includes the name — otherwise every keystroke would be wiped by the
-        // next re-render.
-        const commit = () => this.cb.onRenameBuilding(id, nameField.value);
-        nameField.addEventListener('change', commit);
-        nameField.addEventListener('blur', commit);
-        nameField.addEventListener('keydown', (e) => {
-          if ((e as KeyboardEvent).key === 'Enter') nameField.blur();
-        });
+      if (controls.rename !== undefined) {
+        const current = controls.rename;
+        this.el.inspect.querySelector('#insp-rename-btn')?.addEventListener('click', () =>
+          this.openRenamePopup(id, current),
+        );
       }
       this.el.inspect.querySelector('[data-step="-1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, -1));
       this.el.inspect.querySelector('[data-step="1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, 1));
@@ -1303,7 +1309,7 @@ export class UI {
     const tabSig =
       this.villageTab === 'jobs'
         ? trades.map((t) => `${tradeWorking(s, t)}:${tradeStaff(s, t)}:${tradeCapacity(s, t)}:${tradePosts(s, t).length}`).join('|') +
-          `#${buildersWorking},${laborers},${s.desiredBuilders}`
+          `#${buildersWorking},${laborers},${s.desiredBuilders},${autoBuilderDemand(s)}`
         : this.villageTab === 'limits'
           ? LIMITABLE.map((k) => s.limits?.[k] ?? 0).join(',')
           : this.villageTab === 'history'
@@ -1366,8 +1372,15 @@ export class UI {
 
     // Builders — a global job (only these villagers construct work buildings). Always shown so the
     // player can staff construction even before any workplace exists.
+    //
+    // The row's denominator is what the village's *actual* open work is asking for right now — the
+    // sum of every active site's own builder requirement (`autoBuilderDemand`, table-driven off
+    // `BUILDING_DEFS[type].builders`/footprint, plus demolitions, rubble and planned roads) — not
+    // the player's manual target, which stays the stepper's own number (`asked` — unchanged, still
+    // `s.desiredBuilders`). A house under construction alongside a Town Hall reads "X / 6" (2 + 4);
+    // finish the house and it drops to "X / 4"; finish both and it reads "0 / 0".
     grid.appendChild(
-      this.staffRow('🔨', 'Builders', buildersWorking, s.desiredBuilders, s.desiredBuilders, false, (d) =>
+      this.staffRow('🔨', 'Builders', buildersWorking, autoBuilderDemand(s), s.desiredBuilders, false, (d) =>
         this.cb.onSetBuilders(d),
       ),
     );
@@ -1909,6 +1922,49 @@ export class UI {
     this.el.trade.onclick = null;
   }
 
+  // ---- Building rename popup (reuses the modal container) ----
+  /**
+   * The pencil next to a building's name opens this rather than an inline field living
+   * permanently on the sheet. It reuses the trade overlay's modal container the same way
+   * `openRanchPicker` does — a one-shot dialog the frame loop never touches, so a keystroke here
+   * can never be wiped by the inspect sheet's own 100 ms refresh cycle the way an inline field
+   * inside it would be.
+   */
+  private openRenamePopup(buildingId: number, currentName: string): void {
+    this.el.trade.classList.remove('hidden');
+    this.el.trade.innerHTML = `<div class="tp-card picker rename-popup">
+        <h2>Rename<button class="close" id="rnp-close">×</button></h2>
+        <input class="inv-name" id="rnp-input" type="text" maxlength="24" value="${escapeAttr(currentName)}" />
+        <div class="tp-actions">
+          <button class="tp-dismiss" id="rnp-cancel">Cancel</button>
+          <button class="do-trade" id="rnp-save">Save</button>
+        </div>
+      </div>`;
+    const input = byId('rnp-input') as HTMLInputElement;
+    input.focus();
+    input.select();
+    const save = () => {
+      this.cb.onRenameBuilding(buildingId, input.value);
+      this.closeRenamePopup();
+    };
+    byId('rnp-save').addEventListener('click', save);
+    byId('rnp-cancel').addEventListener('click', () => this.closeRenamePopup());
+    byId('rnp-close').addEventListener('click', () => this.closeRenamePopup());
+    input.addEventListener('keydown', (e) => {
+      const key = (e as KeyboardEvent).key;
+      if (key === 'Enter') save();
+      else if (key === 'Escape') this.closeRenamePopup();
+    });
+    this.el.trade.onclick = (e) => {
+      if (e.target === this.el.trade) this.closeRenamePopup();
+    };
+  }
+  private closeRenamePopup(): void {
+    this.el.trade.classList.add('hidden');
+    this.el.trade.innerHTML = '';
+    this.el.trade.onclick = null;
+  }
+
   private resetBasket(): void {
     this.basketGive = {};
     this.basketGet = {};
@@ -2014,7 +2070,7 @@ export class UI {
     byId('tp-orders').innerHTML = RESOURCE_KINDS.map((k) => {
       const have = Math.floor(store[k] ?? 0);
       return `<div class="tp-row">
-          <span class="tp-good">${RESOURCE_ICON[k]} ${k}</span>
+          <span class="tp-good">${RESOURCE_ICON[k]} ${resourceWord(k)}</span>
           <span class="tp-val" title="Trade value per unit">◈${TRADE_VALUE[k]}</span>
           <span class="tp-have" title="${isPort ? 'On the quay now' : 'In the post now'}">${have}</span>
           ${this.qtyControl('ord', k, orders[k] ?? 0, -1)}
@@ -2093,7 +2149,7 @@ export class UI {
       .map((k) => {
         const stock = Math.floor(m.stock[k] ?? 0);
         return `<div class="tp-row">
-            <span class="tp-good">${RESOURCE_ICON[k]} ${k}</span>
+            <span class="tp-good">${RESOURCE_ICON[k]} ${resourceWord(k)}</span>
             <span class="tp-val">◈${TRADE_VALUE[k]}</span>
             <span class="tp-have"><small>of ${stock}</small></span>
             ${this.qtyControl('buy', k, this.basketGet[k] ?? 0, stock)}
@@ -2118,7 +2174,7 @@ export class UI {
           .map((k) => {
             const have = Math.floor(store[k] ?? 0);
             return `<div class="tp-row">
-                <span class="tp-good">${RESOURCE_ICON[k]} ${k}</span>
+                <span class="tp-good">${RESOURCE_ICON[k]} ${resourceWord(k)}</span>
                 <span class="tp-val">◈${TRADE_VALUE[k]}</span>
                 <span class="tp-have"><small>of ${have}</small></span>
                 ${this.qtyControl('give', k, this.basketGive[k] ?? 0, have)}

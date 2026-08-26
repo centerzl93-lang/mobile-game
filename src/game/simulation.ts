@@ -231,6 +231,7 @@ import {
   BuildingType,
   SEASON_BURN,
   CLOTHED_HEAT_FACTOR,
+  WARM_CLOTHED_HEAT_FACTOR,
   isAdult,
   isFireproof,
   freshStats,
@@ -266,6 +267,7 @@ import {
   takeNearest,
   consume,
   nearestBarnWith,
+  nearestBarnWithTool,
   nearestBarnWithRoom,
   nearestBarnOnlyWith,
   nearestStockWith,
@@ -281,6 +283,7 @@ import {
   takeFromLarder,
   takeFoodFromLarder,
   totalAvailable,
+  totalClothingAvailable,
   totalFood,
   totalFoodAvailable,
 } from './storage';
@@ -356,6 +359,11 @@ const MINE_IRON_FACTOR = 0.8, MINE_COAL_FACTOR = 0.5;
 // Two ways to a coat. Wool goes further than hide per unit — a fleece is spun and woven, a hide
 // is cut around — but a pen of sheep is the real difference: see `ANIMAL_META`.
 const TAILOR_LEATHER_IN = 5, TAILOR_WOOL_IN = 4, TAILOR_OUT = 4;
+// The third way: both at once, for a coat worth twice the fuel saving (`WARM_CLOTHED_HEAT_FACTOR`).
+// Costlier per unit than either plain recipe — it takes as much of *each* input as the wool
+// recipe takes of wool alone, for fewer coats out — which is the point: Warm Clothing is a
+// higher tier to work up to, not a third interchangeable option.
+const TAILOR_WARM_LEATHER_IN = 3, TAILOR_WARM_WOOL_IN = 3, TAILOR_WARM_OUT = 3;
 // The luxury chain, per the spec's ratios: two sand and a coal make two glass, and two glass with
 // an iron make one piece of jewellery.
 const LUX_GLASS_SAND = 2, LUX_GLASS_COAL = 1, LUX_GLASS_OUT = 2;
@@ -483,6 +491,7 @@ export function update(s: GameState, dt: number, log: LogFn): void {
   routeBudget = 0;
   anyPlannedPath = scanAnyPlannedPath(s); // gates the idle-adult work scans below
   anyHarvestOrder = scanAnyHarvestOrder(s);
+  anyToolAvailable = scanAnyToolAvailable(s); // gates `sendForTool` below
   ensureNavLabels(s); // walkable connectivity, recomputed only when it actually changed
   reconcileWorkers(s);
   assignHomesAndJobs(s);
@@ -605,9 +614,10 @@ function heat(s: GameState, dt: number, log: LogFn): void {
   for (const c of s.citizens) {
     const home = c.homeId !== null ? homeById.get(c.homeId) : undefined;
     const stoneFactor = home?.type === 'stonehouse' ? STONE_HOUSE_HEAT_FACTOR : 1;
-    // A wool coat saves fuel; nothing else does. Fine clothes are never worn (they are export
-    // goods), so the only two states left are coated and not.
-    const clothFactor = c.clothed ? CLOTHED_HEAT_FACTOR : 1;
+    // A coat saves fuel; nothing else does. Fine clothes are never worn (they are export goods),
+    // so this is coated-warm, coated-regular, or not — see `c.warmClothed`/`c.clothed`, set at the
+    // season turn by which tier's ration actually covered them.
+    const clothFactor = c.warmClothed ? WARM_CLOTHED_HEAT_FACTOR : c.clothed ? CLOTHED_HEAT_FACTOR : 1;
     let need = HEAT_PER_CITIZEN_WINTER * rate * stoneFactor * clothFactor * fuelFactor; // heat units
     // Fuel is burned where it is kept: in the hearth of the house the villager lives in. A housed
     // villager has no fall-back to the village fuel pile — a barn is a woodshed, not a fire, and
@@ -676,11 +686,13 @@ function staffWanted(s: GameState, b: Building): number {
 /**
  * What the village has stored of whatever a limit is set on — food being every edible kind, tools
  * being iron and steel together (one cap for the whole tool ladder, the same figure the HUD chip
- * already folds them into; steel carries no cap of its own).
+ * already folds them into; steel carries no cap of its own), and clothing being Regular and Warm
+ * together the same way (Warm carries no cap of its own either).
  */
 export function limitStock(s: GameState, key: LimitKey): number {
   if (key === 'food') return totalFood(s);
   if (key === 'tools') return totalStored(s, 'tools') + totalStored(s, 'steeltools');
+  if (key === 'clothing') return totalStored(s, 'clothing') + totalStored(s, 'warmclothing');
   return totalStored(s, key);
 }
 
@@ -853,6 +865,32 @@ export function tryEquipTool(s: GameState, c: Citizen, barn: Building): void {
   };
   if (takeFrom('steeltools', 'steel')) return;
   takeFrom('tools', 'iron');
+}
+
+/**
+ * A bare-handed villager's dedicated errand for a tool, tried once before they settle into a work
+ * or build cycle with nothing on their belt. Ordinary barn visits (dropping a load, fetching a
+ * converter input or builder materials) already check the shelf opportunistically
+ * (`tryEquipTool`) — this covers the gap that leaves: the barn *they* happened to visit had none,
+ * while another one in the village does, and they would otherwise never have a reason to go there.
+ *
+ * Deliberately narrow: it only fires while genuinely bare-handed (a villager mid-wear or holding a
+ * spare already has what they need and is left alone), and only when `nearestBarnWithTool` finds
+ * somewhere real to walk to — a village with no tools anywhere sends nobody wandering, and this
+ * check costs nothing on every other tick because it is skipped the instant `c.tool` is set.
+ * `anyToolAvailable` (an O(barns) scan run once a tick, not per citizen — see its own doc comment)
+ * is what makes the "nowhere to walk to" case cheap even with a whole bare-handed workforce: it
+ * skips the O(barns) nearest-search entirely rather than running it once per citizen only to have
+ * every one of them come back empty.
+ * Returns whether it sent them (the caller should end its tick either way it did).
+ */
+function sendForTool(s: GameState, c: Citizen, dt: number): boolean {
+  if (c.tool || !anyToolAvailable) return false;
+  const barn = nearestBarnWithTool(s, { x: c.x, y: c.y });
+  if (!barn) return false;
+  goTo(c, buildingApproach(s, barn, c));
+  if (stepTo(s, c, dt)) tryEquipTool(s, c, barn);
+  return true;
 }
 
 /**
@@ -1237,6 +1275,16 @@ function scanAnyPlannedPath(s: GameState): boolean {
 function scanAnyHarvestOrder(s: GameState): boolean {
   for (let i = 0; i < s.harvest.length; i++) if (s.harvest[i] !== HARVEST_NONE) return true;
   return false;
+}
+// Same reasoning as `anyPlannedPath` above: `sendForTool` (see `tryEquipTool`'s neighbour below)
+// would otherwise have every bare-handed citizen run a full nearest-barn search
+// (`nearestBarnWithTool`) every single tick, even in a village with no tool anywhere at all — an
+// O(citizens × barns) cost paid every frame for an answer that stays "no" for as long as nobody
+// forges one. One O(barns) scan a tick, shared by the whole population, turns the common case back
+// into the cheap no-op it should be.
+let anyToolAvailable = false;
+function scanAnyToolAvailable(s: GameState): boolean {
+  return totalStored(s, 'tools') > 0 || totalStored(s, 'steeltools') > 0;
 }
 const WAYPOINT_ARRIVE = 0.18;
 /** How close (in tiles) a planned path must be before an *employed* worker will detour to lay it.
@@ -1625,6 +1673,7 @@ function converterInputs(b: Building): [ResourceKind, number][] {
         ? [['iron', SMITH_STEEL_IRON], ['coal', SMITH_STEEL_COAL]]
         : [['iron', SMITH_IRON_IN]];
     case 'tailor':
+      if (b.recipe === 'warm') return [['leather', TAILOR_WARM_LEATHER_IN], ['wool', TAILOR_WARM_WOOL_IN]];
       return b.recipe === 'wool' ? [['wool', TAILOR_WOOL_IN]] : [['leather', TAILOR_LEATHER_IN]];
     case 'luxury':
       switch (b.recipe) {
@@ -1715,6 +1764,11 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workerFact
     }
     return;
   }
+
+  // 2.5. Bare-handed, and a barn somewhere actually has a tool? Go get it before working on
+  // regardless — see `sendForTool`. A worker who is already equipped, or for whom no tool exists
+  // anywhere in the village, falls straight through to step 3 exactly as before.
+  if (sendForTool(s, c, dt)) return;
 
   // 3. Go where the work actually is, and on completion fill carry with a produced load.
   //
@@ -2319,6 +2373,11 @@ function workOutput(
             : null;
       }
     case 'tailor':
+      if (b.recipe === 'warm') {
+        return consumeStore(b, [['leather', TAILOR_WARM_LEATHER_IN], ['wool', TAILOR_WARM_WOOL_IN]])
+          ? { kind: 'warmclothing', amount: TAILOR_WARM_OUT * tf }
+          : null;
+      }
       if (b.recipe === 'wool') {
         return consumeStore(b, [['wool', TAILOR_WOOL_IN]]) ? { kind: 'clothing', amount: TAILOR_OUT * tf } : null;
       }
@@ -2575,6 +2634,12 @@ function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, builderFac
     // once. A repair (`damaged`) labours the same way but banks the work into `repairProgress`
     // against `repairWorkOf`, and never touches `navVersion` — the building never stopped standing,
     // so there is no frame stage and no wall to appear.
+    //
+    // A bare-handed builder whose site already has every material delivered would otherwise never
+    // pass through a barn again — the 'fetch' branch above is the only other place a builder
+    // equips — so the same dedicated errand workers get is offered here too before they settle in
+    // to labour tool-less.
+    if (sendForTool(s, c, dt)) return;
     goTo(c, buildingApproach(s, pick.site, c));
     if (stepTo(s, c, dt)) {
       const site = pick.site;
@@ -3286,17 +3351,38 @@ function endSeason(s: GameState, log: LogFn): void {
 
   // Clothing *is* a seasonal issue: a garment wears out over a season rather than being burned
   // by the hour, and the ration is what `heat` then reads all season long — a warmly dressed
-  // villager needs less fuel. `c.clothed` is transient, recomputed here each season, never saved.
+  // villager needs less fuel. `c.clothed`/`c.warmClothed` are transient, recomputed here each
+  // season, never saved.
   const burn = SEASON_BURN[season];
   if (s.citizens.length > 0) {
     const clothEach = CLOTHING_PER_CITIZEN_WINTER * burn;
     const unclothed: Citizen[] = [];
     for (const c of s.citizens) {
+      const home = homeOf(c);
       // Out of the household's own press first, then the barns — the same larder-first rule food
       // and fuel follow. It also makes what the renderer draws honest: a villager wears a coat
       // when their home holds clothing, and that is the clothing they are actually issued.
+      //
+      // Warm Clothing is tried first, same "better tier first" order as a villager equipping steel
+      // over iron at a barn (`tryEquipTool`) — a household that has both spends the dearer, more
+      // protective coat before falling back to a plain one.
+      let warmNeed = clothEach;
+      if (home && warmNeed > 0) {
+        const fromLarder = Math.min(warmNeed, home.store['warmclothing'] ?? 0);
+        if (fromLarder > 0) {
+          takeFromLarder(s, home, 'warmclothing', fromLarder);
+          warmNeed -= fromLarder;
+        }
+      }
+      if (warmNeed > 0) warmNeed = consume(s, 'warmclothing', warmNeed);
+      if (warmNeed <= 0.001) {
+        c.warmClothed = true;
+        c.clothed = true;
+        continue;
+      }
+      c.warmClothed = false;
+
       let need = clothEach;
-      const home = homeOf(c);
       if (home && need > 0) {
         const fromLarder = Math.min(need, home.store['clothing'] ?? 0);
         if (fromLarder > 0) {
@@ -3305,7 +3391,7 @@ function endSeason(s: GameState, log: LogFn): void {
         }
       }
       if (need > 0) need = consume(s, 'clothing', need);
-      // Only a proper wool coat clothes a villager. Fine clothes are a showpiece the town makes to
+      // Only a proper coat clothes a villager. Fine clothes are a showpiece the town makes to
       // sell, never to wear — a gown does not go into the winter press, so a village short of coats
       // stays cold no matter how many fine clothes sit in its barns.
       c.clothed = need <= 0.001;
@@ -3425,8 +3511,11 @@ function recordSeasonStats(s: GameState): void {
     for (const k of FOOD_KINDS) foodNet += row.net[k] ?? 0;
     // Tools counts either seam of the supply — a village that forges only steel is still keeping
     // itself in tools, so steel net satisfies the "food, fuel, tools and clothing" self-sufficiency.
+    // Clothing works the same way across its own two seams: a tailor running only the Warm bench
+    // still counts.
     const toolsNet = (row.net.tools ?? 0) + (row.net.steeltools ?? 0);
-    if (foodNet > 0 && (row.net.firewood ?? 0) > 0 && toolsNet > 0 && (row.net.clothing ?? 0) > 0) {
+    const clothingNet = (row.net.clothing ?? 0) + (row.net.warmclothing ?? 0);
+    if (foodNet > 0 && (row.net.firewood ?? 0) > 0 && toolsNet > 0 && clothingNet > 0) {
       st.allFourProduced = true;
     }
   }
@@ -3515,7 +3604,7 @@ function warnOfShortfalls(s: GameState, season: Season, log: LogFn): void {
     if (heatHave < pop * HEAT_PER_CITIZEN_WINTER) {
       log('❄️ Winter is coming and fuel is low — stock firewood or coal', 'bad');
     }
-    if (totalAvailable(s, 'clothing') < pop * CLOTHING_PER_CITIZEN_WINTER) {
+    if (totalClothingAvailable(s) < pop * CLOTHING_PER_CITIZEN_WINTER) {
       log('🧥 Winter is coming and warm clothing is short', 'bad');
     }
   }
@@ -4520,7 +4609,7 @@ function updateWellbeing(s: GameState, foodShort: boolean, deaths: number, taver
     100,
   );
   const headroom = housingCapacity(s) - pop > 0;
-  const clothed = totalAvailable(s, 'clothing') >= pop;
+  const clothed = totalClothingAvailable(s) >= pop;
   const comfortable = totalFoodAvailable(s) > pop * FOOD_PER_CITIZEN_PER_SEASON;
   // Souls the village's priests can actually keep, against how many there are. Worship used to be
   // a yes-or-no — one chapel lifted a village of any size — which is what left a cathedral with

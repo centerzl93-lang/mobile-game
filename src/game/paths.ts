@@ -501,6 +501,30 @@ export function demolishPathRect(s: GameState, x0: number, y0: number, x1: numbe
   return marked;
 }
 
+/**
+ * Whether two adjacent tiles of *built* road (not merely planned) form a real, ridable join
+ * rather than two stretches that happen to touch at a bare corner.
+ *
+ * An orthogonal pair always counts — they share a full edge. A diagonal pair only counts when at
+ * least one of the two tiles that would fill the corner between them is *also* built road: the
+ * same "don't cut a blocked corner" shape the pathfinder already applies to solid obstacles
+ * (`astar`'s corner gate in `pathfind.ts`), turned around to gate the road network's own
+ * continuity instead of an obstacle's. Two road tiles at opposite corners of a 2×2 square, with
+ * bare ground on the other two, are not one joined road — see `landStepCost`, which is where this
+ * stops a diagonal hop between them from earning the ride-the-road speed bonus.
+ *
+ * Only tiles `dx`/`dy` apart by at most one count as "adjacent" at all; anything further apart is
+ * never connected by this check regardless of what lies between.
+ */
+export function pathsConnected(s: GameState, ax: number, ay: number, bx: number, by: number): boolean {
+  const dx = bx - ax, dy = by - ay;
+  if (Math.abs(dx) > 1 || Math.abs(dy) > 1 || (dx === 0 && dy === 0)) return false;
+  if (pathSpeedMult(s, ax, ay) <= 1 || pathSpeedMult(s, bx, by) <= 1) return false;
+  if (dx === 0 || dy === 0) return true; // orthogonal: a shared full edge is always a real join
+  // Diagonal: only a real join if a built road fills in one of the two corner-sharing tiles.
+  return pathSpeedMult(s, ax + dx, ay) > 1 || pathSpeedMult(s, ax, ay + dy) > 1;
+}
+
 /** Movement multiplier from a built path at a world position (1 = bare ground). */
 export function pathSpeedMult(s: GameState, x: number, y: number): number {
   const tx = Math.floor(x);

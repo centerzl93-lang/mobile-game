@@ -3517,17 +3517,18 @@ test.describe('workplace names', () => {
       const renamed = nameOf(ids[0]);
       g.renameBuilding(ids[0], '   '); // blank must not leave it nameless
       const blanked = nameOf(ids[0]);
-      // The inspect sheet offers an editable field, and titles the sheet with the name.
+      // The sheet titles itself with the name, and offers a pencil to change it — no dedicated
+      // field of its own living permanently on the sheet (see the pencil-popup test below).
       g.renameBuilding(ids[0], 'North Mill');
       g.inspectSel = { kind: 'building', id: ids[0] };
       g.refreshInspect();
-      const field = document.getElementById('insp-name') as HTMLInputElement | null;
       return {
         auto,
         renamed,
         blanked,
-        fieldValue: field?.value ?? null,
         title: document.querySelector('.inv-head')?.textContent ?? '',
+        hasPencil: !!document.getElementById('insp-rename-btn'),
+        hasOldField: !!document.getElementById('insp-name'),
         barnHasName: (barn.name ?? null) !== null,
       };
     });
@@ -3536,10 +3537,101 @@ test.describe('workplace names', () => {
     expect(out.renamed).toBe('North Mill');
     // Freeing "Woodcutter 1" makes it the lowest unused number again, so blank reclaims it.
     expect(out.blanked).toBe('Woodcutter 1');
-    expect(out.fieldValue).toBe('North Mill');
     expect(out.title).toContain('North Mill');
+    expect(out.hasPencil).toBe(true);
+    // The old dedicated rename field is gone from the main sheet — renaming is pencil-only now.
+    expect(out.hasOldField).toBe(false);
     // A barn employs nobody, so it gets no name of its own.
     expect(out.barnHasName).toBe(false);
+  });
+
+  test('the pencil opens a rename popup: Save commits, Cancel does not, and it persists through save/load', async ({ page }) => {
+    await open2d(page);
+    const id = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const barn = g.state.buildings.find((b: any) => b.type === 'barn');
+      let placed: number | null = null;
+      for (let r = 3; r < 20 && placed == null; r++)
+        for (let dy = -r; dy <= r && placed == null; dy++)
+          for (let dx = -r; dx <= r && placed == null; dx++)
+            if (g.debugCanPlace('woodcutter', barn.x + dx, barn.y + dy).ok) {
+              placed = g.debugPlace('woodcutter', barn.x + dx, barn.y + dy);
+            }
+      g.inspectSel = { kind: 'building', id: placed };
+      g.refreshInspect();
+      return placed;
+    });
+    expect(id).not.toBeNull();
+
+    // Cancel: change the text, dismiss, and nothing should have changed.
+    await page.click('#insp-rename-btn');
+    await expect(page.locator('#rnp-input')).toBeVisible();
+    await expect(page.locator('#rnp-input')).toHaveValue('Woodcutter 1');
+    await page.fill('#rnp-input', 'Should Not Stick');
+    await page.click('#rnp-cancel');
+    await expect(page.locator('#rnp-input')).toBeHidden();
+    let name = await page.evaluate((bid) => {
+      const g = (window as any).__village;
+      return g.state.buildings.find((b: any) => b.id === bid)?.name;
+    }, id);
+    expect(name).toBe('Woodcutter 1');
+
+    // Save: commits the new name and closes the popup.
+    await page.click('#insp-rename-btn');
+    await page.fill('#rnp-input', 'North Mill');
+    await page.click('#rnp-save');
+    await expect(page.locator('#rnp-input')).toBeHidden();
+    name = await page.evaluate((bid) => {
+      const g = (window as any).__village;
+      return g.state.buildings.find((b: any) => b.id === bid)?.name;
+    }, id);
+    expect(name).toBe('North Mill');
+
+    // Renamed buildings persist through a save/load round trip, same as any other village state.
+    const reloaded = await page.evaluate((bid) => {
+      const g = (window as any).__village;
+      g.debugSave();
+      g.debugLoad();
+      return g.state.buildings.find((b: any) => b.id === bid)?.name;
+    }, id);
+    expect(reloaded).toBe('North Mill');
+  });
+
+  test('the pencil is a real touch target on a phone-sized layout', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 }); // a phone, held upright
+    await open2d(page);
+    const id = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const barn = g.state.buildings.find((b: any) => b.type === 'barn');
+      let placed: number | null = null;
+      for (let r = 3; r < 20 && placed == null; r++)
+        for (let dy = -r; dy <= r && placed == null; dy++)
+          for (let dx = -r; dx <= r && placed == null; dx++)
+            if (g.debugCanPlace('woodcutter', barn.x + dx, barn.y + dy).ok) {
+              placed = g.debugPlace('woodcutter', barn.x + dx, barn.y + dy);
+            }
+      g.inspectSel = { kind: 'building', id: placed };
+      g.refreshInspect();
+      return placed;
+    });
+    const pencil = page.locator('#insp-rename-btn');
+    await expect(pencil).toBeVisible();
+    // At least a 32px box in each direction — small enough not to crowd the title, large enough
+    // to actually hit with a thumb.
+    const box = await pencil.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.width).toBeGreaterThanOrEqual(24);
+    expect(box!.height).toBeGreaterThanOrEqual(24);
+    await pencil.click();
+    await page.fill('#rnp-input', 'Phone Mill');
+    await page.click('#rnp-save');
+    const name = await page.evaluate((bid) => {
+      const g = (window as any).__village;
+      return g.state.buildings.find((b: any) => b.id === bid)?.name;
+    }, id);
+    expect(name).toBe('Phone Mill');
   });
 });
 
@@ -3573,6 +3665,71 @@ test.describe('job board', () => {
     // Every row can be staffed, including the trades with nowhere to work yet.
     expect(board.withSteppers).toBe(board.names!.length);
     expect(board.muted).toBe(board.names!.length - 1); // all but Builders
+  });
+
+  test('Builders denominator sums active construction, not a generic target', async ({ page }) => {
+    await open2d(page);
+    // Seeded: the town hall needs a clear 5x5 patch near the barn, and an unseeded map occasionally
+    // doesn't offer one within the search radius below.
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false, undefined, 42));
+    await page.click('#btn-village');
+    await expect(page.locator('#village .staff-row').first()).toBeVisible();
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // Placement itself checks affordability — a town hall alone needs 84 iron on hand.
+      barn.store.wood = 2000; barn.store.stone = 2000; barn.store.iron = 2000;
+
+      const readSub = () => {
+        g.ui.refreshPanels(s);
+        const rows = [...document.querySelectorAll('#village .staff-row')];
+        const row = rows.find((r) => r.querySelector('.jr-name')!.textContent === 'Builders')!;
+        return row.querySelector('.jr-sub')!.textContent; // "working/wanted"
+      };
+      const denomOf = (sub: string) => Number(sub.split('/')[1]);
+
+      // Nothing under construction beyond the founding village itself.
+      const baseline = denomOf(readSub());
+
+      const findClear = (type: string) => {
+        for (let r = 3; r < 40; r++)
+          for (let dy = -r; dy <= r; dy++)
+            for (let dx = -r; dx <= r; dx++) {
+              const x = barn.x + dx, y = barn.y + dy;
+              if (g.debugCanPlace(type, x, y).ok) return { x, y };
+            }
+        throw new Error('no clear spot for ' + type);
+      };
+
+      const hp = findClear('house');
+      const houseId = g.debugPlace('house', hp.x, hp.y);
+      const withHouse = denomOf(readSub());
+
+      const tp = findClear('townhall');
+      const hallId = g.debugPlace('townhall', tp.x, tp.y);
+      const withBoth = denomOf(readSub());
+
+      // Finish the house (as a builder crew would) without touching the Town Hall.
+      const house = s.buildings.find((b: any) => b.id === houseId);
+      house.built = true;
+      house.progress = g.debugBuildWork('house');
+      const afterHouseDone = denomOf(readSub());
+
+      const hall = s.buildings.find((b: any) => b.id === hallId);
+      hall.built = true;
+      hall.progress = g.debugBuildWork('townhall');
+      const afterBothDone = denomOf(readSub());
+
+      return { baseline, withHouse, withBoth, afterHouseDone, afterBothDone, houseNeed: g.debugBuildersWanted('house'), hallNeed: g.debugBuildersWanted('townhall') };
+    });
+
+    expect(out.houseNeed).toBe(2);
+    expect(out.hallNeed).toBe(4);
+    expect(out.withHouse, 'placing a house adds its own requirement').toBe(out.baseline + out.houseNeed);
+    expect(out.withBoth, 'a second site sums on top of the first').toBe(out.baseline + out.houseNeed + out.hallNeed);
+    expect(out.afterHouseDone, 'finishing the house drops back to just the Town Hall').toBe(out.baseline + out.hallNeed);
+    expect(out.afterBothDone, 'finishing everything returns to the baseline').toBe(out.baseline);
   });
 
   test('a trade can be staffed before it has anywhere to work', async ({ page }) => {
@@ -5972,8 +6129,55 @@ test.describe('iron and steel tools', () => {
 
     // The sheet carries a Tool line, and it reads this citizen's own kit, not the village's.
     expect(out.none.toLowerCase()).toContain('bare hands');
-    expect(out.iron).toContain('Iron tools');
-    expect(out.steel).toContain('Steel tools');
+    expect(out.iron).toContain('Iron Tools');
+    expect(out.steel).toContain('Steel Tools');
+    // The +15% production edge is a Codex fact, not something spelled out on every sheet.
+    expect(out.steel).not.toContain('15%');
+  });
+
+  test('a barn never shows a concatenated resource identifier for either tool', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(
+      new Function(`
+        ${forge}
+        const smith = put('blacksmith');
+        smith.desiredWorkers = 1;
+        smith.recipe = 'iron';
+        barn.store.tools = 40;
+        barn.store.steeltools = 40;
+        g.inspectSel = { kind: 'building', id: barn.id };
+        g.refreshInspect();
+        return [...document.querySelectorAll('#inspect .inv-row span:first-child')].map((e) => e.textContent);
+      `) as () => any,
+    );
+    // Every raw kind reads as its player-facing name — never the bare identifier the code uses
+    // internally (which would run "steel" and "tools" together with no space).
+    expect(out.some((t: string) => /iron tools/i.test(t))).toBe(true);
+    expect(out.some((t: string) => /steel tools/i.test(t))).toBe(true);
+    expect(out.every((t: string) => !/steeltools/i.test(t))).toBe(true);
+    expect(out.every((t: string) => !/warmclothing/i.test(t))).toBe(true);
+  });
+
+  test('the Codex discloses what normal play does not: Steel Tools\' +15% edge over Iron', async ({ page }) => {
+    await open2d(page);
+    await page.click('#mm-codex');
+    const out = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.cx-row')];
+      const blacksmith = rows.find((r) => r.querySelector('.cx-name')!.textContent === 'Blacksmith');
+      const notes = [...document.querySelectorAll('.cx-note')].map((n) => ({
+        title: n.querySelector('.cx-name')!.textContent,
+        body: n.querySelector('.cx-desc')!.textContent,
+      }));
+      return {
+        blacksmithDesc: blacksmith?.querySelector('.cx-desc')!.textContent ?? '',
+        toolNote: notes.find((n) => /iron tools.*steel tools/i.test(n.title ?? '')),
+      };
+    });
+    expect(out.blacksmithDesc).toContain('Iron Tools');
+    expect(out.blacksmithDesc).toContain('Steel Tools');
+    expect(out.blacksmithDesc).toContain('15%');
+    expect(out.toolNote, 'a dedicated Codex note explains the tool ladder').toBeTruthy();
+    expect(out.toolNote!.body).toContain('15%');
   });
 
   test('a coal seam is slower to dig than an iron one', { tag: '@slow' }, async ({ page }) => {
@@ -8349,8 +8553,11 @@ test.describe('work happens where the work is', () => {
         wc.store.wood = 9999; // keep it stocked: this is about where they stand, not logistics
         const c = s.citizens.find((x: any) => x.jobId === wc.id);
         // Stand them at their own door each tick and clear anything that would send them off, so
-        // this measures the rule and not how long a walk to the barn happens to be on this map.
+        // this measures the rule and not how long a walk to the barn happens to be on this map —
+        // tool-fetching included: a bare-handed villager prioritises a barn trip for one, so give
+        // them one up front rather than have that errand compete with what this test measures.
         if (c) {
+          g.debugSetCitizenTool(c.id, 'iron');
           const at = g.debugWorkSpot(c.id);
           c.x = at.x;
           c.y = at.y;
@@ -9588,9 +9795,11 @@ test.describe('stockpile limits', () => {
         for (let i = 0; i < ticks; i++) {
           wc.store.wood = 9999; // keep it in input, so this measures the cap and nothing else
           // Stand them at their own door and take away any reason to wander, so what is measured
-          // is the cap rather than the length of a walk on this particular map.
+          // is the cap rather than the length of a walk on this particular map — tool-fetching
+          // included, so give them one up front rather than let that errand compete with the cap.
           for (const c of s.citizens) {
             if (c.jobId !== wc.id) continue;
+            g.debugSetCitizenTool(c.id, 'iron');
             const at = g.debugWorkSpot(c.id);
             c.x = at.x;
             c.y = at.y;

@@ -33,6 +33,7 @@ import {
   RESOURCE_KINDS,
   ResourceCategory,
   ResourceKind,
+  resourceDisplayName,
   SEASONS,
   isAdult,
   isInfant,
@@ -198,7 +199,7 @@ function inventoryRows(s: GameState): InventoryRow[] {
     rows.push({
       kind,
       icon: RESOURCE_ICON[kind],
-      label: kind[0].toUpperCase() + kind.slice(1),
+      label: resourceDisplayName(kind),
       category: RESOURCE_CATEGORY[kind],
       stock,
       cap: capFor(s, kind),

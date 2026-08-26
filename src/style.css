@@ -1838,6 +1838,32 @@ body {
   cursor: pointer;
   line-height: 1;
 }
+/* Title text and the rename pencil share one flex item, so `.inv-head`'s space-between still
+   puts only the × on the far side. */
+.inv-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.pencil-btn {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  /* A real touch target, not just the glyph's own tiny box. */
+  padding: 6px;
+  margin: -6px 0;
+  border-radius: 6px;
+}
+.pencil-btn:hover,
+.pencil-btn:focus-visible {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
 .inv-row {
   display: flex;
   justify-content: space-between;
@@ -2002,11 +2028,8 @@ body {
   display: none !important;
 }
 
-/* Editable building name in the inspect sheet. */
-.inv-ctrl .inv-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: 60%;
+/* Editable building name — shared by the rename popup's own input. */
+.inv-name {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: transparent;
@@ -2014,11 +2037,25 @@ body {
   font: inherit;
   font-size: 13px;
   padding: 6px 8px;
-  text-align: right;
 }
-.inv-ctrl .inv-name:focus {
+.inv-name:focus {
   outline: none;
   border-color: var(--accent);
+}
+.inv-ctrl .inv-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  text-align: right;
+}
+/* The rename popup itself: a compact card, same modal container the ranch picker reuses. */
+.rename-popup .inv-name {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 16px; /* 16px+ keeps iOS Safari from zooming in on focus */
+  padding: 10px;
+  margin: 10px 0 14px;
 }
 
 /* Job board: heading above the jobs the village hasn't built yet, and their muted rows. */

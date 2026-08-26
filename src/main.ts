@@ -45,8 +45,6 @@ import {
   FLOOD_DEATH_CHANCE,
   FloodRiskTier,
   DamageSeverity,
-  FESTIVAL_FOOD,
-  POLICY_META,
   POLICIES,
   policyCapacity,
   activePolicies,
@@ -205,8 +203,9 @@ import { tileIndex, inBounds } from './game/world';
 import {
   addNearest,
   totalStored,
-  totalFoodAvailable,
   totalHeldAll,
+  totalAvailable,
+  totalFoodAvailable,
   barnLoad,
   capacityOf,
   houseFuelPerSeason,
@@ -214,6 +213,7 @@ import {
   larderFoodTarget,
   larderTarget,
 } from './game/storage';
+import { townHallDashboard } from './game/townhall';
 import {
   planPath, markPending, pendingPathCount, confirmPendingPaths, cancelPendingPaths,
   isSpanTier, spanLine, routePath, unplanTiles, demolishPathRect, pathSpeedMult,
@@ -1706,36 +1706,16 @@ class Game {
         // The books and the rules are what a Town Hall is *for*, so they arrive with the building
         // and are found by tapping it rather than taking up room in the HUD.
         if (b.type === 'townhall' && b.built) {
-          const enacted = this.state.policies ?? [];
-          const active = activePolicies(this.state);
-          const capacity = policyCapacity(this.state);
-          const hasFood = totalFoodAvailable(this.state) >= FESTIVAL_FOOD;
-          const canFestival = capacity >= 1 && hasFood;
+          // The full dashboard (ledger, production, population, policy detail) lives in its own
+          // overlay — `ui.ts` opens it straight off `townHallDashboard(state)`, the same way the
+          // trading post reads its own state fresh rather than through `controls`. This inspect-sheet
+          // control only needs enough to draw the compact summary line and the button that opens it.
           controls = {
             ...controls,
             townhall: {
-              // One row per resource the village actually holds or moved last season — asking for
-              // all thirty would bury the four that matter under a wall of zeroes.
-              ledger: RESOURCE_KINDS.map((kind) => ({ kind, row: ledgerFor(this.state, kind) }))
-                .filter(({ row }) => row && (row.stock > 0.01 || Math.abs(row.net) > 0.01))
-                .map(({ kind, row }) => ({ kind, ...row! })),
-              policies: POLICIES.map((id) => ({
-                id,
-                ...POLICY_META[id],
-                enacted: enacted.includes(id),
-                active: active.includes(id),
-              })),
-              capacity,
-              canFestival,
-              // Two distinct reasons hide behind one disabled button — no clerk at the desk at all,
-              // or a clerk but not enough food banked — and they call for different player action, so
-              // spell out which one it actually is rather than leaving a bare disabled button to
-              // guess at (see the Town Hall UI expansion's own note on this).
-              festivalReason: canFestival
-                ? undefined
-                : capacity < 1
-                  ? 'Needs a clerk at the Town Hall'
-                  : `Needs ${FESTIVAL_FOOD} food banked`,
+              clerks: Math.min(b.workers.length, BUILDING_DEFS.townhall.jobs),
+              clerkJobs: BUILDING_DEFS.townhall.jobs,
+              activePolicyCount: activePolicies(this.state).length,
             },
           };
         }
@@ -2057,6 +2037,11 @@ class Game {
     this.ui.openTradingPost(id);
   }
 
+  /** Debug/testing helper: open the Town Hall dashboard without tapping the building. */
+  debugOpenTownHall(id: number): void {
+    this.ui.openTownHall(id);
+  }
+
   /** Debug/testing helper: run the once-per-season fire roll without waiting for a season. */
   debugFireSeason(): void {
     fireSeason(this.state, this.log);
@@ -2308,6 +2293,13 @@ class Game {
   /** Debug/testing helper: the Town Hall books for one resource. */
   debugLedger(kind: ResourceKind) {
     return ledgerFor(this.state, kind);
+  }
+
+  /** Debug/testing helper: the whole Town Hall dashboard — inventory, production, population and
+   *  policy cards — exactly as the panel reads it, so a test can assert against real figures
+   *  instead of scraping rendered text. */
+  debugTownHallDashboard() {
+    return townHallDashboard(this.state);
   }
 
   /** Debug/testing helper: the name stored against a save slot, or null if it is unnamed. */
@@ -2612,6 +2604,19 @@ class Game {
   /** Debug/testing helper: food across every edible kind — what a `food` limit is judged against. */
   debugTotalFood(): number {
     return limitStock(this.state, 'food');
+  }
+
+  /** Debug/testing helper: what the village can actually draw on of one kind — free barn/market
+   *  stock plus every household's larder (see `totalAvailable`). What the Town Hall's inventory
+   *  tab and the survival low-stock warnings both read. */
+  debugTotalAvailable(kind: ResourceKind): number {
+    return totalAvailable(this.state, kind);
+  }
+
+  /** Debug/testing helper: `debugTotalAvailable`, summed across every food kind — see
+   *  `totalFoodAvailable`. What the Town Hall inventory tab's aggregate Food row reads. */
+  debugTotalFoodAvailable(): number {
+    return totalFoodAvailable(this.state);
   }
 
   /**

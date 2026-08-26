@@ -278,6 +278,39 @@ export const RESOURCE_ICON: Record<ResourceKind, string> = {
 /** Non-food resources that show a red "low" warning in the HUD (survival-critical). */
 export const SURVIVAL_RESOURCES: ResourceKind[] = ['firewood', 'clothing'];
 
+/**
+ * The broad bucket a resource kind belongs to — for grouping, never for gameplay. Nothing in the
+ * simulation reads this; it exists purely so a summary screen (the Town Hall dashboard) can fold
+ * forty-eight goods into a handful of headlines without inventing its own list of what's food and
+ * what's a building material.
+ */
+export type ResourceCategory = 'food' | 'materials' | 'fuel' | 'tools' | 'clothing' | 'medicine' | 'luxury' | 'livestock';
+
+/** Every resource kind, sorted into its `ResourceCategory` — a `Record` so a new `ResourceKind` is
+ *  a compile error here until it is given a bucket. */
+export const RESOURCE_CATEGORY: Record<ResourceKind, ResourceCategory> = {
+  ...(Object.fromEntries(FOOD_KINDS.map((k) => [k, 'food'])) as Record<ResourceKind, ResourceCategory>),
+  wood: 'materials', stone: 'materials', iron: 'materials',
+  firewood: 'fuel', coal: 'fuel',
+  tools: 'tools', steeltools: 'tools',
+  leather: 'clothing', wool: 'clothing', clothing: 'clothing',
+  medicine: 'medicine',
+  sand: 'luxury', glass: 'luxury', jewelry: 'luxury', gold: 'luxury', dye: 'luxury', silk: 'luxury',
+  finejewelry: 'luxury', fineclothes: 'luxury',
+  cattle: 'livestock', pigs: 'livestock', sheep: 'livestock', chickens: 'livestock',
+};
+
+export const RESOURCE_CATEGORY_META: Record<ResourceCategory, { label: string; icon: string }> = {
+  food: { label: 'Food', icon: FOOD_ICON },
+  materials: { label: 'Materials', icon: '🪵' },
+  fuel: { label: 'Fuel', icon: '🔥' },
+  tools: { label: 'Tools', icon: '🛠️' },
+  clothing: { label: 'Clothing', icon: '🧥' },
+  medicine: { label: 'Medicine', icon: '💊' },
+  luxury: { label: 'Luxury goods', icon: '💍' },
+  livestock: { label: 'Livestock', icon: '🐄' },
+};
+
 export type Season = 'Spring' | 'Summer' | 'Autumn' | 'Winter';
 export const SEASONS: Season[] = ['Spring', 'Summer', 'Autumn', 'Winter'];
 
@@ -865,6 +898,20 @@ export interface Building {
    * second workforce, just a gate on the one that already exists.
    */
   enabled?: boolean;
+  /**
+   * Output actually produced here so far this season, measured at the moment a worker's cycle
+   * completes (`runWorker`) — the same instant that feeds a load into `carry`/`pending`. Reset to
+   * `{}` at every turnover once it is snapshotted into `lastSeasonProduced` (see `closeLedger`).
+   *
+   * Measured, never modelled, for the same reason the village ledger is (`ledgerFor`): a formula
+   * built from a building's nominal output-per-worker would have to relearn every blocker that can
+   * slow it — a missing input, a bare-handed worker, sickness, a stockpile cap — and would drift
+   * from the real economy exactly when a player most wants to trust it.
+   */
+  producedThisSeason?: Partial<Record<ResourceKind, number>>;
+  /** `producedThisSeason` as it stood at the last turnover — what the Town Hall's Production tab
+   *  reads for a "this building's output last season" figure. */
+  lastSeasonProduced?: Partial<Record<ResourceKind, number>>;
 }
 
 /** What a villager is doing right now in the logistics loop. */
@@ -2125,6 +2172,18 @@ export interface GameState {
    * save from before achievements shipped — the migration seeds a fresh one (see `freshStats`).
    */
   stats?: VillageStats;
+  /**
+   * One row per season, newest last, bounded the same as `ledger` (`LEDGER_SEASONS`) — the raw
+   * counts the Town Hall's Population tab charts. Pushed alongside `ledger` at every turnover (see
+   * `closeLedger`), off the same two accumulators below.
+   */
+  popHistory?: PopHistoryRow[];
+  /** Children born so far this season, tallied as `births` spawns them; folded into `popHistory`
+   *  and reset at the next turnover. */
+  seasonBirths?: number;
+  /** Newcomers settled so far this season (`settleNomads`, whenever the player accepts a band —
+   *  not only at a season turn); folded into `popHistory` and reset at the next turnover. */
+  seasonImmigrants?: number;
 }
 
 /**
@@ -2767,6 +2826,21 @@ export interface LedgerRow {
 
 /** Seasons of books the hall keeps — two years, enough to read a trend off. */
 export const LEDGER_SEASONS = 8;
+
+/**
+ * A season's entry in the Town Hall's population count — `popHistory`'s row, kept the same length
+ * as the resource ledger (`LEDGER_SEASONS`) and closed at the same moment (`closeLedger`).
+ */
+export interface PopHistoryRow {
+  year: number;
+  /** The season that just ended (index into `SEASONS`). */
+  season: number;
+  /** Citizens alive at the close of this season. */
+  pop: number;
+  births: number;
+  deaths: number;
+  immigrants: number;
+}
 
 // ---- Policies (enacted at the Town Hall) ------------------------------------------------------
 /**

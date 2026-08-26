@@ -124,7 +124,7 @@ import {
   PATH_BRIDGE_STONE,
   entranceTiles,
 } from './types';
-import { newGame, housingCapacity } from './game/state';
+import { newGame, newGameWorld, foundVillage, canFoundBarnAt, housingCapacity } from './game/state';
 import { VillageTier, buildingUnlocked, pathUnlocked, pinTier, villageTier } from './game/tiers';
 import { pinRandom, newSeed } from './game/rng';
 import {
@@ -199,7 +199,7 @@ import {
 } from './game/buildings';
 import { findPath, isWalkable } from './game/pathfind';
 import { bridgeDeck, BOAT_LADEN_TOP, BRIDGE_BANK_Y } from './render/bridges';
-import { tileIndex, inBounds } from './game/world';
+import { tileIndex, inBounds, findStartTile } from './game/world';
 import {
   addNearest,
   totalStored,
@@ -305,6 +305,13 @@ class Game {
   sizeH = 4;
   /** Quarter turns clockwise the pending building will be placed at (see `Building.rot`). */
   buildRot: 0 | 1 | 2 | 3 = 0;
+  /**
+   * Set while the player is choosing where to found a new village (the New Village screen's
+   * "Choose starting spot" toggle) — null the rest of the time. `this.state` is a real, generated
+   * map with no barn, buildings or citizens yet; a barn ghost tracks the reticle and the confirm
+   * bar (`refreshConfirmBar`) is what actually founds the village, via `confirmFounding`.
+   */
+  private founding: { name: string } | null = null;
   selectedPath: PathTier | null = null;
   demolish = false;
   harvestMode = false;
@@ -480,6 +487,7 @@ class Game {
   }
 
   private onSelectBuild(t: BuildingType | null, locked = false): void {
+    if (this.founding) return; // founding has its own placement flow — the toolbar is inert until it's done
     this.selectedBuild = t;
     this.buildLocked = locked;
     this.selectedPath = null;
@@ -1085,6 +1093,10 @@ class Game {
    * Start a fresh game and write it to `slot`. Directly startable (difficulty-select + headless
    * drivers). Defaults to the autosave slot — the real new-game flow founds a village there and
    * the running game autosaves there from then on. Tests pass a manual slot index to seed one.
+   *
+   * Leaves the game running, not paused — `beginNewGame` (the real New Village screen) pauses it
+   * afterwards; this lower-level entry point does not, so headless drivers keep advancing time
+   * exactly as before.
    */
   startNewGame(
     size: MapSize = 'small',
@@ -1139,12 +1151,14 @@ class Game {
     size: MapSize;
     difficulty: Difficulty;
     disasters: boolean;
+    placeManually: boolean;
     seed: number;
     name: string;
   } = {
     size: 'small',
     difficulty: 'normal',
     disasters: true,
+    placeManually: false,
     seed: newSeed(),
     name: '',
   };
@@ -1186,9 +1200,79 @@ class Game {
   /** Found a new village in the autosave slot and start play. A new game never touches a manual
    * slot — those are the player's hard saves, written only from the Save screen. */
   private beginNewGame(name: string): void {
-    const { size, difficulty, disasters, seed } = this.newGameOpts;
+    const { size, difficulty, disasters, seed, placeManually } = this.newGameOpts;
+    if (placeManually) {
+      this.beginManualFounding(size, difficulty, disasters, seed, name);
+      return;
+    }
     this.startNewGame(size, difficulty, disasters, AUTOSAVE_SLOT, seed);
+    this.paused = true; // a new village always opens paused, so the player can look before it starts
     setSlotName(AUTOSAVE_SLOT, name); // the running village carries its name on the autosave slot
+  }
+
+  /**
+   * "Choose starting spot": generate the map and let the player pick where the barn goes instead
+   * of the auto-picked spot `newGame` would have used. `this.state` becomes a real, generated map
+   * with no barn, buildings or citizens yet — nothing is saved, and there is no village at all,
+   * until `confirmFounding` actually sites the barn.
+   */
+  private beginManualFounding(
+    size: MapSize,
+    difficulty: Difficulty,
+    disasters: boolean,
+    seed: number,
+    name: string,
+  ): void {
+    this.state = newGameWorld(size, difficulty, disasters, seed);
+    // A dry, roomy spot to start looking from — the map's raw centre is as likely as not to be the
+    // river, since it meanders straight down the middle. The player is still free to pan anywhere;
+    // this only saves them from opening on a red ghost.
+    const suggestion = findStartTile(this.state.tiles);
+    this.camera.focus(suggestion.x, suggestion.y);
+    this.paused = true;
+    this.selectedBuild = 'barn'; // drives the placement ghost at the reticle (see `frame`)
+    this.buildLocked = true;
+    this.buildRot = 0;
+    this.selectedPath = null;
+    this.demolish = false;
+    this.clearInspect();
+    this.input.setMode('normal');
+    this.ui.clearSelection();
+    this.ui.hideOverlay();
+    this.running = true;
+    this.founding = { name };
+  }
+
+  /** The barn's footprint at the reticle, whatever the player is currently aiming it over. */
+  private foundingReticle(): { tx: number; ty: number } {
+    return this.reticleTile('barn');
+  }
+
+  /** Confirm bar action while founding: site the barn (and, on Easy, its starter houses) here. */
+  private confirmFounding(tx: number, ty: number): void {
+    if (!this.founding) return;
+    if (!canFoundBarnAt(this.state.tiles, tx, ty)) {
+      this.ui.flashHint('Too close to the water — pan to dry ground first');
+      return;
+    }
+    const { name } = this.founding;
+    foundVillage(this.state, tx, ty);
+    this.founding = null;
+    this.selectedBuild = null;
+    this.buildLocked = false;
+    this.centreOnVillage();
+    this.paused = true; // a new village always opens paused
+    saveGame(this.state, AUTOSAVE_SLOT);
+    setSlotName(AUTOSAVE_SLOT, name);
+    this.ui.log('A fresh village begins', 'good');
+  }
+
+  /** Confirm bar's Cancel while founding: abandon it and return to the New Village screen. */
+  private cancelFounding(): void {
+    this.founding = null;
+    this.selectedBuild = null;
+    this.buildLocked = false;
+    this.openNewGameSetup();
   }
 
   /**
@@ -1353,6 +1437,8 @@ class Game {
 
   /** In-game pause menu: Resume, Save, Load, Settings, New Game, Main Menu. */
   private openPauseMenu(): void {
+    // Nothing to pause/save/load yet while founding — the menu button backs out of it instead.
+    if (this.founding) { this.cancelFounding(); return; }
     this.paused = true;
     this.ui.showPauseMenu({
       onResume: () => {
@@ -1385,6 +1471,9 @@ class Game {
 
   private onTap(sx: number, sy: number): void {
     if (!this.running || this.state.gameOver) return;
+    // Founding is confirmed through the confirm bar, not a map tap — a stray tap while panning to
+    // aim must not found the village somewhere the player didn't mean to.
+    if (this.founding) return;
     if (this.selectedBuild) {
       this.placeAtReticle();
       return;
@@ -2362,6 +2451,11 @@ class Game {
     cam.apply();
   }
 
+  /** Debug/testing helper: can the barn's footprint sit at (x, y) right now (see `canFoundBarnAt`)? */
+  debugCanFoundBarnAt(x: number, y: number): boolean {
+    return canFoundBarnAt(this.state.tiles, x, y);
+  }
+
   /** Debug/testing helper: the tile value a path tier writes when built. */
   debugPathValue(tier: PathTier): number {
     return tier === 'dirt' ? PATH_DIRT
@@ -3047,6 +3141,17 @@ class Game {
    * held rather than applied, so this bar is the only way either actually happens.
    */
   private refreshConfirmBar(): void {
+    if (this.founding) {
+      const { tx, ty } = this.foundingReticle();
+      const ok = canFoundBarnAt(this.state.tiles, tx, ty);
+      this.ui.showConfirm(
+        ok ? 'Pan to where you want to found your village' : 'Too close to the water — pan to dry ground',
+        'Found here',
+        () => this.confirmFounding(tx, ty),
+        () => this.cancelFounding(),
+      );
+      return;
+    }
     const pending = pendingPathCount(this.state);
     if (pending > 0) {
       this.ui.showConfirm(
@@ -3184,13 +3289,19 @@ class Game {
       placement.pw = w;
       placement.ph = h;
       placement.prot = this.buildRot;
-      placement.valid = canPlace(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot).ok;
-      // A legal but unreachable spot is a soft-lock the player is about to build: warn, don't
-      // forbid. `warn` only means anything alongside a valid placement — a red ghost is already
-      // saying no for a better reason.
-      placement.warn =
-        placement.valid &&
-        !placementReachable(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot);
+      if (this.founding) {
+        // No tier, no cost, no reachability — there is no village yet for any of those to mean
+        // anything. Only the ground itself (see `canFoundBarnAt`) can refuse a spot.
+        placement.valid = canFoundBarnAt(this.state.tiles, tx, ty);
+      } else {
+        placement.valid = canPlace(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot).ok;
+        // A legal but unreachable spot is a soft-lock the player is about to build: warn, don't
+        // forbid. `warn` only means anything alongside a valid placement — a red ghost is already
+        // saying no for a better reason.
+        placement.warn =
+          placement.valid &&
+          !placementReachable(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot);
+      }
     }
     this.ui.setPlaceWarn(!!placement.warn);
 

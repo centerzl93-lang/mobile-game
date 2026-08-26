@@ -998,7 +998,13 @@ test.describe('available workers count', () => {
   // no job but cannot work, so they must not be counted as available labour.
   test('the job board counts free laborers as adults only, never children', { tag: '@slow' }, async ({ page }) => {
     await open(page);
-    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', true));
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', true);
+      // A new village opens two founders as builders — orthogonal to what this test checks (adults
+      // vs children), so hold it at zero rather than let it shift either count being compared.
+      g.debugSetBuilders(0);
+    });
     await page.click('#btn-village');
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
@@ -1288,6 +1294,10 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
         // this test allows.
         g.startNewGame('small', 'easy', false, undefined, 1000);
         const s = g.state; // captured *after* startNewGame — it replaces g.state outright
+        // A new village opens two founders as builders, which would otherwise hold two of the
+        // eight adults back from hire — release them, since every hand here needs to be hireable
+        // for the six employed slots below.
+        g.debugSetBuilders(0);
         // Two huts, not one, so the proof doesn't ride on a single trip landing exactly on time:
         // six employed hands give the brigade the same kind of margin the other fire-recovery
         // tests get from a full, unfiltered village.
@@ -1666,6 +1676,10 @@ test.describe('fire recovery: BURNING → DAMAGED → repaired, or destroyed', (
     const out = await page.evaluate((placeSrc) => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
+      // Hold builders at zero until the rubble-hauling phase below — a new village's two founding
+      // builders would otherwise start carting the refund off the rubble pile before `justBurned`
+      // is even captured, since there is nothing else for them to build yet.
+      g.debugSetBuilders(0);
       const hut = eval(placeSrc)(g, 'gatherer');
       const salvage = g.debugSalvage('gatherer'); // REFUND_FRACTION of the build cost
       g.debugIgnite(hut.id);
@@ -7387,6 +7401,115 @@ test.describe('the New Village screen', () => {
   });
 });
 
+test.describe('a new village always opens paused', () => {
+  test('the auto-founded flow starts paused so the player can look before it begins', async ({ page }) => {
+    await open2d(page);
+    await page.click('#mm-new');
+    await page.click('#ng-start');
+    await page.waitForTimeout(150);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      return { paused: g.paused, builders: g.state.desiredBuilders };
+    });
+    expect(out.paused, 'a fresh village waits for the player to unpause it').toBe(true);
+    // Two founders go straight to construction rather than the harvest gangs.
+    expect(out.builders).toBe(2);
+  });
+});
+
+test.describe('choosing a starting spot', () => {
+  test('the toggle swaps Start for a placement flow, and Found here plants the barn', async ({ page }) => {
+    await open2d(page);
+    await page.click('#mm-new');
+    await page.click('#ng-spot-choose');
+    await expect(page.locator('#ng-start')).toHaveText('Choose starting spot');
+    await page.click('#ng-start');
+    await page.waitForTimeout(150);
+
+    // A real, generated map — but nobody has founded anything on it yet.
+    const before = await page.evaluate(() => {
+      const g = (window as any).__village;
+      return { buildings: g.state.buildings.length, citizens: g.state.citizens.length, running: g.running };
+    });
+    expect(before.buildings).toBe(0);
+    expect(before.citizens).toBe(0);
+    expect(before.running).toBe(true);
+    await expect(page.locator('#cf-ok')).toHaveText('Found here');
+
+    // The map's centre — where the reticle starts, unpanned — sits on the river more often than
+    // not, since the river meanders down the middle of the map. Pan to a spot this map's own
+    // tiles say is dry before confirming, the same way a player panning away from the water would.
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      const s = g.state;
+      for (let x = 4; x < s.w - 4; x++) {
+        if (g.debugCanFoundBarnAt(x, Math.floor(s.h / 2))) {
+          g.debugLookAt(x, Math.floor(s.h / 2));
+          return;
+        }
+      }
+      throw new Error('no dry spot found across the middle row');
+    });
+    await page.click('#cf-ok');
+    await page.waitForTimeout(150);
+    const after = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const s = g.state;
+      return {
+        barns: s.buildings.filter((b: any) => b.type === 'barn').length,
+        citizens: s.citizens.length,
+        builders: s.desiredBuilders,
+        paused: g.paused,
+      };
+    });
+    expect(after.barns, 'the barn the player chose a spot for is standing').toBe(1);
+    expect(after.citizens).toBeGreaterThan(0);
+    expect(after.builders).toBe(2);
+    expect(after.paused).toBe(true);
+  });
+
+  test('Easy plants its three starter houses around the chosen spot too', async ({ page }) => {
+    await open2d(page);
+    await page.click('#mm-new');
+    await page.click('#ng-diff-easy');
+    await page.click('#ng-spot-choose');
+    await page.click('#ng-start');
+    await page.waitForTimeout(150);
+    // See the note in the test above — pan off the river before confirming.
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      const s = g.state;
+      for (let x = 4; x < s.w - 4; x++) {
+        if (g.debugCanFoundBarnAt(x, Math.floor(s.h / 2))) {
+          g.debugLookAt(x, Math.floor(s.h / 2));
+          return;
+        }
+      }
+      throw new Error('no dry spot found across the middle row');
+    });
+    await page.click('#cf-ok');
+    await page.waitForTimeout(150);
+    const houses = await page.evaluate(() =>
+      (window as any).__village.state.buildings.filter((b: any) => b.type === 'house').length,
+    );
+    expect(houses).toBe(3);
+  });
+
+  test('Cancel backs out of founding, leaving no village behind', async ({ page }) => {
+    await open2d(page);
+    await page.click('#mm-new');
+    await page.click('#ng-spot-choose');
+    await page.click('#ng-start');
+    await page.waitForTimeout(150);
+    await page.click('#cf-cancel');
+    await page.waitForTimeout(100);
+    // Back on the New Village screen, and nothing was founded.
+    await expect(page.locator('#ng-start')).toBeVisible();
+    const running = await page.evaluate(() => (window as any).__village.running);
+    expect(running).toBe(false);
+  });
+});
+
 test.describe('naming a village at the start', () => {
   test('the name typed on the setup card names the village and follows it into a hard save', async ({ page }) => {
     await open2d(page);
@@ -7993,6 +8116,9 @@ test.describe('roads get laid', () => {
       // road, and on an awkward map that ran past the 30s test budget.
       g.startNewGame('small', 'easy', false);
       const s = g.state;
+      // Start from zero — a new village opens two founders as builders, but this test's premise is
+      // a workforce with every hand already spoken for and nobody assigned to build yet.
+      g.debugSetBuilders(0);
       const PATH_DIRT_PLAN = 1, PATH_DIRT = 2;
       const barn = s.buildings.find((b: any) => b.type === 'barn');
       barn.store.wood = 9000;
@@ -8332,6 +8458,9 @@ test.describe('work happens where the work is', () => {
       const g = (window as any).__village;
       g.startNewGame('small', 'easy', false);
       const s = g.state; // after the new game: startNewGame replaces the state object wholesale
+      // A new village opens two founders as builders, reserving them out of the hiring pool this
+      // test needs in full for the lumberyard and, later, the outside felling.
+      g.debugSetBuilders(0);
       const lum = eval(mk)('lumberyard', 4);
       const r = g.debugWorkRadius(lum.id);
       const cx = lum.x + 1.5, cy = lum.y + 1.5;

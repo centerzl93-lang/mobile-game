@@ -2392,10 +2392,11 @@ export class UI {
     size: MapSize;
     difficulty: Difficulty;
     disasters: boolean;
+    placeManually: boolean;
     seed: number;
     name: string;
     slotLabel: string;
-    onChange: (patch: { size?: MapSize; difficulty?: Difficulty; disasters?: boolean }) => void;
+    onChange: (patch: { size?: MapSize; difficulty?: Difficulty; disasters?: boolean; placeManually?: boolean }) => void;
     onStart: (setup: { seed: number; name: string }) => void;
     onBack: () => void;
   }): void {
@@ -2408,6 +2409,12 @@ export class UI {
       seg(`ng-diff-${d}`, opts.difficulty === d, DIFFICULTY_META[d].label),
     ).join('');
     const dis = seg('ng-dis-on', opts.disasters, 'On') + seg('ng-dis-off', !opts.disasters, 'Off');
+    const spot = seg('ng-spot-auto', !opts.placeManually, 'Auto') + seg('ng-spot-choose', opts.placeManually, 'Choose');
+    const spotDesc = opts.placeManually
+      ? opts.difficulty === 'easy'
+        ? 'Pan the map to aim, then confirm a spot for the barn — its three starter houses land around it.'
+        : 'Pan the map to aim, then confirm a spot for the barn.'
+      : 'Founds the village for you, on the roomiest plains it can find.';
 
     this.overlayCard(
       `<h2>New Village</h2>` +
@@ -2419,6 +2426,8 @@ export class UI {
         `<div class="set-label">Difficulty</div><div class="seg-row">${diffs}</div>` +
         `<p class="ng-desc">${DIFFICULTY_META[opts.difficulty].desc}</p>` +
         `<div class="set-label">Disasters (fire &amp; disease)</div><div class="seg-row">${dis}</div>` +
+        `<div class="set-label">Starting spot</div><div class="seg-row">${spot}</div>` +
+        `<p class="ng-desc">${spotDesc}</p>` +
         `<div class="set-label">Seed</div>` +
         `<div class="ng-seed">` +
         `<input id="ng-seed" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" value="${opts.seed}">` +
@@ -2428,7 +2437,7 @@ export class UI {
         // Empty until something happens to it. The line stays in the layout so confirming a copy
         // does not shove the Start button down the card.
         `<p class="ng-hint" id="ng-hint"></p>` +
-        `<button id="ng-start">Start</button>` +
+        `<button id="ng-start">${opts.placeManually ? 'Choose starting spot' : 'Start'}</button>` +
         `<button class="ghost" id="ng-back">Back</button>` +
         `</div>`,
       'menu-card newgame-card',
@@ -2451,6 +2460,8 @@ export class UI {
     );
     byId('ng-dis-on').addEventListener('click', () => opts.onChange({ disasters: true }));
     byId('ng-dis-off').addEventListener('click', () => opts.onChange({ disasters: false }));
+    byId('ng-spot-auto').addEventListener('click', () => opts.onChange({ placeManually: false }));
+    byId('ng-spot-choose').addEventListener('click', () => opts.onChange({ placeManually: true }));
 
     byId('ng-reroll').addEventListener('click', () => {
       field.value = String(newSeed());

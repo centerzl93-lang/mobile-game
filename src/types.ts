@@ -2792,6 +2792,11 @@ export const START_CHILDREN = 4; // founding children
 export const ADULT_MIN_AGE = 20; // founding adults' age range
 export const ADULT_MAX_AGE = 29;
 export const CHILD_MIN_AGE = 6; // founding children spawn in [CHILD_MIN_AGE, ADULT_AGE)
+/**
+ * Founders sent straight to construction rather than the harvest gangs, so the first house or
+ * well the player marks doesn't sit untouched until they find the Job Board themselves.
+ */
+export const DEFAULT_BUILDER_COUNT = 2;
 
 // ---- Leisure (villagers take occasional breaks from work) ----
 /**

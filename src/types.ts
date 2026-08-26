@@ -94,6 +94,12 @@ export type ResourceKind =
   | 'leather'
   | 'wool'
   | 'clothing'
+  // Warm Clothing is a *separate* barn good from plain (Regular) clothing: it takes both leather
+  // and wool to sew (see `TailorRecipe` `'warm'`) and, once issued, halves a coated villager's
+  // winter fuel bill rather than cutting it by a quarter (`WARM_CLOTHED_HEAT_FACTOR`). The HUD
+  // folds the two into a single 🧥 figure — same as `tools`/`steeltools` — but the barn, the
+  // tailor and a villager's own household larder keep them apart.
+  | 'warmclothing'
   | 'cattle'
   | 'pigs'
   | 'chickens'
@@ -184,6 +190,7 @@ export const RESOURCE_KINDS: ResourceKind[] = [
   'leather',
   'wool',
   'clothing',
+  'warmclothing',
   'cattle',
   'pigs',
   'sheep',
@@ -266,6 +273,7 @@ export const RESOURCE_ICON: Record<ResourceKind, string> = {
   leather: '🟫',
   wool: '🧶',
   clothing: '🧥',
+  warmclothing: '🧤',
   cattle: '🐄',
   pigs: '🐖',
   chickens: '🐔',
@@ -293,7 +301,7 @@ export const RESOURCE_CATEGORY: Record<ResourceKind, ResourceCategory> = {
   wood: 'materials', stone: 'materials', iron: 'materials',
   firewood: 'fuel', coal: 'fuel',
   tools: 'tools', steeltools: 'tools',
-  leather: 'clothing', wool: 'clothing', clothing: 'clothing',
+  leather: 'clothing', wool: 'clothing', clothing: 'clothing', warmclothing: 'clothing',
   medicine: 'medicine',
   sand: 'luxury', glass: 'luxury', jewelry: 'luxury', gold: 'luxury', dye: 'luxury', silk: 'luxury',
   finejewelry: 'luxury', fineclothes: 'luxury',
@@ -372,8 +380,13 @@ export type BuildingType =
 
 export type MineOutput = 'coal' | 'iron';
 export type SmithRecipe = 'iron' | 'steel';
-/** What a tailor sews from: hides off the cattle and the hunt, or fleece off a sheep pen. */
-export type TailorRecipe = 'leather' | 'wool';
+/**
+ * What a tailor sews. `'leather'` and `'wool'` each sew plain Regular Clothing from one hide or
+ * fleece kind alone — the normal early/mid-game coat. `'warm'` sews Warm Clothing, which needs
+ * *both* leather and wool at once and, worn, is worth twice a Regular coat's fuel saving
+ * (`WARM_CLOTHED_HEAT_FACTOR`) — a deliberate higher tier, not a third interchangeable option.
+ */
+export type TailorRecipe = 'leather' | 'wool' | 'warm';
 /**
  * What bench the luxury workshop is running.
  *
@@ -1023,9 +1036,18 @@ export interface Citizen {
   /**
    * Got a clothing ration at the last season turnover. Transient — recomputed each season in
    * `endSeason`, never saved. A clothed villager burns less firewood; an unclothed one risks
-   * falling ill in winter.
+   * falling ill in winter. True whether the ration that covered them was Regular or Warm
+   * Clothing — see `warmClothed` for which.
    */
   clothed?: boolean;
+  /**
+   * Set alongside `clothed` when this season's ration was drawn from Warm Clothing rather than
+   * Regular Clothing — Warm Clothing needs both leather *and* wool to sew (see `TailorRecipe`
+   * `'warm'`) and, while worn, halves the fuel a coat would otherwise save
+   * (`WARM_CLOTHED_HEAT_FACTOR` vs `CLOTHED_HEAT_FACTOR`) rather than a quarter. Transient, like
+   * `clothed` — recomputed each season, never saved.
+   */
+  warmClothed?: boolean;
   /**
    * The tool this villager is actually holding — `undefined` means bare hands. Unlike clothing
    * (a season's ration, billed and forgotten), a tool is a real, persistent item: this villager
@@ -1280,6 +1302,12 @@ export function buildersWantedFor(type: BuildingType): number {
  * the map is nobody's job unless somebody is free — and a fully staffed village has nobody free,
  * which left confirmed roads sitting unbuilt for good. One builder gets a road moving; long runs
  * ask for a couple more, and it stops at three so a big road plan cannot empty the workplaces.
+ *
+ * This is the Builders job row's own denominator (`buildJobsBody` in `ui.ts`) — "X / N" reads as
+ * assigned-builders over what the sites actually now open need, not against the player's manual
+ * staffing target (`GameState.desiredBuilders`, the stepper's own number and unrelated to this).
+ * It is computed live off the buildings, per `buildersWantedFor`, so a site finishing or a new one
+ * going up moves it immediately, with nothing to store or ratchet.
  */
 export function autoBuilderDemand(s: GameState): number {
   let n = 0;
@@ -1617,7 +1645,8 @@ export function limitedOutput(b: Building): LimitKey | null {
  * limit on gold, dye or silk — bought off a ship, made by nobody — would sit in the panel doing
  * nothing. The five luxury goods a town produces are here; the three it only buys are not.
  * `steeltools` is absent too, on purpose: it shares the `tools` cap (see `limitStock`) rather than
- * carrying a second one of its own, so the panel offers one "Tools" row, not two.
+ * carrying a second one of its own, so the panel offers one "Tools" row, not two. `warmclothing`
+ * shares `clothing`'s cap the same way, for the same reason.
  */
 export const LIMITABLE: LimitKey[] = [
   'food', 'wood', 'firewood', 'stone', 'coal', 'iron', 'tools', 'clothing', 'medicine',
@@ -1700,6 +1729,15 @@ export const CODEX_NOTES: { icon: string; title: string; body: string }[] = [
       'A wooden house can be traded up to stone from its own panel. A builder razes it and raises ' +
       'the new one on the same spot; the household is out of doors until the roof is on.',
   },
+  {
+    icon: '🛠️',
+    title: 'Iron Tools & Steel Tools',
+    body:
+      'Iron Tools are the standard: every trade is balanced around a villager holding one. Steel ' +
+      "Tools are the advanced tier a blacksmith can forge instead, given coal alongside the iron — " +
+      'they wear out half as often, and work 15% faster besides. A villager equips whichever tier ' +
+      'is on the shelf the next time they are already at a barn, steel first.',
+  },
 ];
 
 /** Player-facing name and icon for a limit row. Food is a category, so it has its own. */
@@ -1714,7 +1752,38 @@ LIMIT_META.finejewelry.label = 'Fine jewellery';
 LIMIT_META.fineclothes.label = 'Fine clothes';
 LIMIT_META.jewelry.label = 'Jewellery';
 // Steel tools read as two words too; plain tools stay "Tools" (the HUD's combined figure).
-LIMIT_META.steeltools.label = 'Steel tools';
+LIMIT_META.steeltools.label = 'Steel Tools';
+LIMIT_META.warmclothing.label = 'Warm Clothing';
+
+/**
+ * Player-facing name for a resource kind on its own — a barn's stock list, the trading post, a
+ * villager's own "Carrying" line, the Codex. Almost always `LIMIT_META[k].label`, with one
+ * exception: `LIMIT_META.tools` stays the bare "Tools" it always was because that label also
+ * names the *combined* tools figure the HUD chip and the one shared stockpile cap read (iron and
+ * steel folded together — see `limitStock`), and that fold is deliberate. Naming a single shelf
+ * of plain tools is a different question with a different answer: the baseline tier has its own
+ * name, "Iron Tools", same as its steel counterpart already has one of its own
+ * (`LIMIT_META.steeltools`). Never reads as "Tools" when what is actually meant is the iron tier
+ * specifically, and never produces a concatenated `steeltools`/`warmclothing`-style identifier —
+ * see the Codex disclosure for the one thing this label deliberately leaves out (Steel Tools'
+ * production edge over Iron, `STEEL_TOOL_PROD`).
+ */
+export function resourceDisplayName(k: ResourceKind): string {
+  if (k === 'tools') return 'Iron Tools';
+  return LIMIT_META[k].label;
+}
+
+/**
+ * `resourceDisplayName`, lower-cased for embedding mid-sentence ("Hauling iron tools to the
+ * barns") rather than standing as its own label. For every plain single-word kind this is
+ * identical to reading `k` directly, same as before this existed; the only kinds it actually
+ * changes are the ones that used to run two words together with no space at all — `steeltools`,
+ * `warmclothing`, `finejewelry`, `fineclothes` — and `tools` itself, which now reads as the
+ * specific "iron tools" it means rather than the ambiguous, generic "tools".
+ */
+export function resourceWord(k: ResourceKind): string {
+  return resourceDisplayName(k).toLowerCase();
+}
 
 /**
  * Fraction of a resource's own stockpile limit below which the village calls it low — the level
@@ -2316,7 +2385,7 @@ export const RESOURCE_VOLUME: Record<ResourceKind, number> = {
   // Bulky raw materials — the volume-1 baseline.
   wood: 1, firewood: 1, stone: 1, coal: 1, iron: 1,
   // Worked goods: denser than raw material, so more fit in a load.
-  tools: 0.5, steeltools: 0.5, leather: 0.5, wool: 0.5, clothing: 0.5,
+  tools: 0.5, steeltools: 0.5, leather: 0.5, wool: 0.5, clothing: 0.5, warmclothing: 0.5,
   medicine: 0.25,
   // Livestock is driven, not carried, and a cow takes rather more room than a log.
   cattle: 4, pigs: 3, sheep: 2, chickens: 0.5,
@@ -2685,6 +2754,14 @@ export const SEASON_BURN: Record<Season, number> = {
  * means less fuel burned, so clothing production pays for itself twice over.
  */
 export const CLOTHED_HEAT_FACTOR = 0.75;
+/**
+ * Firewood multiplier for a villager whose ration this season was Warm Clothing rather than
+ * Regular. Exactly twice Regular's saving — Regular cuts the bill by a quarter (1 - 0.75), Warm
+ * cuts it by a half — which is the whole point of paying both leather *and* wool for it. Derived
+ * from `CLOTHED_HEAT_FACTOR` rather than hand-set so "2x the benefit" stays true if that dial ever
+ * moves.
+ */
+export const WARM_CLOTHED_HEAT_FACTOR = 1 - 2 * (1 - CLOTHED_HEAT_FACTOR);
 
 // ---- Household larders (villagers keep their own supplies at home) ----
 /**
@@ -2732,7 +2809,7 @@ export const LARDER_URGENT_AT = 0.25;
 /** Most residents of one house that may be out on a grocery run at the same time. */
 export const MAX_LARDER_SHOPPERS = 3;
 /** Resources a household keeps at home, in the order a resident restocks them. */
-export const LARDER_KINDS: ResourceKind[] = ['firewood', 'clothing', 'medicine'];
+export const LARDER_KINDS: ResourceKind[] = ['firewood', 'clothing', 'warmclothing', 'medicine'];
 
 /**
  * Carrying space for a grocery run — a proper basket of provisions, rather than the single
@@ -3456,6 +3533,10 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
   leather: 3,
   wool: 2.5,
   clothing: 6,
+  // Twice a Regular coat's price: it costs a Regular coat's worth of *both* leather and wool
+  // rather than a Regular's worth of either, and it is worth twice the fuel saving worn — the
+  // same "priced above tools but below where the edge would put it" logic as `steeltools`.
+  warmclothing: 12,
   cattle: 20,
   pigs: 14,
   sheep: 16,
@@ -3495,7 +3576,7 @@ export const MERCHANT_CATEGORY_STOCK: Record<MerchantCategory, Partial<Record<Re
   seeds: {},
   animals: { cattle: 6, pigs: 8, sheep: 8, chickens: 12 },
   foods: { grain: 160, corn: 120, potato: 120, fish: 140, beef: 80, venison: 60, mutton: 70, pork: 70, chicken: 70, milk: 90, eggs: 80 },
-  goods: { tools: 60, clothing: 60, leather: 90, wool: 80, medicine: 40 },
+  goods: { tools: 60, clothing: 60, warmclothing: 30, leather: 90, wool: 80, medicine: 40 },
   // The Port's holds are deeper than a river boat's — larger quantities, and the imported goods
   // no village can make for itself. The luxury goods (gold/dye/silk) are the *only* feed for the
   // fine benches, and the luxury fleet calls just once a year — so its hold has to be deep enough
@@ -3623,12 +3704,12 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   blacksmith: {
     type: 'blacksmith', name: 'Blacksmith', emoji: '⚒️', category: 'resources', w: 3, h: 3,
     cost: { wood: 40, stone: 30, iron: 40 }, jobs: 1, work: 90,
-    desc: 'Forges tools from iron, or steel tools from iron + coal (lasts longer).',
+    desc: 'Forges Iron Tools from iron, or Steel Tools from iron + coal. Steel lasts twice as long as iron before it wears out, and works 15% faster besides.',
   },
   tailor: {
     type: 'tailor', name: 'Tailor', emoji: '🧵', category: 'resources', w: 3, h: 3,
     cost: { wood: 40, stone: 24, iron: 20 }, jobs: 1, work: 80,
-    desc: 'Sews warm clothing to keep villagers healthy in winter. Set it to work either hide — from cattle and the hunt — or fleece off a sheep pen; wool goes a little further per unit.',
+    desc: 'Sews clothing to keep villagers healthy in winter. Set it to work either hide — from cattle and the hunt — or fleece off a sheep pen, for Regular Clothing; wool goes a little further per unit. Working both at once sews Warm Clothing instead, at twice the fuel saving of a Regular coat.',
   },
   trading: {
     type: 'trading', name: 'Trading Post', emoji: '🚢', category: 'trade', w: 5, h: 9,

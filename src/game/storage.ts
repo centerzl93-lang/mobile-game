@@ -14,6 +14,7 @@ import {
   HOUSE_FOOD_PER_RESIDENT,
   HOUSE_FIREWOOD_PER_RESIDENT,
   HOUSE_CLOTHING_PER_RESIDENT,
+  WARM_CLOTHED_HEAT_FACTOR,
   HOUSE_MEDICINE_PER_RESIDENT,
   CHILD_FOOD_FACTOR,
   heatFactorOf,
@@ -159,6 +160,21 @@ export function nearestBarnWithRoom(s: GameState, pos: Pos): Building | null {
     }
   }
   return best;
+}
+
+/**
+ * Nearest storage node holding *either* tier of tool — steel or iron, whichever is the shorter
+ * walk. Used to send a bare-handed villager on a deliberate trip for one when their own barn visit
+ * turned up nothing (see `sendForTool` in `simulation.ts`); which tier they actually come away
+ * with once there is `tryEquipTool`'s call — steel first — not this pick, which only decides
+ * *where* to walk.
+ */
+export function nearestBarnWithTool(s: GameState, pos: Pos): Building | null {
+  const steel = nearestBarnWith(s, pos, 'steeltools');
+  const iron = nearestBarnWith(s, pos, 'tools');
+  if (!steel) return iron;
+  if (!iron) return steel;
+  return dist2(center(steel), pos) <= dist2(center(iron), pos) ? steel : iron;
 }
 
 /** Nearest *barn* (not a market) holding `kind` — used by market vendors restocking. */
@@ -309,7 +325,8 @@ export function houseFuelPerSeason(s: GameState, house: Building): number {
   const burn = SEASON_BURN[SEASONS[s.season]];
   let units = 0;
   for (const c of residentsOf(s, house)) {
-    units += HEAT_PER_CITIZEN_WINTER * burn * walls * (c.clothed ? CLOTHED_HEAT_FACTOR : 1);
+    const clothFactor = c.warmClothed ? WARM_CLOTHED_HEAT_FACTOR : c.clothed ? CLOTHED_HEAT_FACTOR : 1;
+    units += HEAT_PER_CITIZEN_WINTER * burn * walls * clothFactor;
   }
   return units / FIREWOOD_HEAT;
 }
@@ -332,7 +349,7 @@ export function larderTarget(s: GameState, house: Building, kind: ResourceKind):
     const factor = heatFactorOf(house.type);
     return residents * HOUSE_FIREWOOD_PER_RESIDENT * factor;
   }
-  if (kind === 'clothing') return residents * HOUSE_CLOTHING_PER_RESIDENT;
+  if (kind === 'clothing' || kind === 'warmclothing') return residents * HOUSE_CLOTHING_PER_RESIDENT;
   if (kind === 'medicine') return residents * HOUSE_MEDICINE_PER_RESIDENT;
   return 0;
 }
@@ -358,6 +375,17 @@ export function totalInLarders(s: GameState, kind: ResourceKind): number {
  */
 export function totalAvailable(s: GameState, kind: ResourceKind): number {
   return totalStored(s, kind) + totalInLarders(s, kind);
+}
+
+/**
+ * Coats the village can actually draw on, Regular and Warm together — the same "either seam
+ * counts" fold `limitStock` applies to the barn/market total, extended across household larders
+ * too. A village dressed entirely in Warm Clothing is exactly as clothed as one dressed entirely
+ * in Regular, so survival warnings and the wellbeing check both read this rather than either kind
+ * alone.
+ */
+export function totalClothingAvailable(s: GameState): number {
+  return totalAvailable(s, 'clothing') + totalAvailable(s, 'warmclothing');
 }
 
 /** Food across the barns *and* every larder — see `totalAvailable`. */

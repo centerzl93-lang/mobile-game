@@ -5,11 +5,17 @@ import {
   PATH_BRIDGE,
   PATH_BRIDGE_STONE,
   PATH_TUNNEL,
+  PATH_STONE_MULT,
+  PATH_DIRT_MULT,
+  PATH_BRIDGE_MULT,
+  PATH_BRIDGE_STONE_MULT,
+  PATH_TUNNEL_MULT,
   blocksMovement,
   footprintW,
   footprintH,
 } from '../types';
 import { tileIndex, inBounds } from './world';
+import { pathSpeedMult, pathsConnected } from './paths';
 
 /**
  * Which tiles a finished building stands on, rebuilt only when the village changes.
@@ -102,28 +108,67 @@ export function isWater(s: GameState, tx: number, ty: number): boolean {
 }
 
 /**
- * A* from tile (fx,fy) to tile (tx,ty) over walkable tiles. Returns a list of tile-centre
- * waypoints (including the destination centre) or null if no route exists. The start tile is
- * not included. If the destination itself is unwalkable, there is no path.
+ * A* from tile (fx,fy) to tile (tx,ty) over walkable tiles, weighted by how long each tile
+ * actually takes to cross rather than by plain distance — see {@link landStepCost}. A villager
+ * therefore routes onto a road whenever doing so is genuinely faster, joining it early and
+ * leaving late for a long, straight stretch, and ignoring a path that only shaves a tile or two
+ * off a route that is mostly spent getting to and from it. It is *not* "always prefer a path":
+ * with no speed gain over the distance involved, the plain-ground route wins exactly as before.
+ * Returns a list of tile-centre waypoints (including the destination centre) or null if no route
+ * exists. The start tile is not included. If the destination itself is unwalkable, there is no
+ * path.
  */
 export function findPath(s: GameState, fx: number, fy: number, tx: number, ty: number): Point[] | null {
-  return astar(s, fx, fy, tx, ty, isWalkable);
+  return astar(s, fx, fy, tx, ty, isWalkable, landStepCost, LAND_BEST_MULT);
 }
 
 /**
  * A* over water tiles, for the merchant boat. Same routing as {@link findPath} but the passable
  * surface is the river/lakes, so the boat threads the channel to its wharf and back out to sea
  * rather than teleporting across land. Null when no continuous water route exists (e.g. a berth on
- * an isolated pond); the caller then falls back to a direct approach.
+ * an isolated pond); the caller then falls back to a direct approach. Plain distance cost — a path
+ * tile is a road for feet, not for a hull, so it carries no speed bonus on the water.
  */
 export function findWaterPath(s: GameState, fx: number, fy: number, tx: number, ty: number): Point[] | null {
   return astar(s, fx, fy, tx, ty, isWater);
 }
 
 /**
- * The A* core shared by land ({@link findPath}) and water ({@link findWaterPath}) routing. `passable`
- * decides which tiles the mover may occupy; everything else (8-neighbour steps, diagonal corner
- * gating, octile heuristic, tile-centre waypoints) is identical for both surfaces.
+ * Time to cross from the tile a step starts on (`cx`,`cy`) to the one it lands on (`nx`,`ny`), in
+ * the same units `dist` (1 or `Math.SQRT2`) is already in — a straight step onto a stone road
+ * costs 1/2 instead of 1. Ordinarily keyed on the *destination* tile's own multiplier
+ * (`pathSpeedMult`).
+ *
+ * The one exception is a diagonal hop between two built-road tiles that only touch at a bare
+ * corner (`pathsConnected` says no): physically walkable, since the ground under both is still
+ * plain and the general corner-cutting gate above only blocks a genuinely solid obstacle, but not
+ * a ride on the road — two unconnected fragments of path don't hand a mover the speed bonus for
+ * hopping the gap between them, so that one step prices at plain-ground speed instead.
+ */
+function landStepCost(s: GameState, cx: number, cy: number, nx: number, ny: number, dist: number): number {
+  if (cx !== nx && cy !== ny && pathSpeedMult(s, cx, cy) > 1 && !pathsConnected(s, cx, cy, nx, ny)) {
+    return dist;
+  }
+  return dist / pathSpeedMult(s, nx, ny);
+}
+/**
+ * The fastest any tile can be crossed — every path type's own speed multiplier, at its highest
+ * (`PATH_STONE_MULT`/`PATH_BRIDGE_STONE_MULT`, both the quickest surface a road reaches). Used to
+ * scale the A* heuristic down to match `landStepCost`'s units: since no real route can beat this
+ * best case, dividing the plain-distance estimate by it keeps the heuristic admissible (never
+ * overestimates), which is what keeps the search provably optimal rather than merely greedy for
+ * roads.
+ */
+const LAND_BEST_MULT = Math.max(
+  PATH_STONE_MULT, PATH_DIRT_MULT, PATH_BRIDGE_MULT, PATH_BRIDGE_STONE_MULT, PATH_TUNNEL_MULT,
+);
+
+/**
+ * The A* core shared by land ({@link findPath}) and water ({@link findWaterPath}) routing.
+ * `passable` decides which tiles the mover may occupy; `stepCost` decides how long entering a
+ * given tile actually takes (plain distance by default, for water); `bestMult` is the fastest any
+ * step could possibly be, scaling the heuristic to match. Everything else (8-neighbour steps,
+ * diagonal corner gating, octile heuristic, tile-centre waypoints) is identical for both surfaces.
  */
 function astar(
   s: GameState,
@@ -132,6 +177,9 @@ function astar(
   tx: number,
   ty: number,
   passable: (s: GameState, x: number, y: number) => boolean,
+  stepCost: (s: GameState, cx: number, cy: number, nx: number, ny: number, dist: number) => number =
+    (_s, _cx, _cy, _nx, _ny, dist) => dist,
+  bestMult = 1,
 ): Point[] | null {
   fx |= 0; fy |= 0; tx |= 0; ty |= 0;
   if (!inBounds(fx, fy) || !passable(s, tx, ty)) return null;
@@ -148,7 +196,7 @@ function astar(
   // Small binary heap keyed by f = g + heuristic.
   const heap: number[] = [start];
   const fscore = new Float32Array(N).fill(Infinity);
-  fscore[start] = octile(fx, fy, tx, ty);
+  fscore[start] = octile(fx, fy, tx, ty) / bestMult;
   const less = (a: number, b: number) => fscore[a] < fscore[b];
   const push = (v: number) => {
     heap.push(v);
@@ -194,12 +242,12 @@ function astar(
       }
       const ni = tileIndex(nx, ny);
       if (seen[ni]) continue;
-      const step = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1;
-      const ng = g[cur] + step;
+      const dist = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1;
+      const ng = g[cur] + stepCost(s, cx, cy, nx, ny, dist);
       if (ng < g[ni]) {
         came[ni] = cur;
         g[ni] = ng;
-        fscore[ni] = ng + octile(nx, ny, tx, ty);
+        fscore[ni] = ng + octile(nx, ny, tx, ty) / bestMult;
         push(ni);
       }
     }

@@ -3131,7 +3131,7 @@ export class Renderer3D {
   private clothedHomes(s: GameState): Set<number> {
     const out = new Set<number>();
     for (const b of s.buildings) {
-      if (b.built && isDwelling(b.type) && (b.store['clothing'] ?? 0) > 0) out.add(b.id);
+      if (b.built && isDwelling(b.type) && ((b.store['clothing'] ?? 0) + (b.store['warmclothing'] ?? 0)) > 0) out.add(b.id);
     }
     return out;
   }

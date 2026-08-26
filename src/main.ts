@@ -108,6 +108,8 @@ import {
   LuxuryRecipe,
   ResourceKind,
   RESOURCE_ICON,
+  resourceDisplayName,
+  resourceWord,
   NO_TOOLS_PENALTY,
   LARDER_KINDS,
   LIMIT_STEP,
@@ -1520,7 +1522,7 @@ class Game {
     if (c.task?.kind === 'toLarder') return '🏠 Carrying supplies home';
     if (c.task?.kind === 'toHouse') return '🛒 Delivering groceries';
     if ((c.rest ?? 0) > 0) return '☕ Taking a break';
-    if (c.carry) return `📦 Hauling ${c.carry.kind} to the barns`;
+    if (c.carry) return `📦 Hauling ${resourceWord(c.carry.kind)} to the barns`;
     const job = c.jobId != null ? this.state.buildings.find((b) => b.id === c.jobId) : null;
     if (job && job.built) {
       const name = buildingName(job);
@@ -1669,8 +1671,17 @@ class Game {
           }
         }
         if (b.type === 'mine') rows.push({ label: 'Digging', value: b.output });
-        if (b.type === 'blacksmith') rows.push({ label: 'Forging', value: `${b.recipe} tools` });
-        if (b.type === 'tailor') rows.push({ label: 'Sewing from', value: `${b.recipe}` });
+        if (b.type === 'blacksmith') {
+          rows.push({ label: 'Forging', value: b.recipe === 'steel' ? 'Steel Tools' : 'Iron Tools' });
+        }
+        if (b.type === 'tailor') {
+          const from: Record<TailorRecipe, string> = {
+            leather: 'leather (Regular Clothing)',
+            wool: 'wool (Regular Clothing)',
+            warm: 'leather + wool (Warm Clothing)',
+          };
+          rows.push({ label: 'Sewing from', value: from[(b.recipe as TailorRecipe) ?? 'leather'] });
+        }
         if (b.type === 'luxury') {
           const bench: Record<LuxuryRecipe, string> = {
             glass: '🔷 glass, from sand and coal',
@@ -1723,7 +1734,7 @@ class Game {
         if (!isDwelling(b.type)) {
           for (const k of RESOURCE_KINDS) {
             const v = b.store[k] ?? 0;
-            if (v > 0.5) rows.push({ label: `${RESOURCE_ICON[k]} ${k}`, value: `${Math.floor(v)}`, grid: true });
+            if (v > 0.5) rows.push({ label: `${RESOURCE_ICON[k]} ${resourceDisplayName(k)}`, value: `${Math.floor(v)}`, grid: true });
           }
         }
       }
@@ -1770,8 +1781,9 @@ class Game {
           ] };
         } else if (b.type === 'tailor') {
           controls.toggle = { group: 'tailor', options: [
-            { v: 'leather', label: '🟫 Leather', on: b.recipe !== 'wool' },
+            { v: 'leather', label: '🟫 Leather', on: b.recipe !== 'wool' && b.recipe !== 'warm' },
             { v: 'wool', label: '🧶 Wool', on: b.recipe === 'wool' },
+            { v: 'warm', label: '🧤 Warm', on: b.recipe === 'warm' },
           ] };
         } else if (b.type === 'luxury') {
           controls.toggle = { group: 'luxury', options: [
@@ -1952,12 +1964,15 @@ class Game {
       // a village-wide fact, so two workers at the same bench can read differently here. Children
       // (and undergrads, who aren't working either) carry none, so the row is for working villagers.
       if (adult && !c.undergrad) {
-        const spareNote = c.spareTool ? ` — spare ${c.spareTool === 'steel' ? 'steel' : 'iron'} tool in hand` : '';
+        // Steel's own production edge over iron is a Codex fact (see `CODEX_NOTES`), not something
+        // spelled out on every villager's sheet — normal play just names which tool they're
+        // holding, the same way it never states a farm's exact yield either.
+        const spareNote = c.spareTool ? ` — spare ${c.spareTool === 'steel' ? 'Steel' : 'Iron'} Tools in hand` : '';
         const toolValue =
           c.tool === 'steel'
-            ? `${RESOURCE_ICON.steeltools} Steel tools (+15% work)${spareNote}`
+            ? `${RESOURCE_ICON.steeltools} Steel Tools${spareNote}`
             : c.tool === 'iron'
-              ? `${RESOURCE_ICON.tools} Iron tools${spareNote}`
+              ? `${RESOURCE_ICON.tools} Iron Tools${spareNote}`
               : '✋ Bare hands (−25% work) — picks one up at the next barn with a spare';
         rows.push({ label: 'Tool', value: toolValue, tone: c.tool ? undefined : 'warn' });
       }
@@ -1965,7 +1980,7 @@ class Game {
         label: 'Carrying',
         // Against the per-kind limit, so it's clear a load is 12 logs but 48 of a crop.
         value: c.carry
-          ? `${RESOURCE_ICON[c.carry.kind]} ${Math.floor(c.carry.amount)}/${carryLimit(c.carry.kind)} ${c.carry.kind}`
+          ? `${RESOURCE_ICON[c.carry.kind]} ${Math.floor(c.carry.amount)}/${carryLimit(c.carry.kind)} ${resourceWord(c.carry.kind)}`
           : 'nothing',
       });
       const face = !adult ? '🧒' : c.sex === 'm' ? '👨' : '👩';

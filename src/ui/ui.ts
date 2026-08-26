@@ -220,6 +220,8 @@ export interface UICallbacks {
   onNewGame: () => void;
   onOpenMenu: () => void;
   onSetWorkers: (buildingId: number, delta: number) => void;
+  /** Set a workplace's wanted worker count to an exact figure — what the workers slider commits on release. */
+  onSetWorkersTo: (buildingId: number, value: number) => void;
   /** Move a whole profession's wanted count by one, spread across whatever buildings it has. */
   onSetTradeWorkers: (type: BuildingType, delta: number) => void;
   /** Mark this building for demolition, or take the mark back off. */
@@ -1021,7 +1023,14 @@ export class UI {
     if (controls?.workers) {
       const wk = controls.workers;
       ctrlHtml += `<div class="inv-ctrl"><span>Workers <small>(max ${wk.max})</small></span>
-        <div class="stepper"><button data-step="-1">−</button><span class="count">${wk.value}</span><button data-step="1">+</button></div></div>`;
+        <div class="stepper"><button data-step="-1">−</button><span class="count" id="insp-workers-count">${wk.value}</span><button data-step="1">+</button></div></div>`;
+      // A quick jump to any figure at once — the ±1 stepper above still does fine adjustment, but
+      // walking a ten-slot quarry down to zero one click at a time is exactly what this avoids.
+      // Same commit-on-release pattern as the ranch herd-limit slider below.
+      if (wk.max > 1) {
+        ctrlHtml += `<div class="inv-ctrl"><input type="range" class="ranch-slider" id="insp-workers-range"
+          min="0" max="${wk.max}" step="1" value="${wk.value}" aria-label="Wanted workers" /></div>`;
+      }
     }
     if (controls?.enable) {
       // On/off is deliberately its own line, worded as the state and the action: a disabled
@@ -1121,6 +1130,17 @@ export class UI {
       }
       this.el.inspect.querySelector('[data-step="-1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, -1));
       this.el.inspect.querySelector('[data-step="1"]')?.addEventListener('click', () => this.cb.onSetWorkers(id, 1));
+      const workersRange = this.el.inspect.querySelector('#insp-workers-range') as HTMLInputElement | null;
+      if (workersRange) {
+        const count = this.el.inspect.querySelector('#insp-workers-count') as HTMLElement | null;
+        // Live read-out while dragging, without committing: same pattern as the ranch herd-limit
+        // slider — commit lands on release (`change`) so the sheet's periodic rebuild doesn't fight
+        // an in-progress drag.
+        workersRange.addEventListener('input', () => {
+          if (count) count.textContent = workersRange.value;
+        });
+        workersRange.addEventListener('change', () => this.cb.onSetWorkersTo(id, Number(workersRange.value)));
+      }
       this.el.inspect
         .querySelector('#insp-enable')
         ?.addEventListener('click', () => this.cb.onSetBuildingEnabled(id, controls.enable?.on === false));

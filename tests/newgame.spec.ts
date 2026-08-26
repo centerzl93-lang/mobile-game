@@ -2291,8 +2291,9 @@ test.describe('workplace staffing release', () => {
 
 test.describe('why a workplace is idle', () => {
   // The inspect sheet's job is to answer "everyone's here, so why is nothing coming out?" — see
-  // `workplaceStatus`. These pin the reasons a player can act on: switched off, and slowed for want
-  // of tools (the village-wide penalty that makes every trade drag).
+  // `workplaceStatus`. These pin the reasons a player can act on: switched off, nobody there at
+  // all, and — distinct from both — short of the crew asked for, which still reads Working (just
+  // coloured to flag it) rather than a whole other status word.
   const placeGatherer = `() => {
     const g = window.__village;
     const s = g.state;
@@ -2325,9 +2326,14 @@ test.describe('why a workplace is idle', () => {
       eval(prepStr as string); // per-test tweak: disable it, or empty the barns of tools
       g.inspectSel = { kind: 'building', id };
       g.refreshInspect();
+      const statusRow = [...document.querySelectorAll('#inspect .inv-row')].find(
+        (r) => r.querySelector('span:first-child')?.textContent === 'Status',
+      );
       return {
         workers: b.workers.length,
+        desired: b.desiredWorkers,
         text: document.getElementById('inspect')!.innerText,
+        statusClass: statusRow?.className ?? '',
       };
     }, [place, prep] as const);
   const place = placeGatherer;
@@ -2338,7 +2344,31 @@ test.describe('why a workplace is idle', () => {
     expect(out.text).toContain('Disabled');
   });
 
-  test('with its workers bare-handed, a workplace reads as slowed for want of tools', async ({ page }) => {
+  test('a workplace with nobody there at all reads Not staffed', async ({ page }) => {
+    await open2d(page);
+    const out = await staffedGatherer(page, 'b.workers = [];');
+    expect(out.text).toContain('Not staffed');
+  });
+
+  test('a workplace short of the crew it wants still reads Working, coloured amber to flag it', async ({ page }) => {
+    await open2d(page);
+    // Fake worker ids are enough — `workplaceStatus` only cares how many are on the books, not who.
+    const out = await staffedGatherer(page, 'b.workers = [1]; b.desiredWorkers = 2;');
+    expect(out.workers, 'still short of what it wants, but not empty').toBe(1);
+    expect(out.desired).toBe(2);
+    expect(out.text).toContain('Working');
+    expect(out.statusClass).toContain('tone-warn');
+  });
+
+  test('a fully staffed workplace reads Working in the "all well" tone', async ({ page }) => {
+    await open2d(page);
+    const out = await staffedGatherer(page, 'b.workers = [1, 2]; b.desiredWorkers = 2;');
+    expect(out.workers).toBe(out.desired);
+    expect(out.text).toContain('Working');
+    expect(out.statusClass).toContain('tone-good');
+  });
+
+  test('bare-handed workers no longer change the workplace status — that detail was removed', async ({ page }) => {
     await open2d(page);
     // Tools are a personal belonging now, so strip this workplace's own staff directly rather than
     // the barns — a bare shelf only matters once a worker's own tool actually wears out.
@@ -2346,7 +2376,63 @@ test.describe('why a workplace is idle', () => {
       'if (c) { c.tool = undefined; c.toolWear = 0; } }';
     const out = await staffedGatherer(page, strip);
     expect(out.workers, 'the gatherer really is staffed').toBeGreaterThan(0);
-    expect(out.text.toLowerCase()).toContain('bare-handed');
+    expect(out.text).toContain('Working');
+    expect(out.text.toLowerCase()).not.toContain('bare-handed');
+  });
+});
+
+test.describe('setting a workplace worker count directly', () => {
+  test('the workers slider jumps straight to any figure, including zero, without stepping', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // Synthetic, built quarry (as the Forester sheet test above does): the slider is a pure UI
+      // concern, so it doesn't need a real, reachable 8x8 clearing — genuinely scarce on a small
+      // map — just to prove it commits a value.
+      const q = {
+        id: s.nextId++, type: 'quarry', x: barn.x, y: barn.y, built: true, progress: 220,
+        workers: [], desiredWorkers: 6, store: {},
+      };
+      s.buildings.push(q);
+      g.inspectSel = { kind: 'building', id: q.id };
+      g.refreshInspect();
+      const range = document.getElementById('insp-workers-range') as HTMLInputElement;
+      const max = Number(range.max);
+      // A quarry's crew of up to ten used to take ten clicks to zero out — the slider commits any
+      // figure in one drag, on release (`change`), the same pattern as the ranch herd-limit slider.
+      range.value = '0';
+      range.dispatchEvent(new Event('change'));
+      const afterZero = q.desiredWorkers;
+      range.value = String(max);
+      range.dispatchEvent(new Event('change'));
+      return { max, afterZero, afterMax: q.desiredWorkers };
+    });
+    expect(out.max, "a quarry's job cap").toBe(10);
+    expect(out.afterZero).toBe(0);
+    expect(out.afterMax).toBe(10);
+  });
+
+  test('no slider is offered for a single-slot job — the stepper alone is already exact', async ({ page }) => {
+    await open2d(page);
+    const hasSlider = await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'easy', false);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      // A woodcutter's single job slot — synthetic and built, same reasoning as above.
+      const wc = {
+        id: s.nextId++, type: 'woodcutter', x: barn.x, y: barn.y, built: true, progress: 30,
+        workers: [], desiredWorkers: 0, store: {},
+      };
+      s.buildings.push(wc);
+      g.inspectSel = { kind: 'building', id: wc.id };
+      g.refreshInspect();
+      return !!document.getElementById('insp-workers-range');
+    });
+    expect(hasSlider).toBe(false);
   });
 });
 

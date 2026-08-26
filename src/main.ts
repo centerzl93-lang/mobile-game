@@ -365,6 +365,7 @@ class Game {
       onNewGame: () => this.openNewGameSetup(true),
       onOpenMenu: () => this.openPauseMenu(),
       onSetWorkers: (id, d) => this.setWorkers(id, d),
+      onSetWorkersTo: (id, v) => this.setWorkersTo(id, v),
       onSetTradeWorkers: (type, d) => this.setTradeWorkers(type, d),
       onDemolishBuilding: (id, on) => this.setBuildingDemolish(id, on),
       onUpgradeBuilding: (id) => this.upgradeBuilding(id),
@@ -658,6 +659,15 @@ class Game {
     if (!b) return;
     const max = BUILDING_DEFS[b.type].jobs;
     b.desiredWorkers = Math.max(0, Math.min(max, b.desiredWorkers + delta));
+    this.persist();
+  }
+
+  /** Set a workplace's wanted worker count directly — what the workers slider commits on release. */
+  private setWorkersTo(id: number, value: number): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (!b) return;
+    const max = BUILDING_DEFS[b.type].jobs;
+    b.desiredWorkers = Math.max(0, Math.min(max, Math.round(value)));
     this.persist();
   }
 
@@ -1720,11 +1730,7 @@ class Game {
         // genuinely their own problem and would mislead if folded into one of the three). It is the
         // answer to "everyone's here, so why is nothing coming out?" — see `workplaceStatus`.
         const status = workplaceStatus(this.state, b);
-        if (status) {
-          rows.push({ label: 'Status', value: status.text, tone: status.tone });
-          // A secondary line, not a second status: still working, just worth knowing why it's slower.
-          if (status.note) rows.push({ label: '—', value: status.note, tone: 'warn' });
-        }
+        if (status) rows.push({ label: 'Status', value: status.text, tone: status.tone });
         if (def.jobs > 0) rows.push({ label: 'Workers', value: `${b.workers.length}/${b.desiredWorkers}` });
         if (isDwelling(b.type)) {
           const residents = this.state.citizens.filter((c) => c.homeId === b.id);

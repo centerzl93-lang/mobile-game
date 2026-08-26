@@ -762,12 +762,6 @@ export interface WorkStatus {
    */
   text: string;
   tone: WorkTone;
-  /**
-   * An optional secondary line: something worth knowing that doesn't change *whether* the building
-   * is working, only how well — e.g. a worker short a tool. Shown under the primary status, never
-   * in place of it.
-   */
-  note?: string;
 }
 
 /**
@@ -784,9 +778,8 @@ function isProducer(b: Building): boolean {
  * learns once and reads everywhere: Working, At limit, Not staffed. A handful of states are
  * genuinely different problems with genuinely different fixes — switched off, on fire, damaged, out
  * of a material to work with — and keep their own plain text rather than being folded into one of
- * the three and misread. Tool wear is a slowdown, not a stoppage, so it rides along as a secondary
- * `note` instead of taking over the primary line. Returns null for anything that isn't a producer (a
- * store, a school, an unbuilt site).
+ * the three and misread. Returns null for anything that isn't a producer (a store, a school, an
+ * unbuilt site).
  */
 export function workplaceStatus(s: GameState, b: Building): WorkStatus | null {
   if (!b.built || b.razed || !isProducer(b)) return null;
@@ -797,12 +790,10 @@ export function workplaceStatus(s: GameState, b: Building): WorkStatus | null {
   // Off by the player's own hand — the reason most often mistaken for "nobody is working here", and
   // a different fix (the Enabled switch right here on the sheet) from raising staff on the Job Board.
   if (b.enabled === false) return { text: '⏸️ Disabled', tone: 'bad' };
-  // Short of the staff the player actually wants here — whether that's nobody assigned at all or a
-  // seat still walking over — reads the same to the player and fixes the same way (the Job Board),
-  // so it is one status rather than a family of near-identical ones.
-  if (b.workers.length === 0 || b.workers.length < staffWanted(s, b)) {
-    return { text: '🚫 Not staffed', tone: 'warn' };
-  }
+  // Nobody here at all is its own state — the building genuinely hasn't started. A crew that's
+  // merely short of what the player asked for still counts as working (below), just coloured to
+  // show it: nobody wants a second status word to learn for "3 of 10".
+  if (b.workers.length === 0) return { text: '🚫 Not staffed', tone: 'warn' };
   if (b.type === 'farm' && !b.crop) return { text: '🌱 No seed — buy a crop from a trader', tone: 'warn' };
   // A converter the whole village cannot feed — no iron for the smith, no sand for the glassblower.
   // Only when the barns are empty of it too: if any barn still holds some, a hand is already
@@ -816,25 +807,10 @@ export function workplaceStatus(s: GameState, b: Building): WorkStatus | null {
   if (capKey && atLimit(s, capKey)) {
     return { text: `✅ ${LIMIT_META[capKey].label} at your limit — paused`, tone: 'capped' };
   }
-  // The tool penalty (`NO_TOOLS_PENALTY`) is per villager now, not village-wide: a shop can be
-  // fully staffed and still short a tool or two. A field answers to no chisel, so it is left out —
-  // everything else here can run bare-handed, just slower, which is worth a note but never a stop.
-  let note: string | undefined;
-  if (b.type !== 'farm') {
-    const bare = citizensAt(s, b.workers).filter((c) => !c.tool).length;
-    if (bare > 0) {
-      note = b.workers.length > 1 ? `🔧 ${bare}/${b.workers.length} bare-handed — slower` : '🔧 Bare-handed — slower';
-    }
-  }
-  return { text: '✓ Working', tone: 'good', note };
-}
-
-/** Resolve worker ids to the actual `Citizen`s still alive — a departed worker's id lingers a tick. */
-function citizensAt(s: GameState, ids: number[]): Citizen[] {
-  if (ids.length === 0) return [];
-  const found: Citizen[] = [];
-  for (const c of s.citizens) if (ids.includes(c.id)) found.push(c);
-  return found;
+  // Fully staffed reads green; short of the crew the player asked for is still working — just
+  // slower — so it reads amber rather than switching to a whole different word.
+  const tone: WorkTone = b.workers.length < staffWanted(s, b) ? 'warn' : 'good';
+  return { text: '✓ Working', tone };
 }
 
 /**

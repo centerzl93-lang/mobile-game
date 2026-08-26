@@ -3501,6 +3501,24 @@ export const DIFFICULTY_RESOURCES: Record<Difficulty, Partial<Resources>> = {
   ) as Partial<Resources>,
 };
 
+/**
+ * Difficulty's ongoing cut, not just its starting one: Hard households burn a bit more firewood
+ * a season than Normal, Easy a bit less, so the picker keeps meaning something once the first
+ * winter's starting stock (`DIFFICULTY_RESOURCES`) is spent either way. Folded into `heat()` the
+ * same multiplicative way as `heatFactorOf` and clothing — see `difficultyHeatFactor`.
+ *
+ * Deliberately a much gentler dial than `HARD_FACTOR` (0.5): that one halves a one-time buffer a
+ * village only leans on for its first year or two, so a big swing there just moves *when* a
+ * blacksmith/tailor/woodcutter becomes necessary. This one reweights every season for the rest of
+ * the game, so a swing anywhere near that size would either make Hard's heating unsurvivable at
+ * scale or make Easy's disappear entirely — see the balance report for the tested range.
+ */
+export const DIFFICULTY_HEAT_FACTOR: Record<Difficulty, number> = {
+  easy: 0.9,
+  normal: 1,
+  hard: 1.15,
+};
+
 // ---- Trade (barter by relative value; merchant keeps a margin) ----
 export const TRADE_VALUE: Record<ResourceKind, number> = {
   // The luxury chain. Sand is worth barely carrying; every step after it multiplies.

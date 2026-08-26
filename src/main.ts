@@ -365,6 +365,7 @@ class Game {
       onNewGame: () => this.openNewGameSetup(true),
       onOpenMenu: () => this.openPauseMenu(),
       onSetWorkers: (id, d) => this.setWorkers(id, d),
+      onSetWorkersTo: (id, v) => this.setWorkersTo(id, v),
       onSetTradeWorkers: (type, d) => this.setTradeWorkers(type, d),
       onDemolishBuilding: (id, on) => this.setBuildingDemolish(id, on),
       onUpgradeBuilding: (id) => this.upgradeBuilding(id),
@@ -658,6 +659,15 @@ class Game {
     if (!b) return;
     const max = BUILDING_DEFS[b.type].jobs;
     b.desiredWorkers = Math.max(0, Math.min(max, b.desiredWorkers + delta));
+    this.persist();
+  }
+
+  /** Set a workplace's wanted worker count directly — what the workers slider commits on release. */
+  private setWorkersTo(id: number, value: number): void {
+    const b = this.state.buildings.find((x) => x.id === id);
+    if (!b) return;
+    const max = BUILDING_DEFS[b.type].jobs;
+    b.desiredWorkers = Math.max(0, Math.min(max, Math.round(value)));
     this.persist();
   }
 
@@ -1715,9 +1725,10 @@ class Game {
           }
         }
       } else {
-        // Why this workplace is (or isn't) producing, in one coloured line above the numbers: switched
-        // off, short of hands, out of a material, capped, or slowed for want of tools. It is the answer
-        // to "everyone's here, so why is nothing coming out?" — see `workplaceStatus`.
+        // Why this workplace is (or isn't) producing, boiled down to Working / At limit / Not staffed
+        // (plus the handful of states — switched off, out of a material, on fire, damaged — that are
+        // genuinely their own problem and would mislead if folded into one of the three). It is the
+        // answer to "everyone's here, so why is nothing coming out?" — see `workplaceStatus`.
         const status = workplaceStatus(this.state, b);
         if (status) rows.push({ label: 'Status', value: status.text, tone: status.tone });
         if (def.jobs > 0) rows.push({ label: 'Workers', value: `${b.workers.length}/${b.desiredWorkers}` });
@@ -1761,29 +1772,15 @@ class Game {
             });
           }
         }
-        if (b.type === 'mine') rows.push({ label: 'Digging', value: b.output });
-        if (b.type === 'blacksmith') {
-          rows.push({ label: 'Forging', value: b.recipe === 'steel' ? 'Steel Tools' : 'Iron Tools' });
-        }
-        if (b.type === 'tailor') {
-          const from: Record<TailorRecipe, string> = {
-            leather: 'leather (Regular Clothing)',
-            wool: 'wool (Regular Clothing)',
-            warm: 'leather + wool (Warm Clothing)',
-          };
-          rows.push({ label: 'Sewing from', value: from[(b.recipe as TailorRecipe) ?? 'leather'] });
-        }
-        if (b.type === 'luxury') {
-          const bench: Record<LuxuryRecipe, string> = {
-            glass: '🔷 glass, from sand and coal',
-            jewelry: '💍 jewellery, from glass and iron',
-            finejewelry: '👑 fine jewellery, from jewellery and gold',
-            fineclothes: '👗 fine clothes, from dye and silk',
-          };
-          rows.push({ label: 'At the bench', value: bench[(b.recipe as LuxuryRecipe) ?? 'glass'] });
-        }
+        // What each producer makes/digs/sews is already told by its toggle below (and, for a mine
+        // or smith, by the building's own name) — a description row here would only repeat the
+        // player's own selection back to them. The Status line above says whether it's actually
+        // happening; that's the pairing the sheet needs, not a play-by-play of the recipe.
         if (b.type === 'farm') {
-          rows.push({ label: 'Crop', value: b.crop ? `${CROP_META[b.crop].emoji} ${CROP_META[b.crop].label}` : '🌱 No seed — buy from a trader' });
+          // No toggle exists to say this when the village owns no seed at all — everywhere else,
+          // the crop toggle below already names the selection, so this row only appears to explain
+          // the gap.
+          if (!b.crop) rows.push({ label: 'Crop', value: '🌱 No seed — buy from a trader', tone: 'warn' });
           rows.push({ label: 'Field', value: `${footprintW(b)}×${footprintH(b)}` });
           rows.push({ label: 'Growth', value: `${Math.round((b.growth ?? 0) * 100)}%` });
           // A famine only ever docks the crop actually harvested at Autumn (see `endSeason`), but

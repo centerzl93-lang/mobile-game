@@ -137,10 +137,10 @@ export interface InspectRow {
    */
   grid?: boolean;
   /**
-   * Draw a fill bar (0..1) under this row's label/value instead of a plain line — how full a barn
-   * or market is, at a glance, rather than a raw volume-over-capacity readout. `value` still holds
-   * whatever's worth reading alongside it (an item count, say); the bar just replaces the numbers
-   * a player would otherwise have to do the division on themselves.
+   * Draw this row as a fill bar (0..1) instead of a plain label/value line — how full a barn or
+   * market is, at a glance, rather than a raw volume-over-capacity readout. `label`/`value` are
+   * unused for rendering (still required by the type; a description of the bar is enough — it
+   * becomes the row's `aria-label`) — the bar itself carries a centred "X% full" readout.
    */
   bar?: number;
 }
@@ -974,13 +974,17 @@ export class UI {
     // has to know about the packing.
     const rowHtml = (r: InspectRow): string =>
       `<div class="inv-row${r.tone ? ` tone-${r.tone}` : ''}"><span>${r.label}</span><span>${r.value}</span></div>`;
-    // A fill bar replaces the label/value pair with a stacked head (still label + value) and a
-    // proportional bar underneath — how full a barn or market reads at a glance, no division required.
+    // A fill bar replaces the label/value pair entirely — no numbers to do the division on, just how
+    // full a barn or market reads at a glance. The percentage sits centred *in* the bar rather than
+    // above it, so the row earns its height back; `.inv-bar-label`'s outline keeps it legible whether
+    // that point on the bar is filled or still empty track.
     const barRowHtml = (r: InspectRow): string => {
       const pct = Math.max(0, Math.min(100, Math.round((r.bar ?? 0) * 100)));
-      return `<div class="inv-row inv-row-bar${r.tone ? ` tone-${r.tone}` : ''}">
-        <div class="inv-row-head"><span>${r.label}</span><span>${r.value}</span></div>
-        <div class="inv-bar"><div class="inv-bar-fill" style="width:${pct}%"></div></div>
+      return `<div class="inv-row-bar${r.tone ? ` tone-${r.tone}` : ''}">
+        <div class="inv-bar" role="img" aria-label="${r.label}: ${pct}% full">
+          <div class="inv-bar-fill" style="width:${pct}%"></div>
+          <span class="inv-bar-label">${pct}% full</span>
+        </div>
       </div>`;
     };
     let body = '';

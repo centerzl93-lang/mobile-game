@@ -1773,26 +1773,23 @@ body {
   color: var(--accent);
 }
 /*
- * A fill bar (barn/market space used): the label/value line stacks above a thin proportional bar
- * instead of sitting alone, so `.inv-row`'s own flex layout is overridden to stack them vertically.
+ * A fill bar (barn/market space used): one tall bar standing in for the whole row, its own height
+ * carrying the "X% full" readout instead of a separate label/value line above it.
  */
 .inv-row-bar {
   display: block;
-}
-.inv-row-head {
-  display: flex;
-  justify-content: space-between;
+  padding: 4px 0;
 }
 .inv-bar {
-  margin-top: 4px;
-  height: 6px;
-  border-radius: 3px;
+  position: relative;
+  height: 28px;
+  border-radius: 6px;
   background: rgba(255, 255, 255, 0.08);
   overflow: hidden;
 }
 .inv-bar-fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: 6px;
   background: var(--accent);
 }
 .inv-row-bar.tone-warn .inv-bar-fill {
@@ -1800,6 +1797,28 @@ body {
 }
 .inv-row-bar.tone-bad .inv-bar-fill {
   background: var(--danger);
+}
+/*
+ * Centred over the bar, not beside it — an absolutely-positioned overlay spanning the whole track so
+ * it stays centred whatever the fill. The white text plus a dark outline (stacked text-shadows, not
+ * a single blurred one) keeps it readable whether that point on the bar is filled or empty track.
+ */
+.inv-bar-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow:
+    -1px -1px 0 rgba(0, 0, 0, 0.85),
+    1px -1px 0 rgba(0, 0, 0, 0.85),
+    -1px 1px 0 rgba(0, 0, 0, 0.85),
+    1px 1px 0 rgba(0, 0, 0, 0.85),
+    0 0 4px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
 }
 /*
  * The compact stock grid: a barn's contents two to a line instead of one per row, so a full

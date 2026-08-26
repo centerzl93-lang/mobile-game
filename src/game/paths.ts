@@ -456,6 +456,14 @@ export function markPathRaze(s: GameState, idx: number): 'razed' | 'unplanned' |
     // A never-laid order: cancel it on the spot. No work, nothing to salvage.
     s.paths[idx] = PATH_NONE;
     dropPathRaze(s, idx);
+    // The harvest order `confirmPendingPaths`/`markGroundHarvest` placed on this tile (felling a
+    // tree, clearing loose stone) existed only to clear ground for *this* plan — mirrors
+    // `clearFootprintHarvest`'s reasoning for a cancelled building site. Nothing else can own a
+    // harvest order on a path tile (`planPath` refuses to plan under a building, and placing a
+    // building tears any path off its footprint first — see `clearPathsUnder`), so this can never
+    // steal a mark a different, still-active site is relying on. Leaving it standing would keep a
+    // laborer chasing wood/stone for a road that no longer exists.
+    s.harvest[idx] = HARVEST_NONE;
     return 'unplanned';
   }
   (s.razePaths ??= []);

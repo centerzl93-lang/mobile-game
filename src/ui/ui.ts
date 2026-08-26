@@ -2580,66 +2580,64 @@ export class UI {
   }
 
   /**
-   * Slot picker for loading or saving. Empty slots are disabled in load mode.
+   * Slot picker for loading or saving: three fixed manual slots, plus (load only) the autosave.
    *
-   * An occupied slot also carries a rename field and a delete button. The name is an input rather
-   * than a prompt so it reads as part of the row, and it sits *outside* the big pick button — a
-   * text field nested in a button cannot be focused without also triggering the button.
+   * A slot's title is the village's own name — set once, at founding, from the New Village screen,
+   * and carried automatically onto whichever slot holds that village (see `saveToSlot`/
+   * `continueGame` in `main.ts`). There is nothing to rename here: an occupied manual slot carries
+   * only its pick button and a delete button. The autosave is listed under its own heading so it
+   * reads as the village currently in progress, not a fourth manual save, and it cannot be deleted
+   * from here — that would drop the running game.
    */
   showSlotSelect(opts: {
     mode: 'load' | 'save';
     slots: { index: number; info: { year: number; pop: number; size: MapSize; name: string | null } | null }[];
+    /** Load only: the autosave slot, listed separately from the three manual saves. */
+    autosave?: { index: number; info: { year: number; pop: number; size: MapSize; name: string | null } | null } | null;
     onPick: (slot: number) => void;
-    onRename: (slot: number, name: string) => void;
     onDelete: (slot: number) => void;
     onBack: () => void;
   }): void {
     const sizeLabel: Record<MapSize, string> = { small: 'Small', large: 'Large' };
-    const rows = opts.slots
-      .map(({ index, info }) => {
-        const fallback = `Slot ${index + 1}`;
-        if (!info) {
-          // Loading needs an occupied slot, so empty rows are disabled there; saving can pick an
-          // empty slot to write a fresh hard save into.
-          const disabled = opts.mode === 'load' ? ' disabled' : '';
-          return `<button id="slot-${index}"${disabled}>${fallback}<span class="sub">Empty</span></button>`;
-        }
-        const title = info.name ?? fallback;
-        return (
-          `<div class="slot-row">` +
-          `<button id="slot-${index}" class="slot-pick">${escapeHtml(title)}` +
-          `<span class="sub">Yr ${info.year} · ${info.pop} people · ${sizeLabel[info.size]}</span></button>` +
-          `<div class="slot-edit">` +
-          `<input id="slot-name-${index}" class="slot-name" type="text" maxlength="${SLOT_NAME_MAX}"` +
-          ` value="${escapeAttr(info.name ?? '')}" placeholder="${fallback}" aria-label="Name for ${fallback}" />` +
-          `<button id="slot-del-${index}" class="slot-del" title="Delete this village" aria-label="Delete ${escapeAttr(title)}">🗑</button>` +
-          `</div></div>`
-        );
-      })
+    const row = (index: number, info: { year: number; pop: number; size: MapSize; name: string | null } | null,
+      fallback: string, deletable: boolean): string => {
+      if (!info) {
+        // Loading needs an occupied slot, so empty rows are disabled there; saving can pick an
+        // empty slot to write a fresh hard save into.
+        const disabled = opts.mode === 'load' ? ' disabled' : '';
+        return `<button id="slot-${index}"${disabled}>${fallback}<span class="sub">Empty</span></button>`;
+      }
+      const title = info.name ?? fallback;
+      const del = deletable
+        ? `<div class="slot-edit"><button id="slot-del-${index}" class="slot-del" title="Delete this village" aria-label="Delete ${escapeAttr(title)}">🗑</button></div>`
+        : '';
+      return (
+        `<div class="slot-row">` +
+        `<button id="slot-${index}" class="slot-pick">${escapeHtml(title)}` +
+        `<span class="sub">Yr ${info.year} · ${info.pop} people · ${sizeLabel[info.size]}</span></button>` +
+        `${del}</div>`
+      );
+    };
+    const manualRows = opts.slots
+      .map(({ index, info }) => row(index, info, `Manual Save ${index + 1}`, true))
       .join('');
-    // Saving to an occupied slot asks for confirmation on pick (see the overwrite modal); the list
-    // itself just names each hard save.
-    const note = opts.mode === 'save'
-      ? `<p class="slot-note">These are your hard saves. The game autosaves separately, on its own.</p>`
+    const autoSection = opts.autosave
+      ? `<div class="set-label">Autosave</div>${row(opts.autosave.index, opts.autosave.info, 'Autosave', false)}`
       : '';
     this.overlayCard(
       `<h2>${opts.mode === 'load' ? 'Load Game' : 'Save Game'}</h2>` +
-        `<div class="menu-list">${note}${rows}<button class="ghost" id="slot-back">Back</button></div>`,
+        `<div class="menu-list">${manualRows}${autoSection}<button class="ghost" id="slot-back">Back</button></div>`,
       'menu-card',
     );
     for (const { index, info } of opts.slots) {
       if (opts.mode === 'load' && !info) continue;
       byId(`slot-${index}`).addEventListener('click', () => opts.onPick(index));
       if (!info) continue;
-      const field = byId(`slot-name-${index}`) as HTMLInputElement;
-      // Commit on blur and on Enter, the same as the building rename field.
-      const commit = () => opts.onRename(index, field.value);
-      field.addEventListener('change', commit);
-      field.addEventListener('blur', commit);
-      field.addEventListener('keydown', (e) => {
-        if ((e as KeyboardEvent).key === 'Enter') field.blur();
-      });
       byId(`slot-del-${index}`).addEventListener('click', () => opts.onDelete(index));
+    }
+    if (opts.autosave) {
+      const { index, info } = opts.autosave;
+      if (info) byId(`slot-${index}`).addEventListener('click', () => opts.onPick(index));
     }
     byId('slot-back').addEventListener('click', () => opts.onBack());
   }

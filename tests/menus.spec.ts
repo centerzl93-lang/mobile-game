@@ -94,57 +94,52 @@ test.describe('save slots', () => {
     expect(await page.evaluate(() => (window as any).__village.state.w)).toBe(144);
   });
 
-  test('a slot can be named, and the name sticks through a reload', async ({ page }) => {
+  test('a slot\'s title is the village\'s own name, set once at founding — there is no rename control', async ({ page }) => {
     await open(page);
-    await page.evaluate(() => (window as any).__village.startNewGame('small', 'normal', true, 0));
+    // Found a village through the real New Village screen so it carries the typed name, then hard
+    // save it into slot 0.
+    await page.click('#mm-new');
+    await page.fill('#ng-name', 'Riverstead');
+    await page.click('#ng-start');
+    await page.waitForTimeout(150);
+    await page.click('#btn-menu');
+    await page.click('#pm-save');
+    await page.click('#slot-0'); // empty → writes straight away
+    await page.click('#pm-save'); // back to the save list
+
+    // The slot's title is the village name, with no field anywhere to edit it.
+    await expect(page.locator('#slot-0')).toContainText('Riverstead');
+    await expect(page.locator('#slot-name-0')).toHaveCount(0);
+    await expect(page.locator('.slot-row input')).toHaveCount(0);
+
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
-
     await page.click('#mm-load');
-    // An occupied slot is titled "Slot 1" until it is named; an empty one carries no controls.
-    await expect(page.locator('#slot-0')).toContainText('Slot 1');
-    await expect(page.locator('#slot-name-1')).toHaveCount(0);
-    await expect(page.locator('#slot-del-1')).toHaveCount(0);
-
-    await page.fill('#slot-name-0', 'Riverstead');
-    await page.press('#slot-name-0', 'Enter');
-    // The list redraws so the row title follows the field.
+    // The name sticks through a reload, and still nothing to rename it with — on Load either.
     await expect(page.locator('#slot-0')).toContainText('Riverstead');
-    await expect(page.locator('#slot-0')).toContainText('12 people');
+    await expect(page.locator('#slot-name-0')).toHaveCount(0);
+    await expect(page.locator('.slot-row input')).toHaveCount(0);
 
-    await page.reload({ waitUntil: 'load' });
-    await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
-    await page.click('#mm-load');
-    await expect(page.locator('#slot-0')).toContainText('Riverstead');
-    await expect(page.locator('#slot-name-0')).toHaveValue('Riverstead');
-
-    // Clearing the field puts the default back rather than leaving a blank row.
-    await page.fill('#slot-name-0', '');
-    await page.press('#slot-name-0', 'Enter');
-    await expect(page.locator('#slot-0')).toContainText('Slot 1');
+    // An unnamed village falls back to "Manual Save N", not the old "Slot N".
+    await expect(page.locator('#slot-1')).toContainText('Empty');
   });
 
   test('a slot can be deleted, taking its name with it', async ({ page }) => {
     page.on('dialog', (d) => d.accept()); // the delete asks first
     await open(page);
-    await page.evaluate(() => {
-      const g = (window as any).__village;
-      g.startNewGame('small', 'normal', true, 0);
-      g.startNewGame('large', 'normal', true, 1);
-    });
-    await page.reload({ waitUntil: 'load' });
-    await page.waitForFunction(() => !!(window as any).__village, undefined, { timeout: 10_000 });
-
-    await page.click('#mm-load');
-    await page.fill('#slot-name-0', 'Doomed');
-    await page.press('#slot-name-0', 'Enter');
+    await page.click('#mm-new');
+    await page.fill('#ng-name', 'Doomed');
+    await page.click('#ng-start');
+    await page.waitForTimeout(150);
+    await page.click('#btn-menu');
+    await page.click('#pm-save');
+    await page.click('#slot-0'); // writes slot 0, named "Doomed" automatically
+    await page.click('#pm-save');
     await expect(page.locator('#slot-0')).toContainText('Doomed');
 
     await page.click('#slot-del-0');
-    // The row goes back to being an empty slot, and the other save is untouched.
+    // The row goes back to being an empty slot.
     await expect(page.locator('#slot-0')).toContainText('Empty');
-    await expect(page.locator('#slot-0')).toBeDisabled();
-    await expect(page.locator('#slot-1')).toBeEnabled();
     expect(await page.evaluate(() => localStorage.getItem('little-village-save-v12-slot0'))).toBeNull();
     // The name is gone too — a slot reused later must not inherit the last village's name.
     expect(await page.evaluate(() => localStorage.getItem('little-village-save-v12-slot0-name'))).toBeNull();
@@ -234,7 +229,7 @@ test.describe('autosave slot vs manual save slots', () => {
     expect([await rawSlot(page, 0), await rawSlot(page, 1), await rawSlot(page, 2)]).toEqual(before);
   });
 
-  test('Continue resumes the autosave slot; Load lists only the manual hard saves', async ({ page }) => {
+  test('Continue resumes the autosave slot; Load lists the manual hard saves plus the autosave', async ({ page }) => {
     await open(page);
     await page.evaluate(() => {
       const g = (window as any).__village;
@@ -243,7 +238,7 @@ test.describe('autosave slot vs manual save slots', () => {
     });
     await reloadToMenu(page);
 
-    // Both routes are offered and independent: Continue for the autosave, Load for the hard save.
+    // Both routes are offered: Continue for the autosave, Load for everything (hard saves + autosave).
     await expect(page.locator('#mm-continue')).toBeVisible();
     await expect(page.locator('#mm-load')).toBeVisible();
 
@@ -253,10 +248,29 @@ test.describe('autosave slot vs manual save slots', () => {
     expect(await page.evaluate(() => ({ seed: (window as any).__village.state.seed, w: (window as any).__village.state.w })))
       .toEqual({ seed: 2002, w: 144 });
 
-    // The Load list shows the manual slots only — there is no row for the autosave slot.
+    // The Load list shows the manual slot and, separately, the autosave — both loadable.
     await page.click('#btn-menu');
     await page.click('#pm-load');
     await expect(page.locator('#slot-0')).toContainText('people');
+    await expect(page.locator('#slot-3')).toBeEnabled(); // the autosave row
+    await expect(page.locator('#slot-3')).toContainText('people');
+    // No delete control on the autosave row — deleting it would drop the running game.
+    await expect(page.locator('#slot-del-3')).toHaveCount(0);
+
+    // Loading the autosave row from the Load screen resumes the same village Continue does.
+    await page.click('#slot-3');
+    await page.waitForTimeout(150);
+    expect(await page.evaluate(() => (window as any).__village.state.seed)).toBe(2002);
+  });
+
+  test('Save Game never lists the autosave — it is not a manual write target', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'normal', true)); // autosave slot
+    await page.click('#btn-menu');
+    await page.click('#pm-save');
+    await expect(page.locator('#slot-0')).toBeVisible();
+    await expect(page.locator('#slot-1')).toBeVisible();
+    await expect(page.locator('#slot-2')).toBeVisible();
     await expect(page.locator('#slot-3')).toHaveCount(0);
   });
 
@@ -279,6 +293,30 @@ test.describe('autosave slot vs manual save slots', () => {
     await page.click('#mm-continue');
     await page.waitForTimeout(150);
     expect(await page.evaluate(() => (window as any).__village.state.seed)).toBe(1001);
+  });
+
+  test('all four slots — three manual plus the autosave — can each be loaded from the Load screen', async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => {
+      const g = (window as any).__village;
+      g.startNewGame('small', 'normal', true, 0, 1001);
+      g.startNewGame('small', 'normal', true, 1, 1002);
+      g.startNewGame('small', 'normal', true, 2, 1003);
+      g.startNewGame('small', 'normal', true, g.debugAutosaveSlot(), 1004);
+    });
+    await reloadToMenu(page);
+
+    // The autosave must be checked first: loading a manual slot copies it into the autosave slot
+    // (see `continueGame`), so checking slot 3 after any manual load would read the wrong village.
+    for (const [row, seed] of [['#slot-3', 1004], ['#slot-0', 1001], ['#slot-1', 1002], ['#slot-2', 1003]] as const) {
+      await page.click('#mm-load');
+      await expect(page.locator(row)).toBeEnabled();
+      await page.click(row);
+      await page.waitForTimeout(150);
+      expect(await page.evaluate(() => (window as any).__village.state.seed)).toBe(seed);
+      await page.click('#btn-menu');
+      await page.click('#pm-main');
+    }
   });
 
   test('manual Save to an empty slot writes it with no confirmation', async ({ page }) => {

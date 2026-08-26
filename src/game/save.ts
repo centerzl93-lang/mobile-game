@@ -158,18 +158,21 @@ export const SLOTS = 3;
 export const AUTOSAVE_SLOT = SLOTS;
 const slotKey = (slot: number): string => `little-village-save-v12-slot${slot}`;
 /**
- * A slot's player-given name, kept beside the save rather than inside it.
+ * A slot's display name — the village's own name, typed once on the New Village screen — kept
+ * beside the save rather than inside it.
  *
  * The game autosaves over the slot every few seconds, so a name stored in the envelope would have
  * to be read back and re-attached on every one of those writes to survive — and would be lost the
- * moment a save was written by any path that forgot. Beside it, the name is written once when the
- * player types it and is untouched by anything else.
+ * moment a save was written by any path that forgot. Beside it, the name is written once at
+ * founding and carried onto a slot whenever that village is saved or loaded into it (see
+ * `saveToSlot`/`continueGame` in `main.ts`); there is no separate per-slot rename in the UI, so
+ * nothing else ever touches this key.
  */
 const slotNameKey = (slot: number): string => `little-village-save-v12-slot${slot}-name`;
 const LAST_SLOT_KEY = 'little-village-last-slot';
 const MIGRATED_KEY = 'little-village-migrated';
 
-/** Longest slot name the player can set. Matches the building-rename field. */
+/** Longest village name a player can type on the New Village screen. */
 export const SLOT_NAME_MAX = 24;
 
 interface SaveEnvelope {
@@ -462,8 +465,9 @@ export function hasSave(slot?: number): boolean {
 }
 
 /**
- * The name the player gave a slot, or null if they never named it (the list shows "Slot N" then).
- * Trimmed and length-capped on the way in, so a name is either something readable or absent.
+ * The village name stamped on a slot, or null if none is stamped (the list falls back to "Manual
+ * Save N" / "Autosave" then). Trimmed and length-capped on the way in, so a name is either
+ * something readable or absent.
  */
 export function slotName(slot: number): string | null {
   try {
@@ -475,7 +479,11 @@ export function slotName(slot: number): string | null {
   }
 }
 
-/** Name a slot, or clear the name back to the default by passing an empty one. */
+/**
+ * Stamp a slot with a village's name, or clear it back to the default by passing an empty one.
+ * Called only from the game (a new village founding, a hard save, a load) — never from a player-
+ * facing rename control, which the UI does not offer.
+ */
 export function setSlotName(slot: number, name: string): void {
   try {
     const clean = name.trim().slice(0, SLOT_NAME_MAX);

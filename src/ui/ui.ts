@@ -136,6 +136,13 @@ export interface InspectRow {
    * ran the sheet off the screen — see `.inv-grid`.
    */
   grid?: boolean;
+  /**
+   * Draw this row as a fill bar (0..1) instead of a plain label/value line — how full a barn or
+   * market is, at a glance, rather than a raw volume-over-capacity readout. `label`/`value` are
+   * unused for rendering (still required by the type; a description of the bar is enough — it
+   * becomes the row's `aria-label`) — the bar itself carries a centred "X% full" readout.
+   */
+  bar?: number;
 }
 
 /** Interactive controls shown at the foot of the inspect sheet for a built workplace. */
@@ -158,8 +165,9 @@ export interface InspectControls {
    */
   tradingPost?: { merchantDocked: boolean; port: boolean; landlocked?: boolean };
   /**
-   * Pull it down, or call it off. `blocked` is the village's last barn, which has to stay
-   * standing; `marked` swaps the button for a cancel, right up until the walls actually come down.
+   * Pull it down, or call it off. `blocked` is the village's last barn, which has to stay standing
+   * — the sheet leaves the control off entirely rather than offering a button nobody can press.
+   * `marked` swaps the button for a cancel, right up until the walls actually come down.
    * `construction` flags an unfinished site: there is nothing to pull down, so the button reads
    * "Cancel construction" and takes the site away at once (materials mostly refunded) once confirmed.
    */
@@ -967,9 +975,24 @@ export class UI {
     // has to know about the packing.
     const rowHtml = (r: InspectRow): string =>
       `<div class="inv-row${r.tone ? ` tone-${r.tone}` : ''}"><span>${r.label}</span><span>${r.value}</span></div>`;
+    // A fill bar replaces the label/value pair entirely — no numbers to do the division on, just how
+    // full a barn or market reads at a glance. The percentage sits centred *in* the bar rather than
+    // above it, so the row earns its height back; `.inv-bar-label`'s outline keeps it legible whether
+    // that point on the bar is filled or still empty track.
+    const barRowHtml = (r: InspectRow): string => {
+      const pct = Math.max(0, Math.min(100, Math.round((r.bar ?? 0) * 100)));
+      return `<div class="inv-row-bar${r.tone ? ` tone-${r.tone}` : ''}">
+        <div class="inv-bar" role="img" aria-label="${r.label}: ${pct}% full">
+          <div class="inv-bar-fill" style="width:${pct}%"></div>
+          <span class="inv-bar-label">${pct}% full</span>
+        </div>
+      </div>`;
+    };
     let body = '';
     for (let i = 0; i < rows.length; i++) {
-      if (rows[i].grid) {
+      if (rows[i].bar !== undefined) {
+        body += barRowHtml(rows[i]);
+      } else if (rows[i].grid) {
         let j = i;
         while (j < rows.length && rows[j].grid) j++;
         body += `<div class="inv-grid">${rows.slice(i, j).map(rowHtml).join('')}</div>`;
@@ -1078,7 +1101,9 @@ export class UI {
       const u = controls.upgrade;
       ctrlHtml += `<div class="inv-ctrl"><button class="ranch-btn" id="insp-upgrade">⬆️ Upgrade to ${u.to} <small>${u.cost}</small></button></div>`;
     }
-    if (controls?.demolish) {
+    // A blocked demolition (the village's last barn) has nothing to offer, so the control is left
+    // off the sheet entirely rather than surfacing as a button nobody can press.
+    if (controls?.demolish && !controls.demolish.blocked) {
       const d = controls.demolish;
       // Once the walls are coming down there is nothing to cancel — the button says so rather
       // than offering an undo that would leave a half-dismantled building standing.
@@ -1088,11 +1113,9 @@ export class UI {
           ? '🧱 Being pulled down'
           : d.marked
             ? '✖️ Cancel demolition'
-            : d.blocked
-              ? '🛖 Last barn — cannot demolish'
-              : '💥 Demolish';
+            : '💥 Demolish';
       const cls = d.marked && !d.underway ? 'ranch-btn' : 'ranch-btn danger';
-      const dis = d.blocked || d.underway ? ' disabled' : '';
+      const dis = d.underway ? ' disabled' : '';
       ctrlHtml += `<div class="inv-ctrl"><button class="${cls}" id="insp-demolish"${dis}>${label}</button></div>`;
     }
     this.el.inspect.innerHTML =

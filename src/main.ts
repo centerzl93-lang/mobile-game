@@ -2052,16 +2052,17 @@ class Game {
       // a village-wide fact, so two workers at the same bench can read differently here. Children
       // (and undergrads, who aren't working either) carry none, so the row is for working villagers.
       if (adult && !c.undergrad) {
-        // Steel's own production edge over iron is a Codex fact (see `CODEX_NOTES`), not something
-        // spelled out on every villager's sheet — normal play just names which tool they're
-        // holding, the same way it never states a farm's exact yield either.
-        const spareNote = c.spareTool ? ` — spare ${c.spareTool === 'steel' ? 'Steel' : 'Iron'} Tools in hand` : '';
+        // This row answers exactly one question — what tool is this villager using right now — and
+        // nothing else. Steel's production edge over iron is a Codex fact (see `CODEX_NOTES`), not
+        // spelled out here, and a spare tool in reserve (`Citizen.spareTool`, see `tryEquipTool`) is
+        // purely a backend mechanic that keeps a villager from going bare-handed between barn trips;
+        // it's deliberately never surfaced on this sheet.
         const toolValue =
           c.tool === 'steel'
-            ? `${RESOURCE_ICON.steeltools} Steel Tools${spareNote}`
+            ? `${RESOURCE_ICON.steeltools} Steel Tools`
             : c.tool === 'iron'
-              ? `${RESOURCE_ICON.tools} Iron Tools${spareNote}`
-              : '✋ Bare hands (−25% work) — picks one up at the next barn with a spare';
+              ? `${RESOURCE_ICON.tools} Iron Tools`
+              : 'None';
         rows.push({ label: 'Tool', value: toolValue, tone: c.tool ? undefined : 'warn' });
       }
       rows.push({

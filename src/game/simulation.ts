@@ -181,7 +181,7 @@ import {
   CONGREGATION_PER_PRIEST,
   isWorkplace,
   houseCapacityOf,
-  STONE_HOUSE_HEAT_FACTOR,
+  heatFactorOf,
   HAPPY_TAVERN,
   HAPPY_CHAPEL,
   HAPPY_CEMETERY,
@@ -598,9 +598,12 @@ function eat(s: GameState, dt: number, log: LogFn): void {
  * and the household hauler tops the woodpile up as it runs down instead of chasing a cliff.
  *
  * Three things cut a villager's fuel bill: the season (SEASON_BURN), a warm coat
- * (CLOTHED_HEAT_FACTOR, decided at the season boundary and read here all season), and living
- * behind stone walls (STONE_HOUSE_HEAT_FACTOR) — masonry holds its heat, so a stone house both
- * burns less and keeps a smaller woodpile.
+ * (CLOTHED_HEAT_FACTOR, decided at the season boundary and read here all season), and the walls
+ * around them (`heatFactorOf` — masonry holds its heat, and a grand house holds it again better
+ * still, see `GRAND_HOUSE_HEAT_FACTOR`). This is the same `heatFactorOf` a household's larder
+ * target is sized against (`houseFuelPerSeason`/`larderTarget` in `storage.ts`) — one housing
+ * efficiency figure per building type, read by both what a household stocks and what it actually
+ * burns, so the two never disagree about what a stone or grand house is worth.
  */
 function heat(s: GameState, dt: number, log: LogFn): void {
   if (s.citizens.length === 0) return;
@@ -614,12 +617,12 @@ function heat(s: GameState, dt: number, log: LogFn): void {
   const fuelFactor = householdFuelFactor(s);
   for (const c of s.citizens) {
     const home = c.homeId !== null ? homeById.get(c.homeId) : undefined;
-    const stoneFactor = home?.type === 'stonehouse' ? STONE_HOUSE_HEAT_FACTOR : 1;
+    const wallFactor = home ? heatFactorOf(home.type) : 1;
     // A coat saves fuel; nothing else does. Fine clothes are never worn (they are export goods),
     // so this is coated-warm, coated-regular, or not — see `c.warmClothed`/`c.clothed`, set at the
     // season turn by which tier's ration actually covered them.
     const clothFactor = c.warmClothed ? WARM_CLOTHED_HEAT_FACTOR : c.clothed ? CLOTHED_HEAT_FACTOR : 1;
-    let need = HEAT_PER_CITIZEN_WINTER * rate * stoneFactor * clothFactor * fuelFactor; // heat units
+    let need = HEAT_PER_CITIZEN_WINTER * rate * wallFactor * clothFactor * fuelFactor; // heat units
     // Fuel is burned where it is kept: in the hearth of the house the villager lives in. A housed
     // villager has no fall-back to the village fuel pile — a barn is a woodshed, not a fire, and
     // letting everyone draw on it directly meant the stockpile drained on its own while the houses

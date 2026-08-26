@@ -239,7 +239,7 @@ fact.
 - **The job board is per-profession, not per-building.** `tradeStaff` = the sum of each building's
   `desiredWorkers` plus `tradeExtra` overflow (staff a trade before it has a building);
   `setTradeWanted` spreads a change across buildings. Builders are separate — derived from open sites
-  via `autoBuilderDemand` plus a player `builderExtra`. `autoStaff` opens new jobs automatically.
+  via `autoBuilderDemand` plus a player `builderExtra`.
 - **Adulthood** at `ADULT_AGE` (16); a `student`/`undergrad` is over-age but not yet in the
   workforce. Schooling runs `SCHOOL_START_AGE`(12)→`SCHOOL_LEAVING_AGE`(16); a university adds one
   year. Education multiplies work (`EDUCATED_BONUS`/`GRADUATE_BONUS`) and longevity.

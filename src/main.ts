@@ -232,13 +232,27 @@ import { InspectRow, InspectControls } from './ui/ui';
 /** Where the tips preference lives. Kept out of the save so it follows the player, not a village. */
 const TIPS_KEY = 'village-tips';
 
+/** Where the haptic-feedback preference lives. Follows the player, not a village. Defaults on. */
+const HAPTICS_KEY = 'village-haptics';
+const hapticsPref = (): boolean => localStorage.getItem(HAPTICS_KEY) !== 'off';
+
 /**
- * Where the auto-staffing preference lives. Like tips, it follows the player rather than the
- * village, and is copied onto each game's state so the simulation reads it from one place.
- * Defaults on: the point of it is to spare the player re-staffing every hut by hand.
+ * Audio volume preferences. There is no audio in the game yet — these are front-end-only sliders
+ * (0..10, default 5) so the settings surface is ready for a future sound system to read. Like tips
+ * and haptics, they follow the player rather than the village, so they live in localStorage, not
+ * the save.
  */
-const AUTO_STAFF_KEY = 'village-auto-staff';
-const autoStaffPref = (): boolean => localStorage.getItem(AUTO_STAFF_KEY) !== 'off';
+const AUDIO_MUSIC_KEY = 'village-audio-music';
+const AUDIO_NOTIFICATIONS_KEY = 'village-audio-notifications';
+const AUDIO_VILLAGE_KEY = 'village-audio-village';
+const AUDIO_DISASTER_KEY = 'village-audio-disaster';
+const AUDIO_VOLUME_DEFAULT = 5;
+const audioVolumePref = (key: string): number => {
+  const stored = localStorage.getItem(key);
+  if (stored === null) return AUDIO_VOLUME_DEFAULT;
+  const raw = Number(stored);
+  return Number.isFinite(raw) && raw >= 0 && raw <= 10 ? raw : AUDIO_VOLUME_DEFAULT;
+};
 
 const SPEEDS = [1, 2, 5, 10];
 /**
@@ -1080,7 +1094,6 @@ class Game {
     seed?: number,
   ): void {
     this.state = newGame(size, difficulty, disasters, seed);
-    this.state.autoStaff = autoStaffPref();
     this.centreOnVillage();
     this.paused = false;
     this.selectedBuild = null;
@@ -1248,33 +1261,62 @@ class Game {
     });
   }
 
+  /**
+   * Settings is reachable both mid-game (Pause) and from the title screen, where `state` is only
+   * the idle backdrop village — force-saving that would overwrite whatever is really in the
+   * autosave slot. So a settings change only forces an autosave when a real game is running; the
+   * preference itself is written to `localStorage` either way and needs no village to hold it.
+   */
+  private persistSetting(): void {
+    if (this.running) this.persist();
+  }
+
   /** Settings: graphics tier (applies on reload) and clear-all-saves. `back` returns to caller. */
   private openSettings(back: () => void): void {
+    const gfx = (localStorage.getItem('village-gfx') as 'low' | 'high' | null) ?? 'auto';
     this.ui.showSettings({
-      gfx: (localStorage.getItem('village-gfx') as 'low' | 'high' | null) ?? 'auto',
+      gfx,
+      initialGfx: gfx,
       tips: this.ui.tipsEnabled(),
-      autoStaff: autoStaffPref(),
+      haptics: hapticsPref(),
+      musicVolume: audioVolumePref(AUDIO_MUSIC_KEY),
+      notificationsVolume: audioVolumePref(AUDIO_NOTIFICATIONS_KEY),
+      villageVolume: audioVolumePref(AUDIO_VILLAGE_KEY),
+      disasterVolume: audioVolumePref(AUDIO_DISASTER_KEY),
       onSetGfx: (g) => {
         if (g === 'auto') localStorage.removeItem('village-gfx');
         else localStorage.setItem('village-gfx', g);
+        this.persistSetting();
       },
       onSetTips: (on) => {
         this.ui.setTips(on);
         localStorage.setItem(TIPS_KEY, on ? 'on' : 'off');
+        this.persistSetting();
       },
-      onSetAutoStaff: (on) => {
-        localStorage.setItem(AUTO_STAFF_KEY, on ? 'on' : 'off');
-        // Takes effect on the next building to finish. Deliberately not persisted: Settings is
-        // reachable from the main menu, where `state` is only the idle backdrop village, and
-        // saving that would write it over whatever is really in the slot. The preference is
-        // re-applied from storage every time a game is started or loaded.
-        this.state.autoStaff = on;
+      onSetHaptics: (on) => {
+        localStorage.setItem(HAPTICS_KEY, on ? 'on' : 'off');
+        this.persistSetting();
+      },
+      onSetMusicVolume: (v) => {
+        localStorage.setItem(AUDIO_MUSIC_KEY, String(v));
+        this.persistSetting();
+      },
+      onSetNotificationsVolume: (v) => {
+        localStorage.setItem(AUDIO_NOTIFICATIONS_KEY, String(v));
+        this.persistSetting();
+      },
+      onSetVillageVolume: (v) => {
+        localStorage.setItem(AUDIO_VILLAGE_KEY, String(v));
+        this.persistSetting();
+      },
+      onSetDisasterVolume: (v) => {
+        localStorage.setItem(AUDIO_DISASTER_KEY, String(v));
+        this.persistSetting();
       },
       onClearSaves: () => {
         clearSave();
         this.ui.flashHint('All saves cleared');
       },
-      onReload: () => location.reload(),
       onBack: back,
     });
   }
@@ -1295,9 +1337,6 @@ class Game {
       return;
     }
     this.state = saved;
-    // The preference belongs to the player, not the village, so a loaded save adopts whatever is
-    // set now rather than whatever was set when it was saved.
-    this.state.autoStaff = autoStaffPref();
     this.centreOnVillage();
     this.paused = false;
     this.clearInspect();

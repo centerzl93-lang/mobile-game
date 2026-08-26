@@ -2606,42 +2606,76 @@ export class UI {
     byId('ow-cancel').addEventListener('click', () => opts.onCancel());
   }
 
-  /** Settings: graphics tier (applies on reload) and clear-all-saves. */
+  /** Settings: graphics tier (applies on reload), audio volumes, and clear-all-saves. */
   showSettings(opts: {
     gfx: 'auto' | 'low' | 'high';
+    /** What `gfx` was when the panel was first opened this visit — see the Apply handler below. */
+    initialGfx: 'auto' | 'low' | 'high';
     tips: boolean;
-    autoStaff: boolean;
+    haptics: boolean;
+    musicVolume: number;
+    notificationsVolume: number;
+    villageVolume: number;
+    disasterVolume: number;
     onSetGfx: (g: 'auto' | 'low' | 'high') => void;
     onSetTips: (on: boolean) => void;
-    onSetAutoStaff: (on: boolean) => void;
+    onSetHaptics: (on: boolean) => void;
+    onSetMusicVolume: (v: number) => void;
+    onSetNotificationsVolume: (v: number) => void;
+    onSetVillageVolume: (v: number) => void;
+    onSetDisasterVolume: (v: number) => void;
     onClearSaves: () => void;
-    onReload: () => void;
     onBack: () => void;
   }): void {
     const gfxBtn = (g: 'auto' | 'low' | 'high', label: string) =>
       `<button class="seg${opts.gfx === g ? ' on' : ''}" id="set-gfx-${g}">${label}</button>`;
     const tipBtn = (on: boolean, label: string) =>
       `<button class="seg${opts.tips === on ? ' on' : ''}" id="set-tips-${on ? 'on' : 'off'}">${label}</button>`;
-    const staffBtn = (on: boolean, label: string) =>
-      `<button class="seg${opts.autoStaff === on ? ' on' : ''}" id="set-staff-${on ? 'on' : 'off'}">${label}</button>`;
+    const hapticBtn = (on: boolean, label: string) =>
+      `<button class="seg${opts.haptics === on ? ' on' : ''}" id="set-haptics-${on ? 'on' : 'off'}">${label}</button>`;
+    // The volume sliders below are wired to preferences only — there's no audio in the game yet, so
+    // moving one just persists a number for a future sound system to read. Label and slider are one
+    // `set-vol` block so the two sit close together, with a tighter gap between blocks than a full
+    // `menu-list` row gets — see `.set-vol`/`.set-audio-list` in style.css.
+    // `--fill` drives the filled portion of the track (see style.css) — a manual stand-in for the
+    // native `accent-color` progress fill, which is unavailable once the track/thumb are custom-
+    // styled. Set on render and kept live on drag by `wireVolume`'s `input` handler below.
+    const volumeRow = (id: string, label: string, value: number) =>
+      `<div class="set-vol">` +
+      `<div class="set-vol-label"><span>${label}</span>` +
+      `<span class="ranch-avail" id="set-${id}-label">${value}</span></div>` +
+      `<input type="range" class="ranch-slider" id="set-${id}" min="0" max="10" step="1" value="${value}" ` +
+      `style="--fill: ${(value / 10) * 100}%" />` +
+      `</div>`;
     this.overlayCard(
       `<h2>Settings</h2>` +
-        `<div class="menu-list">` +
+        `<div class="menu-list set-list">` +
         `<div class="set-label">Graphics</div>` +
         `<div class="seg-row">${gfxBtn('auto', 'Auto')}${gfxBtn('low', 'Low')}${gfxBtn('high', 'High')}</div>` +
-        `<div class="set-note">Graphics changes apply after reloading.</div>` +
-        `<div class="set-label">Staff new workplaces</div>` +
-        `<div class="seg-row">${staffBtn(true, 'On')}${staffBtn(false, 'Off')}</div>` +
-        `<div class="set-note">A finished workplace hires whoever is free instead of standing empty until you staff it. ` +
-        `A job left open by a villager dying is always refilled, either way.</div>` +
+        `<div class="set-pair">` +
+        `<div class="set-pair-col">` +
         `<div class="set-label">Tips</div>` +
-        `<div class="seg-row">${tipBtn(true, 'On')}${tipBtn(false, 'Off')}</div>` +
-        `<div class="set-note">The hint bar explaining each tool. Warnings and the event log are unaffected.</div>` +
-        `<button id="set-reload">Reload now</button>` +
-        `<button class="ghost" id="set-clear">Clear all saves</button>` +
+        `<div class="seg-row mini">${tipBtn(true, 'On')}${tipBtn(false, 'Off')}</div>` +
+        `</div>` +
+        `<div class="set-pair-col">` +
+        `<div class="set-label">Haptic feedback</div>` +
+        `<div class="seg-row mini">${hapticBtn(true, 'On')}${hapticBtn(false, 'Off')}</div>` +
+        `</div>` +
+        `</div>` +
+        `<div class="set-label">Audio</div>` +
+        `<div class="set-audio-list">` +
+        volumeRow('music', 'Music', opts.musicVolume) +
+        volumeRow('notifications', 'Notifications', opts.notificationsVolume) +
+        volumeRow('village', 'Village noises', opts.villageVolume) +
+        volumeRow('disaster', 'Disaster noises', opts.disasterVolume) +
+        `</div>` +
+        `<div class="set-pair">` +
+        `<button id="set-apply">Apply</button>` +
         `<button class="ghost" id="set-back">Back</button>` +
+        `</div>` +
+        `<button class="ghost" id="set-clear">Clear all saves</button>` +
         `</div>`,
-      'menu-card',
+      'menu-card settings-card',
     );
     (['auto', 'low', 'high'] as const).forEach((g) =>
       byId(`set-gfx-${g}`).addEventListener('click', () => {
@@ -2657,16 +2691,52 @@ export class UI {
       }),
     );
     ([true, false] as const).forEach((on) =>
-      byId(`set-staff-${on ? 'on' : 'off'}`).addEventListener('click', () => {
-        opts.onSetAutoStaff(on);
-        this.showSettings({ ...opts, autoStaff: on });
+      byId(`set-haptics-${on ? 'on' : 'off'}`).addEventListener('click', () => {
+        opts.onSetHaptics(on);
+        this.showSettings({ ...opts, haptics: on });
       }),
     );
-    byId('set-reload').addEventListener('click', () => opts.onReload());
+    // Each slider: live read-out while dragging (`input`), value committed on release (`change`) —
+    // same split as the ranch herd-limit slider, so the drag stays smooth and the panel only
+    // re-renders once the value settles.
+    const wireVolume = (id: string, onSet: (v: number) => void, apply: (v: number) => typeof opts) => {
+      const slider = byId(`set-${id}`) as HTMLInputElement;
+      const label = byId(`set-${id}-label`);
+      slider.addEventListener('input', () => {
+        label.textContent = slider.value;
+        slider.style.setProperty('--fill', `${(Number(slider.value) / 10) * 100}%`);
+      });
+      slider.addEventListener('change', () => {
+        const v = Number(slider.value);
+        onSet(v);
+        this.showSettings(apply(v));
+      });
+    };
+    wireVolume('music', opts.onSetMusicVolume, (v) => ({ ...opts, musicVolume: v }));
+    wireVolume('notifications', opts.onSetNotificationsVolume, (v) => ({ ...opts, notificationsVolume: v }));
+    wireVolume('village', opts.onSetVillageVolume, (v) => ({ ...opts, villageVolume: v }));
+    wireVolume('disaster', opts.onSetDisasterVolume, (v) => ({ ...opts, disasterVolume: v }));
+    byId('set-apply').addEventListener('click', () => {
+      // Graphics only takes effect on reload — everything else here is already live — so Apply's
+      // one job beyond leaving (same as Back) is telling the player that, but only when it is true.
+      if (opts.gfx !== opts.initialGfx) this.showGraphicsReloadNotice(opts.onBack);
+      else opts.onBack();
+    });
     byId('set-clear').addEventListener('click', () => {
       if (confirm('Delete all saved villages? This cannot be undone.')) opts.onClearSaves();
     });
     byId('set-back').addEventListener('click', () => opts.onBack());
+  }
+
+  /** A one-button notice that the graphics change just made will apply next time the game reloads. */
+  private showGraphicsReloadNotice(onDismiss: () => void): void {
+    this.overlayCard(
+      `<h2>Graphics updated</h2>` +
+        `<p>Your new graphics setting will take effect the next time the game reloads.</p>` +
+        `<div class="menu-list"><button id="gfx-note-ok">OK</button></div>`,
+      'menu-card',
+    );
+    byId('gfx-note-ok').addEventListener('click', () => onDismiss());
   }
 
   showGameOver(s: GameState, onNew: () => void, onMainMenu: () => void): void {

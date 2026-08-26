@@ -842,6 +842,105 @@ body {
   color: var(--muted);
   opacity: 0.8;
 }
+/* A row of two side-by-side halves: Tips/Haptic feedback (each a labelled column) and Apply/Back
+   (plain buttons as direct children — sized by the `> button` rule below instead of `.set-pair-col`). */
+.menu-card .set-pair {
+  display: flex;
+  gap: 12px;
+}
+.menu-card .set-pair-col {
+  flex: 1;
+  min-width: 0;
+}
+.menu-card .set-pair > button {
+  flex: 1;
+  width: auto;
+  margin-top: 0;
+}
+.menu-card .seg-row.mini button.seg {
+  padding: 7px 4px;
+  font-size: 12.5px;
+}
+/* Each audio option as one tight block — label hugging its own slider — with a smaller gap between
+   blocks than a full `menu-list` row gets, so the whole Audio section reads as one compact group
+   instead of four widely spaced rows. */
+.menu-card .set-audio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+.menu-card .set-vol {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.menu-card .set-vol-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text);
+}
+/* A taller, more visible track/thumb than the ranch herd-limit slider that `.ranch-slider` was
+   built for — scoped to Settings' audio sliders only, so the ranch inspect sheet is untouched.
+   `-webkit-appearance: none` on the element itself (not just the thumb) hands Chrome's own
+   vertical centring of the native track over to us — without it the thumb's `margin-top` offset
+   is measured against Chrome's own (differently-sized) default track and lands off-centre. */
+.menu-card .set-vol .ranch-slider {
+  height: 30px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+/* `-webkit-appearance: none` above also drops the plain `.ranch-slider`'s native `accent-color`
+   progress fill (that relies on the browser's own track), so the filled portion left of the thumb
+   is redrawn by hand here as a gradient split at `--fill` (a 0%-100% custom property `volumeRow`
+   sets inline from the value, kept live on drag by the `input` handler in `wireVolume`). */
+.menu-card .set-vol .ranch-slider::-webkit-slider-runnable-track {
+  height: 10px;
+  border-radius: 5px;
+  background: linear-gradient(
+    to right,
+    var(--accent) var(--fill, 50%),
+    rgba(255, 255, 255, 0.15) var(--fill, 50%)
+  );
+}
+.menu-card .set-vol .ranch-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  margin-top: -6px; /* centres the 22px thumb on the 10px track: (22 - 10) / 2 */
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+.menu-card .set-vol .ranch-slider::-moz-range-track {
+  height: 10px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.15);
+}
+/* Firefox has a dedicated progress pseudo-element, so it needs no gradient trick. */
+.menu-card .set-vol .ranch-slider::-moz-range-progress {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--accent);
+}
+.menu-card .set-vol .ranch-slider::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+/* Settings grew past a short landscape phone once the audio sliders joined it — same fix as the
+   New Village card: the list scrolls inside the card rather than pushing Back off the bottom. */
+.menu-card.settings-card .set-list {
+  max-height: min(78vh, 640px);
+  overflow-y: auto;
+}
 
 /* ---- Replace-a-slot picker + overwrite confirmation ---- */
 .menu-card .slot-note {

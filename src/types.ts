@@ -1921,20 +1921,6 @@ export interface GameState {
   difficulty: Difficulty;
   /** Whether fire, disease, famine and flood can occur (toggled at New Game). */
   disasters: boolean;
-  /**
-   * Whether a workplace opens its jobs the moment it is finished, instead of standing empty until
-   * the player staffs it on the Job Board.
-   *
-   * Only about *newly created* jobs. A job left open by a worker dying is always refilled — that
-   * is not automation, it is the village noticing a hole in its own workforce, and having to go
-   * and re-hire by hand every time an elder passes is busywork rather than a decision. Builders
-   * are outside this entirely: their count is derived from the open construction sites (see
-   * `autoBuilderDemand`) and no workplace slot is involved.
-   *
-   * A player preference rather than a property of the village — it mirrors the Settings toggle
-   * and is written onto the state so the simulation has one place to read it.
-   */
-  autoStaff?: boolean;
   tiles: Tile[]; // length w * h
   paths: number[]; // length w * h, PATH_* values
   buildings: Building[];

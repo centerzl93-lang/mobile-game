@@ -6113,26 +6113,34 @@ test.describe('iron and steel tools', () => {
         ${forge}
         // Pick a working-age villager and read their sheet under each tool of their own in turn.
         const adult = s.citizens.find((c) => c.age >= 16) || s.citizens[0];
-        const sheet = (tool) => {
+        const sheet = (tool, spare) => {
           g.debugSetCitizenTool(adult.id, tool);
+          adult.spareTool = spare;
           g.inspectSel = { kind: 'citizen', id: adult.id };
           g.refreshInspect();
           return document.getElementById('inspect').innerText;
         };
         return {
-          none: sheet(null),
-          iron: sheet('iron'),
-          steel: sheet('steel'),
+          none: sheet(null, undefined),
+          iron: sheet('iron', undefined),
+          steel: sheet('steel', undefined),
+          ironWithSpare: sheet('iron', 'steel'),
         };
       `) as () => any,
     );
 
-    // The sheet carries a Tool line, and it reads this citizen's own kit, not the village's.
-    expect(out.none.toLowerCase()).toContain('bare hands');
+    // The sheet carries a Tool line, and it reads this citizen's own kit, not the village's —
+    // and only what they're using right now, never what they're also holding in reserve.
+    expect(out.none.toLowerCase()).toContain('none');
     expect(out.iron).toContain('Iron Tools');
     expect(out.steel).toContain('Steel Tools');
     // The +15% production edge is a Codex fact, not something spelled out on every sheet.
     expect(out.steel).not.toContain('15%');
+    // A spare tool in reserve (`Citizen.spareTool`) is a backend mechanic, never player-facing.
+    expect(out.ironWithSpare).toContain('Iron Tools');
+    expect(out.ironWithSpare.toLowerCase()).not.toContain('spare');
+    expect(out.ironWithSpare.toLowerCase()).not.toContain('reserve');
+    expect(out.ironWithSpare.toLowerCase()).not.toContain('backup');
   });
 
   test('a barn never shows a concatenated resource identifier for either tool', async ({ page }) => {

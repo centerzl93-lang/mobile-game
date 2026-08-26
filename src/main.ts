@@ -240,6 +240,24 @@ const TIPS_KEY = 'village-tips';
 const AUTO_STAFF_KEY = 'village-auto-staff';
 const autoStaffPref = (): boolean => localStorage.getItem(AUTO_STAFF_KEY) !== 'off';
 
+/**
+ * Audio volume preferences. There is no audio in the game yet — these are front-end-only sliders
+ * (0..10, default 5) so the settings surface is ready for a future sound system to read. Like tips
+ * and auto-staff, they follow the player rather than a village, so they live in localStorage, not
+ * the save.
+ */
+const AUDIO_MUSIC_KEY = 'village-audio-music';
+const AUDIO_NOTIFICATIONS_KEY = 'village-audio-notifications';
+const AUDIO_VILLAGE_KEY = 'village-audio-village';
+const AUDIO_DISASTER_KEY = 'village-audio-disaster';
+const AUDIO_VOLUME_DEFAULT = 5;
+const audioVolumePref = (key: string): number => {
+  const stored = localStorage.getItem(key);
+  if (stored === null) return AUDIO_VOLUME_DEFAULT;
+  const raw = Number(stored);
+  return Number.isFinite(raw) && raw >= 0 && raw <= 10 ? raw : AUDIO_VOLUME_DEFAULT;
+};
+
 const SPEEDS = [1, 2, 5, 10];
 /**
  * The largest simulation step, in seconds, that `update()` is ever handed in a single call. This
@@ -1254,6 +1272,10 @@ class Game {
       gfx: (localStorage.getItem('village-gfx') as 'low' | 'high' | null) ?? 'auto',
       tips: this.ui.tipsEnabled(),
       autoStaff: autoStaffPref(),
+      musicVolume: audioVolumePref(AUDIO_MUSIC_KEY),
+      notificationsVolume: audioVolumePref(AUDIO_NOTIFICATIONS_KEY),
+      villageVolume: audioVolumePref(AUDIO_VILLAGE_KEY),
+      disasterVolume: audioVolumePref(AUDIO_DISASTER_KEY),
       onSetGfx: (g) => {
         if (g === 'auto') localStorage.removeItem('village-gfx');
         else localStorage.setItem('village-gfx', g);
@@ -1270,6 +1292,10 @@ class Game {
         // re-applied from storage every time a game is started or loaded.
         this.state.autoStaff = on;
       },
+      onSetMusicVolume: (v) => localStorage.setItem(AUDIO_MUSIC_KEY, String(v)),
+      onSetNotificationsVolume: (v) => localStorage.setItem(AUDIO_NOTIFICATIONS_KEY, String(v)),
+      onSetVillageVolume: (v) => localStorage.setItem(AUDIO_VILLAGE_KEY, String(v)),
+      onSetDisasterVolume: (v) => localStorage.setItem(AUDIO_DISASTER_KEY, String(v)),
       onClearSaves: () => {
         clearSave();
         this.ui.flashHint('All saves cleared');

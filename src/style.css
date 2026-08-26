@@ -842,6 +842,12 @@ body {
   color: var(--muted);
   opacity: 0.8;
 }
+/* Settings grew past a short landscape phone once the audio sliders joined it — same fix as the
+   New Village card: the list scrolls inside the card rather than pushing Back off the bottom. */
+.menu-card.settings-card .set-list {
+  max-height: min(78vh, 640px);
+  overflow-y: auto;
+}
 
 /* ---- Replace-a-slot picker + overwrite confirmation ---- */
 .menu-card .slot-note {

@@ -1246,17 +1246,22 @@ class Game {
     const suggestion = findStartTile(this.state.tiles);
     this.camera.focus(suggestion.x, suggestion.y);
     this.paused = true;
-    this.selectedBuild = 'barn'; // drives the placement ghost at the reticle (see `frame`)
-    this.buildLocked = true;
-    this.buildRot = 0;
     this.selectedPath = null;
     this.demolish = false;
     this.clearInspect();
     this.input.setMode('normal');
+    // Drop whatever tool the New Village screen's own controls thought was active *before* arming
+    // the barn ghost below — `clearSelection` cascades into the `onSelectBuild(null)`/
+    // `onSelectPath(null)` callbacks (closing any inspect/build/path tool), which would otherwise
+    // wipe the ghost the instant it was set: nothing is armed yet for it to touch, so it's a no-op
+    // here rather than a race.
     this.ui.clearSelection();
     this.ui.hideOverlay();
+    this.founding = { name }; // guards onSelectBuild/onSelectPath against nulling the ghost below
+    this.selectedBuild = 'barn'; // drives the placement ghost at the reticle (see `frame`)
+    this.buildLocked = true;
+    this.buildRot = 0;
     this.running = true;
-    this.founding = { name };
   }
 
   /** The barn's footprint at the reticle, whatever the player is currently aiming it over. */

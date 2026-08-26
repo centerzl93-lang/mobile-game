@@ -743,7 +743,8 @@ body {
   font-weight: 500;
   opacity: 0.75;
 }
-/* An occupied save slot: the big pick button, with a rename field and a delete button under it. */
+/* An occupied save slot: the big pick button, with a delete button under it. The slot's title is
+   always the village's own name — there is nothing here to type into. */
 .menu-card .slot-row {
   display: flex;
   flex-direction: column;
@@ -756,29 +757,6 @@ body {
   display: flex;
   gap: 6px;
   align-items: stretch;
-}
-.menu-card .slot-name {
-  flex: 1;
-  min-width: 0; /* a flex item defaults to its content width, which would push the bin off the card */
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text);
-  font: inherit;
-  font-size: 13px;
-  padding: 6px 10px;
-}
-.menu-card .slot-name::placeholder {
-  color: var(--muted);
-}
-.menu-card .slot-name:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-/* The global reset turns selection off everywhere; a field you type a name into needs it back. */
-.menu-card .slot-name {
-  user-select: text;
-  -webkit-user-select: text;
 }
 .menu-card .menu-list .slot-del {
   /* `.card button` sets width:100%, which a flex item resolves its auto basis from — leaving the
@@ -943,12 +921,6 @@ body {
 }
 
 /* ---- Replace-a-slot picker + overwrite confirmation ---- */
-.menu-card .slot-note {
-  margin: 0 0 4px;
-  font-size: 12px;
-  line-height: 1.35;
-  color: var(--muted);
-}
 .menu-card .ow-village {
   display: flex;
   flex-direction: column;

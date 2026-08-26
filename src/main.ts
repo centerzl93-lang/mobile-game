@@ -1283,10 +1283,10 @@ class Game {
    */
   private saveToSlot(slot: number): void {
     const ok = saveGame(this.state, slot);
-    // Stamp the slot with the village's current name (blank clears it to the default "Slot N"), so
-    // an overwritten slot never keeps the replaced village's name.
+    // Stamp the slot with the village's current name (blank clears it to the default label), so an
+    // overwritten slot never keeps the replaced village's name.
     if (ok) setSlotName(slot, slotName(AUTOSAVE_SLOT) ?? '');
-    const label = slotName(slot) ?? `Slot ${slot + 1}`;
+    const label = slotName(slot) ?? `Manual Save ${slot + 1}`;
     this.ui.flashHint(ok ? `Saved to ${label}` : 'Could not save — storage may be full');
     this.openPauseMenu();
   }
@@ -1303,7 +1303,7 @@ class Game {
       return;
     }
     this.ui.showOverwriteConfirm({
-      title: info.name ?? `Slot ${slot + 1}`,
+      title: info.name ?? `Manual Save ${slot + 1}`,
       year: info.year,
       pop: info.pop,
       size: info.size,
@@ -1312,13 +1312,21 @@ class Game {
     });
   }
 
-  /** Slot picker for loading or saving. `back` returns to whichever menu opened it. */
+  /**
+   * Slot picker for loading or saving. `back` returns to whichever menu opened it. Save only ever
+   * offers the three manual slots — the autosave is not a manual write target, the game keeps it
+   * current on its own — while Load also lists the autosave, so the village in progress can be
+   * resumed from the same screen as a hard save (Continue on the main menu is just a shortcut to
+   * the same slot).
+   */
   private openSlotSelect(mode: 'load' | 'save', back: () => void): void {
     const slots = Array.from({ length: SLOTS }, (_, i) => ({ index: i, info: slotInfo(i) }));
-    const label = (slot: number): string => slotName(slot) ?? `Slot ${slot + 1}`;
+    const label = (slot: number): string =>
+      slotName(slot) ?? (slot === AUTOSAVE_SLOT ? 'Autosave' : `Manual Save ${slot + 1}`);
     this.ui.showSlotSelect({
       mode,
       slots,
+      autosave: mode === 'load' ? { index: AUTOSAVE_SLOT, info: slotInfo(AUTOSAVE_SLOT) } : null,
       onPick: (slot) => {
         if (mode === 'load') {
           this.continueGame(slot);
@@ -1328,11 +1336,6 @@ class Game {
         } else {
           this.saveToSlot(slot); // empty slot — write straight away
         }
-      },
-      onRename: (slot, name) => {
-        if (name.trim() === (slotName(slot) ?? '')) return; // blur with nothing typed
-        setSlotName(slot, name);
-        this.openSlotSelect(mode, back); // redraw so the row title follows the field
       },
       onDelete: (slot) => {
         // Manual slots are static snapshots — the live game autosaves elsewhere — so deleting one is

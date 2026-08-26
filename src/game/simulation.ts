@@ -182,6 +182,7 @@ import {
   isWorkplace,
   houseCapacityOf,
   heatFactorOf,
+  DIFFICULTY_HEAT_FACTOR,
   HAPPY_TAVERN,
   HAPPY_CHAPEL,
   HAPPY_CEMETERY,
@@ -477,6 +478,11 @@ export function householdFuelFactor(s: GameState): number {
   return policyActive(s, 'populationDrive') ? POLICY_POPDRIVE_FUEL : 1;
 }
 
+/** Difficulty's ongoing cut to heating demand — see `DIFFICULTY_HEAT_FACTOR`. */
+export function difficultyHeatFactor(s: GameState): number {
+  return DIFFICULTY_HEAT_FACTOR[s.difficulty];
+}
+
 /** Conservation: how much faster felled forest tiles regrow — see `regrowForest`. */
 export function forestRegrowFactor(s: GameState): number {
   return policyActive(s, 'conservation') ? POLICY_CONSERVE_REGROW : 1;
@@ -597,13 +603,14 @@ function eat(s: GameState, dt: number, log: LogFn): void {
  * Charging it continuously means summer really is cheap hour by hour, winter really is expensive,
  * and the household hauler tops the woodpile up as it runs down instead of chasing a cliff.
  *
- * Three things cut a villager's fuel bill: the season (SEASON_BURN), a warm coat
- * (CLOTHED_HEAT_FACTOR, decided at the season boundary and read here all season), and the walls
+ * Four things set a villager's fuel bill: the season (SEASON_BURN), a warm coat
+ * (CLOTHED_HEAT_FACTOR, decided at the season boundary and read here all season), the walls
  * around them (`heatFactorOf` — masonry holds its heat, and a grand house holds it again better
- * still, see `GRAND_HOUSE_HEAT_FACTOR`). This is the same `heatFactorOf` a household's larder
- * target is sized against (`houseFuelPerSeason`/`larderTarget` in `storage.ts`) — one housing
- * efficiency figure per building type, read by both what a household stocks and what it actually
- * burns, so the two never disagree about what a stone or grand house is worth.
+ * still, see `GRAND_HOUSE_HEAT_FACTOR`; this is the same `heatFactorOf` a household's larder
+ * target is sized against, `houseFuelPerSeason`/`larderTarget` in `storage.ts`, so the two never
+ * disagree about what a stone or grand house is worth), and the difficulty picked at New Game
+ * (`difficultyHeatFactor` — Hard burns a bit more, Easy a bit less, on top of their different
+ * starting stockpiles, so the picker keeps mattering long after the first winter).
  */
 function heat(s: GameState, dt: number, log: LogFn): void {
   if (s.citizens.length === 0) return;
@@ -613,8 +620,10 @@ function heat(s: GameState, dt: number, log: LogFn): void {
   for (const b of s.buildings) if (b.built && isDwelling(b.type)) homeById.set(b.id, b);
 
   const froze: Citizen[] = [];
-  // Population Drive's cost, read once for the whole village — see `householdFuelFactor`.
+  // Population Drive's cost and the difficulty's own ongoing cut, each read once for the whole
+  // village — see `householdFuelFactor`/`difficultyHeatFactor`.
   const fuelFactor = householdFuelFactor(s);
+  const diffFactor = difficultyHeatFactor(s);
   for (const c of s.citizens) {
     const home = c.homeId !== null ? homeById.get(c.homeId) : undefined;
     const wallFactor = home ? heatFactorOf(home.type) : 1;
@@ -622,7 +631,7 @@ function heat(s: GameState, dt: number, log: LogFn): void {
     // so this is coated-warm, coated-regular, or not — see `c.warmClothed`/`c.clothed`, set at the
     // season turn by which tier's ration actually covered them.
     const clothFactor = c.warmClothed ? WARM_CLOTHED_HEAT_FACTOR : c.clothed ? CLOTHED_HEAT_FACTOR : 1;
-    let need = HEAT_PER_CITIZEN_WINTER * rate * wallFactor * clothFactor * fuelFactor; // heat units
+    let need = HEAT_PER_CITIZEN_WINTER * rate * wallFactor * clothFactor * fuelFactor * diffFactor; // heat units
     // Fuel is burned where it is kept: in the hearth of the house the villager lives in. A housed
     // villager has no fall-back to the village fuel pile — a barn is a woodshed, not a fire, and
     // letting everyone draw on it directly meant the stockpile drained on its own while the houses

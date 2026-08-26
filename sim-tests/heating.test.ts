@@ -12,6 +12,11 @@
  * advertised fuel saving (see its `desc` in `BUILDING_DEFS`) was never actually applied to
  * consumption. `heatFactorOf` is the one housing-efficiency figure both paths now read.
  *
+ * `fuelFactor` also folds in `difficultyHeatFactor` (`DIFFICULTY_HEAT_FACTOR`) — Hard's own
+ * ongoing cut to heating demand, Easy's own ongoing discount, on top of (not instead of) their
+ * different starting stockpiles. The chosen values were picked from a balance sweep (see the
+ * "difficulty" tests below and the balance report) rather than by feel.
+ *
  * Same shape as `clothing.test.ts` — drives `update` directly in Node, no browser or renderer.
  */
 import { test } from 'node:test';
@@ -22,7 +27,7 @@ import { houseFuelPerSeason } from '../src/game/storage';
 import {
   BUILDING_DEFS, HEAT_PER_CITIZEN_WINTER, FIREWOOD_HEAT, SEASON_BURN,
   STONE_HOUSE_HEAT_FACTOR, GRAND_HOUSE_HEAT_FACTOR, CLOTHED_HEAT_FACTOR, WARM_CLOTHED_HEAT_FACTOR,
-  heatFactorOf,
+  heatFactorOf, DIFFICULTY_HEAT_FACTOR,
 } from '../src/types';
 import type { GameState, Building, BuildingType, Citizen } from '../src/types';
 
@@ -270,21 +275,72 @@ test('scenario: a larger, well-invested village burns less firewood per citizen 
 });
 
 // ---------------------------------------------------------------------------------------------
-// Difficulty: heating demand is per-citizen and identical on Normal and Hard — difficulty tunes
-// the starting stockpile a village has to weather the first years on (`DIFFICULTY_RESOURCES`),
-// not the ongoing consumption rate, so an efficiency investment is worth exactly as much fuel on
-// either difficulty. Hard stays harder because it starts with less firewood buffer, not because
-// its households burn faster.
+// Difficulty: Hard's ongoing heating cut, on top of Hard's smaller starting stockpile
+// (`DIFFICULTY_RESOURCES`) — see `DIFFICULTY_HEAT_FACTOR`. Deliberately a gentle multiplier
+// (1.05–1.5 tested, 1.15 shipped) rather than anything near `HARD_FACTOR`'s 0.5: a stress test
+// (`newgame`-style village, marginal woodcutter staffing, 3 simulated years) found the shipped
+// 1.15 keeps a tight Hard village hard but survivable, while a 1.5 candidate was the first to
+// actually cost a marginal village a life — see the balance report for the full sweep. Easy's own
+// discount (0.9 shipped) is checked for the same non-triviality: a modestly-invested Easy village
+// (house + Regular clothing only, not the maxed Grand House + Warm Clothing) should still be worth
+// managing, not comfortably self-sufficient from a single coat.
 // ---------------------------------------------------------------------------------------------
-test('difficulty does not change the per-citizen heating rate — only the starting stockpile differs', () => {
-  const sNormal = mk(4010, 'normal');
-  sNormal.citizens = [];
-  const { h: hNormal } = citizenIn(sNormal, 'stonehouse', true, false);
-  const sHard = mk(4010, 'hard');
-  sHard.citizens = [];
-  const { h: hHard } = citizenIn(sHard, 'stonehouse', true, false);
+test('Hard burns more firewood than Normal, Easy less, for the identical household', () => {
+  const mkOne = (diff: 'normal' | 'hard' | 'easy') => {
+    const s = mk(4010, diff);
+    s.citizens = [];
+    const { h } = citizenIn(s, 'stonehouse', true, false);
+    return { s, h };
+  };
   const dt = 5;
-  const cNormal = burned(sNormal, hNormal, dt);
-  const cHard = burned(sHard, hHard, dt);
-  assert.ok(Math.abs(cNormal - cHard) < 1e-6, 'the heating formula itself takes no difficulty input');
+  const { s: sN, h: hN } = mkOne('normal');
+  const { s: sHd, h: hHd } = mkOne('hard');
+  const { s: sE, h: hE } = mkOne('easy');
+  const burnedNormal = burned(sN, hN, dt);
+  const burnedHard = burned(sHd, hHd, dt);
+  const burnedEasy = burned(sE, hE, dt);
+  assert.ok(burnedHard > burnedNormal, 'Hard should burn more firewood than Normal for the same household');
+  assert.ok(burnedEasy < burnedNormal, 'Easy should burn less firewood than Normal for the same household');
+  assert.ok(
+    Math.abs(burnedHard / burnedNormal - DIFFICULTY_HEAT_FACTOR.hard) < 1e-6,
+    `Hard's burn should be exactly DIFFICULTY_HEAT_FACTOR.hard (${DIFFICULTY_HEAT_FACTOR.hard})x Normal's, got ${burnedHard / burnedNormal}`,
+  );
+  assert.ok(
+    Math.abs(burnedEasy / burnedNormal - DIFFICULTY_HEAT_FACTOR.easy) < 1e-6,
+    `Easy's burn should be exactly DIFFICULTY_HEAT_FACTOR.easy (${DIFFICULTY_HEAT_FACTOR.easy})x Normal's, got ${burnedEasy / burnedNormal}`,
+  );
+});
+
+test('the shipped difficulty factors stay inside the tested "meaningfully different, not game-breaking" range', () => {
+  // Pinned against the balance sweep: 1.05-1.5 tested for Hard (1.5 was the first to cost a
+  // marginal village a life; 1.05 was barely distinguishable from Normal at a tight staffing
+  // level), 0.95-0.75 for Easy (0.75 was the first to make even a minimally-invested household
+  // comfortably self-sufficient). The shipped values sit inside that range, not at either edge.
+  assert.ok(DIFFICULTY_HEAT_FACTOR.hard > 1, 'Hard must burn strictly more than Normal to mean anything');
+  assert.ok(DIFFICULTY_HEAT_FACTOR.hard >= 1.1 && DIFFICULTY_HEAT_FACTOR.hard <= 1.3, 'Hard should sit in the tested "meaningfully harder, not fatal-by-itself" band');
+  assert.ok(DIFFICULTY_HEAT_FACTOR.easy < 1, 'Easy must burn strictly less than Normal to mean anything');
+  assert.ok(DIFFICULTY_HEAT_FACTOR.easy >= 0.85 && DIFFICULTY_HEAT_FACTOR.easy <= 0.95, 'Easy should sit in the tested "meaningfully easier, not free" band');
+  assert.equal(DIFFICULTY_HEAT_FACTOR.normal, 1, 'Normal is the fixed reference point every other difficulty is measured against');
+});
+
+test('the household firewood larder target agrees with live consumption on every difficulty, not just Normal', () => {
+  for (const diff of ['normal', 'hard', 'easy'] as const) {
+    const s = mk(4011, diff);
+    s.citizens = [];
+    // A single resident — Easy's EASY_START_HOUSES leaves more than one house standing, which
+    // wakes rehouseVillagers's "no couple here? keep one man and one woman" reshuffle and would
+    // relocate a second same-sex citizen mid-test. One resident sidesteps that entirely.
+    addAdults(s, 1, 'f');
+    const h = builtHouse(s, 'grandhouse');
+    for (const c of s.citizens) { c.homeId = h.id; c.clothed = true; c.warmClothed = true; }
+    s.season = 3; // Winter
+    const estimatedPerSeason = houseFuelPerSeason(s, h);
+    const dt = 10;
+    const got = burned(s, h, dt);
+    const expected = estimatedPerSeason * (dt / 600);
+    assert.ok(
+      Math.abs(got - expected) < 1e-6,
+      `[${diff}] live consumption (${got}) should match the larder-target rate (${expected}) — the difficulty cut must not be applied on one side only`,
+    );
+  }
 });

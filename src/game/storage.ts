@@ -18,6 +18,7 @@ import {
   HOUSE_MEDICINE_PER_RESIDENT,
   CHILD_FOOD_FACTOR,
   heatFactorOf,
+  DIFFICULTY_HEAT_FACTOR,
   CLOTHED_HEAT_FACTOR,
   HEAT_PER_CITIZEN_WINTER,
   FIREWOOD_HEAT,
@@ -318,15 +319,20 @@ export function residentsOf(s: GameState, house: Building): Citizen[] {
  *
  * Drawn continuously by `heat`, so this is a rate rather than a bill that lands somewhere: it is
  * what the inspect sheet shows so the player can see why a woodpile empties fast in winter and
- * barely moves in summer, and what stone walls and warm coats are saving them.
+ * barely moves in summer, and what stone walls and warm coats are saving them. Includes the
+ * difficulty's own ongoing cut (`DIFFICULTY_HEAT_FACTOR`) for the same reason it includes
+ * `heatFactorOf`: this is the estimate a household's hauler stocks the larder against, so it has
+ * to agree with what `heat()` actually bills or a Hard household is sent home with a Normal-sized
+ * armful and comes up short every winter.
  */
 export function houseFuelPerSeason(s: GameState, house: Building): number {
   const walls = heatFactorOf(house.type);
   const burn = SEASON_BURN[SEASONS[s.season]];
+  const diff = DIFFICULTY_HEAT_FACTOR[s.difficulty];
   let units = 0;
   for (const c of residentsOf(s, house)) {
     const clothFactor = c.warmClothed ? WARM_CLOTHED_HEAT_FACTOR : c.clothed ? CLOTHED_HEAT_FACTOR : 1;
-    units += HEAT_PER_CITIZEN_WINTER * burn * walls * clothFactor;
+    units += HEAT_PER_CITIZEN_WINTER * burn * walls * clothFactor * diff;
   }
   return units / FIREWOOD_HEAT;
 }
@@ -345,8 +351,9 @@ export function larderTarget(s: GameState, house: Building, kind: ResourceKind):
   const residents = residentsOf(s, house).length;
   if (residents === 0) return 0;
   if (kind === 'firewood') {
-    // Stone houses hold their heat, so their residents keep less fuel by the same factor they burn.
-    const factor = heatFactorOf(house.type);
+    // Stone houses hold their heat, so their residents keep less fuel by the same factor they
+    // burn, and a Hard household keeps more (Easy less) by the same difficulty cut `heat()` bills.
+    const factor = heatFactorOf(house.type) * DIFFICULTY_HEAT_FACTOR[s.difficulty];
     return residents * HOUSE_FIREWOOD_PER_RESIDENT * factor;
   }
   if (kind === 'clothing' || kind === 'warmclothing') return residents * HOUSE_CLOTHING_PER_RESIDENT;

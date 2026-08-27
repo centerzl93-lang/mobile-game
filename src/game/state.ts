@@ -79,7 +79,9 @@ function makeBuilding(s: { nextId: number }, type: BuildingType, x: number, y: n
     workers: [],
     desiredWorkers: 0, // start unstaffed — the player assigns workers with the stepper
     growth: 0,
-    output: 'coal',
+    // A mine opens on coal, a quarry on stone — the ordinary, always-useful seam rather than the
+    // one that takes a deliberate choice to dig instead.
+    output: type === 'quarry' ? 'stone' : 'coal',
     // A blacksmith opens on iron, a tailor on leather — the input each can get without a
     // dedicated pen behind it.
     recipe: type === 'tailor' ? 'leather' : 'iron',

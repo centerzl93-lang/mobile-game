@@ -104,6 +104,35 @@ import {
   UNCLOTHED_HEALTH_PENALTY,
   UNCLOTHED_HAPPY_PENALTY,
   FARM_FOOD_PER_WORKER,
+  LOAD_FOOD,
+  LOAD_MAT,
+  WCUT_WOOD_IN,
+  WCUT_FW_OUT,
+  MINE_IRON_FACTOR,
+  MINE_COAL_FACTOR,
+  SMITH_IRON_IN,
+  SMITH_IRON_OUT,
+  SMITH_STEEL_IRON,
+  SMITH_STEEL_COAL,
+  SMITH_STEEL_OUT,
+  TAILOR_LEATHER_IN,
+  TAILOR_WOOL_IN,
+  TAILOR_OUT,
+  TAILOR_WARM_LEATHER_IN,
+  TAILOR_WARM_WOOL_IN,
+  TAILOR_WARM_OUT,
+  LUX_GLASS_SAND,
+  LUX_GLASS_COAL,
+  LUX_GLASS_OUT,
+  LUX_JEWEL_GLASS,
+  LUX_JEWEL_IRON,
+  LUX_JEWEL_OUT,
+  LUX_FINEJEWEL_JEWELRY,
+  LUX_FINEJEWEL_GOLD,
+  LUX_FINEJEWEL_OUT,
+  LUX_FINECLOTH_DYE,
+  LUX_FINECLOTH_SILK,
+  LUX_FINECLOTH_OUT,
   CROP_META,
   ANIMAL_META,
   RanchAnimal,
@@ -175,7 +204,8 @@ import {
   isDwelling,
   dwellingCapacityOf,
   SHELTER_HAPPY,
-  QUARRY_SAND_SHARE,
+  QUARRY_STONE_FACTOR,
+  QUARRY_SAND_FACTOR,
   GRAND_HOUSE_HAPPY,
   HAPPY_MONUMENT,
   CONGREGATION_PER_PRIEST,
@@ -336,7 +366,10 @@ function announceDeaths(log: LogFn, victims: Citizen[], cause: DeathCause, kind:
   log(`${who} ${DEATH_PHRASE[cause]}`, kind);
 }
 
-// Local balance for the per-trip economy.
+// Local balance for the per-trip economy. (The converter recipe constants — WCUT_*, SMITH_*,
+// MINE_*_FACTOR, TAILOR_*, LUX_* — moved to types.ts's "Production" block; these terrain-richness
+// factors stay here since they scale a site's own yield rather than convert one resource to
+// another.)
 const FOREST_CIRCLE_IDEAL = 24;
 const WATER_IDEAL = 14; // water tiles in the fishing circle for full yield (circle scales with workers)
 const STONE_IDEAL = 6;
@@ -344,38 +377,6 @@ const STONE_IDEAL = 6;
 const QUARRY_ROCK_BONUS = 0.5;
 const MIN_FACTOR = 0.15;
 const TREE_REGROW = 0.02;
-
-const LOAD_FOOD = 8; // food produced per work cycle (before factor)
-const LOAD_MAT = 6; // raw material produced per work cycle (before factor)
-// Converter recipes: inputs consumed and output produced per cycle.
-const WCUT_WOOD_IN = 6, WCUT_FW_OUT = 8;
-const SMITH_IRON_IN = 4, SMITH_IRON_OUT = 5;
-// Steel takes the same iron plus coal, and yields the *same count* of tools as iron does — steel's
-// advantage is that each one lasts twice as long (`STEEL_DURABILITY`) and works 15% harder, not
-// that more come off the anvil. So a smith on steel doubles a village's tool-seasons per iron ingot
-// but only by feeding it coal from a second, slower mine — the "keep two mines" pressure by design.
-const SMITH_STEEL_IRON = 4, SMITH_STEEL_COAL = 3, SMITH_STEEL_OUT = 5;
-// Mine yields per cycle. Coal is deliberately the slower seam: it keeps coal rarer than iron and
-// steel a real investment, so a village that wants both has to sink and staff a mine for each.
-const MINE_IRON_FACTOR = 0.8, MINE_COAL_FACTOR = 0.5;
-// Two ways to a coat. Wool goes further than hide per unit — a fleece is spun and woven, a hide
-// is cut around — but a pen of sheep is the real difference: see `ANIMAL_META`.
-const TAILOR_LEATHER_IN = 5, TAILOR_WOOL_IN = 4, TAILOR_OUT = 4;
-// The third way: both at once, for a coat worth twice the fuel saving (`WARM_CLOTHED_HEAT_FACTOR`).
-// Costlier per unit than either plain recipe — it takes as much of *each* input as the wool
-// recipe takes of wool alone, for fewer coats out — which is the point: Warm Clothing is a
-// higher tier to work up to, not a third interchangeable option.
-const TAILOR_WARM_LEATHER_IN = 3, TAILOR_WARM_WOOL_IN = 3, TAILOR_WARM_OUT = 3;
-// The luxury chain, per the spec's ratios: two sand and a coal make two glass, and two glass with
-// an iron make one piece of jewellery.
-const LUX_GLASS_SAND = 2, LUX_GLASS_COAL = 1, LUX_GLASS_OUT = 2;
-const LUX_JEWEL_GLASS = 2, LUX_JEWEL_IRON = 1, LUX_JEWEL_OUT = 1;
-// The fine bench: a finished jewel reset with imported gold, and dyed silk worked into a gown.
-// Each yields a single piece a cycle — dear to run and worth it, since a merchant pays more for one
-// than for anything else the town can make. Fine jewellery takes a whole piece of jewellery (itself
-// the top of the base chain) and the gold to mount it, so it sits one clean step above jewellery.
-const LUX_FINEJEWEL_JEWELRY = 1, LUX_FINEJEWEL_GOLD = 1, LUX_FINEJEWEL_OUT = 1;
-const LUX_FINECLOTH_DYE = 1, LUX_FINECLOTH_SILK = 2, LUX_FINECLOTH_OUT = 1;
 
 const ARRIVE = 0.25; // tile distance considered "arrived"
 /**
@@ -2332,13 +2333,13 @@ function workOutput(
       // its base rate. (Using factorStone here would drop an inland quarry to MIN_FACTOR, which
       // would make "buildable anywhere" a lie.)
       //
-      // Every so often a load comes up sand rather than stone. A quarry is a hole in the ground and
-      // some of what comes out of it is grit — which is where glass starts, so the whole luxury
-      // chain hangs off a building the village has had since it was a hamlet, with no new pit to
-      // dig for it.
+      // Stone or sand, one seam at a time — the same toggle a mine uses for iron/coal
+      // (`Building.output`, `QuarryOutput`), not a random side-effect of ordinary digging. A quarry
+      // given over to sand digs no stone at all while it's set that way.
       const load = LOAD_MAT * quarryRichness(s, b) * tf;
-      if (rand(s) < QUARRY_SAND_SHARE) return { kind: 'sand', amount: load };
-      return { kind: 'stone', amount: load };
+      return b.output === 'sand'
+        ? { kind: 'sand', amount: load * QUARRY_SAND_FACTOR }
+        : { kind: 'stone', amount: load * QUARRY_STONE_FACTOR };
     }
     case 'mine': {
       const f = factorStone(s, b) * tf;

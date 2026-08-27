@@ -5467,7 +5467,7 @@ test.describe('sand, glass, jewellery and the harbour', () => {
     };
   `;
 
-  test('a quarry brings up sand as well as stone, and sand can be stored', { tag: '@slow' }, async ({ page }) => {
+  test('a quarry digs stone by default, and only sand once toggled — never both at once', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(180_000);
     await open2d(page);
     const out = await page.evaluate(
@@ -5480,25 +5480,32 @@ test.describe('sand, glass, jewellery and the harbour', () => {
         // like a workplace that never ran — that was the whole fault in this test, not the quarry.
         for (let i = 0; i < 3; i++) { const b = put('barn'); if (b) b.store.grain = 4000; }
         for (const k of ['wood', 'stone', 'iron', 'sand', 'glass']) barn.store[k] = 40;
-        const base = { stone: g.debugTotalStored('stone'), sand: g.debugTotalStored('sand') };
-        for (let i = 0; i < 6000; i++) g.debugAdvance(0.5);
-        return {
-          sand: g.debugTotalStored('sand') - base.sand,
+
+        // Phase 1: untouched — a fresh quarry digs stone, nothing else.
+        let base = { stone: g.debugTotalStored('stone'), sand: g.debugTotalStored('sand') };
+        for (let i = 0; i < 3000; i++) g.debugAdvance(0.5);
+        const stoneOnly = {
           stone: g.debugTotalStored('stone') - base.stone,
-          share: g.debugSandShare(),
+          sand: g.debugTotalStored('sand') - base.sand,
         };
+
+        // Phase 2: toggled to sand — the same job slots now dig sand, and nothing but sand.
+        q.output = 'sand';
+        base = { stone: g.debugTotalStored('stone'), sand: g.debugTotalStored('sand') };
+        for (let i = 0; i < 3000; i++) g.debugAdvance(0.5);
+        const sandOnly = {
+          stone: g.debugTotalStored('stone') - base.stone,
+          sand: g.debugTotalStored('sand') - base.sand,
+        };
+
+        return { stoneOnly, sandOnly };
       `) as () => any,
     );
 
-    expect(out.sand, 'the quarry brought sand up').toBeGreaterThan(0);
-    expect(out.stone, 'and stone as it always did').toBeGreaterThan(0);
-    expect(out.sand, 'sand is the minority of what a quarry digs').toBeLessThan(out.stone);
-    // The *share* is asserted on the rule rather than on the barns. What ends up stored is not the
-    // ratio the quarry dug at: the two goods compete for the same shelf, and once the barns fill,
-    // whichever is being hauled at that moment is the one that gets turned away. Measuring the
-    // split downstream reads a storage effect and calls it a production rate.
-    expect(out.share).toBeGreaterThanOrEqual(0.2);
-    expect(out.share).toBeLessThanOrEqual(0.25);
+    expect(out.stoneOnly.stone, 'an untouched quarry digs stone').toBeGreaterThan(0);
+    expect(out.stoneOnly.sand, 'and nothing else, before it is toggled').toBe(0);
+    expect(out.sandOnly.sand, 'toggled to sand, it digs sand').toBeGreaterThan(0);
+    expect(out.sandOnly.stone, 'and stops digging stone entirely while set that way').toBe(0);
   });
 
   test('the workshop turns sand and coal into glass, and glass and iron into jewellery', { tag: '@slow' }, async ({ page }) => {

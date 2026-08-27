@@ -5555,8 +5555,8 @@ test.describe('sand, glass, jewellery and the harbour', () => {
     expect(out.madeGlass, 'sand and coal became glass').toBeGreaterThan(0);
     expect(out.madeJewels, 'glass and iron became jewellery').toBeGreaterThan(0);
     // The ratios the spec asks for, read off the recipe itself.
-    expect(out.glassInputs).toEqual([['sand', 8], ['coal', 4]]);
-    expect(out.jewelInputs).toEqual([['glass', 8], ['iron', 4]]);
+    expect(out.glassInputs).toEqual([['sand', 2], ['coal', 1]]);
+    expect(out.jewelInputs).toEqual([['glass', 2], ['iron', 1]]);
   });
 
   test('the fine bench resets jewellery in gold, and takes silk up in dye', { tag: '@slow' }, async ({ page }) => {
@@ -5610,8 +5610,8 @@ test.describe('sand, glass, jewellery and the harbour', () => {
 
     expect(out.madeFineJewels, 'jewellery and gold became fine jewellery').toBeGreaterThan(0);
     expect(out.madeFineClothes, 'dye and silk became fine clothes').toBeGreaterThan(0);
-    expect(out.fineJewelInputs).toEqual([['jewelry', 4], ['gold', 4]]);
-    expect(out.fineClothInputs).toEqual([['dye', 4], ['silk', 8]]);
+    expect(out.fineJewelInputs).toEqual([['jewelry', 1], ['gold', 1]]);
+    expect(out.fineClothInputs).toEqual([['dye', 1], ['silk', 2]]);
     // The most valuable things a town can make — dearer than the plain jewellery below them.
     expect(out.jewelVal).toBe(40);
     expect(out.clothVal).toBe(34);
@@ -5943,8 +5943,8 @@ test.describe('iron and steel tools', () => {
     expect(out.steel.tools, 'the steel recipe makes no plain tools').toBe(0);
     expect(out.steel.coalUsed, 'steel eats coal').toBeGreaterThan(0);
     // The recipes themselves: iron alone, versus iron plus coal.
-    expect(out.ironInputs).toEqual([['iron', 8]]);
-    expect(out.steelInputs).toEqual([['iron', 8], ['coal', 6]]);
+    expect(out.ironInputs).toEqual([['iron', 4]]);
+    expect(out.steelInputs).toEqual([['iron', 4], ['coal', 3]]);
   });
 
   test('a villager\'s own kit decides their tool factor: steel over iron over bare hands', async ({ page }) => {

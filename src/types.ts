@@ -3448,10 +3448,11 @@ export const FARM_FOOD_PER_WORKER = 320; // at full growth, paid at autumn harve
  * this leather together now, rather than one cut *or* the other, so the tailor always has hide.
  *
  * Cut from 0.4 to 0.1 (PLAYTEST B13): at 0.4 a single hunting cabin — built for food, not leather —
- * kept a tailor in hide practically for free, undercutting the ranch's own dedicated wool line and
- * leaving leather with none of the scarcity `TAILOR_LEATHER_IN` (below) was priced against. A
+ * kept a tailor in hide practically for free, undercutting the ranch's own dedicated wool line. A
  * quarter of the old trickle makes leather a real byproduct again: useful, but not a standing
- * supply a village gets without ever deciding to.
+ * supply a village gets without ever deciding to. This cut is the one B14 kept when it reverted
+ * `TAILOR_LEATHER_IN` back down (see below) — leather's scarcity now comes from *this* number
+ * alone, not from also doubling what a coat costs to sew.
  */
 export const HUNT_HIDE_FRACTION = 0.1;
 
@@ -3486,15 +3487,19 @@ export const MINE_COAL_FACTOR = 0.25;
  * ingot, but only by feeding it coal from a second, slower mine — the "keep two mines" pressure by
  * design.
  *
- * Doubled from 4/4/3 (PLAYTEST B13): tool-making was cheap enough that it barely competed with
- * anything else iron and coal are wanted for (construction, the luxury bench, a second mine's own
- * upkeep). Doubling the ore bill — output held at 5 either way — makes a smithy a real draw on both
- * seams rather than an afterthought one, and widens steel's coal premium in step.
+ * PLAYTEST B13 doubled these (4/4/3 -> 8/8/6) to lean on iron and coal harder; B14's measured
+ * throughput comparison (real simulated ticks, old ratios vs new, same seed) found the *combined*
+ * effect of that plus the halved mine output (`MINE_IRON_FACTOR`/`MINE_COAL_FACTOR`) compounded
+ * far past what "the ore bill doubled" suggests on its own — roughly 4x more iron-mining workforce
+ * needed per tool-smith, ~6x more coal-mining per steel-smith. Reverted back to 4/4/3 here: the
+ * mine cut alone already delivers the "make the player commit real workforce to mining" pressure
+ * B13 was after, without also doubling what a smith draws down on top of a supply that already
+ * halved. See PLAYTEST B14.
  */
-export const SMITH_IRON_IN = 8;
+export const SMITH_IRON_IN = 4;
 export const SMITH_IRON_OUT = 5;
-export const SMITH_STEEL_IRON = 8;
-export const SMITH_STEEL_COAL = 6;
+export const SMITH_STEEL_IRON = 4;
+export const SMITH_STEEL_COAL = 3;
 export const SMITH_STEEL_OUT = 5;
 
 /**
@@ -3506,16 +3511,18 @@ export const SMITH_STEEL_OUT = 5;
  * higher tier to work up to, not a third interchangeable option, and worth it: it is worth twice
  * the fuel saving worn (`WARM_CLOTHED_HEAT_FACTOR`).
  *
- * Doubled from 5/4/3/3 (PLAYTEST B13), alongside the `HUNT_HIDE_FRACTION` cut above: with leather
- * now a genuine scarcity rather than a hunting-cabin freebie, a coat is meant to cost real
- * commitment on *either* input, not just leather. Output (`TAILOR_OUT`/`TAILOR_WARM_OUT`) is
- * untouched — the same coat, twice the raw material behind it.
+ * PLAYTEST B13 doubled these (5/4/3/3 -> 10/8/6/6) alongside cutting `HUNT_HIDE_FRACTION` to a
+ * quarter; B14 reverted the recipe back to 5/4/3/3 while *keeping* the leather-rarity cut — a
+ * hunting cabin already gives a tailor a quarter the hide it used to, which is the scarcity B13
+ * was actually after. Doubling the recipe on top of that quartered supply compounded to roughly 8x
+ * more hunting workforce needed per leather-tailor (measured, not estimated — see PLAYTEST B14),
+ * which read as a wall rather than a real cost. `TAILOR_OUT`/`TAILOR_WARM_OUT` were never touched.
  */
-export const TAILOR_LEATHER_IN = 10;
-export const TAILOR_WOOL_IN = 8;
+export const TAILOR_LEATHER_IN = 5;
+export const TAILOR_WOOL_IN = 4;
 export const TAILOR_OUT = 4;
-export const TAILOR_WARM_LEATHER_IN = 6;
-export const TAILOR_WARM_WOOL_IN = 6;
+export const TAILOR_WARM_LEATHER_IN = 3;
+export const TAILOR_WARM_WOOL_IN = 3;
 export const TAILOR_WARM_OUT = 3;
 
 /**
@@ -3525,23 +3532,24 @@ export const TAILOR_WARM_OUT = 3;
  * piece a cycle, dear to run, and worth it since a merchant pays more for one than for anything
  * else the town can make (see TRADE_VALUE).
  *
- * Every input quadrupled (PLAYTEST B13) — output untouched, so the same glass/jewellery/fine goods
- * now cost 4x the sand, coal, glass, iron, jewellery, gold, dye and silk to make. The point is
- * scarcity, not a bigger bench: stockpiling any real quantity domestically should take serious,
- * sustained production, so the Port's imported gold/dye/silk and a merchant's own stock become the
- * practical way to a stocked luxury economy rather than an afterthought on top of it.
+ * PLAYTEST B13 quadrupled every input here; B14 reverted the chain back to its original ratios
+ * (unlike the blacksmith/tailor revert, nothing upstream of glass was cut the way mine/hunting
+ * output was, so there was no offsetting scarcity left to lean on — quadrupling the recipe alone
+ * made the chain barely worth running before a Port even exists, since a town-tier village has no
+ * gold/dye/silk yet and Fine goods are city-tier). Sand/coal/iron scarcity still comes from the
+ * quarry and mine cuts B13 kept; that's judged enough pressure on the luxury chain by itself.
  */
-export const LUX_GLASS_SAND = 8;
-export const LUX_GLASS_COAL = 4;
+export const LUX_GLASS_SAND = 2;
+export const LUX_GLASS_COAL = 1;
 export const LUX_GLASS_OUT = 2;
-export const LUX_JEWEL_GLASS = 8;
-export const LUX_JEWEL_IRON = 4;
+export const LUX_JEWEL_GLASS = 2;
+export const LUX_JEWEL_IRON = 1;
 export const LUX_JEWEL_OUT = 1;
-export const LUX_FINEJEWEL_JEWELRY = 4;
-export const LUX_FINEJEWEL_GOLD = 4;
+export const LUX_FINEJEWEL_JEWELRY = 1;
+export const LUX_FINEJEWEL_GOLD = 1;
 export const LUX_FINEJEWEL_OUT = 1;
-export const LUX_FINECLOTH_DYE = 4;
-export const LUX_FINECLOTH_SILK = 8;
+export const LUX_FINECLOTH_DYE = 1;
+export const LUX_FINECLOTH_SILK = 2;
 export const LUX_FINECLOTH_OUT = 1;
 
 /**

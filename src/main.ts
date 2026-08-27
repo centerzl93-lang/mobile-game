@@ -58,7 +58,6 @@ import {
   workRadiusOf,
   fullWorkRadiusOf,
   buildersWantedFor,
-  QUARRY_SAND_SHARE,
   PORT_ARRIVAL_CHANCE,
   PORT_PRICE_MODS,
   MERCHANT_CATEGORY_STOCK,
@@ -104,6 +103,7 @@ import {
   MAP_W,
   MAP_H,
   MineOutput,
+  QuarryOutput,
   SmithRecipe,
   TailorRecipe,
   LuxuryRecipe,
@@ -718,7 +718,8 @@ class Game {
     this.persist();
   }
 
-  private setMineOutput(id: number, output: MineOutput): void {
+  /** A mine's coal/iron toggle and a quarry's stone/sand one — same field, same shape. */
+  private setMineOutput(id: number, output: MineOutput | QuarryOutput): void {
     const b = this.state.buildings.find((x) => x.id === id);
     if (b) {
       b.output = output;
@@ -1881,6 +1882,11 @@ class Game {
             { v: 'coal', label: 'Coal', on: b.output === 'coal' },
             { v: 'iron', label: 'Iron', on: b.output === 'iron' },
           ] };
+        } else if (b.type === 'quarry') {
+          controls.toggle = { group: 'quarry', options: [
+            { v: 'stone', label: 'Stone', on: b.output !== 'sand' },
+            { v: 'sand', label: 'Sand', on: b.output === 'sand' },
+          ] };
         } else if (b.type === 'blacksmith') {
           controls.toggle = { group: 'smith', options: [
             { v: 'iron', label: 'Iron', on: b.recipe === 'iron' },
@@ -2845,11 +2851,6 @@ class Game {
   debugPlacementReachable(type: BuildingType, x: number, y: number, rot: 0 | 1 | 2 | 3 = 0): boolean {
     const { w, h } = this.placeSize(type);
     return placementReachable(this.state, type, x, y, w, h, rot);
-  }
-
-  /** Debug/testing helper: how often a quarry load comes up sand. */
-  debugSandShare(): number {
-    return QUARRY_SAND_SHARE;
   }
 
   /** Debug/testing helper: what a recipe consumes per cycle. */

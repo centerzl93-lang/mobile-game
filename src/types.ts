@@ -379,6 +379,14 @@ export type BuildingType =
   | 'barn';
 
 export type MineOutput = 'coal' | 'iron';
+/**
+ * What a quarry digs — stone or sand, one seam at a time by the player's own choice, the same
+ * shape as a mine's `MineOutput` toggle. Sand used to turn up as an unbidden fraction of ordinary
+ * stone-digging (`QUARRY_SAND_SHARE`); it is now a deliberate commitment, same as a mine committing
+ * to coal over iron. Shares `Building.output` with `MineOutput` rather than a field of its own —
+ * a quarry and a mine never share a building, so the field never has to disambiguate.
+ */
+export type QuarryOutput = 'stone' | 'sand';
 export type SmithRecipe = 'iron' | 'steel';
 /**
  * What a tailor sews. `'leather'` and `'wool'` each sew plain Regular Clothing from one hide or
@@ -784,8 +792,8 @@ export interface Building {
   maxWorkers?: number;
   /** Accumulated field growth for farms (0..1). */
   growth: number;
-  /** Mine: whether it digs coal or iron. */
-  output: MineOutput;
+  /** Mine: whether it digs coal or iron. Quarry: whether it digs stone or sand. */
+  output: MineOutput | QuarryOutput;
   /** Blacksmith: iron tools or steel tools. */
   /**
    * Which recipe a converter is set to. One field, two buildings: a blacksmith reads it as
@@ -1752,8 +1760,8 @@ export const CODEX_NOTES: { icon: string; title: string; body: string }[] = [
     body:
       'Iron Tools are the standard: every trade is balanced around a villager holding one. Steel ' +
       "Tools are the advanced tier a blacksmith can forge instead, given coal alongside the iron — " +
-      'they wear out half as often, and work 15% faster besides. A villager equips whichever tier ' +
-      'is on the shelf the next time they are already at a barn, steel first.',
+      'they wear out half as often, and get 15% more done per shift besides. A villager equips ' +
+      'whichever tier is on the shelf the next time they are already at a barn, steel first.',
   },
 ];
 
@@ -3141,14 +3149,6 @@ export const SHELTER_CAPACITY = 18;
  * build proper homes is something the player feels rather than something the game announces.
  */
 export const SHELTER_HAPPY = 12;
-/**
- * How often a quarry load comes up sand instead of stone.
- *
- * A share of the same output rather than a second stream on top: sand is what a quarry digs
- * *instead of* stone that trip, so choosing to make glass costs the town masonry. A fifth is
- * enough to feed a workshop without gutting the stone supply.
- */
-export const QUARRY_SAND_SHARE = 0.22;
 /** A grand house is warmer again than a stone one — its household burns barely half the fuel. */
 export const GRAND_HOUSE_HEAT_FACTOR = 0.45;
 /** Happiness a grand house is worth to the people living in it, and to nobody else. */
@@ -3443,9 +3443,17 @@ export function repairFraction(b: Building): number {
 // `converterInputs` now import the numbers below rather than shadowing them locally. See PLAYTEST
 // B11 for the audit this consolidation came out of.
 export const FARM_FOOD_PER_WORKER = 320; // at full growth, paid at autumn harvest (hauled from the field)
-/** The hide off every kill, as a fraction of a material work-load: hunting yields its venison and
- *  this leather together now, rather than one cut *or* the other, so the tailor always has hide. */
-export const HUNT_HIDE_FRACTION = 0.4;
+/**
+ * The hide off every kill, as a fraction of a material work-load: hunting yields its venison and
+ * this leather together now, rather than one cut *or* the other, so the tailor always has hide.
+ *
+ * Cut from 0.4 to 0.1 (PLAYTEST B13): at 0.4 a single hunting cabin — built for food, not leather —
+ * kept a tailor in hide practically for free, undercutting the ranch's own dedicated wool line and
+ * leaving leather with none of the scarcity `TAILOR_LEATHER_IN` (below) was priced against. A
+ * quarter of the old trickle makes leather a real byproduct again: useful, but not a standing
+ * supply a village gets without ever deciding to.
+ */
+export const HUNT_HIDE_FRACTION = 0.1;
 
 /** A full cycle's food load (gatherer/fishing/hunting/ranch), before the site's richness factor. */
 export const LOAD_FOOD = 8;
@@ -3457,55 +3465,97 @@ export const LOAD_MAT = 6;
 export const WCUT_WOOD_IN = 6;
 export const WCUT_FW_OUT = 8;
 
-// Mine yields, as a fraction of a full LOAD_MAT cycle. Coal is deliberately the slower seam: it
-// keeps coal rarer than iron and steel a real investment, so a village that wants both has to sink
-// and staff a mine for each.
-export const MINE_IRON_FACTOR = 0.8;
-export const MINE_COAL_FACTOR = 0.5;
+/**
+ * Mine yields, as a fraction of a full LOAD_MAT cycle. Coal is deliberately the slower seam: it
+ * keeps coal rarer than iron and steel a real investment, so a village that wants both has to sink
+ * and staff a mine for each.
+ *
+ * Halved from 0.8/0.5 (PLAYTEST B13): a mine's ten job slots were more staffing than its old yield
+ * ever gave a real reason to fill — a handful of workers already saturated what the village could
+ * use. At half the rate, ten workers is what it now takes to run a mine at the pace a growing
+ * village's iron and coal demand actually wants, rather than staffing it being a courtesy.
+ */
+export const MINE_IRON_FACTOR = 0.4;
+export const MINE_COAL_FACTOR = 0.25;
 
-// Blacksmith recipes, per completed work cycle: inputs consumed -> tools produced. Steel takes the
-// same iron plus coal, and yields the *same count* of tools as iron does — steel's advantage is
-// that each one lasts twice as long (`STEEL_DURABILITY`) and works `STEEL_TOOL_PROD` (15%) harder,
-// not that more come off the anvil. A smith on steel doubles a village's tool-seasons per iron
-// ingot, but only by feeding it coal from a second, slower mine — the "keep two mines" pressure by
-// design.
-export const SMITH_IRON_IN = 4;
+/**
+ * Blacksmith recipes, per completed work cycle: inputs consumed -> tools produced. Steel takes the
+ * same iron plus coal, and yields the *same count* of tools as iron does — steel's advantage is
+ * that each one lasts twice as long (`STEEL_DURABILITY`) and works `STEEL_TOOL_PROD` (15%) harder,
+ * not that more come off the anvil. A smith on steel doubles a village's tool-seasons per iron
+ * ingot, but only by feeding it coal from a second, slower mine — the "keep two mines" pressure by
+ * design.
+ *
+ * Doubled from 4/4/3 (PLAYTEST B13): tool-making was cheap enough that it barely competed with
+ * anything else iron and coal are wanted for (construction, the luxury bench, a second mine's own
+ * upkeep). Doubling the ore bill — output held at 5 either way — makes a smithy a real draw on both
+ * seams rather than an afterthought one, and widens steel's coal premium in step.
+ */
+export const SMITH_IRON_IN = 8;
 export const SMITH_IRON_OUT = 5;
-export const SMITH_STEEL_IRON = 4;
-export const SMITH_STEEL_COAL = 3;
+export const SMITH_STEEL_IRON = 8;
+export const SMITH_STEEL_COAL = 6;
 export const SMITH_STEEL_OUT = 5;
 
-// Tailor recipes, per completed work cycle. Two ways to a coat: wool goes further than hide per
-// unit — a fleece is spun and woven, a hide is cut around — but a pen of sheep is the real
-// difference (a new building and a herd to grow), where a hunter's hide is a byproduct of a hunting
-// cabin the village needed for food anyway (`HUNT_HIDE_FRACTION`). The third way, Warm Clothing,
-// takes as much of *each* input as the wool recipe takes of wool alone, for fewer coats out — a
-// higher tier to work up to, not a third interchangeable option, and worth it: it is worth twice
-// the fuel saving worn (`WARM_CLOTHED_HEAT_FACTOR`).
-export const TAILOR_LEATHER_IN = 5;
-export const TAILOR_WOOL_IN = 4;
+/**
+ * Tailor recipes, per completed work cycle. Two ways to a coat: wool goes further than hide per
+ * unit — a fleece is spun and woven, a hide is cut around — but a pen of sheep is the real
+ * difference (a new building and a herd to grow), where a hunter's hide is a byproduct of a hunting
+ * cabin the village needed for food anyway (`HUNT_HIDE_FRACTION`). The third way, Warm Clothing,
+ * takes as much of *each* input as the wool recipe takes of wool alone, for fewer coats out — a
+ * higher tier to work up to, not a third interchangeable option, and worth it: it is worth twice
+ * the fuel saving worn (`WARM_CLOTHED_HEAT_FACTOR`).
+ *
+ * Doubled from 5/4/3/3 (PLAYTEST B13), alongside the `HUNT_HIDE_FRACTION` cut above: with leather
+ * now a genuine scarcity rather than a hunting-cabin freebie, a coat is meant to cost real
+ * commitment on *either* input, not just leather. Output (`TAILOR_OUT`/`TAILOR_WARM_OUT`) is
+ * untouched — the same coat, twice the raw material behind it.
+ */
+export const TAILOR_LEATHER_IN = 10;
+export const TAILOR_WOOL_IN = 8;
 export const TAILOR_OUT = 4;
-export const TAILOR_WARM_LEATHER_IN = 3;
-export const TAILOR_WARM_WOOL_IN = 3;
+export const TAILOR_WARM_LEATHER_IN = 6;
+export const TAILOR_WARM_WOOL_IN = 6;
 export const TAILOR_WARM_OUT = 3;
 
-// The luxury chain, per completed work cycle. Two sand and a coal make two glass; two glass with an
-// iron make one piece of jewellery. The fine bench's own goods sit one clean step above that: a
-// finished jewel reset with imported gold, and dyed silk worked into a gown — each yields a single
-// piece a cycle, dear to run, and worth it since a merchant pays more for one than for anything
-// else the town can make (see TRADE_VALUE).
-export const LUX_GLASS_SAND = 2;
-export const LUX_GLASS_COAL = 1;
+/**
+ * The luxury chain, per completed work cycle. Two sand and a coal make two glass; two glass with an
+ * iron make one piece of jewellery. The fine bench's own goods sit one clean step above that: a
+ * finished jewel reset with imported gold, and dyed silk worked into a gown — each yields a single
+ * piece a cycle, dear to run, and worth it since a merchant pays more for one than for anything
+ * else the town can make (see TRADE_VALUE).
+ *
+ * Every input quadrupled (PLAYTEST B13) — output untouched, so the same glass/jewellery/fine goods
+ * now cost 4x the sand, coal, glass, iron, jewellery, gold, dye and silk to make. The point is
+ * scarcity, not a bigger bench: stockpiling any real quantity domestically should take serious,
+ * sustained production, so the Port's imported gold/dye/silk and a merchant's own stock become the
+ * practical way to a stocked luxury economy rather than an afterthought on top of it.
+ */
+export const LUX_GLASS_SAND = 8;
+export const LUX_GLASS_COAL = 4;
 export const LUX_GLASS_OUT = 2;
-export const LUX_JEWEL_GLASS = 2;
-export const LUX_JEWEL_IRON = 1;
+export const LUX_JEWEL_GLASS = 8;
+export const LUX_JEWEL_IRON = 4;
 export const LUX_JEWEL_OUT = 1;
-export const LUX_FINEJEWEL_JEWELRY = 1;
-export const LUX_FINEJEWEL_GOLD = 1;
+export const LUX_FINEJEWEL_JEWELRY = 4;
+export const LUX_FINEJEWEL_GOLD = 4;
 export const LUX_FINEJEWEL_OUT = 1;
-export const LUX_FINECLOTH_DYE = 1;
-export const LUX_FINECLOTH_SILK = 2;
+export const LUX_FINECLOTH_DYE = 4;
+export const LUX_FINECLOTH_SILK = 8;
 export const LUX_FINECLOTH_OUT = 1;
+
+/**
+ * Quarry yields, as a fraction of a full `LOAD_MAT` cycle — the same shape as `MINE_IRON_FACTOR`/
+ * `MINE_COAL_FACTOR` above, and introduced alongside them (PLAYTEST B13). A quarry used to dig
+ * stone every cycle at full rate, with a `QUARRY_SAND_SHARE` (22%) chance of coming up sand
+ * *instead*, an unbidden side effect the player never chose. It now mimics a mine outright: the
+ * player toggles `Building.output` to `'stone'` or `'sand'` (`QuarryOutput`) and digs only that,
+ * at half the old undivided rate — the same "ten job slots should mean something" pressure as the
+ * mine factors, plus sand becoming a deliberate commitment (a quarry given over to glass-feed digs
+ * no stone at all) rather than a bonus that cost nothing to receive.
+ */
+export const QUARRY_STONE_FACTOR = 0.5;
+export const QUARRY_SAND_FACTOR = 0.5;
 
 // ---- Starting stockpile / population ----
 /**
@@ -3785,7 +3835,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     // player-sizable — and finding eight clear tiles a side is most of what placing one costs.
     type: 'quarry', name: 'Quarry', emoji: '⛏️', category: 'resources', w: 8, h: 8,
     cost: { wood: 100, stone: 180 }, jobs: 10, work: 220,
-    desc: 'Cuts stone. A large pit that can be dug anywhere — but yields more against a rocky mountainside.',
+    desc: 'Cuts stone or sand — pick which in its own panel or on the job board. A large pit that can be dug anywhere — but yields more against a rocky mountainside.',
   },
   mine: {
     type: 'mine', name: 'Mine', emoji: '🕳️', category: 'resources', w: 6, h: 6,
@@ -3795,7 +3845,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   blacksmith: {
     type: 'blacksmith', name: 'Blacksmith', emoji: '⚒️', category: 'resources', w: 3, h: 3,
     cost: { wood: 40, stone: 30, iron: 40 }, jobs: 1, work: 90,
-    desc: 'Forges Iron Tools from iron, or Steel Tools from iron + coal. Steel lasts twice as long as iron before it wears out, and works 15% faster besides.',
+    desc: 'Forges Iron Tools from iron, or Steel Tools from iron + coal. Steel lasts twice as long as iron before it wears out, and gets 15% more done per shift besides.',
   },
   tailor: {
     type: 'tailor', name: 'Tailor', emoji: '🧵', category: 'resources', w: 3, h: 3,

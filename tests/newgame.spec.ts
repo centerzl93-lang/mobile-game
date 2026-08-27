@@ -5467,7 +5467,7 @@ test.describe('sand, glass, jewellery and the harbour', () => {
     };
   `;
 
-  test('a quarry brings up sand as well as stone, and sand can be stored', { tag: '@slow' }, async ({ page }) => {
+  test('a quarry digs stone by default, and only sand once toggled — never both at once', { tag: '@slow' }, async ({ page }) => {
     test.setTimeout(180_000);
     await open2d(page);
     const out = await page.evaluate(
@@ -5480,25 +5480,32 @@ test.describe('sand, glass, jewellery and the harbour', () => {
         // like a workplace that never ran — that was the whole fault in this test, not the quarry.
         for (let i = 0; i < 3; i++) { const b = put('barn'); if (b) b.store.grain = 4000; }
         for (const k of ['wood', 'stone', 'iron', 'sand', 'glass']) barn.store[k] = 40;
-        const base = { stone: g.debugTotalStored('stone'), sand: g.debugTotalStored('sand') };
-        for (let i = 0; i < 6000; i++) g.debugAdvance(0.5);
-        return {
-          sand: g.debugTotalStored('sand') - base.sand,
+
+        // Phase 1: untouched — a fresh quarry digs stone, nothing else.
+        let base = { stone: g.debugTotalStored('stone'), sand: g.debugTotalStored('sand') };
+        for (let i = 0; i < 3000; i++) g.debugAdvance(0.5);
+        const stoneOnly = {
           stone: g.debugTotalStored('stone') - base.stone,
-          share: g.debugSandShare(),
+          sand: g.debugTotalStored('sand') - base.sand,
         };
+
+        // Phase 2: toggled to sand — the same job slots now dig sand, and nothing but sand.
+        q.output = 'sand';
+        base = { stone: g.debugTotalStored('stone'), sand: g.debugTotalStored('sand') };
+        for (let i = 0; i < 3000; i++) g.debugAdvance(0.5);
+        const sandOnly = {
+          stone: g.debugTotalStored('stone') - base.stone,
+          sand: g.debugTotalStored('sand') - base.sand,
+        };
+
+        return { stoneOnly, sandOnly };
       `) as () => any,
     );
 
-    expect(out.sand, 'the quarry brought sand up').toBeGreaterThan(0);
-    expect(out.stone, 'and stone as it always did').toBeGreaterThan(0);
-    expect(out.sand, 'sand is the minority of what a quarry digs').toBeLessThan(out.stone);
-    // The *share* is asserted on the rule rather than on the barns. What ends up stored is not the
-    // ratio the quarry dug at: the two goods compete for the same shelf, and once the barns fill,
-    // whichever is being hauled at that moment is the one that gets turned away. Measuring the
-    // split downstream reads a storage effect and calls it a production rate.
-    expect(out.share).toBeGreaterThanOrEqual(0.2);
-    expect(out.share).toBeLessThanOrEqual(0.25);
+    expect(out.stoneOnly.stone, 'an untouched quarry digs stone').toBeGreaterThan(0);
+    expect(out.stoneOnly.sand, 'and nothing else, before it is toggled').toBe(0);
+    expect(out.sandOnly.sand, 'toggled to sand, it digs sand').toBeGreaterThan(0);
+    expect(out.sandOnly.stone, 'and stops digging stone entirely while set that way').toBe(0);
   });
 
   test('the workshop turns sand and coal into glass, and glass and iron into jewellery', { tag: '@slow' }, async ({ page }) => {
@@ -5548,8 +5555,8 @@ test.describe('sand, glass, jewellery and the harbour', () => {
     expect(out.madeGlass, 'sand and coal became glass').toBeGreaterThan(0);
     expect(out.madeJewels, 'glass and iron became jewellery').toBeGreaterThan(0);
     // The ratios the spec asks for, read off the recipe itself.
-    expect(out.glassInputs).toEqual([['sand', 2], ['coal', 1]]);
-    expect(out.jewelInputs).toEqual([['glass', 2], ['iron', 1]]);
+    expect(out.glassInputs).toEqual([['sand', 8], ['coal', 4]]);
+    expect(out.jewelInputs).toEqual([['glass', 8], ['iron', 4]]);
   });
 
   test('the fine bench resets jewellery in gold, and takes silk up in dye', { tag: '@slow' }, async ({ page }) => {
@@ -5603,8 +5610,8 @@ test.describe('sand, glass, jewellery and the harbour', () => {
 
     expect(out.madeFineJewels, 'jewellery and gold became fine jewellery').toBeGreaterThan(0);
     expect(out.madeFineClothes, 'dye and silk became fine clothes').toBeGreaterThan(0);
-    expect(out.fineJewelInputs).toEqual([['jewelry', 1], ['gold', 1]]);
-    expect(out.fineClothInputs).toEqual([['dye', 1], ['silk', 2]]);
+    expect(out.fineJewelInputs).toEqual([['jewelry', 4], ['gold', 4]]);
+    expect(out.fineClothInputs).toEqual([['dye', 4], ['silk', 8]]);
     // The most valuable things a town can make — dearer than the plain jewellery below them.
     expect(out.jewelVal).toBe(40);
     expect(out.clothVal).toBe(34);
@@ -5936,8 +5943,8 @@ test.describe('iron and steel tools', () => {
     expect(out.steel.tools, 'the steel recipe makes no plain tools').toBe(0);
     expect(out.steel.coalUsed, 'steel eats coal').toBeGreaterThan(0);
     // The recipes themselves: iron alone, versus iron plus coal.
-    expect(out.ironInputs).toEqual([['iron', 4]]);
-    expect(out.steelInputs).toEqual([['iron', 4], ['coal', 3]]);
+    expect(out.ironInputs).toEqual([['iron', 8]]);
+    expect(out.steelInputs).toEqual([['iron', 8], ['coal', 6]]);
   });
 
   test('a villager\'s own kit decides their tool factor: steel over iron over bare hands', async ({ page }) => {

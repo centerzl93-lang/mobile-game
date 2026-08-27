@@ -20,6 +20,7 @@ import {
   isWorkplace,
   buildingName,
   MineOutput,
+  QuarryOutput,
   SmithRecipe,
   TailorRecipe,
   LuxuryRecipe,
@@ -184,8 +185,8 @@ export interface InspectControls {
    * labour elsewhere and halts production while keeping the worker count for when it comes back.
    */
   enable?: { on: boolean };
-  /** A single option toggle (mine output / smith recipe / forester replant / farm crop / ranch animal). */
-  toggle?: { group: 'mine' | 'smith' | 'tailor' | 'luxury' | 'forester' | 'crop' | 'animal'; options: { v: string; label: string; on: boolean }[] };
+  /** A single option toggle (mine/quarry output / smith recipe / forester replant / farm crop / ranch animal). */
+  toggle?: { group: 'mine' | 'quarry' | 'smith' | 'tailor' | 'luxury' | 'forester' | 'crop' | 'animal'; options: { v: string; label: string; on: boolean }[] };
   /**
    * Trading post or Port: show a button that opens the inventory/trade panel, and flag a merchant
    * tied up *at this berth* — a river trader at the post, a fleet at the harbour.
@@ -252,7 +253,7 @@ export interface UICallbacks {
    * chevron, ±2 for the double one (so ±`LIMIT_STEP_BIG`, 100). A cap of 0 means none.
    */
   onSetLimit: (key: LimitKey, delta: number) => void;
-  onSetMineOutput: (buildingId: number, output: MineOutput) => void;
+  onSetMineOutput: (buildingId: number, output: MineOutput | QuarryOutput) => void;
   onSetSmithRecipe: (buildingId: number, recipe: SmithRecipe) => void;
   onSetTailorRecipe: (buildingId: number, recipe: TailorRecipe) => void;
   onSetLuxuryRecipe: (buildingId: number, recipe: LuxuryRecipe) => void;
@@ -1184,7 +1185,7 @@ export class UI {
         this.el.inspect.querySelectorAll('.jr-toggle button').forEach((btn) =>
           btn.addEventListener('click', () => {
             const v = (btn as HTMLElement).dataset.v!;
-            if (tog.group === 'mine') this.cb.onSetMineOutput(id, v as MineOutput);
+            if (tog.group === 'mine' || tog.group === 'quarry') this.cb.onSetMineOutput(id, v as MineOutput | QuarryOutput);
             else if (tog.group === 'smith') this.cb.onSetSmithRecipe(id, v as SmithRecipe);
             else if (tog.group === 'tailor') this.cb.onSetTailorRecipe(id, v as TailorRecipe);
             else if (tog.group === 'luxury') this.cb.onSetLuxuryRecipe(id, v as LuxuryRecipe);

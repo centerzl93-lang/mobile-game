@@ -204,7 +204,8 @@ import {
   isDwelling,
   dwellingCapacityOf,
   SHELTER_HAPPY,
-  QUARRY_SAND_SHARE,
+  QUARRY_STONE_FACTOR,
+  QUARRY_SAND_FACTOR,
   GRAND_HOUSE_HAPPY,
   HAPPY_MONUMENT,
   CONGREGATION_PER_PRIEST,
@@ -2332,13 +2333,13 @@ function workOutput(
       // its base rate. (Using factorStone here would drop an inland quarry to MIN_FACTOR, which
       // would make "buildable anywhere" a lie.)
       //
-      // Every so often a load comes up sand rather than stone. A quarry is a hole in the ground and
-      // some of what comes out of it is grit — which is where glass starts, so the whole luxury
-      // chain hangs off a building the village has had since it was a hamlet, with no new pit to
-      // dig for it.
+      // Stone or sand, one seam at a time — the same toggle a mine uses for iron/coal
+      // (`Building.output`, `QuarryOutput`), not a random side-effect of ordinary digging. A quarry
+      // given over to sand digs no stone at all while it's set that way.
       const load = LOAD_MAT * quarryRichness(s, b) * tf;
-      if (rand(s) < QUARRY_SAND_SHARE) return { kind: 'sand', amount: load };
-      return { kind: 'stone', amount: load };
+      return b.output === 'sand'
+        ? { kind: 'sand', amount: load * QUARRY_SAND_FACTOR }
+        : { kind: 'stone', amount: load * QUARRY_STONE_FACTOR };
     }
     case 'mine': {
       const f = factorStone(s, b) * tf;

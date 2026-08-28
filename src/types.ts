@@ -1120,6 +1120,22 @@ export interface Citizen {
    */
   effort?: number;
   /**
+   * The construction/repair/demolition site (a building id) this builder is currently committed
+   * to, or `undefined` when free. `pickSite`/`nearestSiteNeeding` (`simulation.ts`) answer "what's
+   * the nearest open job right now" from scratch every tick — deliberately, so a cancelled or
+   * finished site drops its builders the instant it stops existing rather than needing anyone to
+   * notice. That is fine for one builder alone, but with several sites under construction at once
+   * the "nearest" answer flickers tick to tick as other builders' own deliveries change which site
+   * looks neediest, and a builder mid-walk with no memory of its own would reverse course to chase
+   * it — sometimes several at once, in lockstep, converging on and abandoning the same tile.
+   * `buildSite` pins the choice: `currentSiteAction` keeps returning it for as long as it is still
+   * a real, open, reachable job, and only asks `pickSite` for a fresh nearest-site search once it
+   * genuinely stops being one (finished, cancelled, demolished away, fully stocked, or a job this
+   * builder is no longer holding — see `assignHomesAndJobs`). Saved like any other belonging, so a
+   * reload resumes the same commitment instead of re-rolling it.
+   */
+  buildSite?: number;
+  /**
    * Filled a bucket at a well and is walking it to a fire — see `runFirefighter`. `false`/absent
    * means the next thing a free adult responding to a fire does is walk to the well, not the fire.
    */

@@ -1684,7 +1684,8 @@ export class UI {
       stat('💼', 'Working', p.workers) +
       stat('🔨', 'Builders', p.builders) +
       stat('🙌', 'Available', p.available) +
-      stat('🤒', 'Sick', p.sick);
+      stat('🤒', 'Sick', p.sick) +
+      (p.assimilating > 0 ? stat('🧳', 'Assimilating', p.assimilating) : '');
     const growth =
       stat('📈', 'Growth this year', `${g.netThisYear >= 0 ? '+' : ''}${g.netThisYear}`) +
       stat('👶', 'Births', g.births) +

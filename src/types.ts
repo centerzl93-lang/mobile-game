@@ -1089,6 +1089,15 @@ export interface Citizen {
    */
   spareTool?: 'iron' | 'steel';
   /**
+   * Seconds of simulation time this villager has spent in the village since arriving as a nomad —
+   * the Assimilation Period clock (`isAssimilating`, `simulation.ts`). Set to 0 the moment a nomad
+   * band settles (`settleNomads`) and accumulated continuously in `lives()`, the same pattern
+   * `schooling` already uses, until it reaches `ASSIMILATION_DURATION`. `undefined` for everyone
+   * else — founders, villagers born in the village, and any nomad from a save written before this
+   * field existed — which is exactly "never assimilating", so an old save needs no migration.
+   */
+  assimilation?: number;
+  /**
    * Seconds this villager has gone unfed. Death comes at STARVE_SECONDS, so a short gap while a
    * hauler restocks the larder is survivable. Transient — not saved.
    */
@@ -1762,6 +1771,14 @@ export const CODEX_NOTES: { icon: string; title: string; body: string }[] = [
       "Tools are the advanced tier a blacksmith can forge instead, given coal alongside the iron — " +
       'they wear out half as often, and get 15% more done per shift besides. A villager equips ' +
       'whichever tier is on the shelf the next time they are already at a barn, steel first.',
+  },
+  {
+    icon: '🧳',
+    title: 'Assimilation Period',
+    body:
+      'Newly arrived nomads spend their first year adapting to life in the settlement. During this ' +
+      'Assimilation Period they consume more food and work less efficiently. After a year in the ' +
+      'village they settle in for good, with no further penalty and nothing for you to do.',
   },
 ];
 
@@ -3184,6 +3201,30 @@ export const NOMAD_SURPLUS_SEASONS = 4.5;
 export const IMMIGRATION_MIN = 4; // fewest nomads in an arriving band
 export const IMMIGRATION_MAX = 12; // most nomads in an arriving band
 export const IMMIGRANT_SICK_CHANCE = 0.15; // chance a newcomer arrives already sick
+
+/**
+ * The Assimilation Period: a nomad's first year in the village costs the village more than an
+ * established villager's — more food, less work — without touching anything else (health,
+ * happiness, housing, jobs all behave normally). It ends on its own the moment the year is up; see
+ * `isAssimilating` in `simulation.ts` for the actual gate and `Citizen.assimilation` for where the
+ * clock lives.
+ *
+ * Deliberately tracked as elapsed simulation *seconds*, not a calendar year/season pair. A "start
+ * year, compare to `state.year`" check (the shape `lastFamineYear`/`lastFloodYear` use for their
+ * one-year cooldown) is the wrong tool here: those only ever need "was it last year or earlier?",
+ * a question a bare year number answers exactly. This needs "has a full year elapsed *from the
+ * moment they arrived*", and a nomad can arrive at any point in the calendar — a year-number
+ * comparison either graduates someone almost the instant the calendar ticks over (arrived late in
+ * the year) or holds them for nearly two years (arrived just after New Year), depending which side
+ * of the boundary the check rounds to. A running seconds counter side-steps the boundary entirely:
+ * it is the same continuous-accumulator idiom `lives()` already uses for `schooling`, and it is
+ * exactly `ASSIMILATION_DURATION` seconds long no matter which day of which season a nomad walks in.
+ */
+export const ASSIMILATION_DURATION = YEAR_LENGTH;
+/** Food consumption while assimilating — a straight multiplier alongside Rationing/Population Drive. */
+export const ASSIMILATION_FOOD_FACTOR = 1.25;
+/** Production while assimilating — a straight multiplier alongside tools/education/wellbeing/cold. */
+export const ASSIMILATION_PROD_FACTOR = 0.85;
 
 // ---- Disease & fire ----
 export const DISEASE_CHANCE = 0.06; // base chance per season of an outbreak

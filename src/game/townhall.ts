@@ -39,7 +39,7 @@ import {
   isInfant,
   isStudent,
 } from '../types';
-import { ledgerFor } from './simulation';
+import { ledgerFor, isAssimilating } from './simulation';
 import { totalAvailable, totalFoodAvailable } from './storage';
 
 /** Building types that turn worker-hours into a stored resource (mirrors the case list in
@@ -104,6 +104,10 @@ export interface PopulationSummary {
    *  reads (`isAdult && jobId === null && !builder`). */
   available: number;
   sick: number;
+  /** In their first year since arriving as a nomad — see `isAssimilating`. Not a health or
+   *  employment state, so it isn't folded into any of the counts above; a villager can be
+   *  assimilating and working, sick, or idle all at once. */
+  assimilating: number;
 }
 
 export interface GrowthSummary {
@@ -283,17 +287,21 @@ function hasProduced(b: Building): boolean {
 }
 
 function populationSummary(s: GameState): PopulationSummary {
-  let children = 0, students = 0, workers = 0, builders = 0, available = 0, sick = 0;
+  let children = 0, students = 0, workers = 0, builders = 0, available = 0, sick = 0, assimilating = 0;
   for (const c of s.citizens) {
     if (isInfant(c)) children++;
     else if (isStudent(c)) students++;
     if (c.sick) sick++;
+    if (isAssimilating(c)) assimilating++;
     if (c.jobId !== null) workers++;
     else if (c.builder) builders++;
     else if (isAdult(c)) available++;
   }
   const total = s.citizens.length;
-  return { total, children, students, adults: total - children - students, workers, builders, available, sick };
+  return {
+    total, children, students, adults: total - children - students, workers, builders, available, sick,
+    assimilating,
+  };
 }
 
 function trend(rows: PopHistoryRow[], pick: (r: PopHistoryRow) => number): ChartSeries {

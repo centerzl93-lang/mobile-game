@@ -111,6 +111,9 @@ import {
   RESOURCE_ICON,
   resourceWord,
   NO_TOOLS_PENALTY,
+  ASSIMILATION_FOOD_FACTOR,
+  ASSIMILATION_PROD_FACTOR,
+  ASSIMILATION_DURATION,
   LARDER_KINDS,
   LIMIT_STEP,
   LimitKey,
@@ -168,6 +171,9 @@ import {
   citizenToolFactor,
   wearCitizenTool,
   tryEquipTool,
+  isAssimilating,
+  assimilationFoodFactor,
+  assimilationProdFactor,
   debugWorkSpotFor,
   debugApproach,
   debugReachable,
@@ -2749,6 +2755,38 @@ class Game {
   debugCitizenToolFactor(id: number): number {
     const c = this.state.citizens.find((x) => x.id === id);
     return c ? citizenToolFactor(c) : NO_TOOLS_PENALTY;
+  }
+
+  /** Debug/testing helper: is this citizen still in their first year since arriving as a nomad? */
+  debugIsAssimilating(id: number): boolean {
+    const c = this.state.citizens.find((x) => x.id === id);
+    return !!c && isAssimilating(c);
+  }
+
+  /** Debug/testing helper: the tuned Assimilation Period modifiers, for a test to read rather than
+   *  hard-code (see `debugFoodPerCitizen`'s own comment on why). */
+  debugAssimilationFactors(): { foodFactor: number; prodFactor: number; durationSeconds: number } {
+    return {
+      foodFactor: ASSIMILATION_FOOD_FACTOR,
+      prodFactor: ASSIMILATION_PROD_FACTOR,
+      durationSeconds: ASSIMILATION_DURATION,
+    };
+  }
+
+  /** Debug/testing helper: the exact multiplier a citizen's current assimilation state applies to
+   *  their food ration / production this instant (1 for a citizen who isn't assimilating). */
+  debugCitizenAssimilationFactors(id: number): { food: number; prod: number } {
+    const c = this.state.citizens.find((x) => x.id === id);
+    if (!c) return { food: 1, prod: 1 };
+    return { food: assimilationFoodFactor(c), prod: assimilationProdFactor(c) };
+  }
+
+  /** Debug/testing helper: fast-forward a citizen's Assimilation Period clock directly, without
+   *  simulating a whole year — for a test that wants to land right at, or just past, the boundary. */
+  debugSetCitizenAssimilation(id: number, seconds: number | null): void {
+    const c = this.state.citizens.find((x) => x.id === id);
+    if (!c) return;
+    c.assimilation = seconds ?? undefined;
   }
 
   /**

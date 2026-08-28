@@ -99,6 +99,9 @@ import {
   STEEL_TOOL_PROD,
   STEEL_DURABILITY,
   TOOL_SPARE_FRACTION,
+  ASSIMILATION_DURATION,
+  ASSIMILATION_FOOD_FACTOR,
+  ASSIMILATION_PROD_FACTOR,
   COLD_WORK_FACTOR,
   COLD_WORK_MIN,
   UNCLOTHED_HEALTH_PENALTY,
@@ -572,7 +575,12 @@ function eat(s: GameState, dt: number, log: LogFn): void {
   // (a bigger, faster-growing village costs more to feed), and they stack the ordinary way.
   const foodFactor = householdFoodFactor(s);
   for (const c of s.citizens) {
-    let need = FOOD_PER_CITIZEN_PER_SEASON * (isAdult(c) ? 1 : CHILD_FOOD_FACTOR) * rate * foodFactor;
+    let need =
+      FOOD_PER_CITIZEN_PER_SEASON *
+      (isAdult(c) ? 1 : CHILD_FOOD_FACTOR) *
+      rate *
+      foodFactor *
+      assimilationFoodFactor(c);
     const home = c.homeId !== null ? homeById.get(c.homeId) : undefined;
     if (home) need = takeFoodFromLarder(s, home, need);
     if (need > 0.000001) need = consumeFood(s, need);
@@ -840,6 +848,26 @@ export function citizenToolFactor(c: Citizen): number {
 }
 
 /**
+ * Still in the Assimilation Period — the first `ASSIMILATION_DURATION` seconds of simulation time
+ * a nomad has spent in the village since `settleNomads` set `Citizen.assimilation` to 0. Ticks up in
+ * `lives()`; `undefined` (a founder, someone born here, or a nomad from a save older than this
+ * feature) reads as "never assimilating", not "just started" — see the field's own doc comment.
+ */
+export function isAssimilating(c: Citizen): boolean {
+  return (c.assimilation ?? Infinity) < ASSIMILATION_DURATION;
+}
+
+/** The Assimilation Period's food-consumption modifier — folded into `eat()`'s ration like `foodFactor`. */
+export function assimilationFoodFactor(c: Citizen): number {
+  return isAssimilating(c) ? ASSIMILATION_FOOD_FACTOR : 1;
+}
+
+/** The Assimilation Period's productivity modifier — folded into a work cycle's `prod` like wellbeing. */
+export function assimilationProdFactor(c: Citizen): number {
+  return isAssimilating(c) ? ASSIMILATION_PROD_FACTOR : 1;
+}
+
+/**
  * A villager who has just arrived at a barn checks its shelf. Bare-handed, they take one unit off
  * the shelf — steel first, then iron — straight into their own kit (`Citizen.tool`). Already
  * holding a tool that's running low on wear (`TOOL_SPARE_FRACTION`) and not already carrying a
@@ -977,6 +1005,12 @@ function lives(s: GameState, dt: number, log: LogFn): void {
   const cameOfAge: Citizen[] = [];
   const dying: Citizen[] = [];
   for (const c of s.citizens) {
+    // The Assimilation Period clock — see `Citizen.assimilation`'s doc comment for why this is a
+    // running seconds count rather than a calendar year comparison. `undefined` (everyone but a
+    // nomad mid-assimilation) is left alone rather than coerced into 0: only `settleNomads` starts
+    // this clock. Stops advancing once the year is up rather than growing forever — nothing reads
+    // it past that point, but there's no reason to keep paying the addition every tick either.
+    if (c.assimilation !== undefined && c.assimilation < ASSIMILATION_DURATION) c.assimilation += dt;
     const wasChild = !isAdult(c);
     c.age += years * AGE_PER_YEAR;
     if (wasChild) {
@@ -1811,7 +1845,12 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workerFact
         // shortage bite before it kills; it eases the moment they are warm again.
         const chillFrac = clamp((c.chill ?? 0) / FREEZE_SECONDS, 0, 1);
         const chilled = 1 - (1 - COLD_WORK_MIN) * chillFrac;
-        const prod = wellbeing * (c.graduate ? GRADUATE_BONUS : c.educated ? EDUCATED_BONUS : 1) * cold * chilled;
+        const prod =
+          wellbeing *
+          (c.graduate ? GRADUATE_BONUS : c.educated ? EDUCATED_BONUS : 1) *
+          cold *
+          chilled *
+          assimilationProdFactor(c);
         const limit = carryLimit(out.kind);
         // Keep working until the load is full, rather than setting off with whatever one cycle
         // produced. A single cycle yields well under a full load, so workers were walking the
@@ -4743,6 +4782,7 @@ function settleNomads(s: GameState, count: number, sick: number, log: LogFn): vo
       c.sick = true;
       placedSick++;
     }
+    c.assimilation = 0; // starts the Assimilation Period clock — see `isAssimilating`
     s.citizens.push(c);
   }
   log(`${count} newcomer${count > 1 ? 's' : ''} settled in your village`, 'good');

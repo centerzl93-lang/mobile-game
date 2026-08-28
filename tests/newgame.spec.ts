@@ -6489,6 +6489,8 @@ test.describe('a village climbs through tiers', () => {
         market: g.debugUnlocked('market'),
         townhall: g.debugUnlocked('townhall'),
         farm: g.debugUnlocked('farm'),
+        ranch: g.debugUnlocked('ranch'),
+        trading: g.debugUnlocked('trading'),
         dirt: g.debugPathUnlocked('dirt'),
         timber: g.debugPathUnlocked('bridge'),
         stone: g.debugPathUnlocked('stone'),
@@ -6503,6 +6505,66 @@ test.describe('a village climbs through tiers', () => {
     for (const k of ['quarry', 'blacksmith', 'market', 'townhall', 'farm', 'stone', 'tunnel'] as const) {
       expect(out[k], `${k} has to be earned`).toBe(false);
     }
+    // The ranch needs livestock and only the Trading Post reliably supplies it, so it waits for
+    // the same tier as the post rather than standing empty since Hamlet.
+    expect(out.ranch, 'a ranch with nothing to pen has to wait for Village').toBe(false);
+    expect(out.trading, 'the post the ranch depends on has to be earned too').toBe(false);
+  });
+
+  test('the ranch unlocks at Village, alongside the Trading Post that supplies its livestock', async ({ page }) => {
+    await open2d(page);
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'easy', false, 0, 4242));
+
+    // A fresh settlement has neither, live (no pin) — this is the fact the whole change hinges on.
+    const fresh = await page.evaluate(() => {
+      const g = (window as any).__village;
+      return { tier: g.debugTier(), ranch: g.debugUnlocked('ranch'), trading: g.debugUnlocked('trading') };
+    });
+    expect(fresh.tier).toBe('settlement');
+    expect(fresh.ranch).toBe(false);
+    expect(fresh.trading).toBe(false);
+
+    // The build menu is the actual gate a player hits — `debugCanPlace`/`debugPlace` deliberately
+    // ignore progression (see their doc comments), so this checks the real thing: the button itself
+    // greyed out and naming the tier it needs. Only one category's pop-out is open at a time, so
+    // each is opened fresh right before it's read.
+    const ranchBtn = page.locator('.build-btn', { hasText: 'Ranch' }).first();
+    const tradingBtn = page.locator('.build-btn', { hasText: 'Trading Post' }).first();
+
+    await page.getByRole('button', { name: /Food/ }).click();
+    await expect(ranchBtn, 'greyed out before Village').toBeDisabled();
+    await expect(ranchBtn, 'and says which tier opens it').toContainText('Village');
+
+    await page.getByRole('button', { name: /Trade/ }).click();
+    await expect(tradingBtn, 'the post it depends on is greyed out too').toBeDisabled();
+    await expect(tradingBtn).toContainText('Village');
+
+    // Pin the village into existence and both buttons come to life together.
+    await page.evaluate(() => (window as any).__village.debugPinTier('village'));
+    await expect(tradingBtn, 'the post unlocks at the same rung').toBeEnabled();
+    await page.getByRole('button', { name: /Food/ }).click();
+    await expect(ranchBtn, 'unlocked the moment the village is one').toBeEnabled();
+
+    // And it is not just reported as unlocked — a ranch can actually be raised. (`debugPlace` skips
+    // progression by design, same as the rest of this suite; the gate itself is what was just
+    // checked above through the real menu.)
+    const placed = await page.evaluate(() => {
+      const g = (window as any).__village;
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      for (const k of ['wood', 'stone', 'iron']) barn.store[k] = 9000;
+      for (let r = 3; r < 26; r++)
+        for (let dy = -r; dy <= r; dy++)
+          for (let dx = -r; dx <= r; dx++) {
+            const x = barn.x + dx, y = barn.y + dy;
+            if (!g.debugCanPlace('ranch', x, y).ok) continue;
+            if (g.debugPlace('ranch', x, y) != null) return true;
+          }
+      return false;
+    });
+    expect(placed, 'a ranch can actually be built once Village tier is reached').toBe(true);
+
+    await page.evaluate(() => (window as any).__village.debugPinTier(null));
   });
 
   test('population and trades carry it up, and losing them carry it back down', { tag: '@slow' }, async ({ page }) => {

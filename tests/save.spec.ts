@@ -439,4 +439,65 @@ test.describe('save/load reliability', () => {
     expect(out.p1).toBeCloseTo(out.set, 5);   // not rescaled on the very first load
     expect(out.p2).toBeCloseTo(out.set, 5);   // and stable across a second round-trip
   });
+
+  test('8. a saved Ranch reloads intact even though the village no longer meets the tier that unlocks it', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(() => {
+      const g = (window as any).__village;
+      // A fresh settlement is well below Village tier — the ranch here can only exist because a
+      // save from before the tier moved (or a debug/edited save) already has one standing. The
+      // tier gate lives in `canPlace`, not in the building's own record, so a load must never
+      // strip it: this is the "already built stays built" rule `villageTier` promises.
+      g.startNewGame('small', 'easy', true, 0, 909);
+      const s = g.state;
+      const barn = s.buildings.find((b: any) => b.type === 'barn');
+      let ranchId: number | null = null;
+      for (let r = 3; r < 26 && ranchId == null; r++)
+        for (let dy = -r; dy <= r && ranchId == null; dy++)
+          for (let dx = -r; dx <= r && ranchId == null; dx++) {
+            const x = barn.x + dx, y = barn.y + dy;
+            if (!g.debugCanPlace('ranch', x, y).ok) continue;
+            ranchId = g.debugPlace('ranch', x, y); // ignores tier, like an old/edited save would
+          }
+      const ranch = s.buildings.find((b: any) => b.id === ranchId);
+      ranch.built = true;
+      ranch.progress = 9999;
+      ranch.animal = 'sheep';
+      ranch.animals = 3;
+      const tierBeforeSave = g.debugTier();
+      const ranchUnlockedBeforeSave = g.debugUnlocked('ranch');
+      g.debugSaveSlot(0);
+
+      // Load into a different, clobbered game to prove the reload reads the saved ranch from disk.
+      g.startNewGame('small', 'easy', true, 1, 111);
+      const loaded = g.debugLoadSlot(0);
+      const s2 = g.state;
+      const reloadedRanch = s2.buildings.find((b: any) => b.id === ranchId);
+      return {
+        loaded,
+        tierBeforeSave,
+        ranchUnlockedBeforeSave,
+        tierAfterLoad: g.debugTier(),
+        ranchStillThere: !!reloadedRanch,
+        ranchBuilt: reloadedRanch?.built,
+        ranchAnimal: reloadedRanch?.animal,
+        ranchAnimals: reloadedRanch?.animals,
+        ranchUnlockedAfterLoad: g.debugUnlocked('ranch'),
+      };
+    });
+
+    expect(out.loaded).toBe(true);
+    // The village that placed the ranch never earned it through the ordinary gate.
+    expect(out.tierBeforeSave).toBe('settlement');
+    expect(out.ranchUnlockedBeforeSave).toBe(false);
+    // And it comes back exactly as it was: standing, finished, its herd intact — the tier gate
+    // never reaches back into buildings that already exist.
+    expect(out.tierAfterLoad).toBe('settlement');
+    expect(out.ranchStillThere, 'the ranch was not dropped on load').toBe(true);
+    expect(out.ranchBuilt).toBe(true);
+    expect(out.ranchAnimal).toBe('sheep');
+    expect(out.ranchAnimals).toBe(3);
+    // The gate still refuses a *new* one — this is about construction, not about what already stands.
+    expect(out.ranchUnlockedAfterLoad).toBe(false);
+  });
 });

@@ -1290,6 +1290,12 @@ function assignHomesAndJobs(s: GameState): void {
   for (const c of s.citizens) {
     c.builder = isAdult(c) && c.jobId === null && builderN < wantBuilders;
     if (c.builder) builderN++;
+    // A citizen who has just stopped being a builder (hired into a job, or the player dialled the
+    // count down) is cleanly released rather than left holding a site commitment they can no
+    // longer act on — see `Citizen.buildSite`. Harmless either way (`currentSiteAction` is only
+    // ever consulted while `c.builder` is true), but this keeps the field honest for anyone
+    // inspecting it and means a builder who returns to the pool later starts from a clean pick.
+    else c.buildSite = undefined;
   }
 }
 
@@ -2492,69 +2498,92 @@ function siteCost(b: Building): Partial<Record<ResourceKind, number>> {
   return b.damaged ? repairCostOf(b) : costOf(b);
 }
 
+/**
+ * What a builder could do at building `b` right now — fetch a shortfall material, lay down
+ * build-work, tear it down, or cart off its rubble — or `null` if it needs nothing from a builder
+ * at all. Pulled out of `pickSite` so `currentSiteAction` (below) can ask the identical question
+ * about one specific, already-assigned building instead of re-searching every building on the map;
+ * the two must never disagree about what a given site is asking for.
+ */
+function siteActionFor(s: GameState, b: Building): { action: SiteAction['action']; kind?: ResourceKind } | null {
+  if (b.razed) {
+    // Rubble: cart the salvage off, one load at a time, until there is nothing left.
+    for (const k in b.store) {
+      if ((b.store[k as ResourceKind] ?? 0) > 0.01) return { action: 'salvage', kind: k as ResourceKind };
+    }
+    return null;
+  }
+  if (b.demolish) return { action: 'raze' };
+  if (!(b.damaged || (!b.built && footprintClear(s, b)))) return null;
+  // The plot has to be cleared *before* materials are hauled in, not after: place → clear the
+  // trees / loose stone under the footprint → deliver materials → construct. Nothing is
+  // fetched to an obstructed site, so a load is never left sitting on a plot that still can't
+  // be built on. The free-adult workforce clears the footprint (see `markFootprintHarvest`);
+  // while anything stands on it this branch is skipped and the site simply waits.
+  //
+  // A DAMAGED building (`b.damaged`) skips all of that — it never stopped standing — and asks
+  // for `repairCostOf`/`repairWorkOf` against its own `repairStore` instead; see `siteCost`/
+  // `siteStore`. Same 'fetch'/'build' actions either way, so a repair rides the rest of this
+  // pipeline — and `runBuilder` below — without a parallel copy of it.
+  const cost = siteCost(b);
+  const store = siteStore(b);
+  let fetchKind: ResourceKind | null = null;
+  let fully = true;
+  for (const k in cost) {
+    const kind = k as ResourceKind;
+    const have = store[kind] ?? 0;
+    if (have < (cost[kind] ?? 0)) fully = false;
+    // Only fetch what is still short *after* counting the loads already on their way here, so a
+    // crowd of builders doesn't each set off for the same sack.
+    const committed = have + carriedToward(s, kind);
+    if (committed < (cost[kind] ?? 0) - 0.001 && totalStored(s, kind) > 0 && fetchKind === null) {
+      fetchKind = kind;
+    }
+  }
+  // Materials are all delivered, but don't raise the building until any trees / loose stone
+  // under its footprint have been harvested away (the free-adult workforce clears them). When
+  // everything short is already in transit (fetchKind null but not `fully`), there is nothing to
+  // do here yet — the builder falls through to harvest/paths until the loads land.
+  return fully ? { action: 'build' } : fetchKind ? { action: 'fetch', kind: fetchKind } : null;
+}
+
 function pickSite(s: GameState, c: Citizen): SiteAction | null {
   let best: SiteAction | null = null;
   let bestD = Infinity;
   for (const b of s.buildings) {
-    let action: SiteAction | null = null;
-    if (b.razed) {
-      // Rubble: cart the salvage off, one load at a time, until there is nothing left.
-      let kind: ResourceKind | null = null;
-      for (const k in b.store) {
-        if ((b.store[k as ResourceKind] ?? 0) > 0.01) {
-          kind = k as ResourceKind;
-          break;
-        }
-      }
-      action = kind ? { site: b, action: 'salvage', kind } : null;
-    } else if (b.demolish) {
-      action = { site: b, action: 'raze' };
-    } else if (b.damaged || (!b.built && footprintClear(s, b))) {
-      // The plot has to be cleared *before* materials are hauled in, not after: place → clear the
-      // trees / loose stone under the footprint → deliver materials → construct. Nothing is
-      // fetched to an obstructed site, so a load is never left sitting on a plot that still can't
-      // be built on. The free-adult workforce clears the footprint (see `markFootprintHarvest`);
-      // while anything stands on it this branch is skipped and the site simply waits.
-      //
-      // A DAMAGED building (`b.damaged`) skips all of that — it never stopped standing — and asks
-      // for `repairCostOf`/`repairWorkOf` against its own `repairStore` instead; see `siteCost`/
-      // `siteStore`. Same 'fetch'/'build' actions either way, so a repair rides the rest of this
-      // pipeline — and `runBuilder` below — without a parallel copy of it.
-      const cost = siteCost(b);
-      const store = siteStore(b);
-      let fetchKind: ResourceKind | null = null;
-      let fully = true;
-      for (const k in cost) {
-        const kind = k as ResourceKind;
-        const have = store[kind] ?? 0;
-        if (have < (cost[kind] ?? 0)) fully = false;
-        // Only fetch what is still short *after* counting the loads already on their way here, so a
-        // crowd of builders doesn't each set off for the same sack.
-        const committed = have + carriedToward(s, kind);
-        if (committed < (cost[kind] ?? 0) - 0.001 && totalStored(s, kind) > 0 && fetchKind === null) {
-          fetchKind = kind;
-        }
-      }
-      // Materials are all delivered, but don't raise the building until any trees / loose stone
-      // under its footprint have been harvested away (the free-adult workforce clears them). When
-      // everything short is already in transit (fetchKind null but not `fully`), there is nothing to
-      // do here yet — the builder falls through to harvest/paths until the loads land.
-      action = fully
-        ? { site: b, action: 'build' }
-        : fetchKind
-          ? { site: b, action: 'fetch', kind: fetchKind }
-          : null;
-    }
-    if (!action) continue;
+    const need = siteActionFor(s, b);
+    if (!need) continue;
     const p = buildingApproach(s, b, c);
     if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) continue;
     const d = (p.x - c.x) ** 2 + (p.y - c.y) ** 2;
     if (d < bestD) {
       bestD = d;
-      best = action;
+      best = { site: b, action: need.action, kind: need.kind };
     }
   }
   return best;
+}
+
+/**
+ * Re-check a builder's existing `c.buildSite` commitment instead of asking `pickSite` to search
+ * every building fresh. As long as the assigned site still exists, still needs something, and is
+ * still reachable, this keeps handing it back — which is what stops several builders working
+ * concurrent sites from reversing course every tick as each site's outstanding need flickers with
+ * every delivery (see `Citizen.buildSite` for the failure mode this avoids). The moment the site
+ * stops being a real, open, reachable job — finished, cancelled, demolished away, fully stocked, or
+ * cut off by a changed map — this returns `null` and the caller falls back to `pickSite`'s ordinary
+ * nearest-site search, so an assignment that has genuinely gone bad is never held onto past the
+ * tick it went bad.
+ */
+function currentSiteAction(s: GameState, c: Citizen): SiteAction | null {
+  if (c.buildSite == null) return null;
+  const b = s.buildings.find((x) => x.id === c.buildSite);
+  if (!b) return null;
+  const need = siteActionFor(s, b);
+  if (!need) return null;
+  const p = buildingApproach(s, b, c);
+  if (!reachableTile(c, Math.floor(p.x), Math.floor(p.y))) return null;
+  return { site: b, action: need.action, kind: need.kind };
 }
 
 /**
@@ -2587,7 +2616,23 @@ function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, builderFac
   if (c.carry) {
     const kind = c.carry.kind;
     // Only builders supply construction sites; a laborer just stashes whatever it's carrying.
-    const site = c.builder ? nearestSiteNeeding(s, c, kind) : null;
+    // Deliver to the site this load was actually fetched for (`c.buildSite`) as long as it still
+    // needs this kind, rather than re-searching for the globally nearest short site from wherever
+    // the builder now happens to stand — see `Citizen.buildSite`. Only falls back to the old
+    // nearest-site search once that specific site stops needing it (finished, cancelled, or beaten
+    // to it by another builder's delivery).
+    let site: Building | null = null;
+    if (c.builder) {
+      const held = c.buildSite != null ? s.buildings.find((b) => b.id === c.buildSite) : undefined;
+      const heldNeedsIt = !!held && !held.razed && !held.demolish && (held.damaged || !held.built) &&
+        (siteStore(held)[kind] ?? 0) < (siteCost(held)[kind] ?? 0) - 0.001;
+      if (heldNeedsIt) {
+        site = held!;
+      } else {
+        site = nearestSiteNeeding(s, c, kind);
+        c.buildSite = site ? site.id : undefined;
+      }
+    }
     if (site) {
       goTo(c, buildingApproach(s, site, c));
       if (stepTo(s, c, dt)) {
@@ -2619,8 +2664,15 @@ function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, builderFac
     return;
   }
 
-  // Only Builders construct work buildings — find a construction site to work.
-  const pick = c.builder ? pickSite(s, c) : null;
+  // Only Builders construct work buildings — find a construction site to work. Stick with
+  // whatever site is already assigned (`c.buildSite`) for as long as it is still a real, open,
+  // reachable job; only search for a fresh nearest site once that commitment lapses — see
+  // `currentSiteAction`.
+  let pick: SiteAction | null = null;
+  if (c.builder) {
+    pick = currentSiteAction(s, c) ?? pickSite(s, c);
+    c.buildSite = pick ? pick.site.id : undefined;
+  }
   if (pick) {
     if (pick.action === 'fetch') {
       const kind = pick.kind!;

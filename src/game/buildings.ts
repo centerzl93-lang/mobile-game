@@ -236,7 +236,10 @@ export function placeBuilding(
     workers: [],
     desiredWorkers: 0, // start unstaffed — the player assigns workers with the stepper
     growth: 0,
-    output: 'coal',
+    // A mine opens on iron, a quarry on stone (any value but 'sand' reads as stone — see the
+    // quarry production case) — the ordinary, always-useful seam rather than the one that takes
+    // a deliberate choice to dig instead.
+    output: 'iron',
     // A blacksmith opens on iron, a tailor on leather — the input each can get without a
     // dedicated pen behind it. One field, two meanings; see `Building.recipe`.
     recipe: type === 'tailor' ? 'leather' : 'iron',

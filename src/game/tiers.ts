@@ -74,8 +74,8 @@ export const BUILDING_TIER: Record<BuildingType, VillageTier> = {
   herbalist: 'settlement',
   well: 'settlement',
   // Hamlet: the resource infrastructure. Quarrying and mining, the trades that work what they
-  // bring back, and the farmland and pens that let a growing hamlet grow its own food — so that
-  // by the time it is a Village it is feeding itself.
+  // bring back, and the farmland that lets a growing hamlet grow its own food — so that by the
+  // time it is a Village it is feeding itself.
   quarry: 'hamlet',
   mine: 'hamlet',
   blacksmith: 'hamlet',
@@ -83,7 +83,6 @@ export const BUILDING_TIER: Record<BuildingType, VillageTier> = {
   stonehouse: 'hamlet',
   shelter: 'hamlet',
   cemetery: 'hamlet',
-  ranch: 'hamlet',
   farm: 'hamlet',
   // Village: the institutions. Somewhere to govern, worship, heal, learn, trade and drink.
   townhall: 'village',
@@ -93,6 +92,9 @@ export const BUILDING_TIER: Record<BuildingType, VillageTier> = {
   market: 'village',
   tavern: 'village',
   trading: 'village',
+  // The ranch needs livestock, and only a Trading Post reliably supplies it — so the ranch waits
+  // for the same tier that raises the post, rather than standing since Hamlet with nothing to pen.
+  ranch: 'village',
   // Town: what a place stops being a village to build. Learning past school, deep water, houses
   // for people with money, a church for thousands, and fine goods.
   university: 'town',

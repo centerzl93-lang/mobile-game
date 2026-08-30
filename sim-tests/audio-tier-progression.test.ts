@@ -12,6 +12,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { newGame } from '../src/game/state';
 import { debugEndSeason } from '../src/game/simulation';
+import { saveGame, loadGame } from '../src/game/save';
 import { pinTier } from '../src/game/tiers';
 import { audioBus, type AudioEvent } from '../src/audio/events';
 
@@ -60,5 +61,32 @@ test('tier progression: a tier *regression* does not emit TIER_ADVANCED (that st
 
   pinTier('hamlet'); // falling back — e.g. a required building burned down
   const events = withCapture(() => debugEndSeason(s, noLog));
+  assert.equal(events.includes('TIER_ADVANCED'), false);
+});
+
+function installFakeLocalStorage(): void {
+  const data = new Map<string, string>();
+  (globalThis as unknown as { localStorage: Storage }).localStorage = {
+    getItem: (k: string) => (data.has(k) ? data.get(k)! : null),
+    setItem: (k: string, v: string) => { data.set(k, v); },
+    removeItem: (k: string) => { data.delete(k); },
+    clear: () => { data.clear(); },
+    key: (i: number) => Array.from(data.keys())[i] ?? null,
+    get length() { return data.size; },
+  } as Storage;
+}
+
+test('tier progression: loading a save whose village is already at a high tier does not replay the advancement sting', () => {
+  installFakeLocalStorage();
+  const s = newGame('small', 'normal', false, 500);
+  pinTier('city');
+  debugEndSeason(s, noLog); // establishes tierSeen = 'city' on the in-memory state, no event (a fresh village)
+  assert.ok(saveGame(s, 7), 'sanity: the state saves cleanly');
+
+  const loaded = loadGame(7);
+  assert.ok(loaded, 'sanity: the save loads back');
+  // Still pinned to the same tier the save was written at — a load is not a fresh village, so this
+  // must read as "no change" rather than a growth from whatever tierSeen would default to.
+  const events = withCapture(() => debugEndSeason(loaded!, noLog));
   assert.equal(events.includes('TIER_ADVANCED'), false);
 });

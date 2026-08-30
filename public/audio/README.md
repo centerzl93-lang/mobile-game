@@ -13,8 +13,13 @@ CLAUDE.md "Audio Asset Architecture":
 
 ```
 audio/
-  music/          one loop per VillageTier (settlement/hamlet/village/town/city)
-  ambient/        environmental layers: water, wind, forest, birds, village
+  music/          one loop per VillageTier (settlement/hamlet/village/town/city) —
+                  more than one file per tier is fine (`AudioManager` picks a track and
+                  avoids an immediate repeat, see `pickMusicVariation`)
+  ambient/        water/wind/forest/village loops, driven by `AudioManager.updateEnvironment`
+                  (`src/audio/environment.ts`); bird calls too, but as one-shot files
+                  (`BIRD_CALL` in `AUDIO_ASSET_MAP`) fired occasionally on a randomized
+                  schedule (`src/audio/birds.ts`) — not a loop, however many you drop in
   buildings/      construction started/completed/damaged/repaired, and the four
                   production-activity loops (mining/woodcutting/blacksmith/construction)
   events/         disaster stings (fire/flood/famine/sickness/warning), tier-advance sting

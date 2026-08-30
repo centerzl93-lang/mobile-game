@@ -33,4 +33,5 @@ export function initAudio(): void {
   audioManager.install();
   hapticManager.install();
   audioManager.installAutoUnlock();
+  audioManager.installVisibilityHandling();
 }

@@ -16,6 +16,8 @@ import { ConcurrencyGate } from './concurrency';
 import { decidePlay } from './decision';
 import { loadAudioSettings, type AudioSettings } from './settings';
 import { computeActivityCounts, intensityFor, type ProductionActivity } from './activity';
+import { EnvironmentSampler, seasonOf, windIntensity } from './environment';
+import { nextBirdCallAt } from './birds';
 import type { VillageTier } from '../game/tiers';
 import type { GameState } from '../types';
 
@@ -75,8 +77,17 @@ export class AudioManager {
    *  `AudioContext`/asset is actually available yet — see `setLoopIntensity`. Lets a caller (or a
    *  test) read back "what did I ask for" even with audio unavailable. */
   private intensities = new Map<string, number>();
+  /** Throttles the expensive half of `updateEnvironment` (the terrain scan) — see
+   *  `EnvironmentSampler`. */
+  private envSampler = new EnvironmentSampler();
+  /** Clock time (same units as `updateEnvironment`'s `now`) the next bird call is due. Starts at 0
+   *  so the very first call is always "due" — a quiet village doesn't wait out a full interval
+   *  before its first chirp. */
+  private nextBirdAt = 0;
   private musicTier: VillageTier | null = null;
   private musicNode: { gain: GainNode; source: AudioBufferSourceNode } | null = null;
+  /** The last music variation actually started — see `pickMusicVariation`. */
+  private lastMusicVariation: string | null = null;
 
   private listener: { x: number; y: number } | undefined;
   private unsubscribeBus?: () => void;
@@ -150,6 +161,30 @@ export class AudioManager {
     window.addEventListener('pointerdown', handler, { once: true });
     window.addEventListener('keydown', handler, { once: true });
     window.addEventListener('touchend', handler, { once: true });
+  }
+
+  /**
+   * Suspend/resume the shared `AudioContext` with the tab/app's own visibility — CLAUDE.md "Pause
+   * / Resume": a backgrounded browser tab or a mobile app losing focus should not keep an
+   * `AudioContext` running (most browsers suspend it for you, but iOS Safari/PWA reliably does not,
+   * and it costs nothing to be explicit rather than assume). A no-op with no `document` (Node
+   * tests, SSR); like `installAutoUnlock`, this only ever touches the *existing* context — it never
+   * creates one, so backgrounding a tab before the first gesture stays a correct no-op rather than
+   * an unlock the player never asked for. `resume()`/`suspend()` both reject quietly on a context
+   * that isn't there yet or is already in the target state — swallowed the same way `unlock()`
+   * already swallows a rejected `resume()`, since neither the simulation nor the UI can do anything
+   * useful with that rejection.
+   */
+  installVisibilityHandling(): void {
+    if (typeof document === 'undefined') return;
+    document.addEventListener('visibilitychange', () => {
+      if (!this.ctx) return; // nothing to suspend/resume before the first unlock
+      if (document.hidden) {
+        this.ctx.suspend().catch(() => {});
+      } else {
+        this.ctx.resume().catch(() => {});
+      }
+    });
   }
 
   /** Where spatial attenuation (`decidePlay`) measures distance from — see CLAUDE.md "Distance /
@@ -259,11 +294,41 @@ export class AudioManager {
     }
   }
 
-  /** Layered environmental ambience (water/wind/forest/birds/village) — CLAUDE.md "Ambient Audio
-   *  Architecture". Not driven automatically anywhere yet in Phase 1; a caller sets one directly
-   *  once it has an opinion (e.g. `setAmbientLayer('water', 0.6)`). */
+  /** Layered environmental ambience (water/wind/forest/village) — CLAUDE.md "Ambient Audio
+   *  Architecture". Driven automatically by `updateEnvironment` below; exposed directly too (a
+   *  caller — or a test — can set one on its own opinion, e.g. `setAmbientLayer('water', 0.6)`). */
   setAmbientLayer(layer: AmbientLayer, intensity: number): void {
     this.setLoopIntensity(layer, AMBIENT_LAYER_DEFS[layer], intensity);
+  }
+
+  /**
+   * The ambient environment tick — CLAUDE.md "Ambient Audio Architecture": water/forest/village
+   * from `environment.ts`'s live terrain+population metrics, wind from a low seasonal bed, plus the
+   * occasional one-shot `BIRD_CALL` on `birds.ts`'s randomized schedule. Meant to be called from
+   * the same cadence as `updateActivity`/`playMusicForTier` (`main.ts`'s 100ms UI-refresh tick) —
+   * the terrain scan itself is throttled by `envSampler` (a few seconds' cadence), so calling this
+   * every 100ms never re-walks the map every 100ms. Never throws: every layer already degrades to
+   * "remembered but silent" when the context or the asset isn't there yet (`setLoopIntensity`).
+   */
+  updateEnvironment(state: GameState, now = nowMs()): void {
+    const metrics = this.envSampler.sample(state, now);
+    this.setAmbientLayer('water', metrics.water);
+    this.setAmbientLayer('forest', metrics.forest);
+    this.setAmbientLayer('village', metrics.village);
+    this.setAmbientLayer('wind', windIntensity(state));
+
+    if (now >= this.nextBirdAt) {
+      this.nextBirdAt = nextBirdCallAt(now, seasonOf(state));
+      // Reuses the ordinary one-shot path (mute/ambient-volume/missing-asset handling included) —
+      // see `events.ts`'s note on `BIRD_CALL` never being `emit`-ted onto the bus.
+      this.playSfx('BIRD_CALL');
+    }
+  }
+
+  /** When the next bird call is due — for tests/inspection, same convention as
+   *  `currentMusicTier()`/`ambientIntensity()`. */
+  nextBirdCallTime(): number {
+    return this.nextBirdAt;
   }
 
   /** The intensity last requested for `key` (an `AmbientLayer` or `ProductionActivity` id),
@@ -351,7 +416,11 @@ export class AudioManager {
     if (!ctx || def.variations.length === 0) return;
     const bus = this.categoryGain.music;
     if (!bus) return;
-    const pick = def.variations[(Math.random() * def.variations.length) | 0];
+    // CLAUDE.md "Music Randomization": "avoid selecting the same track repeatedly if multiple
+    // tracks are available." Only matters once a tier ever gets a second track (today: none do) —
+    // with one variation, or none picked yet, this is exactly the old plain random pick.
+    const pick = pickMusicVariation(def.variations, this.lastMusicVariation);
+    this.lastMusicVariation = pick;
     this.resolveBuffer(ctx, pick).then((buffer) => {
       if (!buffer || this.musicTier !== tier) return; // superseded by another tier change mid-load
       const gain = ctx.createGain();
@@ -381,6 +450,20 @@ export class AudioManager {
 
 function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+/**
+ * Pick a music track, avoiding an immediate repeat of `last` when more than one variation exists —
+ * CLAUDE.md "Music Randomization": "avoid selecting the same track repeatedly," stopping short of
+ * the "complex playlist management" it explicitly says not to build (no history, no shuffle bag,
+ * just "not the one that's already playing"). A single-variation tier (every one of them, until
+ * Phase 2 audio files actually ship) or a tier with nothing picked yet falls back to a plain random
+ * pick — there is nothing to avoid repeating.
+ */
+export function pickMusicVariation(variations: string[], last: string | null, rand: () => number = Math.random): string {
+  if (variations.length <= 1 || last === null) return variations[(rand() * variations.length) | 0];
+  const others = variations.filter((v) => v !== last);
+  return others.length > 0 ? others[(rand() * others.length) | 0] : variations[0];
 }
 
 /** The shared instance — one `AudioContext` for the whole app, same convention as the shared

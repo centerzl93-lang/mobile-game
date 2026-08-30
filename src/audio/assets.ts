@@ -79,6 +79,12 @@ export const AUDIO_ASSET_MAP: Record<AudioEvent, AudioAssetDef> = {
   BLACKSMITH: activityLoop(),
   CONSTRUCTION: activityLoop(),
 
+  // ---- Ambient one-shot — CLAUDE.md "Bird Audio": intermittent, never a loop. Scheduled by
+  // `AudioManager.updateEnvironment` (`birds.ts`'s `nextBirdCallAt`), not by any gameplay call
+  // site — see `events.ts`'s note. Generous concurrency/cooldown are really a safety net: the
+  // scheduler itself already spaces calls tens of seconds apart.
+  BIRD_CALL: sfx('ambient', { category: 'ambient', maxConcurrent: 2, cooldownMs: 5000 }),
+
   // ---- Disasters — rare, important, deliberately allowed to overlap a little (a fire *and* a
   // sickness can both be true) but still cooled down against retriggering mid-event.
   WARNING: sfx('events', { maxConcurrent: 2, cooldownMs: 2000 }),
@@ -113,18 +119,18 @@ export const MUSIC_TRACKS: Record<VillageTier, AudioAssetDef> = {
   city: { category: 'music', variations: [], loop: true, dir: 'music' },
 };
 
-/** Layered environmental ambience (CLAUDE.md "Ambient Audio Architecture") — independent of the
- *  production-activity loops above and of each other; several can play at once
- *  (`AudioManager.setAmbientIntensity` per layer). Not driven by anything yet in Phase 1 — see the
- *  implementation report's "Remaining Work" for how each would eventually be fed (e.g. `water`
- *  scaled by proximity to the river, `wind`/`birds` always on at a low level, `village` scaled by
- *  population). */
-export type AmbientLayer = 'water' | 'wind' | 'forest' | 'birds' | 'village';
+/** Layered *continuous* environmental ambience (CLAUDE.md "Ambient Audio Architecture") —
+ *  independent of the production-activity loops above and of each other; several can play at once
+ *  (`AudioManager.setAmbientLayer` per layer, fed by `environment.ts`'s live metrics:
+ *  `water`/`forest` from terrain near the settlement, `village` from population + built buildings,
+ *  `wind` a low seasonal bed). Birds are deliberately not a fifth entry here — CLAUDE.md "Birds
+ *  should be occasional, not continuous": a call is a one-shot `BIRD_CALL` event above, scheduled
+ *  by `AudioManager.updateEnvironment` (`birds.ts`), not a loop this table would keep running. */
+export type AmbientLayer = 'water' | 'wind' | 'forest' | 'village';
 
 export const AMBIENT_LAYER_DEFS: Record<AmbientLayer, AudioAssetDef> = {
   water: { category: 'ambient', variations: [], loop: true, dir: 'ambient' },
   wind: { category: 'ambient', variations: [], loop: true, dir: 'ambient' },
   forest: { category: 'ambient', variations: [], loop: true, dir: 'ambient' },
-  birds: { category: 'ambient', variations: [], loop: true, dir: 'ambient' },
   village: { category: 'ambient', variations: [], loop: true, dir: 'ambient' },
 };

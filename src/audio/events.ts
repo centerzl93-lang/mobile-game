@@ -23,8 +23,12 @@
  *  `MINING`/`WOODCUTTING`/`BLACKSMITH`/`CONSTRUCTION` are the exception: those four are never
  *  `emit`-ted through the bus below. They're driven continuously by `activity.ts`'s live worker
  *  counts straight into `AudioManager.setAmbientIntensity`, not fired as one-shot occurrences —
- *  see CLAUDE.md "Looping Activity Sounds". They stay in this union so `assets.ts`'s asset table
- *  is one single exhaustive `Record<AudioEvent, …>`, not two parallel tables. */
+ *  see CLAUDE.md "Looping Activity Sounds". `BIRD_CALL` is a second exception in the same spirit,
+ *  just the opposite shape: it's a one-shot, but nothing in gameplay ever `emit`s it either —
+ *  `AudioManager.updateEnvironment` fires it itself on a randomized schedule (`birds.ts`), reusing
+ *  the ordinary one-shot playback path so bird calls get muting/volume/missing-asset handling for
+ *  free. All of these stay in this union so `assets.ts`'s asset table is one single exhaustive
+ *  `Record<AudioEvent, …>`, not several parallel tables. */
 export type AudioEvent =
   // UI / Interaction
   | 'BUILDING_PLACED'
@@ -41,6 +45,8 @@ export type AudioEvent =
   | 'WOODCUTTING'
   | 'BLACKSMITH'
   | 'CONSTRUCTION'
+  // Ambient — self-scheduled, see the doc note above
+  | 'BIRD_CALL'
   // Disasters
   | 'WARNING'
   | 'FIRE_STARTED'

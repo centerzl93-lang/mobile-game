@@ -4061,6 +4061,11 @@ function updateMerchantBoat(s: GameState, dt: number, log: LogFn): void {
       (s.stats ??= freshStats()).merchantVisits++;
       const meta = m.category ? MERCHANT_CATEGORY_META[m.category] : { emoji: '⚓', label: 'merchant' };
       log(`${meta.emoji} A ${meta.label.toLowerCase()} has docked — trade at the post`, 'good');
+      // Bell-then-arrival, one short beat apart in the same tick — the docking transition only
+      // ever fires once per visit (guarded by the `arriving` → `docked` phase change above), so
+      // the bell rings exactly when a merchant actually becomes available, never on every tick
+      // it stays docked.
+      emitAudio('MERCHANT_BELL');
       emitAudio('MERCHANT_ARRIVAL');
     }
   } else if (m.phase === 'docked') {
@@ -4951,7 +4956,7 @@ function dist2c(a: { x: number; y: number }, b: { x: number; y: number }): numbe
   return (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
 }
 
-function diseaseSeason(s: GameState, log: LogFn): void {
+export function diseaseSeason(s: GameState, log: LogFn): void {
   const pop = s.citizens.length;
   if (pop === 0) return;
 
@@ -5194,6 +5199,9 @@ function spawnPortMerchant(s: GameState, log: LogFn, port: Building, category: M
   m.boatPath = null; // planned lazily on the first arriving tick
   const meta = MERCHANT_CATEGORY_META[category];
   log(`${meta.emoji} The ${meta.label} is making for the harbour`, 'good');
+  // A Port fleet's sail-in is audibly the same moment as a river trader's (`spawnMerchant`) —
+  // the player shouldn't have to know which dock a boat is bound for to hear it coming.
+  emitAudio('MERCHANT_BOAT');
 }
 
 /**

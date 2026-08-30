@@ -401,11 +401,11 @@ with the village) for peaks and cumulatives (a village that hit 300 pop and cras
 
 ## Audio & haptics architecture
 
-`src/audio/` — a small, event-driven layer, built across three phases (architecture, then ambient/
-music, then building/activity sound) with no audio files shipped yet — every asset table below
-lists `variations: []`, the documented "not recorded" state, not a placeholder. Keeps gameplay
-decoupled from Web Audio/DOM the same way the rest of the codebase stays decoupled from `THREE.*` —
-see "Unity migration architecture" above.
+`src/audio/` — a small, event-driven layer, built across four phases (architecture, then ambient/
+music, then building/activity sound, then event sfx) with no audio files shipped yet — every asset
+table below lists `variations: []`, the documented "not recorded" state, not a placeholder. Keeps
+gameplay decoupled from Web Audio/DOM the same way the rest of the codebase stays decoupled from
+`THREE.*` — see "Unity migration architecture" above.
 
 - **Semantic events** (`events.ts`): `AudioEvent`/`HapticEvent` unions plus `audioBus`/`emitAudio` —
   a tiny pub/sub. Gameplay raises `FIRE_STARTED`, never "play fire_02.mp3". `simulation.ts` imports
@@ -447,6 +447,27 @@ see "Unity migration architecture" above.
 - **Settings** (`settings.ts`): Master/Music/Ambient/Sfx (0..10) plus a disaster-noises weight and a
   haptics on/off, `localStorage`-keyed exactly like `village-tips`/`village-gfx` — never in the
   save. Reachable from the same Settings panel (`UI.showSettings`).
+- **Event sound effects**: warnings, disasters, merchants and progression all raise their
+  `AudioEvent` from the one authoritative state transition, not from a UI refresh or a per-tick
+  check. `warnLowStocks`'s own `lowWarned` latch (already there for the log line) is what stops
+  `WARNING` from spamming while a shortage sits unchanged — the audio layer added no cooldown of
+  its own on top of it. Fire/Sickness/Famine/Flood (`FIRE_STARTED`/`SICKNESS_EVENT`/
+  `FAMINE_STARTED`/`FLOOD_STARTED`) each fire once per hazard, not once per affected building — a
+  flood that damages four buildings is one `FLOOD_STARTED`, since the event rides the disaster
+  rolling *at all* (`fireSeason`/`famineSeason`/`floodSeason`/`diseaseSeason`, each called once per
+  season turn), never a per-building loop; `BUILDING_DAMAGED` is the separate, already-existing
+  per-building cue for anyone who wants it. A river trader and a Port fleet both launch to
+  `MERCHANT_BOAT` (`spawnMerchant`/`spawnPortMerchant`) and dock to `MERCHANT_BELL` +
+  `MERCHANT_ARRIVAL` together, the instant `updateMerchantBoat`'s `arriving` → `docked` transition
+  happens — never repeating while the same visit stays docked; the audio layer carries no opinion
+  of its own about seasons, categories, or which dock a boat is bound for. `ACHIEVEMENT_EARNED`
+  fires once per newly-unlocked achievement from `Game.checkAchievements` (the authoritative
+  evaluator's own output, not the celebration UI); several at once are each their own event, kept
+  from piling into noise by the ordinary concurrency/cooldown machinery in `assets.ts`, not a
+  bespoke queue. `TIER_ADVANCED` fires from `announceTier`'s existing `s.tierSeen` latch — the same
+  guard that already stopped the tier line from repeating in the log — so it is exactly-once per
+  growth, never on a regression, a repeated season turn at an unchanged tier, or a reload of a save
+  already sitting at that tier (`tierSeen` travels with the save).
 
 ## Save / load system
 

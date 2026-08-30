@@ -6,6 +6,18 @@ import { Renderer, PlacementView } from './render/renderer';
 import { Renderer3D } from './render/renderer3d';
 import { UI, PathTier } from './ui/ui';
 import {
+  initAudio,
+  emitAudio,
+  audioManager,
+  loadAudioSettings,
+  setHapticsEnabled,
+  setMasterVolume,
+  setMusicVolume,
+  setAmbientVolume,
+  setSfxVolume,
+  setDisasterWeight,
+} from './audio';
+import {
   GameState,
   Building,
   Citizen,
@@ -242,27 +254,9 @@ import { InspectRow, InspectControls } from './ui/ui';
 /** Where the tips preference lives. Kept out of the save so it follows the player, not a village. */
 const TIPS_KEY = 'village-tips';
 
-/** Where the haptic-feedback preference lives. Follows the player, not a village. Defaults on. */
-const HAPTICS_KEY = 'village-haptics';
-const hapticsPref = (): boolean => localStorage.getItem(HAPTICS_KEY) !== 'off';
-
-/**
- * Audio volume preferences. There is no audio in the game yet — these are front-end-only sliders
- * (0..10, default 5) so the settings surface is ready for a future sound system to read. Like tips
- * and haptics, they follow the player rather than the village, so they live in localStorage, not
- * the save.
- */
-const AUDIO_MUSIC_KEY = 'village-audio-music';
-const AUDIO_NOTIFICATIONS_KEY = 'village-audio-notifications';
-const AUDIO_VILLAGE_KEY = 'village-audio-village';
-const AUDIO_DISASTER_KEY = 'village-audio-disaster';
-const AUDIO_VOLUME_DEFAULT = 5;
-const audioVolumePref = (key: string): number => {
-  const stored = localStorage.getItem(key);
-  if (stored === null) return AUDIO_VOLUME_DEFAULT;
-  const raw = Number(stored);
-  return Number.isFinite(raw) && raw >= 0 && raw <= 10 ? raw : AUDIO_VOLUME_DEFAULT;
-};
+// Haptic-feedback and audio-volume preferences now live in `src/audio/settings.ts` (same
+// localStorage keys as before, so an existing player's saved slider positions still apply) — see
+// `openSettings` below for how they're read/written and applied live to `audioManager`.
 
 const SPEEDS = [1, 2, 5, 10];
 /**
@@ -420,6 +414,12 @@ class Game {
     this.input.onMarqueeMove = (a, b, c, d) => this.onMarqueeMove(a, b, c, d);
     this.input.onMarqueeEnd = (a, b, c, d) => this.onMarqueeEnd(a, b, c, d);
     this.input.onMarqueeCancel = () => { this.marquee = null; };
+
+    // Wires the audio/haptic backends to the shared semantic-event bus and arms the first-
+    // interaction autoplay unlock (see CLAUDE.md "Browser/Mobile Audio Restrictions"). Never
+    // throws — safe to call unconditionally even where `AudioContext`/`navigator.vibrate` don't
+    // exist at all (see `src/audio/index.ts`).
+    initAudio();
 
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => {
@@ -915,6 +915,7 @@ class Game {
     const r = basketTrade(this.state, basket);
     if (r.ok) {
       this.log('Trade complete', 'good');
+      emitAudio('TRADE_COMPLETED');
       this.persist();
     }
     return r;
@@ -1404,18 +1405,26 @@ class Game {
     if (this.running) this.persist();
   }
 
-  /** Settings: graphics tier (applies on reload) and clear-all-saves. `back` returns to caller. */
+  /**
+   * Settings: graphics tier (applies on reload), audio/haptics, and clear-all-saves. `back`
+   * returns to caller. Every audio/haptics handler both persists (`src/audio/settings.ts`, same
+   * localStorage convention as `village-gfx`/`TIPS_KEY` above it) and applies live to the running
+   * `audioManager` — a slider drag is heard immediately, the same way every other setting here
+   * already takes effect without a reload (bar Graphics, which says so explicitly).
+   */
   private openSettings(back: () => void): void {
     const gfx = (localStorage.getItem('village-gfx') as 'low' | 'high' | null) ?? 'auto';
+    const audio = loadAudioSettings();
     this.ui.showSettings({
       gfx,
       initialGfx: gfx,
       tips: this.ui.tipsEnabled(),
-      haptics: hapticsPref(),
-      musicVolume: audioVolumePref(AUDIO_MUSIC_KEY),
-      notificationsVolume: audioVolumePref(AUDIO_NOTIFICATIONS_KEY),
-      villageVolume: audioVolumePref(AUDIO_VILLAGE_KEY),
-      disasterVolume: audioVolumePref(AUDIO_DISASTER_KEY),
+      haptics: audio.haptics,
+      masterVolume: audio.master,
+      musicVolume: audio.music,
+      notificationsVolume: audio.sfx,
+      villageVolume: audio.ambient,
+      disasterVolume: audio.disasterWeight,
       onSetGfx: (g) => {
         if (g === 'auto') localStorage.removeItem('village-gfx');
         else localStorage.setItem('village-gfx', g);
@@ -1427,23 +1436,32 @@ class Game {
         this.persistSetting();
       },
       onSetHaptics: (on) => {
-        localStorage.setItem(HAPTICS_KEY, on ? 'on' : 'off');
+        setHapticsEnabled(on);
+        this.persistSetting();
+      },
+      onSetMasterVolume: (v) => {
+        setMasterVolume(v);
+        audioManager.setMasterVolume(v);
         this.persistSetting();
       },
       onSetMusicVolume: (v) => {
-        localStorage.setItem(AUDIO_MUSIC_KEY, String(v));
+        setMusicVolume(v);
+        audioManager.setMusicVolume(v);
         this.persistSetting();
       },
       onSetNotificationsVolume: (v) => {
-        localStorage.setItem(AUDIO_NOTIFICATIONS_KEY, String(v));
+        setSfxVolume(v);
+        audioManager.setSfxVolume(v);
         this.persistSetting();
       },
       onSetVillageVolume: (v) => {
-        localStorage.setItem(AUDIO_VILLAGE_KEY, String(v));
+        setAmbientVolume(v);
+        audioManager.setAmbientVolume(v);
         this.persistSetting();
       },
       onSetDisasterVolume: (v) => {
-        localStorage.setItem(AUDIO_DISASTER_KEY, String(v));
+        setDisasterWeight(v);
+        audioManager.setDisasterWeight(v);
         this.persistSetting();
       },
       onClearSaves: () => {
@@ -1543,10 +1561,12 @@ class Game {
     const check = canPlace(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot);
     if (!check.ok) {
       this.ui.flashHint(check.reason ?? 'Cannot build here');
+      emitAudio('INVALID_ACTION');
       return;
     }
     const unreachable = !placementReachable(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot);
     const placed = placeBuilding(this.state, this.selectedBuild, tx, ty, w, h, this.buildRot);
+    emitAudio('BUILDING_PLACED', { x: tx, y: ty });
     const name = BUILDING_DEFS[this.selectedBuild].name;
     const needsClearing = placed !== null && !footprintClear(this.state, placed);
     // Only speak up when the siting needs the player to *do* something: nothing can reach the plot,
@@ -3325,6 +3345,7 @@ class Game {
     const fresh = evaluateAchievements(this.state, this.unlockedAchievements);
     for (const a of fresh) {
       this.ui.celebrateAchievement({ title: a.title, medal: TIER_MEDAL[a.tier], tier: a.tier, unlocked: true });
+      emitAudio('ACHIEVEMENT_EARNED');
     }
   }
 
@@ -3427,6 +3448,15 @@ class Game {
       this.ui.refreshPanels(this.state);
       if (this.inspectSel) this.refreshInspect();
       this.checkAchievements();
+      // Live production-activity ambience (CLAUDE.md "Looping Activity Sounds") and the tier-based
+      // music track (CLAUDE.md "Music Architecture") both read straight off live state on this same
+      // cadence — never from inside `update()` itself, so neither adds any coupling to the tick
+      // pipeline. `playMusicForTier` is a no-op when the tier hasn't actually changed, so calling it
+      // every 100ms never restarts the track. Skipped on the idle main-menu backdrop village.
+      if (this.running && !this.state.gameOver) {
+        audioManager.updateActivity(this.state);
+        audioManager.playMusicForTier(villageTier(this.state));
+      }
     }
     this.refreshConfirmBar();
 

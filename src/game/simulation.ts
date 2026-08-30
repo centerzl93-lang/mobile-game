@@ -283,6 +283,10 @@ import {
   workerCapOf,
 } from '../types';
 import { TIERS, TIER_META, villageTier, meetsTier, VillageTier } from './tiers';
+// Semantic audio events only — pure data/emitter, no Web Audio/DOM. See CLAUDE.md "Unity
+// migration architecture" and `src/audio/events.ts`'s module doc for why this is the one audio
+// import the simulation is allowed.
+import { emitAudio } from '../audio/events';
 import { housingCapacity, buildingCenter, makeCitizen } from './state';
 import {
   forestInCircle,
@@ -3016,6 +3020,7 @@ function finishRepair(s: GameState, b: Building, log: LogFn): void {
   b.repairProgress = 0;
   b.repairStore = {};
   log(`✓ The ${BUILDING_DEFS[b.type].name} has been repaired`, 'good');
+  emitAudio('BUILDING_REPAIRED', { x: b.x, y: b.y });
 }
 
 function finishConstruction(s: GameState, b: Building): void {
@@ -3027,6 +3032,7 @@ function finishConstruction(s: GameState, b: Building): void {
   }
   b.built = true;
   b.progress = BUILDING_DEFS[b.type].work;
+  emitAudio('CONSTRUCTION_COMPLETED', { x: b.x, y: b.y });
   // Staff it from whatever the trade was already asking for and had nowhere to put — the rest of
   // its posts stand empty until the player staffs them on the Job Board.
   drawFromTradeExtra(s, b);
@@ -3669,6 +3675,7 @@ function warnLowStocks(s: GameState, log: LogFn): void {
     if (s.lowWarned[key]) continue; // already told them, and nothing has changed
     s.lowWarned[key] = true;
     log(lowStockLine(key), 'bad');
+    emitAudio('WARNING');
   }
 }
 
@@ -3883,6 +3890,7 @@ function spawnMerchant(s: GameState, log: LogFn): void {
   m.boatPath = null; // planned lazily on the first arriving tick
   const meta = MERCHANT_CATEGORY_META[category];
   log(`${meta.emoji} A ${meta.label.toLowerCase()}'s boat is sailing in`, 'info');
+  emitAudio('MERCHANT_BOAT');
 }
 
 /**
@@ -4039,6 +4047,7 @@ function updateMerchantBoat(s: GameState, dt: number, log: LogFn): void {
       (s.stats ??= freshStats()).merchantVisits++;
       const meta = m.category ? MERCHANT_CATEGORY_META[m.category] : { emoji: '⚓', label: 'merchant' };
       log(`${meta.emoji} A ${meta.label.toLowerCase()} has docked — trade at the post`, 'good');
+      emitAudio('MERCHANT_ARRIVAL');
     }
   } else if (m.phase === 'docked') {
     // Hold station alongside the quay. Recomputed rather than remembered so a post that is
@@ -4942,6 +4951,7 @@ function diseaseSeason(s: GameState, log: LogFn): void {
     for (let i = 0; i < n; i++) healthy[i].sick = true;
     if (n > 0) {
       log('A sickness spreads through the village', 'bad');
+      emitAudio('SICKNESS_EVENT');
       s.disasterAlert = true;
     }
   }
@@ -5019,6 +5029,7 @@ export function famineSeason(s: GameState, log: LogFn): void {
   s.famine = { severity };
   s.lastFamineYear = s.year;
   log('🌾 Reports of poor crops are spreading — farmers warn of a difficult harvest this year', 'bad');
+  emitAudio('FAMINE_STARTED');
   s.disasterAlert = true;
 }
 
@@ -5084,6 +5095,7 @@ export function floodSeason(s: GameState, log: LogFn): void {
   const chance = FLOOD_CHANCE_PER_SPRING * (onCooldown ? FLOOD_COOLDOWN_FACTOR : 1);
   if (rand(s) >= chance) return;
   log('🌊 Water levels are rising — flooding has been reported along the river', 'bad');
+  emitAudio('FLOOD_STARTED');
   // The event itself happened — water rose — whether or not any particular building's own roll
   // goes on to take damage from it. That is what the cooldown remembers, same as `s.famine` is set
   // the moment famine is warned about rather than only once a harvest actually comes in short.
@@ -5251,6 +5263,10 @@ function announceTier(s: GameState, log: LogFn): void {
   if (before === undefined || before === now) return; // a fresh village is simply what it is
   if (TIERS.indexOf(now) > TIERS.indexOf(before)) {
     log(`${TIER_META[now].emoji} Your ${TIER_META[before].name.toLowerCase()} has grown into a ${TIER_META[now].name.toLowerCase()}`, 'good');
+    // The tier-advance *sting* + haptic only — the music crossfade to `now`'s track is a
+    // continuous "what tier is the village at" read, driven independently every UI-refresh tick
+    // from `main.ts` via `AudioManager.playMusicForTier` (see CLAUDE.md "Music Architecture").
+    emitAudio('TIER_ADVANCED');
   } else {
     log(`${TIER_META[now].emoji} Your ${TIER_META[before].name.toLowerCase()} has fallen back to a ${TIER_META[now].name.toLowerCase()}`, 'bad');
   }
@@ -5296,6 +5312,7 @@ function tryIgnite(s: GameState, b: Building, log: LogFn, announce: boolean): vo
   // staff are turned out, exactly as a demolition turns them out (see `razeBuilding`).
   evictOccupants(s, b);
   log(`🔥 Fire! The ${BUILDING_DEFS[b.type].name} is burning`, 'bad');
+  emitAudio('FIRE_STARTED', { x: b.x, y: b.y });
   // A disaster in progress is worth the player's actual attention — see `disasterAlert` and
   // `Game.frame`/`debugAdvanceAtSpeed`, which drop the game back to 1× the moment they notice it.
   s.disasterAlert = true;
@@ -5341,6 +5358,7 @@ function floodDamageBuilding(s: GameState, b: Building, log: LogFn, tier: FloodR
   } else {
     log(`🌊 The ${name} was damaged by the flood and needs repair`, 'bad');
   }
+  emitAudio('BUILDING_DAMAGED', { x: b.x, y: b.y });
   announceDeaths(log, drowned, 'flood', 'bad');
 }
 
@@ -5474,6 +5492,7 @@ function resolveFire(s: GameState, b: Building, survives: boolean, log: LogFn): 
     b.damaged = true;
     b.damageReason = 'fire';
     log(`⚠️ The ${name} survived the fire but is damaged and needs repair`, 'bad');
+    emitAudio('BUILDING_DAMAGED', { x: b.x, y: b.y });
   } else {
     markScorched(s, b); // a burn scar, not the bare ground an ordinary demolition leaves
     razeBuilding(s, b);

@@ -471,3 +471,56 @@ test.describe('settings', () => {
     expect(await page.evaluate(() => localStorage.getItem('village-gfx'))).toBeNull();
   });
 });
+
+// Phase 1 audio/haptics architecture (`src/audio/`) — see CLAUDE.md. These drive the real settings
+// panel in a real Chromium (unlike `sim-tests/audio-*.test.ts`, which run headless in Node with no
+// `AudioContext` at all), so they're the coverage for "audio init doesn't break the browser session"
+// and "the settings surface reads/writes through `src/audio/settings.ts` correctly."
+test.describe('audio settings', () => {
+  async function setSlider(page: Page, id: string, value: string): Promise<void> {
+    await page.evaluate(
+      ({ id, value }) => {
+        const el = document.getElementById(`set-${id}`) as HTMLInputElement;
+        el.value = value;
+        el.dispatchEvent(new Event('change'));
+      },
+      { id, value },
+    );
+  }
+
+  test('Master volume slider is present, defaults sensibly, and persists', async ({ page }) => {
+    await open(page);
+    await page.click('#mm-settings');
+    await expect(page.locator('#set-master')).toBeVisible();
+    // See src/audio/settings.ts's MASTER_DEFAULT.
+    expect(await page.evaluate(() => (document.getElementById('set-master') as HTMLInputElement).value)).toBe('8');
+    await setSlider(page, 'master', '3');
+    expect(await page.evaluate(() => localStorage.getItem('village-audio-master'))).toBe('3');
+  });
+
+  test('haptics toggle persists to the existing village-haptics key', async ({ page }) => {
+    await open(page);
+    await page.click('#mm-settings');
+    await page.click('#set-haptics-off');
+    expect(await page.evaluate(() => localStorage.getItem('village-haptics'))).toBe('off');
+    await page.click('#set-haptics-on');
+    expect(await page.evaluate(() => localStorage.getItem('village-haptics'))).toBe('on');
+  });
+
+  test('the game keeps running, muted or not, and audio init throws no page errors', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    await open(page);
+    // The very first click of `open()`'s own setup already exercised the autoplay-unlock listener
+    // (`AudioManager.installAutoUnlock`) in a real browser — this test layers a full settings pass
+    // and a real game tick on top of it.
+    await page.click('#mm-settings');
+    for (const id of ['master', 'music', 'notifications', 'village', 'disaster']) await setSlider(page, id, '0'); // fully muted
+    await page.click('#set-haptics-off');
+    await page.click('#set-back');
+    await page.evaluate(() => (window as any).__village.startNewGame('small', 'normal', false, 0));
+    await page.waitForTimeout(150); // a few real frames, so the UI-refresh tick's audio hooks run
+    expect(errors).toEqual([]);
+    expect(await page.evaluate(() => (window as any).__village.running)).toBe(true);
+  });
+});

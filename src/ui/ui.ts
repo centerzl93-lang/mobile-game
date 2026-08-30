@@ -2744,6 +2744,9 @@ export class UI {
     initialGfx: 'auto' | 'low' | 'high';
     tips: boolean;
     haptics: boolean;
+    /** The overall fader every category below is multiplied by — see `src/audio/manager.ts`'s
+     *  `master`/`categoryGain` bus chain. */
+    masterVolume: number;
     musicVolume: number;
     notificationsVolume: number;
     villageVolume: number;
@@ -2751,6 +2754,7 @@ export class UI {
     onSetGfx: (g: 'auto' | 'low' | 'high') => void;
     onSetTips: (on: boolean) => void;
     onSetHaptics: (on: boolean) => void;
+    onSetMasterVolume: (v: number) => void;
     onSetMusicVolume: (v: number) => void;
     onSetNotificationsVolume: (v: number) => void;
     onSetVillageVolume: (v: number) => void;
@@ -2764,13 +2768,14 @@ export class UI {
       `<button class="seg${opts.tips === on ? ' on' : ''}" id="set-tips-${on ? 'on' : 'off'}">${label}</button>`;
     const hapticBtn = (on: boolean, label: string) =>
       `<button class="seg${opts.haptics === on ? ' on' : ''}" id="set-haptics-${on ? 'on' : 'off'}">${label}</button>`;
-    // The volume sliders below are wired to preferences only — there's no audio in the game yet, so
-    // moving one just persists a number for a future sound system to read. Label and slider are one
-    // `set-vol` block so the two sit close together, with a tighter gap between blocks than a full
-    // `menu-list` row gets — see `.set-vol`/`.set-audio-list` in style.css.
-    // `--fill` drives the filled portion of the track (see style.css) — a manual stand-in for the
-    // native `accent-color` progress fill, which is unavailable once the track/thumb are custom-
-    // styled. Set on render and kept live on drag by `wireVolume`'s `input` handler below.
+    // Each slider is a category fader on `audioManager`'s bus chain (master → music/ambient/sfx —
+    // see `src/audio/manager.ts`) and takes effect immediately, the same as every other setting
+    // here bar Graphics. Label and slider are one `set-vol` block so the two sit close together,
+    // with a tighter gap between blocks than a full `menu-list` row gets — see `.set-vol`/
+    // `.set-audio-list` in style.css. `--fill` drives the filled portion of the track (see
+    // style.css) — a manual stand-in for the native `accent-color` progress fill, which is
+    // unavailable once the track/thumb are custom-styled. Set on render and kept live on drag by
+    // `wireVolume`'s `input` handler below.
     const volumeRow = (id: string, label: string, value: number) =>
       `<div class="set-vol">` +
       `<div class="set-vol-label"><span>${label}</span>` +
@@ -2795,6 +2800,7 @@ export class UI {
         `</div>` +
         `<div class="set-label">Audio</div>` +
         `<div class="set-audio-list">` +
+        volumeRow('master', 'Master', opts.masterVolume) +
         volumeRow('music', 'Music', opts.musicVolume) +
         volumeRow('notifications', 'Notifications', opts.notificationsVolume) +
         volumeRow('village', 'Village noises', opts.villageVolume) +
@@ -2843,6 +2849,7 @@ export class UI {
         this.showSettings(apply(v));
       });
     };
+    wireVolume('master', opts.onSetMasterVolume, (v) => ({ ...opts, masterVolume: v }));
     wireVolume('music', opts.onSetMusicVolume, (v) => ({ ...opts, musicVolume: v }));
     wireVolume('notifications', opts.onSetNotificationsVolume, (v) => ({ ...opts, notificationsVolume: v }));
     wireVolume('village', opts.onSetVillageVolume, (v) => ({ ...opts, villageVolume: v }));

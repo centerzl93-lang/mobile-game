@@ -33,7 +33,7 @@ Status legend: ✅ done/locked · 🔒 locked (do not change without real playte
 | **8** | Mobile optimization | ⏳ |
 | **9** | UX polish | ⏳ |
 | **10** | Final gameplay validation | ⏳ |
-| **11** | Release preparation | ⏳ |
+| **11** | Release preparation (native identity, build/release infra, monetization & platform services, store & launch) | ⏳ |
 
 *(This supersedes the old Phase 0–9 numbering used while the game was being built out; that work is
 now folded into Phase 1 below, with its own history preserved rather than deleted.)*
@@ -204,6 +204,39 @@ construction, disasters, save schema), and which are engine-specific and get reb
 (Category C: `src/render/`, `src/engine/`; Category D: `localStorage`, DOM, PWA). Use that
 classification as the migration's own work-breakdown — it was written for exactly this transition.
 
+#### Unity project bootstrap
+
+A minimal toolchain proof, not the production build pipeline (that's Phase 11):
+
+- Unity LTS + URP, iOS + Android platform modules installed.
+- **Orientation: landscape**, locked at the project level — settled now because it drives every
+  Unity UI layout decision from Phase 4c onward, the same way the browser HUD's chip row already
+  assumes a wide screen.
+- One development build deployed to a physical device per platform (Unity → Xcode → iPhone; Unity →
+  Android APK) — proves the export/signing/deploy toolchain works before any game logic exists.
+
+#### Parity harness (new — the port's correctness oracle)
+
+The simulation is fully deterministic: a seeded `mulberry32` stream whose entire state is one 32-bit
+integer on `state.rng` (`src/game/rng.ts`), plus a map that's a pure function of `state.seed`. That
+determinism is the cheapest possible way to prove the C# port is faithful, and nothing today captures
+it for that purpose:
+
+- Drive the existing `window.__village` debug hooks (`startNewGame`, `debugAdvance`, `debugPlace`,
+  and the `debug*` query helpers already used by `tests/` and `sim-tests/`) through a fixed set of
+  seeds and scripted action sequences, and export the resulting `GameState` at checkpoints as
+  golden-master fixtures (JSON snapshots).
+- These fixtures become the acceptance gate for Phase 4b: the C# simulation, given the same seed and
+  the same input sequence, must reproduce the same `GameState` fields (population, resources,
+  buildings, tiers, ledger) at each checkpoint. `sim-tests/`'s "pure simulation-in,
+  assertions-on-`GameState`-out" style is the direct model for how the C# side asserts against them.
+
+#### Save-migration decision
+
+Native installs start **fresh** — a web `localStorage` save is not imported into the Unity build. What
+ports is the **save-schema concepts** (`src/game/save.ts`: versioned envelope, numbered migrations,
+load-time field defaults, slots), not the stored bytes.
+
 ---
 
 ### Phase 4 — Unity core architecture ⏳
@@ -211,28 +244,34 @@ classification as the migration's own work-breakdown — it was written for exac
 Create Unity equivalents for the major systems, preferring a **data-driven** architecture — the same
 table-driven convention the browser build already uses for `BUILDING_DEFS`, `RESOURCE_*`, `TRADE_VALUE`
 (Category A tables port close to directly). Keep gameplay values separated from visual/animation
-components wherever practical, mirroring the browser build's simulation/presentation split.
+components wherever practical, mirroring the browser build's simulation/presentation split. Three
+buildable sub-stages, each gated on the one before it — a "build the next phase" request can target
+4a, 4b, or 4c individually:
 
-Include:
+#### 4a — Data (Category A)
 
-- Game state
-- Simulation/tick system
-- Seasons & years
-- Villagers
-- Jobs
-- Buildings
-- Resources
-- Inventory
-- Storage
-- Production
-- Construction
-- Hauling
-- Trade
-- Population
-- Progression
-- Policies
-- Disasters
-- Save/load
+Port `src/types.ts`'s tables and constants as data-driven Unity assets (ScriptableObjects or
+equivalent config): `BUILDING_DEFS`, `RESOURCE_*` (kinds/icon/volume), `TRADE_VALUE`, tier gates
+(`BUILDING_TIER`, `TIER_META`), achievement conditions. These tables *are* the portable artifact —
+port the data, not a new indirection layer around it.
+
+#### 4b — Simulation (Category B)
+
+Rewrite the `update()` tick pipeline in C#: game state, seasons/years, the citizen task machine, jobs,
+construction, hauling, storage/production, trade, population, progression, policies, disasters. Kept
+renderer-free and headless-testable, mirroring `sim-tests/`'s "pure simulation-in,
+assertions-on-`GameState`-out" model. **Gate:** matches the Phase 3 parity-harness golden masters for
+the same seeds/inputs before this sub-stage is considered done.
+
+#### 4c — Platform & glue (Category D)
+
+- **Save/load:** native local save/load reproducing the save-schema concepts (versioned envelope,
+  slots, migrations, load-time defaults) — see Phase 3's save-migration decision.
+- **App lifecycle:** background/resume/sleep/terminate handled safely so the simulation and save state
+  can never corrupt or desync across a suspend.
+- **Offline support:** all assets and saves local; no gameplay system requires a network connection.
+- **Input foundation:** touch (tap/drag/pinch/pan/long-press) plus editor mouse/keyboard, with gameplay
+  input kept separate from UI input — mirrors the browser build's unified `InputManager` split.
 
 ---
 
@@ -292,18 +331,19 @@ Categories:
 Use variation/randomisation where appropriate so repeated actions don't become irritating — the
 browser build's `pickVariationAvoidingRepeat` rule is the pattern to carry over.
 
+**Coordinate with Phase 11's season-turn ad hook** (free SKU): the ad plays at the same `endSeason`
+boundary this phase's season/tier/disaster cues already fire from — the ad presentation must not
+double up with, or drown out, that boundary's own audio/haptic events.
+
 ---
 
 ### Phase 7 — Visual polish ⏳
 
 After the Unity core and animation systems are functioning:
 
-- Lighting
-- Shadows
-- Materials
-- Water
-- Fire
-- Smoke
+- **Graphics pipeline** — URP lighting, shadows, materials, water shading.
+- **VFX** — fire, smoke, weather, particle effects, pooled and built with mobile-friendly shaders
+  (this is where the browser build's disaster/weather visuals get their production-quality Unity pass).
 - Resource-gathering effects
 - Construction effects
 - Seasonal visuals
@@ -324,19 +364,26 @@ After the Unity core and animation systems are functioning:
 Unity development should target mobile performance from the beginning, not as an afterthought:
 
 - Object pooling
-- Efficient simulation
-- Efficient pathfinding
-- LOD
-- Culling/occlusion where appropriate
+- **Simulation performance** — the `update()` tick at large late-game populations; CPU budget, update
+  frequency, AI/task-machine cost.
+- **Efficient pathfinding** — the C# port of `src/game/pathfind.ts`'s A* at scale.
+- **Graphics optimization** — LOD, batching, GPU instancing, culling/occlusion, draw-call reduction.
 - Texture optimization
 - Mesh optimization
-- Draw-call reduction
 - Animation optimization
-- Memory management
-- Battery-conscious simulation
+- **Memory optimization** — texture/asset memory budgets, object pooling coverage, leak prevention.
+- **Battery optimization** — frame rate targets, simulation throttling, background behaviour.
 - Touch controls
 
-Testing must eventually include actual target phones, not just the Unity Editor.
+**Device & stability testing matrix** (must run on physical hardware, not just the Unity Editor):
+
+- **Large village testing** — small / medium / large / extreme populations against an established
+  target population/performance benchmark.
+- **Long session testing** — 1 / 4 / 8+ hour runs, watching for memory leaks, simulation drift, and
+  performance degradation.
+- **Device compatibility** — older phones, modern phones, tablets; establish minimum supported devices.
+- **iOS device testing** — physical iPhone/iPad, development and release builds, not simulator-only.
+- **Android device testing** — low-end, mid-range, high-end physical devices.
 
 ---
 
@@ -347,6 +394,8 @@ Review and improve:
 - Building placement
 - Camera controls
 - Touch controls
+- **Mobile UI adaptation** — responsive layout, touch-target sizing, scaling across phone/tablet.
+- **Safe areas** — iPhone notches/rounded corners/home indicator, Android display cutouts.
 - Villager inspection
 - Job information
 - Production feedback
@@ -390,20 +439,58 @@ B6/B13/B14 measurements already held themselves to (real simulated ticks, not ar
 
 ### Phase 11 — Release preparation ⏳
 
-- Final save system
-- Settings
-- Audio settings
-- Graphics settings
-- Tutorial/onboarding
-- Error handling
-- Performance profiling
-- Device testing
-- Build pipeline
-- App icon
-- Store screenshots
-- Store description
-- Privacy/legal requirements
-- Final QA
+Four buildable sub-stages, each a right-sized "build the next phase" target on its own.
+
+#### 11a — Native app identity & presentation
+
+- **Native app configuration** — bundle ID (iOS) / package name (Android), version + build number.
+  Kept **stable** once established — these are effectively permanent per platform.
+- **App icon** — production icon at every required resolution, iOS + Android.
+- **Launch screen** — production launch/splash experience, iOS + Android.
+- Tutorial/onboarding, settings (audio settings, graphics settings).
+
+#### 11b — Build & release infrastructure
+
+- **Build configuration** — separate debug / development / release configs.
+- **iOS build pipeline** — Unity → Xcode, development and release builds (Mac/Xcode or Unity Build
+  Automation for CI).
+- **Android build pipeline** — development APKs; **release builds as AAB** for Google Play.
+- **Automated build pipeline** — GitHub Actions and/or Unity Build Automation driving both platforms
+  repeatably, superseding Phase 3's minimal bootstrap build.
+- **Crash reporting** — native crash logs + Unity diagnostics.
+- **Error logging** — simulation errors, save errors, asset errors.
+- **Analytics** — retention, progression, feature usage, crashes; kept minimal and privacy-conscious.
+- Performance profiling as an ongoing release-readiness check (feeds back into Phase 8's benchmarks).
+
+#### 11c — Monetization & platform services
+
+- **Two SKUs, both the full game, nothing paywalled:**
+  - **Free** — shows an ad at each season-turn boundary (`endSeason`, the same tick the browser
+    build's tier/disaster/ledger turnover already fires from). See Phase 6's coordination note so the
+    ad doesn't collide with that boundary's audio/haptic cues.
+  - **Paid** — identical game, no ads.
+- **Native achievements** — sync the existing 80-achievement system (`src/game/achievements.ts`) to
+  Game Center (iOS) and Google Play Games (Android), alongside the in-game panel.
+- **Cloud saves** — optional cross-device save backup (CloudKit / Google Play Games / a custom
+  backend). Pursued only once the native local save system (Phase 4c) is stable.
+- **Push notifications** — 🎯 deferred decision, not being built. If picked up later: optional,
+  non-intrusive reminders only, iOS + Android.
+- **In-app purchases** — 🎯 deferred decision, only relevant if monetization design changes to include
+  IAP beyond the ad-supported/paid split above.
+
+#### 11d — Store, compliance & launch
+
+- **Privacy** — privacy policy and platform disclosures (Apple, Google Play).
+- **App permissions** — minimized, and each one explained; request only what's actually needed.
+- **Store compliance** — verify Apple App Store Review and Google Play policy requirements.
+- **App Store assets** — icon, screenshots, preview images.
+- **Store metadata** — descriptions, keywords, categories, age rating, for both stores.
+- **Beta testing** — TestFlight (iOS), Google Play Internal Testing (Android).
+- **Release management** — a repeatable process for version numbers, build numbers, and release notes.
+- **Production monitoring** — crashes, performance, analytics, reviews, post-release.
+- **Update system** — players update without losing progress; save migration + version compatibility
+  validated release over release (extends Phase 4c's save-schema concepts).
+- Final QA.
 
 ---
 
@@ -424,6 +511,14 @@ The next major improvements should therefore prioritize, in this order:
 rather than continuously adding new gameplay mechanics. The browser/Three.js build stays the gameplay,
 balance, and UI/UX reference throughout — Unity is where the production experience gets built, not a
 from-scratch redesign of the game itself.
+
+**Settled Unity-specific decisions** (recorded here so they aren't re-litigated in a future phase):
+
+- **Orientation: landscape**, locked from the Phase 3 bootstrap onward.
+- **Monetization: two SKUs**, both the complete game with nothing paywalled — free (season-turn ad) and
+  paid (ad-free). See Phase 11c.
+- **Saves do not migrate across engines** — a native install starts fresh; only the save-schema
+  *concepts* (Phase 3/4c) carry over from the browser build.
 
 ---
 

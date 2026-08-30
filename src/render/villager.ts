@@ -93,6 +93,22 @@ export function legGeometry(): THREE.BufferGeometry {
 }
 
 /**
+ * The tool a working villager holds: a handle plus a small head, pivoting at the grip so the
+ * instance transform can swing it exactly the way `legGeometry` swings a leg about the hip.
+ *
+ * One shape stands in for the axe, the pickaxe, the hammer and the fishing rod alike — at this
+ * figure's scale (see the file doc comment) a distinct silhouette per tool would not read any
+ * differently from a shared one; what actually sells "swinging an axe" versus "casting a line" is
+ * the arc it moves through (`render/villagerAnim.ts`), not the prop's shape. Keeping it to one
+ * geometry also keeps it to one extra instanced layer alongside legs/hair/coats, not four.
+ */
+export function toolGeometry(): THREE.BufferGeometry {
+  const handle = cyl(0.013, 0.017, 0.30, 0.15);
+  const head = ball(0.04, 0.30, 0, 0, 0.65);
+  return mergeGeometries([handle, head], false)!;
+}
+
+/**
  * The coat: a heavier over-layer covering the torso and upper arms, hanging past the hip.
  *
  * Drawn only for villagers whose household has warm clothing in store, so it needs a silhouette

@@ -66,7 +66,7 @@ test.describe('save/load reliability', () => {
       };
     });
     expect(out.wrote).toBe(true);
-    expect(out.version).toBe(14);
+    expect(out.version).toBe(15);
     expect(out.pop).toBeGreaterThan(0);
     expect(out.hasBarn).toBe(true);
     expect(out.hasStats).toBe(true);
@@ -351,7 +351,7 @@ test.describe('save/load reliability', () => {
     });
     expect(out.loaded).toBe(true);
     expect(out.wrote).toBe(true);
-    expect(out.version).toBe(14);
+    expect(out.version).toBe(15);
     expect(out.statsOnDisk).toBe(true);
     expect(out.limitsOnDisk).toBe(true);
     expect(out.reloaded).toBe(true);

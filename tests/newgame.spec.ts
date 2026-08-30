@@ -300,22 +300,29 @@ test.describe('trading post & merchant', () => {
     expect(out.stockIron).toBe(8); // merchant stock drawn down
   });
 
-  test('a seed merchant unlocks a crop when its value is matched', { tag: '@slow' }, async ({ page }) => {
+  test('the Food Merchant unlocks a crop when its value is matched — there is no dedicated Seed Merchant', { tag: '@slow' }, async ({ page }) => {
     await open(page);
-    await page.evaluate(`(${setup})({ grain: 200 }, {}, { phase: 'docked', present: true, stayTimer: 600, category: 'seeds', stock: {}, seedStock: ['corn'], boat: { x: 0, y: 0 } })`);
+    // Seeds are one of the Food Merchant's two independent offers now (see `rollMerchantOffer`),
+    // never their own category — a docked 'foods' visit with a seed on offer is the whole fixture.
+    await page.evaluate(`(${setup})({ grain: 3000 }, {}, { phase: 'docked', present: true, stayTimer: 600, category: 'foods', viaPort: false, stock: { grain: 100 }, seedStock: ['corn'], boat: { x: 0, y: 0 } })`);
     const out = await page.evaluate(() => {
       const g = (window as any).__village;
       const s = g.state;
       const post = s.buildings.find((b: any) => b.type === 'trading');
       const before = s.seeds.includes('corn');
-      // Seed costs 30 value; margin 0.8 → need 38 grain (value 1 each).
-      const r = g.trade({ give: { grain: 38 }, get: {}, buySeeds: ['corn'] });
-      return { before, ok: r.ok, has: s.seeds.includes('corn'), grain: post.store.grain, offered: s.merchant.seedStock.includes('corn') };
+      // SEED_COST is 2000, grain is worth 1 each, trades settle at parity — 2000 grain exactly.
+      const short = g.trade({ give: { grain: 1999 }, get: {}, buySeeds: ['corn'] });
+      const r = g.trade({ give: { grain: 2000 }, get: {}, buySeeds: ['corn'] });
+      return {
+        before, shortOk: short.ok, ok: r.ok, has: s.seeds.includes('corn'),
+        grain: post.store.grain, offered: s.merchant.seedStock.includes('corn'),
+      };
     });
     expect(out.before).toBe(false);
+    expect(out.shortOk).toBe(false); // under 2000 value is refused
     expect(out.ok).toBe(true);
     expect(out.has).toBe(true); // permanent unlock
-    expect(out.grain).toBe(162); // 38 grain spent
+    expect(out.grain).toBe(1000); // 2000 grain spent
     expect(out.offered).toBe(false); // removed from the merchant's offer
   });
 
@@ -5653,7 +5660,7 @@ test.describe('sand, glass, jewellery and the harbour', () => {
     expect(out.fine.consumed).toBe(0);
   });
 
-  test('the harbour keeps a calendar, and deals in what no village can make', async ({ page }) => {
+  test('the harbour draws from the wider merchant pool at random, and deals in what no village can make', async ({ page }) => {
     await open2d(page);
     const out = await page.evaluate(
       new Function(`
@@ -5665,6 +5672,7 @@ test.describe('sand, glass, jewellery and the harbour', () => {
           for (let q = 0; q < 4; q++) {
             s.merchant.phase = 'away';
             s.merchant.category = null;
+            s.merchant.viaPort = false;
             s.merchant.cooldownTimer = 0;
             // Send the quay away empty each turn. A band of nomads waiting at the gate holds the
             // harbour shut — one arrival at a time is the rule, and it is the right rule — but a
@@ -5698,6 +5706,7 @@ test.describe('sand, glass, jewellery and the harbour', () => {
           builtPort: !!port,
           needsWater: !g.debugCanPlace('port', 2, 2).ok,
           chance: g.debugPortChance(),
+          pool: g.debugPortPool(),
           luxuryStock: g.debugPortStock('portluxury'),
           mods: g.debugPriceMods(),
         };
@@ -5706,17 +5715,25 @@ test.describe('sand, glass, jewellery and the harbour', () => {
 
     expect(out.builtPort, 'the harbour went up').toBe(true);
     expect(out.needsWater, 'and it will not stand inland').toBe(true);
-    // Each season brings its own fleet and no other.
-    const expected: Record<string, string> = {
-      Spring: 'portgrain', Summer: 'portluxury', Autumn: 'portindustrial', Winter: 'portgeneral',
-    };
-    for (const [season, cat] of Object.entries(expected)) {
+    // No fleet is bound to a season any more: every category seen anywhere has to come from the
+    // shared pool, and — over forty years — at least one season has to have drawn more than one
+    // distinct category, which the old fixed calendar could never produce.
+    expect(out.pool.length).toBe(8);
+    const allCats = new Set<string>();
+    let anySeasonVaried = false;
+    for (const season of ['Spring', 'Summer', 'Autumn', 'Winter']) {
       const rolls = out.seen[season] ?? {};
-      expect(Object.keys(rolls), `${season} brings only its own fleet`).toEqual([cat]);
-      // Seven in ten, over forty years — loose bounds, since it is a coin and not a promise.
-      expect(rolls[cat], `${season}'s fleet comes most years`).toBeGreaterThan(40 * 0.4);
-      expect(rolls[cat], `${season}'s fleet is not a certainty`).toBeLessThan(40);
+      const cats = Object.keys(rolls);
+      for (const c of cats) {
+        expect(out.pool, `${c} (seen in ${season}) is a real Port category`).toContain(c);
+        allCats.add(c);
+      }
+      if (cats.length > 1) anySeasonVaried = true;
     }
+    expect(anySeasonVaried, 'at least one season drew more than one category across the sample').toBe(true);
+    // And the Trading Post's own categories are real candidates too, not just the four larger fleets.
+    expect(['basics', 'animals', 'foods', 'goods'].some((c) => allCats.has(c)),
+      'a Trading Post category showed up at the harbour somewhere in the sample').toBe(true);
     // The luxury fleet carries what no village can produce.
     expect(Object.keys(out.luxuryStock).sort()).toEqual(['dye', 'gold', 'silk']);
     expect(out.chance).toBeCloseTo(0.7, 5);
@@ -5743,16 +5760,39 @@ test.describe('sand, glass, jewellery and the harbour', () => {
     return port.id;
   }`;
 
-  test('an empty quay shows the year of fleets, with the season that is due now', async ({ page }) => {
+  test('an empty quay shows the year ahead, unreserved seasons drawn at random and the current one marked', async ({ page }) => {
     await open2d(page);
-    const season = await page.evaluate(`(${fakePort})({ phase: 'away', present: false, category: null, stock: {}, seedStock: [], boat: null }) && window.__village.debugSeasonName()`);
+    const season = await page.evaluate(`(${fakePort})({ phase: 'away', present: false, category: null, viaPort: false, stock: {}, seedStock: [], boat: null }) && window.__village.debugSeasonName()`);
     await expect(page.locator('#tp-title')).toContainText('Harbour');
-    // All four, in calendar order, with exactly one marked as the one due.
+    // Four upcoming seasons, exactly one marked as due now — no fleet is bound to a season any
+    // more, so with no standing request every one of them reads as an honest "drawn at random".
     await expect(page.locator('#trade-overlay .tp-row.fleet')).toHaveCount(4);
     await expect(page.locator('#trade-overlay .tp-row.fleet.now')).toHaveCount(1);
     await expect(page.locator('#trade-overlay .tp-row.fleet.now')).toContainText(String(season));
-    await expect(page.locator('#trade-overlay .tp-row.fleet').first()).toContainText('Northern Grain Fleet');
-    await expect(page.locator('#trade-overlay .tp-row.fleet').last()).toContainText('Winter Supply Fleet');
+    await expect(page.locator('#trade-overlay .tp-row.fleet')).toContainText(['Drawn at random', 'Drawn at random', 'Drawn at random', 'Drawn at random']);
+  });
+
+  test('a requested return names its fleet on the calendar instead of "drawn at random"', async ({ page }) => {
+    await open2d(page);
+    const out = await page.evaluate(`(() => {
+      const portId = (${fakePort})({ phase: 'away', present: false, category: null, viaPort: false, stock: {}, seedStock: [], boat: null });
+      const g = window.__village;
+      const s = g.state;
+      const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter'];
+      // The calendar's second row (next season along): same math the panel itself uses, so the
+      // reservation is guaranteed to land inside the four visible rows rather than a year further out.
+      const idx = (s.season + 1) % 4;
+      const year = s.year + (s.season + 1 >= 4 ? 1 : 0);
+      s.portRequests = [{ category: 'portluxury', season: SEASONS[idx], year }];
+      g.debugOpenTradingPost(portId);
+      return true;
+    })()`);
+    expect(out).toBe(true);
+    // The reserved slot shows the named fleet; the other three still don't know what they'll get.
+    await expect(page.locator('#trade-overlay .tp-row.fleet')).toContainText(['Drawn at random', 'Eastern Luxury Fleet', 'Drawn at random', 'Drawn at random']);
+    // Two `.tp-wait` notes show while the quay is empty (the "no merchant docked" one, and the
+    // calendar's own) — the reservation count is on the calendar's, the last of the two.
+    await expect(page.locator('#trade-overlay .tp-wait').last()).toContainText('Holding 1 of 2');
   });
 
   test('the price a fleet quotes on the sheet is the price the trade actually charges', async ({ page }) => {
@@ -5760,7 +5800,7 @@ test.describe('sand, glass, jewellery and the harbour', () => {
     // Gold is 10 and wood is 1, so an ingot is 10 wood at book value and 11 from a fleet keeping
     // its prices a tenth above it. Chosen because both come out whole: a rounded quote could hide
     // the very mismatch this is here to catch.
-    await page.evaluate(`(${fakePort})({ phase: 'docked', present: true, stayTimer: 600, priceMod: 1.1, category: 'portluxury', stock: { gold: 10 }, seedStock: [], boat: { x: 0, y: 0 } })`);
+    await page.evaluate(`(${fakePort})({ phase: 'docked', present: true, stayTimer: 600, priceMod: 1.1, category: 'portluxury', viaPort: true, stock: { gold: 10 }, seedStock: [], boat: { x: 0, y: 0 } })`);
     await expect(page.locator('#tp-merchant h3')).toContainText('Eastern Luxury Fleet');
     await expect(page.locator('#trade-overlay .tp-price')).toContainText('+10%');
     await expect(page.locator('#trade-overlay .tp-stay')).toContainText('Sails in');

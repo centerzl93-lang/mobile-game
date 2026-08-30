@@ -60,6 +60,7 @@ import {
   buildersWantedFor,
   PORT_ARRIVAL_CHANCE,
   PORT_PRICE_MODS,
+  PORT_MERCHANT_POOL,
   MERCHANT_CATEGORY_STOCK,
   MerchantCategory,
   TRADE_VALUE,
@@ -144,6 +145,7 @@ import {
   berthReachesOpenWater,
   placementReachable,
   dismissMerchant,
+  requestMerchantReturn,
   TradeBasket,
   TradeResult,
   cullRanch,
@@ -399,6 +401,7 @@ class Game {
       onSetTradeOrderTo: (id, kind, value) => this.setTradeOrder(id, kind, value, true),
       onBasketTrade: (basket) => this.trade(basket),
       onDismissMerchant: () => this.dismissMerchant(),
+      onRequestMerchantReturn: (season) => this.requestMerchantReturn(season),
       onAcceptNomads: () => this.acceptNomads(),
       onRejectNomads: () => this.rejectNomads(),
       onSelectHarvest: (a) => this.onSelectHarvest(a),
@@ -920,6 +923,12 @@ class Game {
   private dismissMerchant(): void {
     dismissMerchant(this.state);
     this.persist();
+  }
+
+  private requestMerchantReturn(season: Season): TradeResult {
+    const r = requestMerchantReturn(this.state, season);
+    if (r.ok) this.persist();
+    return r;
   }
 
   /** Adjust a trading post's standing order — by `amount`, or to it when `absolute` is set. Clamped at zero. */
@@ -2916,6 +2925,10 @@ class Game {
   }
   debugPortStock(category: string): Partial<Record<ResourceKind, number>> {
     return MERCHANT_CATEGORY_STOCK[category as MerchantCategory];
+  }
+  /** Debug/testing helper: every category the Port may draw a visit from. */
+  debugPortPool(): MerchantCategory[] {
+    return [...PORT_MERCHANT_POOL];
   }
 
   /** Debug/testing helper: what a resource is worth in trade. */

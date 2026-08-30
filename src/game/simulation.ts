@@ -160,9 +160,14 @@ import {
   MERCHANT_CATEGORIES,
   MERCHANT_CATEGORY_STOCK,
   MERCHANT_CATEGORY_META,
+  MERCHANT_ITEM_COUNT,
+  SEED_OFFER_COUNT,
   PORT_ARRIVAL_CHANCE,
   PORT_PRICE_MODS,
-  PORT_SEASON_MERCHANT,
+  PORT_MERCHANT_POOL,
+  PORT_QUANTITY_VARIANCE,
+  PORT_REQUEST_MAX,
+  MerchantCategory,
   isPortMerchant,
   DIET_VARIETY_TARGET,
   CHILD_FOOD_FACTOR,
@@ -293,7 +298,7 @@ import {
 import { getTile, tileIndex, inBounds, riverColumnX } from './world';
 import { pathSpeedMult, hasPath, dropPathRaze } from './paths';
 import { findPath, findWaterPath, isWalkable, labelComponents } from './pathfind';
-import { rand } from './rng';
+import { rand, randInt, randRange, randPick } from './rng';
 import {
   totalStored,
   totalStoredAll,
@@ -3696,7 +3701,7 @@ export function tradingPost(s: GameState): Building | null {
  */
 export function merchantBerth(s: GameState): Building | null {
   if (s.merchant.category === null) return null;
-  return (isPortMerchant(s.merchant.category) ? portOrPost(s) : tradingPost(s)) ?? null;
+  return (isPortMerchant(s.merchant) ? portOrPost(s) : tradingPost(s)) ?? null;
 }
 
 const BOAT_SPEED = 5; // tiles per second the merchant boat travels along the river
@@ -3742,24 +3747,82 @@ function updateMerchant(s: GameState, dt: number, log: LogFn): void {
   if (rand(s) < MERCHANT_ARRIVAL_CHANCE * (dt / SEASON_LENGTH)) spawnMerchant(s, log);
 }
 
-/** Roll a merchant category, stock its goods, and launch its boat from the top of the river. */
+/** Crop types the village hasn't unlocked yet — what the Food Merchant's seed offer draws from. */
+function unpurchasedSeeds(s: GameState): Crop[] {
+  return CROPS.filter((c) => !s.seeds.includes(c));
+}
+
+/**
+ * `n` distinct items drawn from `pool` without replacement, in the simulation's own RNG stream —
+ * the one thing every random merchant offer needs so a Food Merchant never turns up with two lots
+ * of corn.
+ */
+function pickDistinct<T>(s: GameState, pool: readonly T[], n: number): T[] {
+  const remaining = pool.slice();
+  const picked: T[] = [];
+  const count = Math.min(n, remaining.length);
+  for (let i = 0; i < count; i++) {
+    const idx = randInt(s, remaining.length);
+    picked.push(remaining[idx]);
+    remaining.splice(idx, 1);
+  }
+  return picked;
+}
+
+/** A quantity varied ±`PORT_QUANTITY_VARIANCE` around `base` — "a larger shipment," not a fixed one. */
+function varyPortQuantity(s: GameState, base: number): number {
+  const lo = base * (1 - PORT_QUANTITY_VARIANCE);
+  const hi = base * (1 + PORT_QUANTITY_VARIANCE);
+  return Math.max(1, Math.round(randRange(s, lo, hi)));
+}
+
+/**
+ * Roll one merchant's offer for `category`: a random, duplicate-free subset of that category's
+ * item pool (`MERCHANT_ITEM_COUNT` distinct types), each at its table quantity — exact for a river
+ * visit, varied within `PORT_QUANTITY_VARIANCE` for a Port one (`varyQuantity`). The Food Merchant
+ * also rolls an independent handful of not-yet-owned seeds alongside its food, at the Port exactly
+ * as at the Trading Post — one rule, reused, rather than a second seed-offer path.
+ */
+function rollMerchantOffer(
+  s: GameState,
+  category: MerchantCategory,
+  varyQuantity: boolean,
+): { stock: Partial<Record<ResourceKind, number>>; seedStock: Crop[] } {
+  const pool = MERCHANT_CATEGORY_STOCK[category];
+  const keys = Object.keys(pool) as ResourceKind[];
+  const [min, max] = MERCHANT_ITEM_COUNT[category];
+  const n = Math.min(keys.length, min + randInt(s, max - min + 1));
+  const chosen = pickDistinct(s, keys, n);
+  const stock: Partial<Record<ResourceKind, number>> = {};
+  for (const k of chosen) {
+    const base = pool[k] ?? 0;
+    stock[k] = varyQuantity ? varyPortQuantity(s, base) : base;
+  }
+
+  let seedStock: Crop[] = [];
+  if (category === 'foods') {
+    const remaining = unpurchasedSeeds(s);
+    const [smin, smax] = SEED_OFFER_COUNT;
+    const sn = Math.min(remaining.length, smin + randInt(s, smax - smin + 1));
+    seedStock = pickDistinct(s, remaining, sn);
+  }
+  return { stock, seedStock };
+}
+
+/**
+ * Roll a Trading Post category (there is no dedicated Seed Merchant — a rolled Food Merchant offers
+ * seeds as part of `rollMerchantOffer`, not as a category of its own), stock its randomized offer,
+ * and launch its boat from the top of the river.
+ */
 function spawnMerchant(s: GameState, log: LogFn): void {
   const m = s.merchant;
-  let cats = MERCHANT_CATEGORIES.slice();
-  // A seed merchant has nothing to sell once every crop is unlocked — drop it then.
-  if (CROPS.every((c) => s.seeds.includes(c))) cats = cats.filter((c) => c !== 'seeds');
-  const category = cats[Math.floor(rand(s) * cats.length)];
+  const category = randPick(s, MERCHANT_CATEGORIES);
+  const rolled = rollMerchantOffer(s, category, false); // river visits: exact table quantities
 
   m.category = category;
-  m.stock = {};
-  m.seedStock = [];
-  if (category === 'seeds') {
-    m.seedStock = CROPS.filter((c) => !s.seeds.includes(c));
-  } else {
-    for (const [k, qty] of Object.entries(MERCHANT_CATEGORY_STOCK[category]) as [ResourceKind, number][]) {
-      m.stock[k] = qty;
-    }
-  }
+  m.viaPort = false;
+  m.stock = rolled.stock;
+  m.seedStock = rolled.seedStock;
   m.phase = 'arriving';
   m.present = false;
   m.priceMod = 1; // river traders deal at the book rate; only the Port's fleets haggle
@@ -3904,9 +3967,9 @@ function boatEntry(s: GameState, to: { x: number; y: number }): { x: number; y: 
 function updateMerchantBoat(s: GameState, dt: number, log: LogFn): void {
   const m = s.merchant;
   if (!m.boat) return;
-  // A Port fleet berths at the Port. Falls back to the trading post, so a fleet already at sea
+  // A Port visit berths at the Port. Falls back to the trading post, so a fleet already at sea
   // when the harbour is pulled down still has somewhere to tie up rather than sailing forever.
-  const post = isPortMerchant(m.category) ? portOrPost(s) : tradingPost(s);
+  const post = isPortMerchant(m) ? portOrPost(s) : tradingPost(s);
 
   if (m.phase === 'arriving') {
     if (!post) {
@@ -4083,7 +4146,7 @@ export function basketTrade(s: GameState, basket: TradeBasket): TradeResult {
     return { ok: false, reason: 'Offer value too low' };
   }
 
-  if (isPortMerchant(m.category)) s.portTradeCount = (s.portTradeCount ?? 0) + 1;
+  if (isPortMerchant(m)) s.portTradeCount = (s.portTradeCount ?? 0) + 1;
 
   // Tally the trade for the achievement stats: the count, what left as luxury export, what came in
   // as a trade-only import, and — through a port — the value that changed hands.
@@ -4101,7 +4164,7 @@ export function basketTrade(s: GameState, basket: TradeBasket): TradeResult {
     else if (k === 'dye') { st.tradeOnlyImported += qty; st.importedDye = true; }
     else if (k === 'silk') { st.tradeOnlyImported += qty; st.importedSilk = true; }
   }
-  if (isPortMerchant(m.category)) {
+  if (isPortMerchant(m)) {
     st.portTradeValue += offerValue(basket) + purchaseValue(basket);
   }
 
@@ -5037,32 +5100,15 @@ function portOrPost(s: GameState): Building | undefined {
   );
 }
 
-/**
- * The season's fleet, if it sails.
- *
- * Rolled once at the turn of the season rather than continuously, because the whole point is that
- * it is *scheduled*: a town knows the grain ships come in spring and can hold its barns against
- * it. Seven times in ten — the other three are what stops a plan being a certainty.
- *
- * Nothing happens if a river trader is already tied up: one boat at the quay at a time.
- */
-function portSeason(s: GameState, log: LogFn): void {
-  const port = s.buildings.find((b) => b.built && !b.razed && b.type === 'port');
-  if (!port) return;
-  // A harbour dug on a landlocked lake can berth nothing — no deep-water fleet can reach it.
-  if (!berthReachesOpenWater(s, port)) return;
+/** Stock, launch and announce a Port visit of `category` — shared by the random draw and a fulfilled request. */
+function spawnPortMerchant(s: GameState, log: LogFn, port: Building, category: MerchantCategory): void {
   const m = s.merchant;
-  if (m.phase !== 'away' || s.pendingNomads) return;
-  if (rand(s) >= PORT_ARRIVAL_CHANCE) return;
-
-  const category = PORT_SEASON_MERCHANT[SEASONS[s.season]];
+  const rolled = rollMerchantOffer(s, category, true); // Port visits: quantity varies
   m.category = category;
-  m.stock = {};
-  m.seedStock = [];
-  for (const [k, qty] of Object.entries(MERCHANT_CATEGORY_STOCK[category]) as [ResourceKind, number][]) {
-    m.stock[k] = qty;
-  }
-  m.priceMod = PORT_PRICE_MODS[Math.floor(rand(s) * PORT_PRICE_MODS.length)];
+  m.viaPort = true;
+  m.stock = rolled.stock;
+  m.seedStock = rolled.seedStock;
+  m.priceMod = PORT_PRICE_MODS[randInt(s, PORT_PRICE_MODS.length)];
   m.phase = 'arriving';
   m.present = false;
   m.cooldownTimer = 0;
@@ -5070,6 +5116,73 @@ function portSeason(s: GameState, log: LogFn): void {
   m.boatPath = null; // planned lazily on the first arriving tick
   const meta = MERCHANT_CATEGORY_META[category];
   log(`${meta.emoji} The ${meta.label} is making for the harbour`, 'good');
+}
+
+/**
+ * The season's fleet, if it sails.
+ *
+ * Rolled once at the turn of the season rather than continuously, because the whole point is that
+ * it is *scheduled*: a town holds its barns against a season it knows a fleet is due. No single
+ * category is bound to a season any more — any of `PORT_MERCHANT_POOL` may call in any season,
+ * drawn fresh each time (`spawnPortMerchant`) — except a season the player has *requested* a
+ * merchant's return for, which is guaranteed rather than rolled: that certainty is the whole point
+ * of asking (see `requestMerchantReturn`). An unreserved season still only sails seven times in
+ * ten — the other three are what stops a plan being a certainty.
+ *
+ * Nothing happens if a river trader is already tied up: one boat at the quay at a time. A season
+ * that comes and goes with the quay occupied still consumes its own request (if it had one) rather
+ * than leaving it to jam a future season — see the `due` handling below.
+ */
+function portSeason(s: GameState, log: LogFn): void {
+  s.portRequests ??= [];
+  const season = SEASONS[s.season];
+  const year = s.year;
+
+  // A request is due the instant its own season turns, whether or not it can actually be filled —
+  // it can never come due again, so its slot frees up here regardless.
+  const dueIdx = s.portRequests.findIndex((r) => r.season === season && r.year === year);
+  const due = dueIdx >= 0 ? s.portRequests[dueIdx] : null;
+  if (due) s.portRequests.splice(dueIdx, 1);
+
+  const port = s.buildings.find((b) => b.built && !b.razed && b.type === 'port');
+  // A harbour dug on a landlocked lake can berth nothing — no deep-water fleet can reach it.
+  const reachable = !!port && berthReachesOpenWater(s, port);
+  const m = s.merchant;
+  const canSail = reachable && m.phase === 'away' && !s.pendingNomads;
+  if (!canSail) return;
+
+  if (due) {
+    spawnPortMerchant(s, log, port!, due.category);
+    return;
+  }
+  if (rand(s) >= PORT_ARRIVAL_CHANCE) return;
+  spawnPortMerchant(s, log, port!, randPick(s, PORT_MERCHANT_POOL));
+}
+
+/**
+ * Ask the Port merchant currently docked to come back next year, in a season the player picks.
+ *
+ * Up to `PORT_REQUEST_MAX` requests may stand at once, each reserving one of the Port's four yearly
+ * seasons for a guaranteed arrival; the rest stay on the ordinary random draw (`portSeason`). Always
+ * "next year" from whenever the request is made, so two requests can never collide on the season
+ * alone — only a repeat request for the same season in the same asking-year can, and that's the one
+ * case checked below.
+ */
+export function requestMerchantReturn(s: GameState, season: Season): { ok: boolean; reason?: string } {
+  const m = s.merchant;
+  if (!m.present || !isPortMerchant(m) || !m.category) {
+    return { ok: false, reason: 'No Port merchant docked' };
+  }
+  s.portRequests ??= [];
+  if (s.portRequests.length >= PORT_REQUEST_MAX) {
+    return { ok: false, reason: `Already holding ${PORT_REQUEST_MAX} requests` };
+  }
+  const year = s.year + 1;
+  if (s.portRequests.some((r) => r.season === season && r.year === year)) {
+    return { ok: false, reason: 'That season is already reserved' };
+  }
+  s.portRequests.push({ category: m.category, season, year });
+  return { ok: true };
 }
 
 /**

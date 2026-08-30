@@ -48,8 +48,9 @@ import {
   TRADE_VALUE,
   SEED_COST,
   MERCHANT_CATEGORY_META,
-  PORT_SEASON_MERCHANT,
   PORT_ARRIVAL_CHANCE,
+  PORT_REQUEST_MAX,
+  Season,
   ADULT_AGE,
   isInfant,
   isStudent,
@@ -278,6 +279,8 @@ export interface UICallbacks {
   onSetTradeOrderTo: (buildingId: number, kind: ResourceKind, value: number) => void;
   onBasketTrade: (basket: TradeBasket) => TradeResult;
   onDismissMerchant: () => void;
+  /** Ask the docked Port merchant to return in `season` next year (see `PORT_REQUEST_MAX`). */
+  onRequestMerchantReturn: (season: Season) => { ok: boolean; reason?: string };
   onAcceptNomads: () => void;
   onRejectNomads: () => void;
   /** Turn the harvest tool on with the kind of harvest to mark, or null to turn it off. */
@@ -2083,6 +2086,8 @@ export class UI {
       this.basketGet,
       this.basketSeeds,
       s.seeds.length,
+      s.portRequests,
+      m.viaPort ?? false,
     ]);
     if (sig === this.tradeSig) return;
     this.tradeSig = sig;
@@ -2093,7 +2098,7 @@ export class UI {
       : `🚢 Trading Post <button class="close" id="tp-close">×</button>`;
     byId('tp-close').addEventListener('click', () => this.closeTradingPost());
     byId('tp-summary').textContent = isPort
-      ? 'Set stock orders and a carrier hauls those goods down to the quay from your barns. The deep-water fleets keep a calendar — one to a season — and settle by matching values, so offer goods worth at least the price.'
+      ? 'Set stock orders and a carrier hauls those goods down to the quay from your barns. A larger fleet calls most seasons and settles by matching values, so offer goods worth at least the price — and a merchant you like can be asked to return next year.'
       : 'Set stock orders and a trader hauls those goods here from your barns. Trades are settled by matching values — offer goods worth at least the price.';
 
     // Inventory & orders: every resource with its unit value, current stock, and an order stepper.
@@ -2120,22 +2125,40 @@ export class UI {
   /**
    * The tide table a harbour is worth building for.
    *
-   * A Port's whole point is that its trade is *scheduled*: the grain ships come in spring, the
-   * medicine ship in winter. That is only worth anything if the player can read the calendar
-   * before the season turns, so an empty quay shows the year ahead rather than the shrug a
-   * trading post gives — which fleet each season brings, and which one is due now.
+   * No fleet is bound to a season any more — any of the eight Port categories can call in any of
+   * the next four, drawn fresh each time. What the player *can* still read ahead of time is a
+   * request they've placed: up to `PORT_REQUEST_MAX` seasons are reserved and named outright, the
+   * rest show as an honest "drawn at random" rather than a fleet that isn't actually promised.
    */
   private portCalendar(s: GameState): string {
-    const now = SEASONS[s.season];
-    const rows = SEASONS.map((season) => {
-      const meta = MERCHANT_CATEGORY_META[PORT_SEASON_MERCHANT[season]];
-      return `<div class="tp-row fleet${season === now ? ' now' : ''}">
-          <span class="tp-good">${meta.emoji} ${meta.label}</span>
-          <span class="tp-season">${season}${season === now ? ' · now' : ''}</span>
+    const reqs = s.portRequests ?? [];
+    const rows = SEASONS.map((_, offset) => {
+      const idx = (s.season + offset) % SEASONS.length;
+      const season = SEASONS[idx];
+      const year = s.year + (s.season + offset >= SEASONS.length ? 1 : 0);
+      const req = reqs.find((r) => r.season === season && r.year === year);
+      const meta = req ? MERCHANT_CATEGORY_META[req.category] : null;
+      return `<div class="tp-row fleet${offset === 0 ? ' now' : ''}">
+          <span class="tp-good">${meta ? `${meta.emoji} ${meta.label}` : '🎲 Drawn at random'}</span>
+          <span class="tp-season">${season}${offset === 0 ? ' · now' : ''}</span>
         </div>`;
     }).join('');
-    return `<div class="tp-sub">The year's fleets</div>${rows}
-      <div class="tp-wait">Each sails ${Math.round(PORT_ARRIVAL_CHANCE * 100)} times in a hundred — often enough to plan a year around, not often enough to bet the winter on.</div>`;
+    return `<div class="tp-sub">The year ahead</div>${rows}
+      <div class="tp-wait">An unreserved season sails ${Math.round(PORT_ARRIVAL_CHANCE * 100)} times in a hundred — often enough to plan around, not often enough to bet the winter on. Holding ${reqs.length} of ${PORT_REQUEST_MAX} requested returns.</div>`;
+  }
+
+  /** The docked merchant's own "ask them back" control — Port visits only, and only while present. */
+  private requestReturnControl(s: GameState, m: GameState['merchant']): string {
+    const reqs = s.portRequests ?? [];
+    if (reqs.length >= PORT_REQUEST_MAX) {
+      return `<div class="tp-wait">Already holding ${PORT_REQUEST_MAX} requested returns — one has to sail before another can be asked.</div>`;
+    }
+    const meta = m.category ? MERCHANT_CATEGORY_META[m.category] : null;
+    const seasonBtns = SEASONS.map((season) =>
+      `<button class="request-season" data-season="${season}">${season}</button>`,
+    ).join('');
+    return `<div class="tp-sub">Ask ${meta?.label ?? 'this fleet'} to return next year</div>
+      <div class="tp-request">${seasonBtns}</div>`;
   }
 
   /** The right-hand pane: the docked merchant's goods and the value-matching basket, or a wait note. */
@@ -2213,6 +2236,10 @@ export class UI {
           .join('')
       : `<div class="tp-wait">Nothing ${isPort ? 'on the quay' : 'in the post'} yet — set stock orders on the left so your ${isPort ? 'carriers bring' : 'trader brings'} goods to sell.</div>`;
 
+    // A Port visit — whichever of the eight categories it happens to be — can be asked back for a
+    // season next year. A river trader never gets this: the Trading Post stays opportunistic.
+    const requestBlock = isPort && m.viaPort ? this.requestReturnControl(s, m) : '';
+
     pane.innerHTML = `<h3>${meta.emoji} ${meta.label}</h3>${berthed}
       <div class="tp-sub">You buy</div>${buyRows || '<div class="tp-wait">Sold out.</div>'}${seedRows}
       <div class="tp-sub">You give <small>(from ${isPort ? 'harbour' : 'post'} stock)</small></div>${giveRows}
@@ -2220,7 +2247,8 @@ export class UI {
       <div class="tp-actions">
         <button class="do-trade" id="tp-do"${ok ? '' : ' disabled'}>Trade</button>
         <button class="tp-dismiss" id="tp-dismiss">⛵ Dismiss</button>
-      </div>`;
+      </div>
+      ${requestBlock}`;
 
     // Both baskets clamp to what is actually available: the merchant's stock on the buy side, the
     // post's own inventory on the give side. All fills the row to that ceiling in one tap.
@@ -2269,6 +2297,14 @@ export class UI {
       this.flashHint(r.ok ? 'Trade complete' : r.reason ?? 'Trade failed');
       this.tradeSig = '';
     });
+    pane.querySelectorAll('button[data-season]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        const season = (btn as HTMLElement).dataset.season as Season;
+        const r = this.cb.onRequestMerchantReturn(season);
+        this.flashHint(r.ok ? `Asked to return next ${season}` : r.reason ?? 'Cannot request a return');
+        this.tradeSig = '';
+      }),
+    );
   }
 
   // ---- Confirm bar ----

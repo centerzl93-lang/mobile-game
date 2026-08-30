@@ -449,8 +449,13 @@ export const CROP_META: Record<Crop, { label: string; emoji: string; food: Resou
   melon: { label: 'Melon', emoji: '🍈', food: 'melon', yieldMult: 0.85 },
 };
 
-/** Trade value a merchant charges to sell a crop's seed (a permanent one-time unlock). */
-export const SEED_COST = 30;
+/**
+ * Trade value a merchant charges to sell a crop's seed — a permanent, one-time unlock of that crop
+ * for every field the village ever plants, not a recurring commodity, so it is priced as a major
+ * strategic investment rather than an ordinary basket item. One flat price for every seed: nothing
+ * about the permanence this buys differs crop to crop.
+ */
+export const SEED_COST = 2000;
 /** Distinct foods in stock that earn the full diet-variety health bonus (it saturates here). */
 export const DIET_VARIETY_TARGET = 5;
 
@@ -1926,38 +1931,85 @@ export const HARVEST_KIND_META: Record<HarvestKind, { label: string; emoji: stri
   clear: { label: 'Unmark', emoji: '🚫', hint: 'call off the orders inside the square' },
 };
 
-/** The single kind of goods a visiting merchant deals in. */
+/**
+ * The single kind of goods a visiting merchant deals in.
+ *
+ * There is no dedicated Seed Merchant: seed unlocks are one of the Food Merchant's two independent
+ * offers (see `rollMerchantOffer` in `simulation.ts`), not a category of their own.
+ */
 export type MerchantCategory =
   | 'basics'
-  | 'seeds'
   | 'animals'
   | 'foods'
   | 'goods'
-  // The four that keep a calendar. They come to the Port, one to a season, and are the only way
-  // gold, dye and silk ever reach the town.
+  // The larger, specialised ships — historically the Port's own, but any of the eight can now call
+  // there (see `PORT_MERCHANT_POOL`). Still the only way gold, dye and silk ever reach the town.
   | 'portgrain'
   | 'portluxury'
   | 'portindustrial'
   | 'portgeneral';
-export const MERCHANT_CATEGORIES: MerchantCategory[] = ['basics', 'seeds', 'animals', 'foods', 'goods'];
-/** The Port's four, and the season each keeps to. */
+/** What calls at the Trading Post: opportunistic, river-borne, one roll per visit. */
+export const MERCHANT_CATEGORIES: MerchantCategory[] = ['basics', 'animals', 'foods', 'goods'];
+/** The Port's own larger, specialised ships — deeper holds than any river trader's. */
 export const PORT_CATEGORIES: MerchantCategory[] = ['portgrain', 'portluxury', 'portindustrial', 'portgeneral'];
-export const PORT_SEASON_MERCHANT: Record<Season, MerchantCategory> = {
-  Spring: 'portgrain',
-  Summer: 'portluxury',
-  Autumn: 'portindustrial',
-  Winter: 'portgeneral',
-};
 /**
- * Odds the season's merchant actually sails.
+ * Every ship that can call at the Port: the ordinary Trading Post categories (a river-style trader
+ * can now sail all the way up to the harbour) plus the Port's own larger fleets. One is drawn at
+ * random for each season that isn't already reserved by a player request — see `portSeason` and
+ * `requestMerchantReturn` in `simulation.ts`.
+ */
+export const PORT_MERCHANT_POOL: MerchantCategory[] = [...MERCHANT_CATEGORIES, ...PORT_CATEGORIES];
+/**
+ * Odds an unreserved Port season actually sails a fleet.
  *
- * Predictable enough to plan a year around, not so certain that the plan is free: seven winters in
- * ten the medicine ship comes, and the town that stocked nothing against the other three finds out
- * why it should have.
+ * Predictable enough to plan around, not so certain that the plan is free. A season the player has
+ * *requested* a merchant's return for skips this roll entirely — that certainty is what the request
+ * buys — see `requestMerchantReturn`.
  */
 export const PORT_ARRIVAL_CHANCE = 0.7;
 /** What a merchant's own prices do to the book value, drawn when they sail. */
 export const PORT_PRICE_MODS = [0.9, 1.0, 1.1] as const;
+/**
+ * How many distinct item *types* a merchant offers in one visit — a range, drawn per visit, not a
+ * fixed count. The Port's own specialised categories keep a fixed `[n, n]`: they still offer their
+ * whole small pool every time, the way every category used to before this random-selection pass —
+ * their size is what makes them feel like "a larger shipment," not a bigger draw on top of that.
+ */
+export const MERCHANT_ITEM_COUNT: Record<MerchantCategory, [min: number, max: number]> = {
+  basics: [2, 5],
+  animals: [1, 2],
+  foods: [3, 4],
+  goods: [3, 4],
+  portgrain: [4, 4],
+  portluxury: [3, 3],
+  portindustrial: [3, 3],
+  portgeneral: [5, 5],
+};
+/** How many not-yet-owned seed types the Food Merchant offers alongside its food, per visit. */
+export const SEED_OFFER_COUNT: [min: number, max: number] = [1, 2];
+/**
+ * A Port visit's quantity is a band around the category's table figure rather than that figure
+ * exactly — "a larger shipment," but not an unlimited one. A river visit uses the table figure
+ * unchanged; only the Port varies it. ±25% keeps a visit recognisably the same size while still
+ * making no two shipments identical.
+ */
+export const PORT_QUANTITY_VARIANCE = 0.25;
+/**
+ * A player may hold this many Port-merchant "return next year" requests at once — up to half the
+ * Port's four yearly seasons. The rest stay on the ordinary random draw, so a player gets real
+ * planning power without being able to script the whole year.
+ */
+export const PORT_REQUEST_MAX = 2;
+/**
+ * A standing request that a Port merchant of `category` return in `season` of `year`. Consumed the
+ * moment that season turns — fulfilled if the Port can actually receive it then, dropped either way
+ * so a request can never occupy a slot past its own season. See `requestMerchantReturn`/`portSeason`.
+ */
+export interface PortRequest {
+  category: MerchantCategory;
+  season: Season;
+  year: number;
+}
 
 export interface Merchant {
   /**
@@ -1983,9 +2035,17 @@ export interface Merchant {
   priceMod?: number;
   /** What this merchant deals in (null while away). */
   category: MerchantCategory | null;
+  /**
+   * Whether this visit sailed in through the Port's own scheduling (`portSeason`) rather than the
+   * Trading Post's ordinary river arrivals (`spawnMerchant`) — decides which building it's tied up
+   * at (`merchantBerth`), whether its prices haggle, and whether its quantities vary, regardless of
+   * which `category` it happens to be: a Materials Merchant that calls at the Port is still a Port
+   * visit. False (or absent, on an older save) while away or river-borne.
+   */
+  viaPort?: boolean;
   /** Goods for sale this visit: resource -> units remaining. */
   stock: Partial<Record<ResourceKind, number>>;
-  /** Seeds category only: the (still-unowned) crop seeds on offer. */
+  /** The Food Merchant's independent seed offer this visit — not-yet-owned crops, if any remain. */
   seedStock: Crop[];
   /**
    * Animated boat position on the water while arriving/docked/leaving (null when away), plus the
@@ -2043,6 +2103,11 @@ export interface GameState {
   gameOver: boolean;
   everLived: boolean;
   merchant: Merchant;
+  /**
+   * Up to `PORT_REQUEST_MAX` pending "return next year" requests for a Port merchant. Absent on an
+   * older save; treated as empty until the player makes their first request (see `loadGame`).
+   */
+  portRequests?: PortRequest[];
   /** Crops the village has unlocked (owns the seed for) and can plant. Empty ⇒ no field grows. */
   seeds: Crop[];
   /** A band of nomads awaiting an accept/reject decision, or null. */
@@ -3727,10 +3792,15 @@ export const TRADE_VALUE: Record<ResourceKind, number> = {
   // rather than a Regular's worth of either, and it is worth twice the fuel saving worn — the
   // same "priced above tools but below where the edge would put it" logic as `steeltools`.
   warmclothing: 12,
-  cattle: 20,
-  pigs: 14,
-  sheep: 16,
-  chickens: 8,
+  // Livestock is priced as a major, largely one-time investment rather than a recurring commodity:
+  // a bought head seeds a Ranch, which then breeds and produces on its own (see `RANCH_BREED_PER_SEASON`),
+  // so importing animals again and again should never be cheaper than letting a pen grow. Ranked by
+  // the animal's own worth — a cow more than a pig or sheep, a chicken least of all — the same order
+  // `ANIMAL_TILES` already ranks them by pen space.
+  cattle: 800,
+  pigs: 600,
+  sheep: 600,
+  chickens: 400,
   medicine: 5,
 };
 /**
@@ -3756,22 +3826,28 @@ export const MERCHANT_COOLDOWN_SEASONS = 1;
 export const MERCHANT_ARRIVAL_CHANCE = 0.5;
 
 /**
- * What each kind of merchant carries, and roughly how much. A visiting merchant rolls one
- * category and stocks these goods. Tweak freely — the trade UI reads straight from here and
- * from TRADE_VALUE. The 'seeds' merchant is special: it offers crop-seed unlocks (see
- * `seedStock`) rather than resources, so its table is empty.
+ * Every good a category is *willing* to carry, and the quantity a visit offers of one when it's
+ * picked — a pool to draw from, not a guaranteed stock list. A visit rolls `MERCHANT_ITEM_COUNT`
+ * distinct items out of its category's pool (`rollMerchantOffer` in `simulation.ts`); a river visit
+ * offers each at the figure below exactly, a Port visit varies it by `PORT_QUANTITY_VARIANCE`. The
+ * Food Merchant's seed offer is separate — see `seedStock` — so no category needs its own entry
+ * for crop unlocks.
+ *
+ * Leather at 30 (was 90): PLAYTEST B13/B14 cut a Hunting Cabin's hide byproduct
+ * (`HUNT_HIDE_FRACTION`) fourfold specifically to keep leather scarce; the old 90-unit stock could
+ * still hand a village more leather in one trade than a year of hunting, undercutting that. The fix
+ * is the quantity, not the price — `TRADE_VALUE.leather` is untouched.
  */
 export const MERCHANT_CATEGORY_STOCK: Record<MerchantCategory, Partial<Record<ResourceKind, number>>> = {
   basics: { wood: 150, stone: 120, coal: 100, iron: 80, firewood: 120 },
-  seeds: {},
   animals: { cattle: 6, pigs: 8, sheep: 8, chickens: 12 },
   foods: { grain: 160, corn: 120, potato: 120, fish: 140, beef: 80, venison: 60, mutton: 70, pork: 70, chicken: 70, milk: 90, eggs: 80 },
-  goods: { tools: 60, clothing: 60, warmclothing: 30, leather: 90, wool: 80, medicine: 40 },
+  goods: { tools: 60, clothing: 60, warmclothing: 30, leather: 30, wool: 80, medicine: 40 },
   // The Port's holds are deeper than a river boat's — larger quantities, and the imported goods
   // no village can make for itself. The luxury goods (gold/dye/silk) are the *only* feed for the
-  // fine benches, and the luxury fleet calls just once a year — so its hold has to be deep enough
-  // that a city can keep a fine bench busy on one visit, and the winter fleet carries a second,
-  // smaller top-up so the top of the chain is not starved for eleven months of the twelve.
+  // fine benches, and the luxury fleet calls just once a year on average — so its hold has to be
+  // deep enough that a city can keep a fine bench busy on one visit, and the winter fleet carries a
+  // second, smaller top-up so the top of the chain is not starved for eleven months of the twelve.
   portgrain: { grain: 400, corn: 320, barley: 260, rice: 240 },
   portluxury: { gold: 40, silk: 30, dye: 45 },
   portindustrial: { iron: 240, coal: 260, tools: 140 },
@@ -3781,7 +3857,6 @@ export const MERCHANT_CATEGORY_STOCK: Record<MerchantCategory, Partial<Record<Re
 /** Label + emoji for each merchant category (shown in the trade UI header). */
 export const MERCHANT_CATEGORY_META: Record<MerchantCategory, { label: string; emoji: string }> = {
   basics: { label: 'Materials Trader', emoji: '🪵' },
-  seeds: { label: 'Seed Merchant', emoji: '🌱' },
   animals: { label: 'Livestock Trader', emoji: '🐄' },
   foods: { label: 'Food Merchant', emoji: '🍞' },
   goods: { label: 'Goods Merchant', emoji: '🛠️' },
@@ -3791,9 +3866,13 @@ export const MERCHANT_CATEGORY_META: Record<MerchantCategory, { label: string; e
   portgeneral: { label: 'Winter Supply Fleet', emoji: '🧭' },
 };
 
-/** Is this one of the Port's scheduled fleets, rather than a river trader? */
-export function isPortMerchant(c: MerchantCategory | null): boolean {
-  return c !== null && PORT_CATEGORIES.includes(c);
+/**
+ * Did this merchant sail in through the Port rather than the Trading Post? Reads the *visit*
+ * (`Merchant.viaPort`), not the category — any of the eight categories in `PORT_MERCHANT_POOL` can
+ * now call at either, so category alone no longer says which building it tied up at.
+ */
+export function isPortMerchant(m: Pick<Merchant, 'viaPort'>): boolean {
+  return m.viaPort === true;
 }
 
 export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
@@ -3826,7 +3905,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     type: 'port', name: 'Port', emoji: '⚓', category: 'trade', w: 7, h: 5,
     cost: { wood: 100, stone: 100, iron: 40 }, jobs: 5, work: 260, builders: 3,
     requiresWaterFraction: 1 / 3,
-    desc: 'A deep-water quay: bigger traders, calling more reliably, and the only source of gold, dye and silk. Its fleets keep a calendar — one to a season — so trade becomes something you can plan a year around rather than wait for.',
+    desc: 'A deep-water quay: bigger traders, calling more reliably, and the only source of gold, dye and silk. Any of the Trading Post\'s own merchants or the Port\'s own larger fleets may call each season — ask a good one back and it returns next year in the season you choose.',
   },
   cathedral: {
     type: 'cathedral', name: 'Cathedral', emoji: '🕍', category: 'civic', w: 7, h: 7,

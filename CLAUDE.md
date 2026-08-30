@@ -444,9 +444,27 @@ gameplay decoupled from Web Audio/DOM the same way the rest of the codebase stay
   (`main.ts`), so positioned one-shots (fire, building/activity sound) actually attenuate with
   distance instead of always reading full volume; `playMusicForTier` is idempotent on an unchanged
   tier, so calling it every tick never restarts the track.
+- **Haptics** (`haptics.ts`'s `HapticManager`): a small, deliberately partial map from `AudioEvent`
+  to one of five `HapticEvent`s (Building/Error/Warning/Achievement/Tier Advancement — most events
+  have no entry and never vibrate) plus a per-`HapticEvent` `PATTERN` and `MIN_INTERVAL_MS` cooldown,
+  independent of `AUDIO_ASSET_MAP`'s own per-event `cooldownMs` (a player can disable haptics
+  without losing the matching sound, or the other way around). The cooldown is a plain last-fired
+  timestamp per event, not `ConcurrencyGate` — a vibration is a fire-and-forget platform call with
+  no "finished playing" moment to release a slot on, so there is nothing to gate but recency. This
+  is what keeps a player mashing a disabled action (repeated `INVALID_ACTION`), several stocks
+  crossing critical in one `warnLowStocks` sweep, or a few achievements landing in the same
+  `checkAchievements` pass from becoming a buzz-buzz-buzz — only the first in a burst is felt.
+  `PATTERN`'s pulse counts/durations encode the required intensity hierarchy (weakest → strongest:
+  Error, Building, Warning, Achievement, Tier Advancement), since the Vibration API this backend
+  targets has no separate amplitude control. `BUILDING_DAMAGED`/`BUILDING_REPAIRED` are deliberately
+  excluded — the disaster that caused the damage already fired its own one-shot `WARNING` haptic, so
+  one flood damaging four buildings still bites once, not four times.
 - **Settings** (`settings.ts`): Master/Music/Ambient/Sfx (0..10) plus a disaster-noises weight and a
   haptics on/off, `localStorage`-keyed exactly like `village-tips`/`village-gfx` — never in the
-  save. Reachable from the same Settings panel (`UI.showSettings`).
+  save. Reachable from the same Settings panel (`UI.showSettings`). The haptics toggle is read live
+  (`HapticManager`'s `isEnabled` defaults to `hapticsEnabled` itself, not a cached snapshot), so
+  flipping it in Settings applies to the very next event with no extra wiring, unlike the volume
+  sliders which need an explicit `audioManager.setXVolume` call alongside the `localStorage` write.
 - **Event sound effects**: warnings, disasters, merchants and progression all raise their
   `AudioEvent` from the one authoritative state transition, not from a UI refresh or a per-tick
   check. `warnLowStocks`'s own `lowWarned` latch (already there for the log line) is what stops

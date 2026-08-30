@@ -85,6 +85,7 @@ renderer, the camera, input, and the DOM UI.
 | `src/render/renderer.ts` | Legacy 2D canvas renderer (feature-parity for `?2d`). |
 | `src/render/models.ts`, `villager.ts`, `bridges.ts` | 3D model loading, villager meshes, bridge geometry. |
 | `src/engine/` | `camera.ts`, `camera3d.ts`, `input.ts`. |
+| `src/audio/` | Semantic audio/haptic events, asset tables, playback policy, Web Audio/haptic backends, settings (see Audio & haptics architecture). |
 | `tests/` | Playwright specs (see Testing). |
 | `sim-tests/` | Headless Node tests against the simulation directly — no browser, no renderer (see Testing). |
 | `tools/` | `icon/` (app-icon build), `models/` (Python/Blender building geometry + `check.py`), `textures/`. |
@@ -397,6 +398,40 @@ games and reloads; a check only ever flips an achievement *on*. Checks read the 
 "is it true now" facts and the per-village lifetime tallies (`GameState.stats` /`VillageStats`, saved
 with the village) for peaks and cumulatives (a village that hit 300 pop and crashed still earned it).
 `evaluateAchievements` runs at season turnover and returns the newly earned ones to celebrate.
+
+## Audio & haptics architecture
+
+`src/audio/` — a small, event-driven layer, built Phase 1 (architecture only; no audio files ship
+yet — every asset table below lists `variations: []`, the documented "not recorded" state, not a
+placeholder). Keeps gameplay decoupled from Web Audio/DOM the same way the rest of the codebase
+stays decoupled from `THREE.*` — see "Unity migration architecture" above.
+
+- **Semantic events** (`events.ts`): `AudioEvent`/`HapticEvent` unions plus `audioBus`/`emitAudio` —
+  a tiny pub/sub. Gameplay raises `FIRE_STARTED`, never "play fire_02.mp3". `simulation.ts` imports
+  only this one file from `src/audio/` (Category A/B, portable); everything else is wired from
+  `main.ts`, the browser-facing edge.
+- **Asset mapping** (`assets.ts`): `AUDIO_ASSET_MAP` is an exhaustive `Record<AudioEvent,
+  AudioAssetDef>` (same convention as `BUILDING_DEFS`) — each event's category (`music`/`ambient`/
+  `sfx`), concurrency cap and cooldown. `MUSIC_TRACKS` (per `VillageTier`) and `AMBIENT_LAYER_DEFS`
+  (water/wind/forest/birds/village) are the other two tables. See `public/audio/README.md` for the
+  folder convention Phase 2 files into.
+- **Playback policy** (`decision.ts`, `concurrency.ts`, `spatial.ts`): `decidePlay` is a pure
+  function — asset table/settings/`ConcurrencyGate`/listener position in, "should this play, how
+  loud" out — so every mute/volume/throttling/distance rule is unit-tested in `sim-tests/` without
+  a browser. `ConcurrencyGate` caps simultaneous instances **per event and per category** and
+  cools down retriggers, so e.g. ten woodcutters finishing a cycle the same tick collapse into one
+  audible hit rather than ten.
+- **Backends** (`manager.ts`'s `AudioManager`, `haptics.ts`'s `HapticManager` — Category D, web-
+  specific): each independently `install()`s onto `audioBus`. `AudioManager` owns one lazily-
+  created `AudioContext` behind a master → music/ambient/sfx gain chain, and
+  `installAutoUnlock()` (first pointer/key/touch anywhere unlocks it — browsers refuse audio before
+  a gesture). `updateActivity(state)` — called from `main.ts`'s UI-refresh tick via `activity.ts`'s
+  live worker counts, never from `update()` itself — drives the four production-activity ambient
+  loops (mining/woodcutting/blacksmith/construction); `playMusicForTier` is idempotent on an
+  unchanged tier, so calling it every tick never restarts the track.
+- **Settings** (`settings.ts`): Master/Music/Ambient/Sfx (0..10) plus a disaster-noises weight and a
+  haptics on/off, `localStorage`-keyed exactly like `village-tips`/`village-gfx` — never in the
+  save. Reachable from the same Settings panel (`UI.showSettings`).
 
 ## Save / load system
 

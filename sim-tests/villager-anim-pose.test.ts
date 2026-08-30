@@ -39,7 +39,16 @@ test('pose: carrying a load -> carrying, no tool, regardless of moving', () => {
   assert.equal(computeVillagerPose(carrying, false, 0).showTool, false);
 });
 
-for (const activity of ['woodcutting', 'mining', 'building'] as const) {
+for (const activity of [
+  'woodcutting',
+  'mining',
+  'building',
+  'farming',
+  'gathering',
+  'herbalist',
+  'blacksmithing',
+  'tailoring',
+] as const) {
   test(`pose: stationary '${activity}' activity -> working, tool shown`, () => {
     const c = fixture({ activity });
     const pose = computeVillagerPose(c, false, 1.23);
@@ -61,6 +70,28 @@ test('pose: fishing activity -> working, tool shown, on its own cast/wait/reel c
   const pose = computeVillagerPose(c, false, 2.0);
   assert.equal(pose.state, 'working');
   assert.equal(pose.showTool, true);
+});
+
+test('pose: hunting activity -> working, tool shown, on its own draw/release clock', () => {
+  const c = fixture({ activity: 'hunting' });
+  const pose = computeVillagerPose(c, false, 1.5);
+  assert.equal(pose.state, 'working');
+  assert.equal(pose.showTool, true);
+  assert.ok(Number.isFinite(pose.toolSwing));
+});
+
+test('pose: hunting activity while still moving never swings — same "no work animations while walking" rule', () => {
+  const c = fixture({ activity: 'hunting' });
+  const pose = computeVillagerPose(c, true, 1.5);
+  assert.notEqual(pose.state, 'working');
+  assert.equal(pose.showTool, false);
+});
+
+test('pose: the bow draw actually varies over a cycle (it is not a frozen stance)', () => {
+  const c = fixture({ activity: 'hunting' });
+  const angles = new Set<number>();
+  for (let t = 0; t < 3; t += 0.2) angles.add(Math.round(computeVillagerPose(c, false, t).toolSwing * 1000));
+  assert.ok(angles.size > 2, 'the bow angle should move through several distinct values over a few seconds');
 });
 
 test('pose: the swing actually varies over time (it is not a frozen stance)', () => {

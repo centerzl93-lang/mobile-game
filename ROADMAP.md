@@ -136,7 +136,7 @@ villager's visible activity has to correspond to what the simulation says they'r
 decides it" rule the rest of `src/render/` already follows (see `CLAUDE.md` "Unity migration
 architecture").
 
-#### Priority animations (first)
+#### Priority animations (first) ✅
 1. Walking
 2. Idle
 3. Woodcutting
@@ -144,7 +144,7 @@ architecture").
 5. Mining
 6. Fishing
 
-#### Next animation group
+#### Next animation group ✅
 7. Farming
 8. Gathering
 9. Hunting
@@ -152,6 +152,19 @@ architecture").
 11. Tailoring
 12. Herbalist work
 13. Carrying resources
+
+Both groups are now implemented end to end: simulation state (`Citizen.activity`, `types.ts`'s
+`JOB_ANIMATION` table) drives a pure pose classifier (`render/villagerAnim.ts`) that
+`Renderer3D.syncCitizens` turns into the shared tool prop's swing, with no per-job branching left in
+the renderer itself. `farming`/`gathering`/`hunting`/`herbalist` needed no visibility change
+(`gatherer`/`hunting`/`herbalist` are `CIRCLE_WORK`, `farm` is `OPEN_FOOTPRINT` — all four were
+already drawn outdoors); `blacksmith`/`tailor` are the second and third deliberate
+`VISIBLE_WHILE_WORKING` exceptions after `mine`, so the smith and tailor are now actually on screen
+to swing a hammer or a needle at rather than scaled away as an ordinary indoor bench. `Carrying
+resources` was already covered by the existing generic `carrying` pose (no swung tool) — no new work
+needed there. Coverage: `sim-tests/villager-anim-pose.test.ts` (pure pose classification, every
+activity) and `sim-tests/villager-activity.test.ts` (drives `update()` directly for each new job
+type, including the two newly-visible indoor trades).
 
 #### Example job → animation sequences
 - **Woodcutter:** walk → arrive at tree → equip/raise axe → swing → tree reaction → repeat → stop →

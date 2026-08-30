@@ -141,6 +141,111 @@ test('a fishing hut worker gets `activity: fishing` at the jetty', () => {
   assert.equal(c.inside, false);
 });
 
+// Phase 2's "next animation group" (ROADMAP.md): farm/gatherer/hunting/herbalist were already
+// drawn outdoors (`OPEN_FOOTPRINT`/`CIRCLE_WORK`) before they had an activity mapped, so these are
+// pure `JOB_ANIMATION` coverage, not a visibility change. blacksmith/tailor are the new
+// `VISIBLE_WHILE_WORKING` exceptions — their tests assert `inside: false` the same way the mine's
+// does, since before this change they would have been scaled to invisible.
+
+test('a farm worker gets `activity: farming` even on an unseeded field', () => {
+  const s = mk(11009);
+  flatten(s);
+  s.buildings = [];
+  s.citizens = [];
+  s.desiredBuilders = 0;
+  s.limits = {};
+  const field = builtWorkplace(s, 'farm', 20, 20); // no `crop` set — the animation must not depend on it
+  const c = addWorker(s, field.id, 5, 5);
+  field.workers = [c.id];
+
+  const arrived = runUntil(s, () => c.activity === 'farming');
+  assert.ok(arrived, 'a field hand should reach the field and start working it, seeded or not');
+  assert.equal(c.inside, false, 'a field is open ground — always visible');
+});
+
+test('a gatherer worker gets `activity: gathering` out in their work circle', () => {
+  const s = mk(11010);
+  flatten(s);
+  s.buildings = [];
+  s.citizens = [];
+  s.desiredBuilders = 0;
+  s.limits = {};
+  const hut = builtWorkplace(s, 'gatherer', 20, 20);
+  const c = addWorker(s, hut.id, 5, 5);
+  hut.workers = [c.id];
+
+  const arrived = runUntil(s, () => c.activity === 'gathering');
+  assert.ok(arrived, 'a gatherer should reach a spot in their circle and start foraging');
+  assert.equal(c.inside, false, 'gatherer is CIRCLE_WORK — always outdoors');
+});
+
+test('a hunting cabin worker gets `activity: hunting` out in their work circle', () => {
+  const s = mk(11011);
+  flatten(s);
+  s.buildings = [];
+  s.citizens = [];
+  s.desiredBuilders = 0;
+  s.limits = {};
+  const cabin = builtWorkplace(s, 'hunting', 20, 20);
+  const c = addWorker(s, cabin.id, 5, 5);
+  cabin.workers = [c.id];
+
+  const arrived = runUntil(s, () => c.activity === 'hunting');
+  assert.ok(arrived, 'a hunter should reach a spot in their circle and start hunting');
+  assert.equal(c.inside, false, 'hunting is CIRCLE_WORK — always outdoors');
+});
+
+test('an herbalist worker gets `activity: herbalist` out in their work circle', () => {
+  const s = mk(11012);
+  flatten(s);
+  s.buildings = [];
+  s.citizens = [];
+  s.desiredBuilders = 0;
+  s.limits = {};
+  const hut = builtWorkplace(s, 'herbalist', 20, 20);
+  const c = addWorker(s, hut.id, 5, 5);
+  hut.workers = [c.id];
+
+  const arrived = runUntil(s, () => c.activity === 'herbalist');
+  assert.ok(arrived, 'an herbalist should reach a spot in their circle and start foraging herbs');
+  assert.equal(c.inside, false, 'herbalist is CIRCLE_WORK — always outdoors');
+});
+
+test('a blacksmith is now visible at the anvil (a new VISIBLE_WHILE_WORKING exception) and gets `activity: blacksmithing`', () => {
+  const s = mk(11013);
+  flatten(s);
+  s.buildings = [];
+  s.citizens = [];
+  s.desiredBuilders = 0;
+  s.limits = {};
+  barnAt(s, 20, 30); // an iron/tools stock for `tryEquipTool`/inputs so the worker isn't stuck fetching
+  const forge = builtWorkplace(s, 'blacksmith', 20, 20);
+  const c = addWorker(s, forge.id, 19, 19);
+  forge.workers = [c.id];
+
+  const arrived = runUntil(s, () => c.activity === 'blacksmithing');
+  assert.ok(arrived, 'the smith should reach the forge and start hammering');
+  assert.equal(c.inside, false, 'blacksmith is the new deliberate exception — see `VISIBLE_WHILE_WORKING` in types.ts');
+});
+
+test('a tailor is now visible at the bench (a new VISIBLE_WHILE_WORKING exception) and gets `activity: tailoring`', () => {
+  const s = mk(11014);
+  flatten(s);
+  s.buildings = [];
+  s.citizens = [];
+  s.desiredBuilders = 0;
+  s.limits = {};
+  const barn = barnAt(s, 20, 30);
+  barn.store.leather = 500; // `builtWorkplace`'s default recipe ('iron', unused by tailor) falls through to the plain-leather bench
+  const bench = builtWorkplace(s, 'tailor', 20, 20);
+  const c = addWorker(s, bench.id, 19, 19);
+  bench.workers = [c.id];
+
+  const arrived = runUntil(s, () => c.activity === 'tailoring');
+  assert.ok(arrived, 'the tailor should reach the bench and start stitching');
+  assert.equal(c.inside, false, 'tailor is the new deliberate exception — see `VISIBLE_WHILE_WORKING` in types.ts');
+});
+
 test('a builder gets `activity: building` while actually laying build-work, not while walking to the site', () => {
   const s = mk(11004);
   flatten(s);

@@ -21,8 +21,9 @@ import {
   TAILOR_WARM_LEATHER_IN, TAILOR_WARM_WOOL_IN, TAILOR_WARM_OUT,
   LUX_GLASS_SAND, LUX_GLASS_COAL, LUX_GLASS_OUT,
   LUX_JEWEL_GLASS, LUX_JEWEL_IRON, LUX_JEWEL_OUT,
+  LUX_FINEJEWEL_OUT, LUX_FINECLOTH_OUT,
   NO_TOOLS_PENALTY, IRON_TOOL_PROD, STEEL_TOOL_PROD, STEEL_DURABILITY,
-  TOOL_WEAR_PER_CYCLE,
+  TOOL_WEAR_PER_CYCLE, TRADE_VALUE, MERCHANT_CATEGORY_STOCK,
 } from '../src/types';
 import type { GameState, Building, BuildingType, Citizen } from '../src/types';
 
@@ -302,4 +303,80 @@ test('Warm Clothing costs as much of EACH input as the single-input recipes need
   // *harder* recipe to keep running, not just a pricier one.
   assert.ok(TAILOR_WARM_OUT < TAILOR_OUT, 'the warm bench turns out fewer coats a cycle than either plain recipe');
   assert.ok(TAILOR_WARM_LEATHER_IN <= TAILOR_LEATHER_IN && TAILOR_WARM_WOOL_IN <= TAILOR_WOOL_IN);
+});
+
+// ---------------------------------------------------------------------------------------------
+// PLAYTEST B15 — luxury production profitability & investment audit. Every bench in the chain
+// must clear its own input cost at TRADE_VALUE parity, and value should climb as a bench sits
+// higher in the chain — the whole point of digging sand at all is that jewellery is worth more
+// than the glass (and the quarry labour) that went into it. These read the live constants rather
+// than hard-coding numbers, so a future, deliberate retune doesn't have to fight the test suite —
+// only a recipe that stops paying for itself, or stops climbing, should ever fail here.
+// ---------------------------------------------------------------------------------------------
+function inputValue(b: Building): number {
+  return debugConverterInputs(b).reduce((sum, [k, qty]) => sum + TRADE_VALUE[k] * qty, 0);
+}
+
+const glassBench = { type: 'luxury', recipe: 'glass' } as unknown as Building;
+const jewelBench = { type: 'luxury', recipe: 'jewelry' } as unknown as Building;
+const fineJewelBench = { type: 'luxury', recipe: 'finejewelry' } as unknown as Building;
+const fineClothBench = { type: 'luxury', recipe: 'fineclothes' } as unknown as Building;
+
+test('every luxury bench clears its own input cost at trade-value parity (bare-handed, the worst case)', () => {
+  // tf floors at NO_TOOLS_PENALTY (a bare-handed worker) — if a recipe is still profitable there,
+  // it is profitable for every tool tier, since tf only ever scales output upward from there.
+  // Fine Jewellery is the one deliberate exception: gold is dear enough (see TRADE_VALUE) that a
+  // bare-handed fine-jeweller sits exactly at parity, not a loss — any tool at all tips it into
+  // profit, which is the point of a recipe gated behind a Port and a jewellery supply already in
+  // hand.
+  const benches: [string, Building, number, boolean][] = [
+    ['glass', glassBench, LUX_GLASS_OUT, true],
+    ['jewelry', jewelBench, LUX_JEWEL_OUT, true],
+    ['finejewelry', fineJewelBench, LUX_FINEJEWEL_OUT, false],
+    ['fineclothes', fineClothBench, LUX_FINECLOTH_OUT, true],
+  ];
+  for (const [kind, bench, out, strict] of benches) {
+    const outValue = out * NO_TOOLS_PENALTY * TRADE_VALUE[kind as keyof typeof TRADE_VALUE];
+    const inValue = inputValue(bench);
+    if (strict) {
+      assert.ok(outValue > inValue, `${kind}: bare-handed output value (${outValue.toFixed(2)}) should still clear its input cost (${inValue})`);
+    } else {
+      assert.ok(outValue >= inValue, `${kind}: bare-handed output value (${outValue.toFixed(2)}) should at least meet its input cost (${inValue})`);
+    }
+  }
+});
+
+test('climbing the chain is worth it: jewellery earns more per grain of sand than selling the glass outright', () => {
+  // Bench-level markup alone isn't the right lens — glass and jewellery draw different amounts of
+  // upstream quarry labour (a bag of sand vs. the sand behind the glass a jewel consumes), so the
+  // economic question is value earned per unit of the scarce root resource (sand), traced all the
+  // way up the chain. That's what makes running the workshop past glass worth the extra bench.
+  const sandPerGlass = inputValue(glassBench) > 0 ? LUX_GLASS_SAND / LUX_GLASS_OUT : 0; // sand a single glass costs
+  const glassValuePerSand = TRADE_VALUE.glass / sandPerGlass;
+  const sandPerJewelry = (LUX_JEWEL_GLASS * sandPerGlass) / LUX_JEWEL_OUT; // sand behind one jewel's glass
+  const jewelryValuePerSand = TRADE_VALUE.jewelry / sandPerJewelry;
+  assert.ok(
+    jewelryValuePerSand > glassValuePerSand,
+    `jewellery (${jewelryValuePerSand.toFixed(2)}/sand) should out-earn glass (${glassValuePerSand.toFixed(2)}/sand) for the same quarry labour — it's the reason a quarry gets built`,
+  );
+});
+
+test('jewellery clears its own glass+iron cost, and glass clears its own sand+coal cost', () => {
+  const glassMarkup = (LUX_GLASS_OUT * TRADE_VALUE.glass) / inputValue(glassBench);
+  const jewelryMarkup = (LUX_JEWEL_OUT * TRADE_VALUE.jewelry) / inputValue(jewelBench);
+  const fineJewelryMarkup = (LUX_FINEJEWEL_OUT * TRADE_VALUE.finejewelry) / inputValue(fineJewelBench);
+  assert.ok(glassMarkup > 1, 'glass clears its own sand+coal cost');
+  assert.ok(jewelryMarkup > 1, 'jewelry clears its own glass+iron cost');
+  assert.ok(fineJewelryMarkup > 1, 'fine jewellery clears its own jewellery+gold cost');
+});
+
+test('the luxury chain\'s intermediate goods are never for sale — no import-and-flip arbitrage', () => {
+  // sand/glass/jewelry must come from the workshop's own bench, never a merchant's hold, or a
+  // player could buy the cheap end of the chain and flip it without ever running a quarry.
+  const noBuy: (keyof typeof TRADE_VALUE)[] = ['sand', 'glass', 'jewelry'];
+  for (const category of Object.values(MERCHANT_CATEGORY_STOCK)) {
+    for (const kind of noBuy) {
+      assert.ok(!(kind in category), `${kind} must not be purchasable from any merchant category — it has to be made`);
+    }
+  }
 });

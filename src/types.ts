@@ -2493,8 +2493,8 @@ export const CARRY_VOLUME = 12;
 export const RESOURCE_VOLUME: Record<ResourceKind, number> = {
   // Sand is quarried by the cartload. The fine goods are small, but volume is not only how much
   // fits in a barn — it is also what divides a load, and a worker holds their output back until
-  // they have a *full* one. Jewellery comes off the bench one piece at a time, so at the 0.1 a
-  // ring deserves by bulk a jeweller would have had to make a hundred and twenty of them before
+  // they have a *full* one. Jewellery comes off the bench just a couple of pieces at a time, so at
+  // the 0.1 a ring deserves by bulk a jeweller would have had to make dozens of them before
   // carrying any to a barn. These are set by how many make a sensible trip.
   sand: 1, glass: 0.5, jewelry: 1, gold: 0.5, dye: 0.5, silk: 0.5,
   // Finer than the plain goods but not smaller in the barn — a coronet still needs its case and a
@@ -3648,11 +3648,11 @@ export const TAILOR_WARM_WOOL_IN = 3;
 export const TAILOR_WARM_OUT = 3;
 
 /**
- * The luxury chain, per completed work cycle. Two sand and a coal make two glass; two glass with an
- * iron make one piece of jewellery. The fine bench's own goods sit one clean step above that: a
- * finished jewel reset with imported gold, and dyed silk worked into a gown — each yields a single
- * piece a cycle, dear to run, and worth it since a merchant pays more for one than for anything
- * else the town can make (see TRADE_VALUE).
+ * The luxury chain, per completed work cycle. Two sand and a coal make three panes of glass; two
+ * glass with an iron make two pieces of jewellery. The fine bench's own goods sit one clean step
+ * above that: a finished jewel reset with imported gold, and dyed silk worked into a gown — each
+ * yields a single piece a cycle, dear to run, and worth it since a merchant pays more for one than
+ * for anything else the town can make (see TRADE_VALUE).
  *
  * PLAYTEST B13 quadrupled every input here; B14 reverted the chain back to its original ratios
  * (unlike the blacksmith/tailor revert, nothing upstream of glass was cut the way mine/hunting
@@ -3660,13 +3660,22 @@ export const TAILOR_WARM_OUT = 3;
  * made the chain barely worth running before a Port even exists, since a town-tier village has no
  * gold/dye/silk yet and Fine goods are city-tier). Sand/coal/iron scarcity still comes from the
  * quarry and mine cuts B13 kept; that's judged enough pressure on the luxury chain by itself.
+ *
+ * PLAYTEST B15 raised `LUX_GLASS_OUT` (2→3) and `LUX_JEWEL_OUT` (1→2) — the *inputs* above are
+ * untouched, so this is an output-side, recipe-ratio fix, not a sell-price bump or an added cost.
+ * B15's own worker-season accounting (bench labour *plus* the quarry/mine labour needed to feed
+ * it, at trade-value parity) found glass landing below plain foraging and jewellery below ordinary
+ * blacksmithing — the two goods this file's own comments call the reason a quarry and a luxury
+ * workshop get built at all were the economy's *worst* per-worker earners, not its best. Doubling
+ * jewellery's yield and raising glass's by half closes that gap (see PLAYTEST.md B15 for the full
+ * before/after) without touching either recipe's dear, deliberately-scarce inputs.
  */
 export const LUX_GLASS_SAND = 2;
 export const LUX_GLASS_COAL = 1;
-export const LUX_GLASS_OUT = 2;
+export const LUX_GLASS_OUT = 3;
 export const LUX_JEWEL_GLASS = 2;
 export const LUX_JEWEL_IRON = 1;
-export const LUX_JEWEL_OUT = 1;
+export const LUX_JEWEL_OUT = 2;
 export const LUX_FINEJEWEL_JEWELRY = 1;
 export const LUX_FINEJEWEL_GOLD = 1;
 export const LUX_FINEJEWEL_OUT = 1;

@@ -47,7 +47,8 @@ import { Camera3D } from '../engine/camera3d';
 import type { PlacementView } from './renderer';
 import { ModelLibrary, InstancedModel } from './models';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { bodyGeometry, skinGeometry, hairGeometry, legGeometry, coatGeometry, HEAD_Y, HIP_Y, LEG_X } from './villager';
+import { bodyGeometry, skinGeometry, hairGeometry, legGeometry, coatGeometry, toolGeometry, HEAD_Y, HIP_Y, SHOULDER_Y, LEG_X } from './villager';
+import { computeVillagerPose, idleSway } from './villagerAnim';
 import {
   BridgeDeck,
   bridgeDeck,
@@ -424,6 +425,18 @@ export class Renderer3D {
   /** Left and right leg, instanced separately so each can swing on its own transform. */
   private legs!: [THREE.InstancedMesh, THREE.InstancedMesh];
   private coats!: THREE.InstancedMesh | null;
+  /** The axe/pickaxe/hammer/rod prop a working villager holds — see `render/villagerAnim.ts` and
+   *  `render/villager.ts`'s `toolGeometry`. One instanced layer, drawn on every tier: the villager
+   *  job animation system this exists for is the point of the feature, not a cosmetic extra the
+   *  low tier can shed the way hair is. */
+  private tools!: THREE.InstancedMesh;
+  /** The last yaw each citizen *instance slot* actually moved with, so a stopped villager keeps
+   *  facing the way they arrived instead of snapping to face 0 the instant they plant their feet —
+   *  see `syncCitizens`. Indexed by array position like every other per-instance buffer here, sized
+   *  once to `CITIZEN_CAP` and never reallocated, so this costs nothing per frame (Phase 10). Slot
+   *  reuse (citizen i's slot becoming a different citizen next frame, e.g. after a death) just means
+   *  one frame's stale facing on a slot that has usually already moved by the time it matters. */
+  private lastYaw = new Float32Array(CITIZEN_CAP);
   private water!: THREE.Mesh;
   private mountainH: Float32Array | null = null; // per-tile mountain block height (0 = not a mountain)
 
@@ -720,6 +733,9 @@ export class Renderer3D {
     this.coats = mkLayer(coatGeometry(), coatMat);
     // Hair is the one part that is purely cosmetic, so it is the one part the low tier drops.
     this.hair = this.tier === 'high' ? mkLayer(hairGeometry(), matte(0xffffff, 0.85)) : null;
+    // The job-animation tool prop: a plain wood-and-iron tone, not tied to any villager's outfit
+    // (see `toolGeometry`'s doc comment on why one shape stands in for every job).
+    this.tools = mkLayer(toolGeometry(), matte(0x5a4a36, 0.8));
 
     // Water plane just beneath the land surface — subdivided so it can ripple.
     const waterMat = new THREE.MeshStandardMaterial({
@@ -3148,6 +3164,7 @@ export class Renderer3D {
     const n = Math.min(s.citizens.length, cap);
     const warmHomes = this.coats ? this.clothedHomes(s) : null;
     let coated = 0;
+    let tooled = 0;
     for (let i = 0; i < n; i++) {
       const c = s.citizens[i];
       const child = c.age < ADULT_AGE;
@@ -3157,19 +3174,45 @@ export class Renderer3D {
       const sc = c.inside ? 0.0001 : child ? 0.62 : 1;
       const fit = OUTFITS[lookIndex(c.id, 0x9e3779b9, OUTFITS.length)];
       const moving = Math.abs(c.tx - c.x) + Math.abs(c.ty - c.y) > 0.03;
+      // The villager job animation system's classification step (`render/villagerAnim.ts`) — see
+      // its file doc comment for the full Simulation Job State -> Animation State pipeline.
+      const pose = computeVillagerPose(c, moving, now);
       // A small rise and fall on each stride, in step with the legs below (hence the doubled
       // frequency — the body bobs once per footfall, the legs swing once per full cycle).
       const stride = now * 5.2 + c.id;
-      const bob = moving ? Math.abs(Math.sin(stride)) * 0.022 : 0;
-      const yaw = moving ? Math.atan2(c.tx - c.x, c.ty - c.y) : 0;
+      let bob = moving ? Math.abs(Math.sin(stride)) * 0.022 : 0;
+      // Facing: while moving, face the way they're actually headed and remember it; once stopped,
+      // keep that heading rather than snapping to face a fixed default direction — a villager who
+      // just walked up to a tree or a mine face should still be looking at it, not at the compass
+      // point the app happens to call yaw zero. A genuinely idle villager (nobody home, nothing to
+      // do) gets a faint side-to-side wobble instead, standing in for "looking around".
+      let yaw: number;
+      if (moving) {
+        yaw = Math.atan2(c.tx - c.x, c.ty - c.y);
+        this.lastYaw[i] = yaw;
+      } else {
+        yaw = this.lastYaw[i];
+        if (pose.state === 'idle') {
+          const sway = idleSway(now, c.id);
+          yaw += sway.yawWobble;
+          bob = sway.bob;
+        }
+      }
       // On a bridge a villager walks the deck, which now arches well clear of the water. Drawing
       // them at land height put them under their own bridge.
       const y0 = (this.deckTopAt(c.x, c.y) ?? TOP) + bob;
+      // A small, constant forward lean while working or hauling a load — enough to read as
+      // "leaning into it" without a separate arm rig to actually bend (see `toolGeometry`'s doc
+      // comment on why the tool prop, not the body, carries the job-specific motion).
+      const pitch = pose.state === 'working' ? 0.11 : pose.state === 'carrying' ? 0.08 : 0;
 
       // Everything above the hips shares one transform; only the legs move independently.
       this.dummy.position.set(c.x, y0, c.y);
       this.dummy.scale.set(sc, sc, sc);
-      this.dummy.rotation.set(0, yaw, 0);
+      // YXZ so the yaw is applied first and the lean happens in the villager's own forward plane —
+      // the same reason the legs below use this order (a turned villager must lean forward, not
+      // sideways).
+      this.dummy.rotation.set(pitch, yaw, 0, 'YXZ');
       this.dummy.updateMatrix();
       this.citizens.setMatrixAt(i, this.dummy.matrix);
       this.citizens.setColorAt(i, this.color.set(c.sick ? SICK_TINT : fit.tunic));
@@ -3224,6 +3267,23 @@ export class Renderer3D {
         this.coats.setColorAt(coated, this.color.set(c.sick ? SICK_TINT : fit.coat));
         coated++;
       }
+      // The job-animation tool: drawn only while `pose` says a work animation is actually playing
+      // (see `render/villagerAnim.ts`) — own running count, same pattern as `coats`, since only a
+      // subset of citizens are mid-swing at any moment. Held roughly at hand height on the working
+      // side, pitched by `pose.toolSwing` in the villager's own forward plane so it swings toward
+      // whatever they are facing rather than the world's fixed axes.
+      if (pose.showTool) {
+        const handX = 0.145 * sc;
+        // Grip height: partway up from hip to shoulder, the same span `bodyGeometry` draws the
+        // arms through.
+        const handY = y0 + (HIP_Y + (SHOULDER_Y - HIP_Y) * 0.55) * sc;
+        this.dummy.position.set(c.x + handX * cos, handY, c.y - handX * sin);
+        this.dummy.scale.set(sc, sc, sc);
+        this.dummy.rotation.set(pose.toolSwing, yaw, 0, 'YXZ');
+        this.dummy.updateMatrix();
+        this.tools.setMatrixAt(tooled, this.dummy.matrix);
+        tooled++;
+      }
     }
     this.citizens.count = n;
     this.citizens.instanceMatrix.needsUpdate = true;
@@ -3239,6 +3299,8 @@ export class Renderer3D {
       this.coats.instanceMatrix.needsUpdate = true;
       if (this.coats.instanceColor) this.coats.instanceColor.needsUpdate = true;
     }
+    this.tools.count = tooled;
+    this.tools.instanceMatrix.needsUpdate = true;
   }
 
   /**
@@ -3498,7 +3560,7 @@ export class Renderer3D {
     const pathMeshes = Object.values(this.pathLayers);
     // Every villager body part is its own layer now, and the head always existed — all of them
     // have to be released here or a new map leaks the old map's meshes.
-    const villagerMeshes = [this.citizens, this.heads, this.hair, this.coats, ...(this.legs ?? [])]
+    const villagerMeshes = [this.citizens, this.heads, this.hair, this.coats, this.tools, ...(this.legs ?? [])]
       .filter((m): m is THREE.InstancedMesh => !!m);
     // `ironNodes` belongs in this list as much as `rocks` does. Leaving it out left every old
     // map's ore chunks in the scene, still at the positions they were given for *that* terrain —

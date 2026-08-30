@@ -970,6 +970,36 @@ export interface CitizenTask {
   pty?: number;
 }
 
+/**
+ * The job-specific work animation a villager can be shown performing (`Citizen.activity`). A
+ * small, deliberately open set — new arms get their pose in `render/villagerAnim.ts` (Category B:
+ * reusable state-machine design, C# rewrite required for a Unity build) — everything not in this
+ * union just shows the generic idle/walking/carrying states with no swung tool, same as a trade
+ * with no animation authored yet.
+ */
+export type VillagerActivity = 'woodcutting' | 'mining' | 'fishing' | 'building';
+
+/**
+ * Which workplace building(s) drive which `VillagerActivity` while a worker is actually producing
+ * there — not walking to it, not fetching an input. Same grouping the audio layer already uses for
+ * its own activity sounds (`ACTIVITY_BUILDING` in `src/audio/activity.ts`): a lumberyard forester
+ * felling trees and a woodcutter splitting logs indoors both count as "woodcutting" there, but only
+ * the lumberyard's forester is ever drawn (`worksIndoors` keeps the woodcutter's bench worker out of
+ * sight like any other indoor trade — see below), so mapping the woodcutter too costs nothing and
+ * saves this table from silently drifting from the audio one if a building is ever moved between
+ * them. `mine` is deliberately the only dig site mapped, matching the audio table's own choice not
+ * to cover `quarry`.
+ *
+ * `'building'` has no entry here — a builder's `jobId` is null by definition, so that activity is
+ * set from the *action* (`runBuilder`'s construct/repair/demolish branches), not from a workplace.
+ */
+export const JOB_ANIMATION: Partial<Record<BuildingType, VillagerActivity>> = {
+  lumberyard: 'woodcutting',
+  woodcutter: 'woodcutting',
+  mine: 'mining',
+  fishing: 'fishing',
+};
+
 export type Sex = 'm' | 'f';
 
 export interface Citizen {
@@ -1054,6 +1084,18 @@ export interface Citizen {
    * loitering on the doorstep. Transient — never saved, recomputed as they work.
    */
   inside?: boolean;
+  /**
+   * The job-specific action this villager is actually performing right now — swinging an axe,
+   * hammering a construction site, working a pickaxe, casting a line — for the renderer's per-job
+   * work animation (`render/villagerAnim.ts`). Set only for the instant real work is happening:
+   * arrived at the work spot, not blocked on a missing input or a tool errand, mid-cycle — the
+   * same moment `inside` is set for an indoor trade, and by the same rule reset to `undefined` at
+   * the top of every tick (`runCitizen`) so an interruption (reassigned, laid off, fetching
+   * materials, the building burning down) clears it for free rather than needing its own teardown.
+   * `undefined` covers walking, hauling, fetching, waiting on a barn, and every trade with no
+   * animation mapped yet (see `JOB_ANIMATION`). Transient — never saved, recomputed every tick.
+   */
+  activity?: VillagerActivity;
   /**
    * Got a clothing ration at the last season turnover. Transient — recomputed each season in
    * `endSeason`, never saved. A clothed villager burns less firewood; an unclothed one risks
@@ -1640,12 +1682,14 @@ export const OPEN_FOOTPRINT: BuildingType[] = ['farm', 'ranch'];
 export const CIRCLE_WORK: BuildingType[] = ['gatherer', 'hunting', 'lumberyard', 'herbalist'];
 
 /**
- * Does this trade happen under a roof? A smith, a tailor, a woodcutter, a teacher and a miner are
- * all inside their building while they work, and are drawn as such — out of sight until they come
- * out with a load.
+ * Does this trade happen under a roof? A smith, a tailor, a woodcutter and a teacher are all
+ * inside their building while they work, and are drawn as such — out of sight until they come out
+ * with a load.
  *
- * Everything with a door except the circle trades and the fishing hut, whose jetty is the point of
- * it. A field and a pen have no door: they are open ground, and their workers are visible on them.
+ * Everything with a door except the circle trades, the fishing hut (its jetty is the point of it),
+ * and the mine (its pickaxe swing is the point of it — see `JOB_ANIMATION`/`render/villagerAnim.ts`
+ * for the animation this exception exists to show). A field and a pen have no door: they are open
+ * ground, and their workers are visible on them.
  */
 /** How much a stockpile limit moves per tap of the stepper's small step; the big step is double this. */
 export const LIMIT_STEP = 50;
@@ -1866,8 +1910,16 @@ export const LOW_STOCK_FRACTION = 0.2;
  */
 export const WARN_STOCK_FRACTION = 0.1;
 
+/**
+ * `mine` is a deliberate, narrow exception alongside `fishing`: without it a miner would be
+ * scaled to invisible (see the renderer's `c.inside` handling) for the exact moment the villager
+ * job animation system needs them on screen swinging a pickaxe. `quarry` is left indoors, matching
+ * the audio layer's own choice not to give it an activity of its own (`ACTIVITY_BUILDING` in
+ * `src/audio/activity.ts`).
+ */
+const VISIBLE_WHILE_WORKING: BuildingType[] = ['fishing', 'mine'];
 export function worksIndoors(type: BuildingType): boolean {
-  return hasDoor(type) && !CIRCLE_WORK.includes(type) && type !== 'fishing';
+  return hasDoor(type) && !CIRCLE_WORK.includes(type) && !VISIBLE_WHILE_WORKING.includes(type);
 }
 export function blocksMovement(b: Building): boolean {
   if (OPEN_FOOTPRINT.includes(b.type)) return false; // fields and pens are walked through, ever

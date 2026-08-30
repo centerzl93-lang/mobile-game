@@ -190,6 +190,7 @@ import {
   LIMIT_META,
   worksIndoors,
   CIRCLE_WORK,
+  JOB_ANIMATION,
   ADULT_AGE,
   SCHOOL_START_AGE,
   SCHOOL_LEAVING_AGE,
@@ -1517,6 +1518,11 @@ function runCitizen(
   // Out of the building unless this tick puts them back at their bench, so a worker who breaks off
   // to haul, shop or rest reappears rather than staying invisible on the doorstep.
   c.inside = false;
+  // No job-specific work animation unless this tick's own branch below sets one — the same
+  // reset-every-tick rule as `inside`, so an interruption (reassigned, laid off, sent to fetch
+  // materials, the workplace burning down) clears the swung tool for free rather than needing its
+  // own teardown path.
+  c.activity = undefined;
   if (!isAdult(c) || c.sick) {
     wander(s, c, dt); // children play; the sick rest — neither can work or haul
     return;
@@ -1849,6 +1855,10 @@ function runWorker(s: GameState, c: Citizen, b: Building, dt: number, workerFact
   goTo(c, spot);
   if (stepTo(s, c, dt)) {
     c.inside = worksIndoors(b.type);
+    // Arrived and about to cycle — this is the one moment `runWorker` actually has a villager
+    // standing at their bench/tree/seam rather than walking to it or fetching an input, so it is
+    // the only place that sets the work animation (see `JOB_ANIMATION`).
+    c.activity = JOB_ANIMATION[b.type];
     c.timer += dt;
     if (c.timer >= WORK_SECONDS) {
       c.timer = 0;
@@ -2723,6 +2733,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, builderFac
       // demolition is not construction run backwards.
       goTo(c, buildingApproach(s, pick.site, c));
       if (stepTo(s, c, dt)) {
+        c.activity = 'building'; // pulling a structure down is the same hammer motion in reverse
         // Public Works speeds this the same way it speeds every other builder task; nothing else
         // (Long Hours included) may touch it — see `builderPolicyFactor`.
         const done = labour(c, dt, builderFactor);
@@ -2762,6 +2773,7 @@ function runBuilder(s: GameState, c: Citizen, dt: number, log: LogFn, builderFac
     if (sendForTool(s, c, dt)) return;
     goTo(c, buildingApproach(s, pick.site, c));
     if (stepTo(s, c, dt)) {
+      c.activity = 'building';
       const site = pick.site;
       const done = labour(c, dt, citizenToolFactor(c) * builderFactor);
       wearCitizenTool(c, done * TOOL_WEAR_PER_BUILD_WORK); // raising or repairing draws on this builder's own tool

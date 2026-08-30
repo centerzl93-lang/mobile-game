@@ -21,14 +21,15 @@
 
 /** UI/interaction, construction, disaster, trading and progression moments — see the module doc.
  *  `MINING`/`WOODCUTTING`/`BLACKSMITH`/`CONSTRUCTION` are the exception: those four are never
- *  `emit`-ted through the bus below. They're driven continuously by `activity.ts`'s live worker
- *  counts straight into `AudioManager.setAmbientIntensity`, not fired as one-shot occurrences —
- *  see CLAUDE.md "Looping Activity Sounds". `BIRD_CALL` is a second exception in the same spirit,
- *  just the opposite shape: it's a one-shot, but nothing in gameplay ever `emit`s it either —
- *  `AudioManager.updateEnvironment` fires it itself on a randomized schedule (`birds.ts`), reusing
- *  the ordinary one-shot playback path so bird calls get muting/volume/missing-asset handling for
- *  free. All of these stay in this union so `assets.ts`'s asset table is one single exhaustive
- *  `Record<AudioEvent, …>`, not several parallel tables. */
+ *  `emit`-ted through the bus below. `AudioManager.updateActivity` reads `activity.ts`'s live
+ *  worker counts each tick and plays each one as an ordinary intermittent one-shot through
+ *  `playSfx` on its own schedule (`ActivitySoundScheduler`) — not pushed onto the bus by gameplay,
+ *  and not a continuous loop either; see CLAUDE.md "Building & Activity Sound Effects". `BIRD_CALL`
+ *  is a second exception in the same spirit: it's a one-shot, but nothing in gameplay ever `emit`s
+ *  it either — `AudioManager.updateEnvironment` fires it itself on a randomized schedule
+ *  (`birds.ts`), reusing the ordinary one-shot playback path so bird calls get muting/volume/
+ *  missing-asset handling for free. All of these stay in this union so `assets.ts`'s asset table is
+ *  one single exhaustive `Record<AudioEvent, …>`, not several parallel tables. */
 export type AudioEvent =
   // UI / Interaction
   | 'BUILDING_PLACED'

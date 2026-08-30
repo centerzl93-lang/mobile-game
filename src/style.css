@@ -1417,6 +1417,25 @@ body {
   font-size: 13px;
   cursor: pointer;
 }
+.tp-request {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+.request-season {
+  flex: 1 1 auto;
+  padding: 8px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.request-season:hover {
+  border-color: var(--accent);
+}
 .tp-open {
   width: 100%;
   padding: 10px;

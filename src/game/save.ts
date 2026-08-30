@@ -98,7 +98,7 @@ const LEGACY_KEY = 'little-village-save-v12';
  * To change the shape of a save now: bump this, and add a step to `MIGRATIONS` keyed by the
  * version it upgrades *from*.
  */
-const VERSION = 14;
+const VERSION = 15;
 
 /**
  * The oldest envelope the loader will still take. Below this a save is too old to reason about and
@@ -130,6 +130,35 @@ const MIGRATIONS: Record<number, (s: GameState) => void> = {
   // at once; the cumulative ones (produce N, survive N winters) simply start counting from now.
   13: (s) => {
     if (!s.stats) s.stats = freshStats();
+  },
+  // v14 → v15: the dedicated Seed Merchant category was removed — seed unlocks are now the Food
+  // Merchant's own independent offer, not a category of their own — and Port fleets stopped being
+  // permanently bound to one season each; any of the eight categories can now call at either the
+  // post or the harbour, decided by *where a visit sailed* (`Merchant.viaPort`) rather than by its
+  // category. A save frozen mid-visit under the old rules needs both fixed up: a docked/arriving/
+  // leaving 'seeds' merchant has no equivalent left to become, so it is sent back out to sea rather
+  // than guessed at (harmless — a new visit rolls in the ordinary course of play); any other
+  // in-flight merchant is tagged with the venue its *old* category implied, so it keeps tying up at
+  // the building it actually sailed to instead of suddenly berthing at the wrong wharf.
+  14: (s) => {
+    const m = s.merchant as unknown as Record<string, unknown>;
+    // Frozen on purpose, the way `RENAMED` and `LEGACY_BUILD_TIME` are: this is the Port's category
+    // list as it stood *before* this migration, not today's `PORT_CATEGORIES` — see the file doc.
+    const OLD_PORT_CATEGORIES = ['portgrain', 'portluxury', 'portindustrial', 'portgeneral'];
+    if (m.category === 'seeds') {
+      m.category = null;
+      m.phase = 'away';
+      m.present = false;
+      m.stayTimer = 0;
+      m.cooldownTimer = 0;
+      m.stock = {};
+      m.seedStock = [];
+      m.boat = null;
+    }
+    if (typeof m.viaPort !== 'boolean') {
+      m.viaPort = typeof m.category === 'string' && OLD_PORT_CATEGORIES.includes(m.category);
+    }
+    if (!Array.isArray(s.portRequests)) s.portRequests = [];
   },
 };
 
@@ -253,6 +282,10 @@ export function loadGame(slot = 0): GameState | null {
     s.h = h;
     // Default fields added after this save format shipped, so older saves keep working.
     if (typeof s.disasters !== 'boolean') s.disasters = true;
+    // Belt-and-suspenders alongside the v14→v15 migration: any save that reaches here without a
+    // request list (an old one that skipped the migration somehow, or a hand-built test fixture)
+    // still gets a real empty array rather than a hole `push` would throw on.
+    if (!Array.isArray(s.portRequests)) s.portRequests = [];
     // Builders became an explicit assignable job. Older saves had every idle adult construct;
     // default to none so the player opts in (matches new games).
     if (typeof s.desiredBuilders !== 'number') s.desiredBuilders = 0;

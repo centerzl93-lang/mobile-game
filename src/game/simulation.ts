@@ -845,6 +845,20 @@ export function workplaceStatus(s: GameState, b: Building): WorkStatus | null {
 }
 
 /**
+ * Plain boolean form of `workplaceStatus`'s "Working" state, for a caller that needs a yes/no
+ * rather than the display text — namely the building/activity audio layer (`src/audio/activity.ts`)
+ * deciding whether a mine/woodcutter/blacksmith is actually producing right now. False for Not
+ * staffed, At limit, disabled, on fire, damaged, or out of a material to work with; true for
+ * Working, whether fully or only partially staffed. Deliberately built on `workplaceStatus` rather
+ * than re-deriving "is this working" from `b.workers`/`cappedOut`/etc. a second time — one
+ * definition of "working," read two ways.
+ */
+export function isWorkplaceProducing(s: GameState, b: Building): boolean {
+  const status = workplaceStatus(s, b);
+  return !!status && status.text.startsWith('✓');
+}
+
+/**
  * The output multiplier this villager's own kit applies to their labour — bare hands, iron, or
  * steel (`Citizen.tool`). Unlike the old village-wide tier, this is read straight off the citizen:
  * two villagers at the same bench can be on different tiers if one has a tool in hand and the

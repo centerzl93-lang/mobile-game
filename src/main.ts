@@ -3455,8 +3455,14 @@ class Game {
       // none of them add any coupling to the tick pipeline. `updateEnvironment`'s own terrain scan
       // is throttled well below 100ms (see `EnvironmentSampler`), and `playMusicForTier` is a no-op
       // when the tier hasn't actually changed, so calling either every 100ms never restarts
-      // anything. Skipped on the idle main-menu backdrop village.
+      // anything. Skipped on the idle main-menu backdrop village. The listener position is the
+      // camera's own centre tile (`centerTile()`, already used for the placement reticle) — the
+      // simplest useful stand-in for "where the player is looking" so positioned building/activity
+      // sounds (CLAUDE.md "Distance / Spatial Audio Architecture") actually attenuate with distance
+      // instead of always reading full volume.
       if (this.running && !this.state.gameOver) {
+        const [listenX, listenY] = this.camera.centerTile();
+        audioManager.setListenerPosition(listenX, listenY);
         audioManager.updateActivity(this.state);
         audioManager.updateEnvironment(this.state);
         audioManager.playMusicForTier(villageTier(this.state));

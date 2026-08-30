@@ -15,9 +15,10 @@ import { AUDIO_ASSET_MAP, MUSIC_TRACKS, AMBIENT_LAYER_DEFS, AUDIO_BASE_PATH, typ
 import { ConcurrencyGate } from './concurrency';
 import { decidePlay } from './decision';
 import { loadAudioSettings, type AudioSettings } from './settings';
-import { computeActivityCounts, intensityFor, type ProductionActivity } from './activity';
+import { computeActivitySnapshots, intensityFor, ActivitySoundScheduler, ACTIVITY_SATURATION, PRODUCTION_ACTIVITIES } from './activity';
 import { EnvironmentSampler, seasonOf, windIntensity } from './environment';
 import { nextBirdCallAt } from './birds';
+import { pickVariationAvoidingRepeat } from './variation';
 import type { VillageTier } from '../game/tiers';
 import type { GameState } from '../types';
 
@@ -75,8 +76,18 @@ export class AudioManager {
   private ambient = new Map<string, LoopNode>();
   /** The intensity last requested for each loop key, tracked independently of whether an
    *  `AudioContext`/asset is actually available yet — see `setLoopIntensity`. Lets a caller (or a
-   *  test) read back "what did I ask for" even with audio unavailable. */
+   *  test) read back "what did I ask for" even with audio unavailable. Also doubles as a plain 0..1
+   *  "how busy is this activity right now" readout for the four production activities, which no
+   *  longer drive an actual loop (see `updateActivity`) but are still worth reporting this way. */
   private intensities = new Map<string, number>();
+  /** Schedules the four building/activity one-shots (mining/woodcutting/blacksmith/construction)
+   *  off live worker counts — see `activity.ts`'s module doc. Owned here as long-lived state (its
+   *  own per-activity "next due" clock) the same way `envSampler`/`nextBirdAt` are. */
+  private activityScheduler = new ActivitySoundScheduler();
+  /** The last variation actually played for each one-shot event — CLAUDE.md "Prevent Repeated
+   *  Sound Selection": `playSfx` feeds this into `pickVariationAvoidingRepeat` so the same clip
+   *  doesn't fire twice in a row for any event that has alternatives, activity sounds included. */
+  private lastVariation = new Map<AudioEvent, string>();
   /** Throttles the expensive half of `updateEnvironment` (the terrain scan) — see
    *  `EnvironmentSampler`. */
   private envSampler = new EnvironmentSampler();
@@ -245,8 +256,19 @@ export class AudioManager {
    * directly.
    */
   playSfx(event: AudioEvent, payload: AudioEventPayload = {}): void {
-    const decision = decidePlay(event, payload, this.snapshot(), this.gate, nowMs(), this.listener);
+    const last = this.lastVariation.get(event) ?? null;
+    const decision = decidePlay(
+      event,
+      payload,
+      this.snapshot(),
+      this.gate,
+      nowMs(),
+      this.listener,
+      AUDIO_ASSET_MAP,
+      (variations) => pickVariationAvoidingRepeat(variations, last),
+    );
     if (!decision.play || !decision.def || !decision.variation) return;
+    this.lastVariation.set(event, decision.variation);
     const ctx = this.ensureContext();
     const bus = ctx ? this.categoryGain[decision.def.category] : undefined;
     if (!ctx || !bus) {
@@ -283,14 +305,20 @@ export class AudioManager {
   }
 
   /**
-   * Feed live production-activity worker counts into their ambient loops — see CLAUDE.md "Looping
-   * Activity Sounds". Called once per UI-refresh tick from `main.ts`, never from `simulation.ts`
-   * itself (see `activity.ts`'s doc); cheap enough at that cadence (a single pass over citizens).
+   * Drive the four building/activity sounds (mining/woodcutting/blacksmith/construction) from live
+   * worker counts — CLAUDE.md "Building & Activity Sound Effects". Called once per UI-refresh tick
+   * from `main.ts`, never from `simulation.ts` itself (see `activity.ts`'s doc); cheap at that
+   * cadence (one pass over buildings + citizens, no allocation beyond the small per-tick snapshot).
+   * Each activity is scheduled independently (`ActivitySoundScheduler`) and played as an ordinary
+   * one-shot through `playSfx` — never a loop, never one instance per worker.
    */
-  updateActivity(state: GameState): void {
-    const counts = computeActivityCounts(state);
-    for (const key of Object.keys(counts) as ProductionActivity[]) {
-      this.setLoopIntensity(key, AUDIO_ASSET_MAP[key], intensityFor(counts[key]));
+  updateActivity(state: GameState, now = nowMs()): void {
+    const snapshots = computeActivitySnapshots(state);
+    for (const activity of PRODUCTION_ACTIVITIES) {
+      this.intensities.set(activity, intensityFor(snapshots[activity].count, ACTIVITY_SATURATION[activity]));
+    }
+    for (const trigger of this.activityScheduler.poll(snapshots, now)) {
+      this.playSfx(trigger.activity, trigger.x !== undefined && trigger.y !== undefined ? { x: trigger.x, y: trigger.y } : {});
     }
   }
 
@@ -457,13 +485,13 @@ function nowMs(): number {
  * CLAUDE.md "Music Randomization": "avoid selecting the same track repeatedly," stopping short of
  * the "complex playlist management" it explicitly says not to build (no history, no shuffle bag,
  * just "not the one that's already playing"). A single-variation tier (every one of them, until
- * Phase 2 audio files actually ship) or a tier with nothing picked yet falls back to a plain random
- * pick — there is nothing to avoid repeating.
+ * real audio files ship) or a tier with nothing picked yet falls back to a plain random pick — there
+ * is nothing to avoid repeating. A thin, non-optional-returning wrapper over the shared
+ * `pickVariationAvoidingRepeat` (also used by one-shot sfx, activity sounds included) — every call
+ * site here already guards against an empty `variations` array before calling.
  */
 export function pickMusicVariation(variations: string[], last: string | null, rand: () => number = Math.random): string {
-  if (variations.length <= 1 || last === null) return variations[(rand() * variations.length) | 0];
-  const others = variations.filter((v) => v !== last);
-  return others.length > 0 ? others[(rand() * others.length) | 0] : variations[0];
+  return pickVariationAvoidingRepeat(variations, last, rand) as string;
 }
 
 /** The shared instance — one `AudioContext` for the whole app, same convention as the shared

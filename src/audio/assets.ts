@@ -25,7 +25,7 @@ export interface AudioAssetDef {
    * empty array is the documented "not implemented yet" state, not an error.
    */
   variations: string[];
-  /** True for a sustained loop (ambient layers, production activity) rather than a one-shot. */
+  /** True for a sustained loop (ambient layers, music) rather than a one-shot. */
   loop?: boolean;
   /** Simultaneous instances of *this event* allowed at once, on top of the shared per-category cap
    *  in `manager.ts`'s `CATEGORY_MAX_CONCURRENT` — see CLAUDE.md "Sound Concurrency". Default 4. */
@@ -51,13 +51,6 @@ const sfx = (dir: AudioAssetDef['dir'], overrides: Partial<AudioAssetDef> = {}):
   ...overrides,
 });
 
-const activityLoop = (): AudioAssetDef => ({
-  category: 'ambient',
-  variations: [],
-  loop: true,
-  dir: 'buildings',
-});
-
 export const AUDIO_ASSET_MAP: Record<AudioEvent, AudioAssetDef> = {
   // ---- UI / Interaction — short, frequent, low priority: tight cooldown, roomy concurrency.
   BUILDING_PLACED: sfx('ui', { maxConcurrent: 3, cooldownMs: 80 }),
@@ -72,12 +65,17 @@ export const AUDIO_ASSET_MAP: Record<AudioEvent, AudioAssetDef> = {
   BUILDING_DAMAGED: sfx('buildings', { maxConcurrent: 3, cooldownMs: 300 }),
   BUILDING_REPAIRED: sfx('buildings', { maxConcurrent: 3, cooldownMs: 300 }),
 
-  // ---- Production activity loops — see `events.ts`'s note: never one-shot, always driven by
-  // `activity.ts`'s live worker counts through `AudioManager.setAmbientIntensity`.
-  MINING: activityLoop(),
-  WOODCUTTING: activityLoop(),
-  BLACKSMITH: activityLoop(),
-  CONSTRUCTION: activityLoop(),
+  // ---- Building/activity sounds — see `events.ts`'s note: intermittent one-shots scheduled by
+  // `activity.ts`'s `ActivitySoundScheduler` off live worker counts (`AudioManager.updateActivity`),
+  // never a continuous loop and never one instance per worker. Concurrency/cooldown are tuned per
+  // activity (CLAUDE.md "Different activities have different perceived density"): a blacksmith is
+  // meant to read as a distinct, occasional event even at a full bench, so it gets the tightest
+  // concurrency and the longest cooldown of the four; construction is allowed to sound busiest
+  // since a big project legitimately has several crews hammering across the site at once.
+  MINING: sfx('buildings', { maxConcurrent: 3, cooldownMs: 1500 }),
+  WOODCUTTING: sfx('buildings', { maxConcurrent: 3, cooldownMs: 1300 }),
+  BLACKSMITH: sfx('buildings', { maxConcurrent: 2, cooldownMs: 2000 }),
+  CONSTRUCTION: sfx('buildings', { maxConcurrent: 4, cooldownMs: 1000 }),
 
   // ---- Ambient one-shot — CLAUDE.md "Bird Audio": intermittent, never a loop. Scheduled by
   // `AudioManager.updateEnvironment` (`birds.ts`'s `nextBirdCallAt`), not by any gameplay call
@@ -120,7 +118,8 @@ export const MUSIC_TRACKS: Record<VillageTier, AudioAssetDef> = {
 };
 
 /** Layered *continuous* environmental ambience (CLAUDE.md "Ambient Audio Architecture") —
- *  independent of the production-activity loops above and of each other; several can play at once
+ *  independent of the building/activity sounds above (those are one-shots, not loops — see
+ *  `activity.ts`) and of each other; several layers can play at once
  *  (`AudioManager.setAmbientLayer` per layer, fed by `environment.ts`'s live metrics:
  *  `water`/`forest` from terrain near the settlement, `village` from population + built buildings,
  *  `wind` a low seasonal bed). Birds are deliberately not a fifth entry here — CLAUDE.md "Birds

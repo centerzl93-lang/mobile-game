@@ -401,10 +401,11 @@ with the village) for peaks and cumulatives (a village that hit 300 pop and cras
 
 ## Audio & haptics architecture
 
-`src/audio/` — a small, event-driven layer, built Phase 1 (architecture only; no audio files ship
-yet — every asset table below lists `variations: []`, the documented "not recorded" state, not a
-placeholder). Keeps gameplay decoupled from Web Audio/DOM the same way the rest of the codebase
-stays decoupled from `THREE.*` — see "Unity migration architecture" above.
+`src/audio/` — a small, event-driven layer, built across three phases (architecture, then ambient/
+music, then building/activity sound) with no audio files shipped yet — every asset table below
+lists `variations: []`, the documented "not recorded" state, not a placeholder. Keeps gameplay
+decoupled from Web Audio/DOM the same way the rest of the codebase stays decoupled from `THREE.*` —
+see "Unity migration architecture" above.
 
 - **Semantic events** (`events.ts`): `AudioEvent`/`HapticEvent` unions plus `audioBus`/`emitAudio` —
   a tiny pub/sub. Gameplay raises `FIRE_STARTED`, never "play fire_02.mp3". `simulation.ts` imports
@@ -414,21 +415,35 @@ stays decoupled from `THREE.*` — see "Unity migration architecture" above.
   AudioAssetDef>` (same convention as `BUILDING_DEFS`) — each event's category (`music`/`ambient`/
   `sfx`), concurrency cap and cooldown. `MUSIC_TRACKS` (per `VillageTier`) and `AMBIENT_LAYER_DEFS`
   (water/wind/forest/birds/village) are the other two tables. See `public/audio/README.md` for the
-  folder convention Phase 2 files into.
+  folder convention real files eventually land in.
 - **Playback policy** (`decision.ts`, `concurrency.ts`, `spatial.ts`): `decidePlay` is a pure
   function — asset table/settings/`ConcurrencyGate`/listener position in, "should this play, how
   loud" out — so every mute/volume/throttling/distance rule is unit-tested in `sim-tests/` without
   a browser. `ConcurrencyGate` caps simultaneous instances **per event and per category** and
   cools down retriggers, so e.g. ten woodcutters finishing a cycle the same tick collapse into one
-  audible hit rather than ten.
+  audible hit rather than ten. `variation.ts`'s `pickVariationAvoidingRepeat` is the one "don't
+  immediately repeat the same clip" rule, shared by one-shot sfx (wired into `decidePlay`'s
+  `pickVariation` hook from `AudioManager.playSfx`) and progression music (`pickMusicVariation`).
+- **Building/activity sound** (`activity.ts`): mining/woodcutting/blacksmith/construction are
+  ordinary one-shot `AudioEvent`s (not a fifth `AudioCategory`, not a loop) that gameplay never
+  `emit`s — `computeActivitySnapshots` reads live `GameState` each tick for who's actually
+  producing (`isWorkplaceProducing`, the same Working/At-limit/Not-staffed distinction the inspect
+  sheet shows, off `simulation.ts`'s `workplaceStatus`) or actively building (`Citizen.buildSite`,
+  grouped per site), and `ActivitySoundScheduler` turns that into occasional, jittered,
+  per-activity-paced one-shots — never one instance per worker, never synced to the simulation
+  tick. Woodcutting has two feeder building types (`lumberyard` fells trees, `woodcutter` splits
+  the wood into firewood) aggregated into one sound. `AudioManager.updateActivity` polls the
+  scheduler and plays whatever it returns through the ordinary `playSfx` path, so concurrency/
+  cooldown/spatial attenuation/missing-asset handling are the same machinery every other sfx event
+  uses, not a parallel system.
 - **Backends** (`manager.ts`'s `AudioManager`, `haptics.ts`'s `HapticManager` — Category D, web-
   specific): each independently `install()`s onto `audioBus`. `AudioManager` owns one lazily-
   created `AudioContext` behind a master → music/ambient/sfx gain chain, and
   `installAutoUnlock()` (first pointer/key/touch anywhere unlocks it — browsers refuse audio before
-  a gesture). `updateActivity(state)` — called from `main.ts`'s UI-refresh tick via `activity.ts`'s
-  live worker counts, never from `update()` itself — drives the four production-activity ambient
-  loops (mining/woodcutting/blacksmith/construction); `playMusicForTier` is idempotent on an
-  unchanged tier, so calling it every tick never restarts the track.
+  a gesture). `setListenerPosition` is fed the camera's own centre tile every UI-refresh tick
+  (`main.ts`), so positioned one-shots (fire, building/activity sound) actually attenuate with
+  distance instead of always reading full volume; `playMusicForTier` is idempotent on an unchanged
+  tier, so calling it every tick never restarts the track.
 - **Settings** (`settings.ts`): Master/Music/Ambient/Sfx (0..10) plus a disaster-noises weight and a
   haptics on/off, `localStorage`-keyed exactly like `village-tips`/`village-gfx` — never in the
   save. Reachable from the same Settings panel (`UI.showSettings`).

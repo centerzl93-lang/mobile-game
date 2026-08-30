@@ -1,7 +1,7 @@
 # Audio assets
 
-This directory is where Phase 2 drops real audio files. Phase 1 built the architecture that reads
-from here (`src/audio/`) without adding any placeholder sound — see `AUDIO_ASSET_MAP`,
+This directory is where real audio files eventually land. The architecture that reads from here
+(`src/audio/`) is built without adding any placeholder sound — see `AUDIO_ASSET_MAP`,
 `MUSIC_TRACKS` and `AMBIENT_LAYER_DEFS` in `src/audio/assets.ts`, every one of which currently lists
 `variations: []`. An empty list is the documented "not recorded yet" state (`AudioManager` treats it
 as "no asset for this event," never an error), not a placeholder.
@@ -20,8 +20,10 @@ audio/
                   (`src/audio/environment.ts`); bird calls too, but as one-shot files
                   (`BIRD_CALL` in `AUDIO_ASSET_MAP`) fired occasionally on a randomized
                   schedule (`src/audio/birds.ts`) — not a loop, however many you drop in
-  buildings/      construction started/completed/damaged/repaired, and the four
-                  production-activity loops (mining/woodcutting/blacksmith/construction)
+  buildings/      construction started/completed/damaged/repaired, and the four building/
+                  activity sounds (mining/woodcutting/blacksmith/construction) — intermittent
+                  one-shots scheduled off live worker counts (`src/audio/activity.ts`), never
+                  a loop and never one file per worker
   events/         disaster stings (fire/flood/famine/sickness/warning), tier-advance sting
   merchants/      boat sailing in, arrival/bell, trade completed
   achievements/   achievement-earned sting

@@ -10,7 +10,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AudioManager } from '../src/audio/manager';
+import { AudioManager, pickMusicVariation } from '../src/audio/manager';
 import { audioBus } from '../src/audio/events';
 import type { GameState } from '../src/types';
 
@@ -93,4 +93,49 @@ test('manager: setAmbientLayer/stopAmbient never throw and remember the requeste
   m.setAmbientLayer('water', 0.7);
   assert.equal(m.ambientIntensity('water'), 0.7);
   assert.doesNotThrow(() => m.stopAmbient('water'));
+});
+
+test('manager: updateEnvironment() reads a GameState and never throws, even for an empty village with no tiles', () => {
+  const m = new AudioManager();
+  const state = { w: 10, h: 10, season: 0, tiles: [], buildings: [], citizens: [] } as unknown as GameState;
+  assert.doesNotThrow(() => m.updateEnvironment(state, 0));
+  assert.equal(m.ambientIntensity('water'), 0);
+  assert.equal(m.ambientIntensity('village'), 0);
+  assert.ok(m.ambientIntensity('wind') > 0); // wind is a low bed even with nothing else going on
+});
+
+test('manager: updateEnvironment() schedules bird calls into the future, and does not reschedule before the gap elapses', () => {
+  const m = new AudioManager();
+  const state = { w: 10, h: 10, season: 0, tiles: [], buildings: [], citizens: [], origin: { x: 5, y: 5 } } as unknown as GameState;
+
+  assert.equal(m.nextBirdCallTime(), 0); // nothing scheduled yet
+  m.updateEnvironment(state, 1000);
+  const first = m.nextBirdCallTime();
+  assert.ok(first > 1000, 'a call should be scheduled strictly after the tick that triggered it');
+
+  m.updateEnvironment(state, 1050); // barely any time has passed — not due yet
+  assert.equal(m.nextBirdCallTime(), first, 'must not reschedule before the previously-booked time');
+});
+
+test('manager: installVisibilityHandling() is a safe no-op with no `document` (Node)', () => {
+  const m = new AudioManager();
+  assert.doesNotThrow(() => m.installVisibilityHandling());
+});
+
+test('pickMusicVariation: a single-variation tier always returns that one track', () => {
+  assert.equal(pickMusicVariation(['only.mp3'], null), 'only.mp3');
+  assert.equal(pickMusicVariation(['only.mp3'], 'only.mp3'), 'only.mp3');
+});
+
+test('pickMusicVariation: with nothing picked yet, a plain random pick from the pool', () => {
+  const pick = pickMusicVariation(['a.mp3', 'b.mp3', 'c.mp3'], null, () => 0.5);
+  assert.ok(['a.mp3', 'b.mp3', 'c.mp3'].includes(pick));
+});
+
+test('pickMusicVariation: never repeats the immediately-previous track when others exist', () => {
+  const variations = ['a.mp3', 'b.mp3', 'c.mp3'];
+  for (const r of [0, 0.33, 0.5, 0.99]) {
+    const pick = pickMusicVariation(variations, 'a.mp3', () => r);
+    assert.notEqual(pick, 'a.mp3');
+  }
 });

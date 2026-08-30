@@ -3448,13 +3448,17 @@ class Game {
       this.ui.refreshPanels(this.state);
       if (this.inspectSel) this.refreshInspect();
       this.checkAchievements();
-      // Live production-activity ambience (CLAUDE.md "Looping Activity Sounds") and the tier-based
-      // music track (CLAUDE.md "Music Architecture") both read straight off live state on this same
-      // cadence — never from inside `update()` itself, so neither adds any coupling to the tick
-      // pipeline. `playMusicForTier` is a no-op when the tier hasn't actually changed, so calling it
-      // every 100ms never restarts the track. Skipped on the idle main-menu backdrop village.
+      // Live production-activity ambience (CLAUDE.md "Looping Activity Sounds"), the environmental
+      // ambient mix (CLAUDE.md "Ambient Audio Architecture" — water/wind/forest/village plus
+      // occasional bird calls) and the tier-based music track (CLAUDE.md "Music Architecture") all
+      // read straight off live state on this same cadence — never from inside `update()` itself, so
+      // none of them add any coupling to the tick pipeline. `updateEnvironment`'s own terrain scan
+      // is throttled well below 100ms (see `EnvironmentSampler`), and `playMusicForTier` is a no-op
+      // when the tier hasn't actually changed, so calling either every 100ms never restarts
+      // anything. Skipped on the idle main-menu backdrop village.
       if (this.running && !this.state.gameOver) {
         audioManager.updateActivity(this.state);
+        audioManager.updateEnvironment(this.state);
         audioManager.playMusicForTier(villageTier(this.state));
       }
     }

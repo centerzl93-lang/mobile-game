@@ -24,9 +24,9 @@ Status legend: ✅ done/locked · 🔒 locked (do not change without real playte
 | Phase | Focus | Status |
 |---|---|---|
 | **1** | Gameplay lock / prototype complete | ✅ done |
-| **2** | Villager animation foundation (browser) | 👉 now |
-| **3** | Unity migration | 🔜 next |
-| **4** | Unity core architecture | ⏳ |
+| **2** | Villager animation foundation (browser) | ✅ done |
+| **3** | Unity migration | 👉 now |
+| **4** | Unity core architecture | 🔜 next |
 | **5** | Production villager animation system (Unity) | ⏳ |
 | **6** | Final audio (Unity) | ⏳ |
 | **7** | Visual polish | ⏳ |

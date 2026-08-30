@@ -976,8 +976,22 @@ export interface CitizenTask {
  * reusable state-machine design, C# rewrite required for a Unity build) — everything not in this
  * union just shows the generic idle/walking/carrying states with no swung tool, same as a trade
  * with no animation authored yet.
+ *
+ * Phase 2's "next animation group" (`ROADMAP.md`) added `farming`/`gathering`/`hunting`/
+ * `herbalist`/`blacksmithing`/`tailoring` alongside the original four — see `JOB_ANIMATION` and
+ * `VISIBLE_WHILE_WORKING` below for what each needed.
  */
-export type VillagerActivity = 'woodcutting' | 'mining' | 'fishing' | 'building';
+export type VillagerActivity =
+  | 'woodcutting'
+  | 'mining'
+  | 'fishing'
+  | 'building'
+  | 'farming'
+  | 'gathering'
+  | 'hunting'
+  | 'herbalist'
+  | 'blacksmithing'
+  | 'tailoring';
 
 /**
  * Which workplace building(s) drive which `VillagerActivity` while a worker is actually producing
@@ -990,6 +1004,12 @@ export type VillagerActivity = 'woodcutting' | 'mining' | 'fishing' | 'building'
  * them. `mine` is deliberately the only dig site mapped, matching the audio table's own choice not
  * to cover `quarry`.
  *
+ * `gatherer`/`hunting`/`herbalist` are `CIRCLE_WORK` and `farm` is `OPEN_FOOTPRINT`, so all four
+ * were already drawn outdoors before this table ever mentioned them — mapping them here only adds
+ * the swing, no visibility change. `blacksmith`/`tailor` are ordinary indoor benches, which is why
+ * they are also added to `VISIBLE_WHILE_WORKING` below: without that, mapping them here would set
+ * an animation on a villager the renderer never draws.
+ *
  * `'building'` has no entry here — a builder's `jobId` is null by definition, so that activity is
  * set from the *action* (`runBuilder`'s construct/repair/demolish branches), not from a workplace.
  */
@@ -998,6 +1018,12 @@ export const JOB_ANIMATION: Partial<Record<BuildingType, VillagerActivity>> = {
   woodcutter: 'woodcutting',
   mine: 'mining',
   fishing: 'fishing',
+  farm: 'farming',
+  gatherer: 'gathering',
+  hunting: 'hunting',
+  herbalist: 'herbalist',
+  blacksmith: 'blacksmithing',
+  tailor: 'tailoring',
 };
 
 export type Sex = 'm' | 'f';
@@ -1916,8 +1942,15 @@ export const WARN_STOCK_FRACTION = 0.1;
  * job animation system needs them on screen swinging a pickaxe. `quarry` is left indoors, matching
  * the audio layer's own choice not to give it an activity of its own (`ACTIVITY_BUILDING` in
  * `src/audio/activity.ts`).
+ *
+ * `blacksmith`/`tailor` join the exception for the same reason, one animation phase later
+ * (`ROADMAP.md` Phase 2's "next animation group"): both are otherwise ordinary indoor benches, but
+ * the hammer-on-anvil and needle poses only mean anything if the smith and tailor are actually
+ * drawn. `woodcutter` (the wood -> firewood bench) and every other indoor trade stay invisible —
+ * this list is exactly the jobs with an authored animation that needs them on screen, not a general
+ * "make trades visible" switch.
  */
-const VISIBLE_WHILE_WORKING: BuildingType[] = ['fishing', 'mine'];
+const VISIBLE_WHILE_WORKING: BuildingType[] = ['fishing', 'mine', 'blacksmith', 'tailor'];
 export function worksIndoors(type: BuildingType): boolean {
   return hasDoor(type) && !CIRCLE_WORK.includes(type) && !VISIBLE_WHILE_WORKING.includes(type);
 }

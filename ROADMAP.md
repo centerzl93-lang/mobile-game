@@ -217,38 +217,46 @@ construction, disasters, save schema), and which are engine-specific and get reb
 (Category C: `src/render/`, `src/engine/`; Category D: `localStorage`, DOM, PWA). Use that
 classification as the migration's own work-breakdown — it was written for exactly this transition.
 
-#### Unity project bootstrap
+See **`UNITY_MIGRATION.md`** for the full detail behind all three items below (repo-structure
+decision, exact bootstrap steps, the parity-harness contract, and the save-schema concepts to port).
 
-A minimal toolchain proof, not the production build pipeline (that's Phase 11):
+#### Unity project bootstrap 👉 (tracked, not yet attested)
+
+A minimal toolchain proof, not the production build pipeline (that's Phase 11). Lives in a **new,
+separate Git repository**, not nested inside `mobile-game` (see `UNITY_MIGRATION.md` for why):
 
 - Unity LTS + URP, iOS + Android platform modules installed.
 - **Orientation: landscape**, locked at the project level — settled now because it drives every
   Unity UI layout decision from Phase 4c onward, the same way the browser HUD's chip row already
   assumes a wide screen.
 - One development build deployed to a physical device per platform (Unity → Xcode → iPhone; Unity →
-  Android APK) — proves the export/signing/deploy toolchain works before any game logic exists.
+  Android APK) — proves the export/signing/deploy toolchain works before any game logic exists. This
+  step runs on the developer's own machine (Editor, Xcode, Android Studio, physical hardware) and is
+  attested there, not from an automated session — see `UNITY_MIGRATION.md`'s bootstrap runbook.
 
-#### Parity harness (new — the port's correctness oracle)
+#### Parity harness ✅ (the port's correctness oracle)
 
 The simulation is fully deterministic: a seeded `mulberry32` stream whose entire state is one 32-bit
 integer on `state.rng` (`src/game/rng.ts`), plus a map that's a pure function of `state.seed`. That
-determinism is the cheapest possible way to prove the C# port is faithful, and nothing today captures
-it for that purpose:
+determinism is the cheapest possible way to prove the C# port is faithful.
 
-- Drive the existing `window.__village` debug hooks (`startNewGame`, `debugAdvance`, `debugPlace`,
-  and the `debug*` query helpers already used by `tests/` and `sim-tests/`) through a fixed set of
-  seeds and scripted action sequences, and export the resulting `GameState` at checkpoints as
-  golden-master fixtures (JSON snapshots).
-- These fixtures become the acceptance gate for Phase 4b: the C# simulation, given the same seed and
-  the same input sequence, must reproduce the same `GameState` fields (population, resources,
-  buildings, tiers, ledger) at each checkpoint. `sim-tests/`'s "pure simulation-in,
-  assertions-on-`GameState`-out" style is the direct model for how the C# side asserts against them.
+- `tools/parity/scenarios.ts` scripts five seeded action sequences (founding, early-growth,
+  full-year, disasters, trade) directly against `src/game/*` — the same "pure simulation-in,
+  assertions-on-`GameState`-out" style `sim-tests/` already uses, so no browser or
+  `window.__village` is needed to generate or check them.
+- `npm run parity:export` writes each checkpoint's `GameState` to `parity-fixtures/*.json` as a
+  committed golden master (see `parity-fixtures/README.md` for the fixture contract and how the
+  future C# port should compare against them); `sim-tests/parity-fixtures.test.ts` is the regression
+  gate that fails if the live simulation ever drifts from what's committed.
+- These fixtures are the acceptance gate for Phase 4b: the C# simulation, given the same seed and the
+  same scripted actions, must reproduce the same state at each checkpoint.
 
-#### Save-migration decision
+#### Save-migration decision ✅
 
 Native installs start **fresh** — a web `localStorage` save is not imported into the Unity build. What
 ports is the **save-schema concepts** (`src/game/save.ts`: versioned envelope, numbered migrations,
-load-time field defaults, slots), not the stored bytes.
+load-time field defaults, slots) — spelled out in full, against the real `save.ts` API, in
+`UNITY_MIGRATION.md`'s "Save-migration decision" section.
 
 ---
 

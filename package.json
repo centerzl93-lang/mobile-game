@@ -11,7 +11,8 @@
     "test": "playwright test",
     "test:fast": "playwright test --grep-invert @slow --reporter=dot",
     "test:slow": "playwright test --grep @slow",
-    "test:sim": "tsx --test sim-tests/*.test.ts"
+    "test:sim": "tsx --test sim-tests/*.test.ts",
+    "parity:export": "tsx tools/parity/export-fixtures.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",

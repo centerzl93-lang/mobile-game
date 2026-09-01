@@ -3267,8 +3267,8 @@ function wander(s: GameState, c: Citizen, dt: number): void {
     const centre = loiterPoint(s, c);
     let set = false;
     for (let k = 0; k < 6; k++) {
-      const tx = clampTile(centre.x + (rand(s) - 0.5) * 8);
-      const ty = clampTile(centre.y + (rand(s) - 0.5) * 8);
+      const tx = clampTile(centre.x + (rand(s) - 0.5) * 8, MAP_W - 0.5);
+      const ty = clampTile(centre.y + (rand(s) - 0.5) * 8, MAP_H - 0.5);
       if (reachableTile(c, Math.floor(tx), Math.floor(ty))) {
         c.tx = tx;
         c.ty = ty;
@@ -5803,8 +5803,16 @@ function depleteCircleTrees(s: GameState, b: Building, amount: number): void {
   }
 }
 
-function clampTile(v: number): number {
-  return Math.max(0, Math.min(47.5, v));
+/**
+ * Keep a wander target on the map, so `Math.floor` of it is always a valid tile index. `max` is
+ * the axis's own `MAP_W - 0.5` / `MAP_H - 0.5` — passed in rather than baked, because the map is
+ * not a fixed size (see `MAP_SIZES` / `setMapSize`). It was a hard-coded `47.5` (the old 48-tile
+ * default's `MAP_W - 1`) for a long time, which on today's 72/144 maps collapsed every wander
+ * target on an over-47.5 axis to exactly 47.5 — idle villagers of a village founded past the
+ * middle all trudged to the one point (47.5, 47.5).
+ */
+function clampTile(v: number, max: number): number {
+  return Math.max(0, Math.min(max, v));
 }
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;

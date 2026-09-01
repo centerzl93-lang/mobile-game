@@ -20,6 +20,7 @@
 import { newGame } from '../../src/game/state';
 import {
   update,
+  basketTrade,
   igniteBuilding,
   debugFloodDamageBuilding,
   debugTriggerFamine,
@@ -27,7 +28,17 @@ import {
 } from '../../src/game/simulation';
 import { canPlace, placeBuilding } from '../../src/game/buildings';
 import { addNearest } from '../../src/game/storage';
-import { buildCost, BUILDING_DEFS, SEASON_LENGTH } from '../../src/types';
+import { tileIndex } from '../../src/game/world';
+import {
+  buildCost,
+  BUILDING_DEFS,
+  PATH_DIRT,
+  PATH_DIRT_PLAN,
+  PATH_STONE,
+  PATH_STONE_PLAN,
+  ranchCapacity,
+  SEASON_LENGTH,
+} from '../../src/types';
 import type { Building, BuildingType, Difficulty, GameState, MapSize, ResourceKind } from '../../src/types';
 
 const noLog: LogFn = () => {};
@@ -215,6 +226,170 @@ export const PARITY_SCENARIOS: ParityScenario[] = [
     disasters: false,
     setup: (s) => {
       place(s, 'trading');
+    },
+    checkpoints: [
+      { label: 'season-1', advanceSeconds: SEASON_LENGTH },
+      { label: 'season-2', advanceSeconds: SEASON_LENGTH },
+    ],
+  },
+
+  // Staffed producers of every kind: a gatherer and a forester work their circles, a shepherd
+  // works an over-full pen, and a blacksmith and a tailor convert stockpiled inputs. Exercises
+  // `runWorker`'s circle-work path (`workSpot`/`scatteredCircleSpots`), `workOutput` for
+  // `gatherer`/`lumberyard`/`ranch`/`blacksmith`/`tailor`, the terrain factors
+  // (`factorCircle`/`forestInCircle`), forester replanting (`plantCircle`/`tendCircle`/
+  // `depleteCircleTrees`), the over-cap cull (`cullOverCap`/`butcherProducts`), the converter
+  // input pipeline (`converterInputs`/`firstMissingInput`/`consumeStore` + the fetch-an-input leg),
+  // and the produced-load haul back to the barns — none of which any other scenario reaches,
+  // because none of them staffs a workplace.
+  {
+    name: 'production',
+    seed: 6006,
+    size: 'small',
+    difficulty: 'normal',
+    disasters: false,
+    setup: (s) => {
+      const origin = s.origin!;
+      const gatherer = finishedBuilding(s, 'gatherer');
+      gatherer.desiredWorkers = 2;
+      const lumberyard = finishedBuilding(s, 'lumberyard');
+      lumberyard.desiredWorkers = 2;
+      const ranch = finishedBuilding(s, 'ranch');
+      ranch.animal = 'sheep';
+      // Above the pen's cap on purpose, so the shepherd thins the flock (`cullOverCap`) before
+      // settling into the daily round of shearing.
+      ranch.animals = ranchCapacity(ranch) + 3;
+      ranch.maxAnimals = ranchCapacity(ranch);
+      ranch.desiredWorkers = 1;
+      const blacksmith = finishedBuilding(s, 'blacksmith');
+      blacksmith.desiredWorkers = 1;
+      addNearest(s, origin, 'iron', 120);
+      const tailor = finishedBuilding(s, 'tailor');
+      tailor.desiredWorkers = 1;
+      addNearest(s, origin, 'leather', 120);
+    },
+    checkpoints: [
+      { label: 'season-1', advanceSeconds: SEASON_LENGTH },
+      { label: 'season-2', advanceSeconds: SEASON_LENGTH },
+    ],
+  },
+
+  // Roadworks: idle villagers lay planned dirt and stone paths and pull up a pair of pre-built
+  // ones. Exercises `buildPath` (the nearest-plan scan, the per-tier material draw), `tearDownPath`
+  // (the masonry salvage), and `clearGroundForPath` (a path routed over a forest tile fells the
+  // tree; over a loose deposit hauls the stone off). The path plans are written straight onto
+  // `s.paths` — this tests the laying, not the planning UI (`planPath`/`confirmPendingPaths`).
+  {
+    name: 'paving',
+    seed: 8008,
+    size: 'small',
+    difficulty: 'normal',
+    disasters: false,
+    setup: (s) => {
+      const o = s.origin!;
+      addNearest(s, o, 'stone', 30);
+      // A straight run of dirt plan, east of the barn, over open ground.
+      for (let k = 0; k < 6; k++) s.paths[tileIndex(o.x - 3 + k, o.y + 4)] = PATH_DIRT_PLAN;
+      // Force a forest tile and a loose-stone deposit onto the run so `clearGroundForPath` has
+      // something to clear on both branches.
+      const ft = s.tiles[tileIndex(o.x - 1, o.y + 4)];
+      ft.type = 'forest';
+      ft.trees = 0.8;
+      s.tiles[tileIndex(o.x, o.y + 4)].stone = 3;
+      // A stone plan segment — the builder consumes a unit of stored stone per tile laid.
+      for (let k = 0; k < 3; k++) s.paths[tileIndex(o.x + 3 + k, o.y + 4)] = PATH_STONE_PLAN;
+      // A pre-laid dirt + stone road north of the barn, both queued for teardown.
+      const razeDirt = tileIndex(o.x - 3, o.y - 4);
+      const razeStone = tileIndex(o.x - 2, o.y - 4);
+      s.paths[razeDirt] = PATH_DIRT;
+      s.paths[razeStone] = PATH_STONE;
+      s.razePaths = [razeDirt, razeStone];
+    },
+    checkpoints: [
+      { label: 'season-1', advanceSeconds: SEASON_LENGTH },
+      { label: 'season-2', advanceSeconds: SEASON_LENGTH },
+    ],
+  },
+
+  // Player-initiated barter: a Port fleet is hand-docked at a trading post and two `basketTrade`
+  // baskets are settled in setup. Exercises the value math (`offerValue`/`purchaseValue`/
+  // `requiredValue`/`sumValue`), `merchantBerth`, the stock/inventory checks, a seed unlock, and
+  // the achievement-stat tally (`tradesCompleted`, `luxuryExported`, `tradeOnlyImported`,
+  // `imported{Gold,Silk}`, `portTradeValue`, `portTradeCount`). The merchant is hand-docked (no
+  // boat, stayTimer well past both checkpoints) — this tests the trade, not the arrival.
+  {
+    name: 'bartering',
+    seed: 1010,
+    size: 'small',
+    difficulty: 'normal',
+    disasters: false,
+    setup: (s) => {
+      const post = finishedBuilding(s, 'trading');
+      post.store = { wood: 3000, jewelry: 20 };
+      const m = s.merchant;
+      m.phase = 'docked';
+      m.present = true;
+      m.category = 'portluxury';
+      m.viaPort = true;
+      m.priceMod = 1.1;
+      m.stock = { gold: 30, silk: 10 };
+      m.seedStock = ['wheat', 'corn'];
+      m.stayTimer = 10 * SEASON_LENGTH;
+      basketTrade(s, { give: { wood: 2500, jewelry: 15 }, get: { gold: 20, silk: 5 }, buySeeds: ['wheat'] });
+      basketTrade(s, { give: { wood: 300 }, get: { gold: 5 }, buySeeds: [] });
+    },
+    checkpoints: [
+      { label: 'immediately-after', advanceSeconds: 0 },
+      { label: 'season-1', advanceSeconds: SEASON_LENGTH },
+    ],
+  },
+
+  // A Port and a scheduled fleet: a "return next year" request is pre-seeded for the coming
+  // season, so `portSeason` fulfils it deterministically (no reliance on the 0.7 arrival roll),
+  // launches a Port merchant (`spawnPortMerchant` — `viaPort`, a `PORT_PRICE_MODS` haggle, varied
+  // quantities), and `updateMerchantBoat` sails it up to the harbour and docks it.
+  {
+    name: 'harbour',
+    seed: 9009,
+    size: 'small',
+    difficulty: 'normal',
+    disasters: false,
+    setup: (s) => {
+      finishedBuilding(s, 'port');
+      // The first `endSeason` rolls the calendar to Summer/year 1 before `portSeason` runs, so
+      // reserve that season. Written straight onto `s.portRequests` (the scenario tests the
+      // scheduler, not the docked-merchant `requestMerchantReturn` UI call).
+      s.portRequests = [{ category: 'portluxury', season: 'Summer', year: 1 }];
+    },
+    checkpoints: [
+      { label: 'season-1', advanceSeconds: SEASON_LENGTH },
+      { label: 'season-2', advanceSeconds: SEASON_LENGTH },
+    ],
+  },
+
+  // The logistics buildings and their keepers: a market vendor hauls groceries up from the barns
+  // and delivers them to a household, and a trading-post keeper matches the post's inventory to
+  // the player's stock orders. Exercises `runVendor`/`marketErrand`/`larderShortfall` and
+  // `runTrader` — the `runWorker` branches for `market`/`trading`, which have no `workOutput` of
+  // their own.
+  {
+    name: 'services',
+    seed: 7007,
+    size: 'small',
+    difficulty: 'normal',
+    disasters: false,
+    setup: (s) => {
+      const origin = s.origin!;
+      finishedBuilding(s, 'house');
+      const market = finishedBuilding(s, 'market');
+      market.desiredWorkers = 1;
+      addNearest(s, origin, 'fruit', 150);
+      addNearest(s, origin, 'grain', 150);
+
+      const trading = finishedBuilding(s, 'trading');
+      trading.desiredWorkers = 1;
+      trading.orders = { wood: 40 } as Partial<Record<ResourceKind, number>>;
+      addNearest(s, origin, 'wood', 80);
     },
     checkpoints: [
       { label: 'season-1', advanceSeconds: SEASON_LENGTH },
